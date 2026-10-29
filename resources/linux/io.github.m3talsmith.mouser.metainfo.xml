@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.m3talsmith.mouser</id>
+  <name>Mouser</name>
+  <summary>GPU-accelerated terminal with compressed scrollback and Kitty protocol</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>Mouser Contributors</developer_name>
+  <launchable type="desktop-id">mouser.desktop</launchable>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+  </categories>
+  <description>
+    <p>
+      Mouser is a fast terminal emulator with chunk-compressed scrollback, on-demand decompression and Kitty protocol support.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/m3talsmith/mouser</url>
+</component>
+

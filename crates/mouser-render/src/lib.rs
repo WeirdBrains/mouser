@@ -29,7 +29,8 @@ impl Default for Renderer {
 
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::new()?;
-    let window = event_loop.create_window(winit::window::WindowAttributes::default().with_title("Mouser"))?;
+    let attrs = winit::window::WindowAttributes::default().with_title("Mouser");
+    let window = event_loop.create_window(attrs)?;
     let context = Context::new(&window).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
     let mut surface = Surface::new(&context, &window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
     let mut width = window.inner_size().width.max(1);

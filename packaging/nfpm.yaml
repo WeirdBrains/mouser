@@ -1,0 +1,32 @@
+name: mouser
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: default
+priority: extra
+maintainer: Mouser Contributors <noreply@example.com>
+description: |
+  Mouser terminal emulator with chunk-compressed scrollback and Kitty protocol.
+homepage: https://github.com/m3talsmith/mouser
+license: MIT
+contents:
+  - src: ${BINARY_PATH}
+    dst: /usr/bin/mouser
+    type: file
+    file_info:
+      mode: 0755
+  - src: resources/linux/mouser.desktop
+    dst: /usr/share/applications/mouser.desktop
+  - src: build/icons/hicolor/**/*
+    dst: /usr/share/icons/hicolor
+  - src: resources/icons/mouser.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/mouser.svg
+  - src: resources/linux/io.github.m3talsmith.mouser.metainfo.xml
+    dst: /usr/share/metainfo/io.github.m3talsmith.mouser.metainfo.xml
+rpm:
+  summary: Mouser terminal emulator
+deb:
+  recommends:
+    - desktop-file-utils
+    - hicolor-icon-theme
+

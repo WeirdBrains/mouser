@@ -1,0 +1,35 @@
+; Inno Setup script for Mouser
+#define MyAppName "Mouser"
+#define MyAppVersion "@VERSION@"
+#define MyAppPublisher "Mouser"
+#define MyAppExeName "mouser.exe"
+
+[Setup]
+AppId={{6F7F0A46-2F29-4F4E-A2E8-9B6B3F7A0A77}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+DefaultDirName={autopf}\Mouser
+DefaultGroupName=Mouser
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+UninstallDisplayIcon={app}\{#MyAppExeName}
+OutputDir=dist
+OutputBaseFilename=MouserSetup-{#MyAppVersion}
+SetupIconFile=resources\windows\mouser.ico
+Compression=lzma
+SolidCompression=yes
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Files]
+Source: "target\x86_64-pc-windows-msvc\release\mouser.exe"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\Mouser"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\Mouser"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"
+

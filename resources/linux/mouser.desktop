@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Mouser
+Comment=Mouser terminal emulator
+Exec=mouser
+Icon=mouser
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupWMClass=Mouser
+
