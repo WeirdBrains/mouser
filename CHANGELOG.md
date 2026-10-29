@@ -32,6 +32,11 @@ Fix: Windows release checksum path
 Fix: Windows release checksum path (final)
 - Use `$Env:GITHUB_WORKSPACE` with `Join-Path` for stable absolute path
 
+## [0.4.8] - 2026-10-29
+
+Fix: Windows checksum command
+- Replace Set-Content with `Out-File -NoNewline -Encoding ASCII` to avoid parameter issues
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
