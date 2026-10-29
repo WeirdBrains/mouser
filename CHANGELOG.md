@@ -1,5 +1,10 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.6] - 2026-10-29
+
+- Packaging: Arch build installs runtime deps via makepkg -s.
+
+
 ## [0.6.5] - 2026-10-29
 
 - Packaging: fix hicolor tree path and Windows installer source path.
