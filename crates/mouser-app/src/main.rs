@@ -25,6 +25,7 @@ struct AppState {
     pending_delete: Option<String>,
     pending_edit: Option<Connection>,
 }
+use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
 use serde::Deserialize;
 use std::fs;
@@ -303,16 +304,7 @@ fn main() -> Result<()> {
             }
         })
     };
-    let on_resize = {
-        let parser = parser.clone();
-        let master = master.clone();
-        Arc::new(move |cols: u16, rows: u16| {
-            if let Ok(mut guard) = master.lock() {
-                let _ = mouser_pty::set_master_winsize(&mut **guard, cols, rows);
-            }
-            parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
-        })
-    };
+    // on_resize is defined below with dims tracking
 
     // Drain PTY bytes periodically in the AboutToWait tick
     std::thread::spawn({
@@ -333,7 +325,108 @@ fn main() -> Result<()> {
             mouser_core::themes::resolve_active_colors(&prefs)
         })
     };
-    let hooks = RenderHooks { on_key_bytes: on_key, on_resize, fetch_lines: fetch, get_colors };
+    // Track last known cols/rows to approximate pixel size for UI layout
+    let dims = Arc::new(Mutex::new((100u16, 30u16)));
+    let dims_for_resize = dims.clone();
+    let on_resize = {
+        let parser = parser.clone();
+        let master = master.clone();
+        let dims_for_resize = dims_for_resize.clone();
+        Arc::new(move |cols: u16, rows: u16| {
+            if let Ok(mut guard) = master.lock() {
+                let _ = mouser_pty::set_master_winsize(&mut **guard, cols, rows);
+            }
+            *dims_for_resize.lock().unwrap() = (cols, rows);
+            parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+        })
+    };
+    let font_size = app_cfg.ui.as_ref().and_then(|u| u.font_size).unwrap_or(16.0);
+    let get_ui_model = {
+        let app_state = app_state.clone();
+        Arc::new(move || {
+            let (cols, rows) = *dims.lock().unwrap();
+            let width_px = (cols as f32 * (font_size * 0.6)).round() as i32 + 20;
+            let height_px = (rows as f32 * (font_size * 1.3)).round() as i32 + 20;
+            // Group connections by category
+            let mut groups: std::collections::BTreeMap<ui::Category, Vec<String>> = Default::default();
+            if let Ok(list) = list_connections() {
+                for c in list {
+                    let cat = match c.kind {
+                        ConnectionKind::Ssh(_) => ui::Category::Ssh,
+                        ConnectionKind::Waypipe(_) => ui::Category::Waypipe,
+                        ConnectionKind::Tunnel(_) => ui::Category::Tunnels,
+                        ConnectionKind::X11(_) => ui::Category::X11,
+                    };
+                    groups.entry(cat).or_default().push(c.name);
+                }
+            }
+            // Modal from state
+            let st = app_state.lock().unwrap();
+            let modal = if let Some(name) = &st.pending_delete {
+                Some(ui::ModalState {
+                    kind: ui::ModalKind::ConfirmDelete { category: ui::Category::Ssh, name: name.clone() },
+                    advanced_open: false,
+                    rect: ui::Rect { x: width_px / 2 - 200, y: height_px / 2 - 120, w: 400, h: 240 },
+                })
+            } else if let Some(conn) = &st.pending_edit {
+                let cat = match conn.kind {
+                    ConnectionKind::Ssh(_) => ui::Category::Ssh,
+                    ConnectionKind::Waypipe(_) => ui::Category::Waypipe,
+                    ConnectionKind::Tunnel(_) => ui::Category::Tunnels,
+                    ConnectionKind::X11(_) => ui::Category::X11,
+                };
+                Some(ui::ModalState {
+                    kind: ui::ModalKind::Edit { category: cat, name: conn.name.clone() },
+                    advanced_open: false,
+                    rect: ui::Rect { x: width_px / 2 - 240, y: height_px / 2 - 160, w: 480, h: 320 },
+                })
+            } else {
+                None
+            };
+            ui::build_sidebar_layout(width_px, height_px, font_size, &groups, modal)
+        })
+    };
+    let on_ui_action = {
+        let app_state = app_state.clone();
+        Arc::new(move |act: ui::UiAction| match act {
+            ui::UiAction::OpenAdd(cat) => {
+                let mut st = app_state.lock().unwrap();
+                let name = "new".to_string();
+                let conn = match cat {
+                    ui::Category::Ssh => Connection { name: name.clone(), kind: ConnectionKind::Ssh(SshConnection::default()) },
+                    ui::Category::Waypipe => Connection { name: name.clone(), kind: ConnectionKind::Waypipe(WaypipeConnection::default()) },
+                    ui::Category::Tunnels => Connection { name: name.clone(), kind: ConnectionKind::Tunnel(TunnelConnection::default()) },
+                    ui::Category::X11 => Connection { name: name.clone(), kind: ConnectionKind::X11(X11Connection::default()) },
+                };
+                st.pending_edit = Some(conn);
+            }
+            ui::UiAction::OpenEdit { category: _, name } => {
+                if let Ok(Some(conn)) = load_connection(&name) {
+                    app_state.lock().unwrap().pending_edit = Some(conn);
+                }
+            }
+            ui::UiAction::OpenDeleteConfirm { category: _, name } => {
+                app_state.lock().unwrap().pending_delete = Some(name);
+            }
+            ui::UiAction::ConfirmDelete => {
+                if let Some(name) = app_state.lock().unwrap().pending_delete.take() {
+                    let _ = delete_connection(&name);
+                }
+            }
+            ui::UiAction::CancelModal | ui::UiAction::ToggleAdvanced | ui::UiAction::None => {
+                let mut st = app_state.lock().unwrap();
+                st.pending_delete = None;
+            }
+        })
+    };
+    let hooks = RenderHooks {
+        on_key_bytes: on_key,
+        on_resize,
+        fetch_lines: fetch,
+        get_colors,
+        get_ui_model: Some(get_ui_model),
+        on_ui_action: Some(on_ui_action),
+    };
     let mut r = Renderer::default();
     if let Some(ui) = &app_cfg.ui
         && let Some(fs) = ui.font_size
