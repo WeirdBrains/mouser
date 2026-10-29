@@ -11,9 +11,9 @@ fn writes_builtins_under_home() {
         env::set_var("MOUSER_HOME", tmp.path());
     }
     write_builtins_if_absent().unwrap();
-    let tokyo = tmp.path().join("themes").join("Tokyo Night");
-    assert!(tokyo.join("dark.toml").exists());
-    assert!(tokyo.join("light.toml").exists());
+    let rs = tmp.path().join("themes").join("Red Star");
+    assert!(rs.join("dark.toml").exists());
+    assert!(rs.join("light.toml").exists());
 }
 
 #[test]
@@ -27,8 +27,8 @@ fn resolves_system_dark_env() {
     unsafe {
         env::set_var("MOUSER_SYSTEM_DARK", "1");
     }
-    let prefs = Preferences { theme: Some("Tokyo Night".into()), font_family: None, font_size: None, mode: Some(ThemeMode::System) };
+    let prefs = Preferences { theme: Some("Red Star".into()), font_family: None, font_size: None, mode: Some(ThemeMode::System) };
     let (bg, fg) = resolve_active_colors(&prefs);
-    assert_eq!(bg, 0x1a1b26);
-    assert_eq!(fg, 0xc0caf5);
+    assert_eq!(bg, 0x020f1b);
+    assert_eq!(fg, 0xe6fbfa);
 }

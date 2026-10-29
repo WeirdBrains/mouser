@@ -29,7 +29,7 @@ pub fn write_builtins_if_absent() -> std::io::Result<()> {
 }
 
 pub fn resolve_active_colors(prefs: &Preferences) -> (u32, u32) {
-    let theme_name = prefs.theme.as_deref().unwrap_or("Tokyo Night");
+    let theme_name = prefs.theme.as_deref().unwrap_or("Red Star");
     let use_dark = match prefs.mode.clone().unwrap_or_default() {
         ThemeMode::Dark => true,
         ThemeMode::Light => false,
@@ -66,6 +66,8 @@ fn parse_hex_rgb(s: &str) -> u32 {
 
 pub fn builtins() -> Vec<(String, ThemeDef, ThemeDef)> {
     vec![
+        // Red Star (Starlight variant) — extracted from owner's wallpaper palette
+        theme_pair("Red Star", "#E6FBFA", "#020F1B", "#04192A", "#E6FBFA"),
         theme_pair("Tokyo Night", "#c0caf5", "#1a1b26", "#3760bf", "#e1e2e7"),
         theme_pair("Catppuccin", "#cdd6f4", "#1e1e2e", "#4c4f69", "#eff1f5"),
         theme_pair("Gruvbox", "#ebdbb2", "#282828", "#3c3836", "#fbf1c7"),
