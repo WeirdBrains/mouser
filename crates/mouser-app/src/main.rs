@@ -320,7 +320,14 @@ fn main() -> Result<()> {
         }
     });
 
-    let hooks = RenderHooks { on_key_bytes: on_key, on_resize, fetch_lines: fetch };
+    // Theme resolver closure
+    let get_colors = {
+        Arc::new(move || {
+            let prefs = mouser_core::storage::load_preferences();
+            mouser_core::themes::resolve_active_colors(&prefs)
+        })
+    };
+    let hooks = RenderHooks { on_key_bytes: on_key, on_resize, fetch_lines: fetch, get_colors };
     let mut r = Renderer::default();
     if let Some(ui) = &app_cfg.ui
         && let Some(fs) = ui.font_size
