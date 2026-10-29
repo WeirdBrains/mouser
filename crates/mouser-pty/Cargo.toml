@@ -1,0 +1,13 @@
+[package]
+name = "mouser-pty"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+description = "PTY spawn and IO glue for Mouser"
+repository = ""
+
+[dependencies]
+anyhow.workspace = true
+portable-pty.workspace = true
+log.workspace = true
+
