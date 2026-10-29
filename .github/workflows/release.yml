@@ -67,9 +67,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $artifactPath = Join-Path -Path $PWD -ChildPath $Env:ARTIFACT
+          $artifactPath = Join-Path -Path $Env:GITHUB_WORKSPACE -ChildPath $Env:ARTIFACT
           $hash = (Get-FileHash -Algorithm SHA256 $artifactPath).Hash.ToLower()
-          Set-Content -Path \"$artifactPath.sha256\" -Value $hash -NoNewline
+          $hash | Out-File -FilePath \"$artifactPath.sha256\" -NoNewline -Encoding ASCII
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
