@@ -1,5 +1,10 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.3] - 2026-10-29
+
+- Release: fix nfpm env expansion; correct Windows Inno Setup paths.
+
+
 ## [0.6.2] - 2026-10-29
 
 - Icon: further refine mouse silhouette for clarity at 32–64px.
