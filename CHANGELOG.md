@@ -1,3 +1,10 @@
+## [0.3.0] - 2026-10-29
+
+Feature: Vim-style modes and basic command line
+- Add Shell/Command/Config modes (default Shell); command line prompt and actions; Esc returns to Shell
+- Toggleable right sidebar via commands; groundwork for menus/keybindings to dispatch actions
+- Quality bar clean; docs page added for modes
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
