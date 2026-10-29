@@ -44,4 +44,3 @@ fn search_across_compressed_chunks() {
     let results = sb.search("beta", &Default::default());
     assert!(results.len() >= 15);
 }
-

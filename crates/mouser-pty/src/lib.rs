@@ -1,5 +1,5 @@
 use anyhow::Result;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::env;
 use std::io::{Read, Write};
 
@@ -35,4 +35,3 @@ pub fn set_master_winsize(master: &mut (dyn MasterPty + Send), cols: u16, rows: 
     master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
     Ok(())
 }
-

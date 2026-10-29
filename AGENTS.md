@@ -14,8 +14,8 @@ These rules are adapted from the owner's Muninn project for this repository.
   view, they remain thin adapters over the core library.
 
 ## Safety
-- Never touch the user's real Mouser config directory for tests or manual runs. Use a temp
-  directory (set `MOUSER_CONFIG_DIR` or pass `--config-dir`) for all non-release runs.
+- Never touch the user's real Mouser home for tests or manual runs. Use a temp
+  directory (set `MOUSER_HOME` or pass `--config-dir`) for all non-release runs.
 - Never edit files outside this project folder (cargo caches excepted).
 - Git: commit locally in logical steps. Do not push to `main` or push tags, change remotes,
   force-push, rewrite published history, or skip hooks. You may push your own feature
@@ -50,6 +50,8 @@ These rules are adapted from the owner's Muninn project for this repository.
 - Full Kitty protocol support is a long-term goal (keyboard, graphics, and common
   extensions). Track status in `docs/kitty-compliance.md`.
 - Configuration is TOML-based (font, colors, scrollback, compression settings).
+- Storage lives in `~/.mouser` by default with `MOUSER_HOME` override. Built-in themes are
+  provided and written on first run or copied on edit.
 
 ## Releases
 - Cut releases locally (commit + annotated tag); never push tags. Packaging should ship

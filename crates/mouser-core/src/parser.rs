@@ -1,10 +1,10 @@
 use crate::grid::{Screen, Style};
-use crate::kitty::{parse_kitty_graphics_params, KeyboardProtocolState, KittyGraphicsEvent};
+use crate::kitty::{KeyboardProtocolState, KittyGraphicsEvent, parse_kitty_graphics_params};
 use crate::scrollback::Scrollback;
 use crate::types::Size;
 use log::trace;
-use std::sync::Arc;
 use std::io::Write;
+use std::sync::Arc;
 use vte::{Params, Parser, Perform};
 
 pub struct TerminalParser<W: Write> {
@@ -125,4 +125,3 @@ impl<W: Write> Perform for TerminalParser<W> {
         }
     }
 }
-

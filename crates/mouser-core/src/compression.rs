@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use std::io;
+use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -18,10 +18,7 @@ pub struct CompressionConfig {
 
 impl Default for CompressionConfig {
     fn default() -> Self {
-        Self {
-            algorithm: CompressionAlgo::Zstd,
-            level: 3,
-        }
+        Self { algorithm: CompressionAlgo::Zstd, level: 3 }
     }
 }
 
@@ -57,10 +54,8 @@ pub fn decompress_bytes(cfg: &CompressionConfig, input: &[u8]) -> Result<Vec<u8>
             Ok(out)
         }
         CompressionAlgo::Lz4 => {
-            let decompressed = lz4_flex::block::decompress_size_prepended(input)
-                .map_err(|_| CompressionError::Lz4)?;
+            let decompressed = lz4_flex::block::decompress_size_prepended(input).map_err(|_| CompressionError::Lz4)?;
             Ok(decompressed)
         }
     }
 }
-
