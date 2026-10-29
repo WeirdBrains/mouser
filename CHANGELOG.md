@@ -1,5 +1,11 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.2] - 2026-10-29
+
+- Icon: further refine mouse silhouette for clarity at 32–64px.
+- CI: remove runtime icon generation; use committed assets.
+
+
 ## [0.6.1] - 2026-10-29
 
 - Release: fix Windows installer icon/output paths; use committed hicolor icons for Arch.
