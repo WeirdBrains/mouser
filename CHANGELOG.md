@@ -1,3 +1,10 @@
+## [0.4.2] - 2026-10-29
+
+Fix: cross-platform config/home resolution and Windows build
+- Remove `xdg` usage in app config loader; use core `resolve_home()` (respects `MOUSER_HOME`)
+- Unblock Windows build/clippy by avoiding Linux-only XDG calls
+- Quality bar: fmt/clippy/tests green locally; CI expected to pass
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
