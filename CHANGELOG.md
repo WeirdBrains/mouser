@@ -1,3 +1,11 @@
+## [0.4.0] - 2026-10-29
+
+Feature: Theming
+- Add built-in themes (10 popular sets) with dark/light variants
+- System/light/dark mode selection; renderer uses theme colors
+- Themes written to `~/.mouser/themes` on first run; docs added
+- Quality bar clean
+
 ## [0.3.0] - 2026-10-29
 
 Feature: Vim-style modes and basic command line
