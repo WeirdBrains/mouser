@@ -1,3 +1,10 @@
+## [0.4.1] - 2026-10-29
+
+CI and release automation:
+- Add GitHub Actions CI (fmt, clippy, build, tests) on pushes to main across Ubuntu, macOS, Windows
+- Add release workflow on `v*` tags: build artifacts for Linux/macOS/Windows and publish GitHub Release with checksums
+- Docs: `docs/release.md` and index in `docs/README.md`
+
 ## [0.4.0] - 2026-10-29
 
 Feature: Theming
