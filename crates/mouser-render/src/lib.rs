@@ -31,6 +31,14 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let attrs = winit::window::WindowAttributes::default().with_title("Mouser");
     let window = event_loop.create_window(attrs)?;
+    // Window icon (cross-platform)
+    if let Ok(img) = image::load_from_memory(include_bytes!("../../../resources/icons/png/mouser_64.png")) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), w, h) {
+            window.set_window_icon(Some(icon));
+        }
+    }
     let context = Context::new(&window).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
     let mut surface = Surface::new(&context, &window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
     let mut width = window.inner_size().width.max(1);

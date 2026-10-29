@@ -55,6 +55,9 @@ Feature: First-class packaging
 - macOS: `Mouser.app` bundle and `.dmg`; Homebrew formula (CLI) and Cask (App) generated and pushed
 - Windows: Installer `.exe` via Inno Setup; embedded icon/version in exe
 
+### Fixes post-tag
+- CI: add `winres` build-dep, remove `docker.io` conflict on Ubuntu runner
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
