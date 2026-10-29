@@ -4,7 +4,7 @@ These rules are adapted from the owner's Muninn project for this repository.
 
 ## Where to work
 - Always work directly on the owner's machine (alien-blue), in this repository folder:
-  `~/Projects/m3talsmith/mouser`. No cloud agents, no clones elsewhere.
+  `~/Projects/m3talsmith/mouser`. No cloud agents, no clones elsewhere. Work on `main` directly; no PRs or branches.
 - Toolchain: Rust >= 1.99 (edition 2024), cargo on this machine. Prefer bundled/vendored
   crate features over installing system packages; ask before installing anything.
 
@@ -54,8 +54,9 @@ These rules are adapted from the owner's Muninn project for this repository.
   provided and written on first run or copied on edit.
 
 ## Releases
-- Cut releases locally (commit + annotated tag); never push tags. Packaging should ship
-  prebuilt binaries; installing must not require Rust.
+- For each tested change: bump versions (docs-only: PATCH; feature: MINOR), update `CHANGELOG.md`,
+  commit as `release: vX.Y.Z`, create an annotated tag `vX.Y.Z`, then push:
+  `git push origin main --follow-tags`. Packaging ships prebuilt binaries; installing must not require Rust.
 
 ## Communication style
 - Keep summaries, changelog entries and commit messages concise.

@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-release:
+    name: Build release artifacts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          set -eux
+          OUTDIR=target/${{ matrix.target }}/release
+          NAME=mouser
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            ART=${NAME}-${{ matrix.target }}.zip
+            7z a "$ART" "$OUTDIR/${NAME}-app.exe"
+          else
+            ART=${NAME}-${{ matrix.target }}.tar.gz
+            tar -C "$OUTDIR" -czf "$ART" "${NAME}-app"
+          fi
+          echo "ARTIFACT=$ART" >> $GITHUB_ENV
+
+      - name: Checksums
+        shell: bash
+        run: |
+          shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: |
+            ${{ env.ARTIFACT }}
+            ${{ env.ARTIFACT }}.sha256
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Extract notes from CHANGELOG
+        id: changelog
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          awk -v ver="## [$VER]" 'f{print} $0 ~ ver{f=1}' CHANGELOG.md | awk 'NR==1 || /^## \[/{print; if(NR>1) exit}' > notes.md
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat notes.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.notes }}
+          files: |
+            dist/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
