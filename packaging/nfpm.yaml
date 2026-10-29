@@ -17,7 +17,7 @@ contents:
       mode: 0755
   - src: resources/linux/mouser.desktop
     dst: /usr/share/applications/mouser.desktop
-  - src: resources/icons/hicolor/**/*
+  - src: resources/icons/hicolor
     dst: /usr/share/icons/hicolor
     type: tree
   - src: resources/icons/mouser.svg
