@@ -37,6 +37,11 @@ Fix: Windows release checksum path (final)
 Fix: Windows checksum command
 - Replace Set-Content with `Out-File -NoNewline -Encoding ASCII` to avoid parameter issues
 
+## [0.4.9] - 2026-10-29
+
+Fix: Windows path quoting
+- Remove unnecessary escaping so PowerShell sees a valid `D:\...` path
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
