@@ -67,8 +67,9 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $hash = (Get-FileHash -Algorithm SHA256 \"$Env:ARTIFACT\").Hash.ToLower()
-          Set-Content -Path \"$Env:ARTIFACT.sha256\" -Value $hash -NoNewline
+          $artifactPath = Join-Path -Path $PWD -ChildPath $Env:ARTIFACT
+          $hash = (Get-FileHash -Algorithm SHA256 $artifactPath).Hash.ToLower()
+          Set-Content -Path \"$artifactPath.sha256\" -Value $hash -NoNewline
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
