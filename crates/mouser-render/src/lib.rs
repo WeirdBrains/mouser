@@ -52,8 +52,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
         font_bytes = Some(data.to_vec());
     });
     let font_data = font_bytes.ok_or_else(|| anyhow::anyhow!("Font data not found"))?;
-    let font = Font::from_bytes(font_data, fontdue::FontSettings::default())
-        .map_err(|e| anyhow::anyhow!(e))?;
+    let font = Font::from_bytes(font_data, fontdue::FontSettings::default()).map_err(|e| anyhow::anyhow!(e))?;
     let line_height = (renderer.font_size * 1.3) as i32;
     let char_width = (renderer.font_size * 0.6) as i32;
 
@@ -160,4 +159,3 @@ fn handle_key_event(key_event: &winit::event::KeyEvent, on_key_bytes: &Arc<dyn F
         }
     }
 }
-

@@ -2,11 +2,25 @@ use anyhow::Result;
 use clap::Parser;
 use crossbeam_channel::unbounded;
 use mouser_core::compression::{CompressionAlgo, CompressionConfig};
+use mouser_core::connections::list_connections;
 use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::{Scrollback, ScrollbackConfig};
 use mouser_core::types::Size;
-use mouser_render::{run as run_renderer, RenderHooks, Renderer};
 use mouser_pty::spawn_shell;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum Mode {
+    Shell,
+    Command,
+    Config,
+}
+
+struct AppState {
+    mode: Mode,
+    command_buf: String,
+    sidebar_open: bool,
+}
+use mouser_render::{RenderHooks, Renderer, run as run_renderer};
 use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Write};
@@ -208,10 +222,14 @@ fn main() -> Result<()> {
     let parser = TerminalParser::new(size, scrollback.clone(), shared_writer.clone());
     let parser = Arc::new(Mutex::new(parser));
 
+    // App UI state
+    let app_state = Arc::new(Mutex::new(AppState { mode: Mode::Shell, command_buf: String::new(), sidebar_open: false }));
+
     // Hooks for renderer
     let fetch = {
         let parser = parser.clone();
         let sb = scrollback.clone();
+        let app_state = app_state.clone();
         Arc::new(move |start: usize, rows: usize| -> Vec<String> {
             // Compose: scrollback tail + screen
             // We take rows from end of (scrollback + screen)
@@ -231,14 +249,52 @@ fn main() -> Result<()> {
                 out.extend(screen_lines.into_iter().take(sb_take));
             }
             sb.prefetch_around(start, end);
+            if app_state.lock().unwrap().sidebar_open {
+                out.push(String::from(""));
+                out.push(String::from("==== Connections ===="));
+                match list_connections() {
+                    Ok(list) if !list.is_empty() => {
+                        for c in list {
+                            out.push(format!("- {}", c.name));
+                        }
+                    }
+                    _ => out.push(String::from("(no connections)")),
+                }
+            }
             out
         })
     };
     let on_key = {
         let writer = shared_writer.clone();
+        let app_state = app_state.clone();
         Arc::new(move |bytes: Vec<u8>| {
-            let mut w = writer.clone();
-            let _ = w.write_all(&bytes);
+            let mut state = app_state.lock().unwrap();
+            match state.mode {
+                Mode::Shell => {
+                    if bytes == b"\x1b" {
+                        // ESC toggles sidebar for demo
+                        state.sidebar_open = !state.sidebar_open;
+                    } else {
+                        let mut w = writer.clone();
+                        let _ = w.write_all(&bytes);
+                    }
+                }
+                Mode::Command => {
+                    if bytes == b"\x1b" {
+                        state.mode = Mode::Shell;
+                        state.command_buf.clear();
+                    } else if bytes == b"\r" {
+                        let cmd = std::mem::take(&mut state.command_buf);
+                        drop(state);
+                        handle_command(&cmd, &writer, &app_state);
+                    } else if let Ok(s) = std::str::from_utf8(&bytes) {
+                        state.command_buf.push_str(s);
+                    }
+                }
+                Mode::Config => {
+                    state.mode = Mode::Shell;
+                }
+            }
         })
     };
     let on_resize = {
@@ -266,7 +322,9 @@ fn main() -> Result<()> {
 
     let hooks = RenderHooks { on_key_bytes: on_key, on_resize, fetch_lines: fetch };
     let mut r = Renderer::default();
-    if let Some(ui) = &app_cfg.ui && let Some(fs) = ui.font_size {
+    if let Some(ui) = &app_cfg.ui
+        && let Some(fs) = ui.font_size
+    {
         r.font_size = fs;
     }
     run_renderer(r, hooks)?;
@@ -275,3 +333,17 @@ fn main() -> Result<()> {
 
 // no proxy needed; master is stored separately
 
+fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppState>>) {
+    let trimmed = cmd.trim();
+    if trimmed == "open-sidebar" {
+        app_state.lock().unwrap().sidebar_open = true;
+    } else if trimmed == "close-sidebar" {
+        app_state.lock().unwrap().sidebar_open = false;
+    } else if let Some(rest) = trimmed.strip_prefix("connect ") {
+        let mut w = writer.clone();
+        let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
+    } else {
+        let mut w = writer.clone();
+        let _ = w.write_all(format!("\r\n[mouser] unknown command: {trimmed}\r\n").as_bytes());
+    }
+}

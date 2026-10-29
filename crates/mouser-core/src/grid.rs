@@ -25,13 +25,7 @@ pub struct Style {
 
 impl Default for Style {
     fn default() -> Self {
-        Self {
-            fg: Rgb { r: 220, g: 220, b: 220 },
-            bg: Rgb { r: 16, g: 16, b: 16 },
-            bold: false,
-            italic: false,
-            underline: false,
-        }
+        Self { fg: Rgb { r: 220, g: 220, b: 220 }, bg: Rgb { r: 16, g: 16, b: 16 }, bold: false, italic: false, underline: false }
     }
 }
 
@@ -147,4 +141,3 @@ impl Screen {
         lines
     }
 }
-

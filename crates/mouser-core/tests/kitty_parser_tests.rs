@@ -1,4 +1,4 @@
-use mouser_core::kitty::{parse_kitty_graphics_params, KittyGraphicsEvent};
+use mouser_core::kitty::{KittyGraphicsEvent, parse_kitty_graphics_params};
 
 #[test]
 fn parse_graphics_begin_and_delete() {
@@ -17,4 +17,3 @@ fn parse_graphics_begin_and_delete() {
         _ => panic!("unexpected"),
     }
 }
-

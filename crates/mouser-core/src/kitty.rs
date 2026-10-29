@@ -39,10 +39,5 @@ pub fn parse_kitty_graphics_params(params: &str) -> KittyGraphicsEvent {
             _ => {}
         }
     }
-    if delete {
-        KittyGraphicsEvent::Delete { id }
-    } else {
-        KittyGraphicsEvent::Begin { id, width, height }
-    }
+    if delete { KittyGraphicsEvent::Delete { id } } else { KittyGraphicsEvent::Begin { id, width, height } }
 }
-

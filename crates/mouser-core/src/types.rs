@@ -9,4 +9,3 @@ pub struct Size {
     pub cols: usize,
     pub rows: usize,
 }
-

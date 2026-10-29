@@ -1,4 +1,4 @@
-use crate::compression::{compress_bytes, decompress_bytes, CompressionAlgo, CompressionConfig};
+use crate::compression::{CompressionAlgo, CompressionConfig, compress_bytes, decompress_bytes};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -57,11 +57,7 @@ impl Scrollback {
         let maybe_full_chunk = {
             let mut tail = self.tail.write();
             tail.push(line);
-            if tail.len() >= self.cfg.chunk_lines {
-                Some(std::mem::take(&mut *tail))
-            } else {
-                None
-            }
+            if tail.len() >= self.cfg.chunk_lines { Some(std::mem::take(&mut *tail)) } else { None }
         };
         // If a chunk was produced, append it to chunks and enforce limits
         if let Some(lines) = maybe_full_chunk {
@@ -127,14 +123,9 @@ impl Scrollback {
             ScrollbackChunk::Compressed { data, last_access, line_count, algo: _ } => {
                 let bytes = decompress_bytes(cfg, data).expect("decompress");
                 let text = String::from_utf8(bytes).expect("utf8");
-                let lines: Vec<String> =
-                    text.split('\n').take(*line_count).map(|s| s.to_string()).collect();
+                let lines: Vec<String> = text.split('\n').take(*line_count).map(|s| s.to_string()).collect();
                 *chunk = ScrollbackChunk::Uncompressed { lines, last_access: *last_access };
-                if let ScrollbackChunk::Uncompressed { lines, .. } = chunk {
-                    lines
-                } else {
-                    unreachable!()
-                }
+                if let ScrollbackChunk::Uncompressed { lines, .. } = chunk { lines } else { unreachable!() }
             }
         }
     }
@@ -147,8 +138,7 @@ impl Scrollback {
                 ScrollbackChunk::Uncompressed { lines, last_access } => {
                     if last_access.elapsed() >= idle && !lines.is_empty() && self.cfg.compression.algorithm != CompressionAlgo::None {
                         let text = lines.join("\n");
-                        let data =
-                            compress_bytes(&self.cfg.compression, text.as_bytes()).expect("compress");
+                        let data = compress_bytes(&self.cfg.compression, text.as_bytes()).expect("compress");
                         let count = lines.len();
                         *chunk = ScrollbackChunk::Compressed {
                             data,
@@ -201,4 +191,3 @@ fn chunk_touch(chunk: &mut ScrollbackChunk) {
         ScrollbackChunk::Compressed { last_access, .. } => *last_access = Instant::now(),
     }
 }
-
