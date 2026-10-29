@@ -47,6 +47,14 @@ Fix: Windows path quoting
 Fix: GitHub Release permissions
 - Add `permissions: contents: write` so Actions can publish Releases
 
+## [0.5.0] - 2026-10-29
+
+Feature: First-class packaging
+- Linux: `.deb` and `.rpm` via nfpm; Arch `mouser-bin` `.pkg.tar.zst` via archlinux container
+- Desktop integration: `.desktop`, hicolor icons (PNG + SVG), AppStream metainfo; validated in CI
+- macOS: `Mouser.app` bundle and `.dmg`; Homebrew formula (CLI) and Cask (App) generated and pushed
+- Windows: Installer `.exe` via Inno Setup; embedded icon/version in exe
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
