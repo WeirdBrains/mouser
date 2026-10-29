@@ -1,3 +1,9 @@
+## [0.6.7] - 2026-10-29
+
+Fixes:
+- Arch packaging in Release workflow: build without sudo by preinstalling deps and using `makepkg --nodeps`.
+- Icon: small-size SVG uses exact Red Star background gradient; regenerated PNG/ICO/ICNS/hicolor assets.
+
 ## [0.4.2] - 2026-10-29
 
 ## [0.6.6] - 2026-10-29
