@@ -8,11 +8,15 @@ use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
 
+pub mod ui;
+
 pub struct RenderHooks {
     pub on_key_bytes: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
     pub on_resize: Arc<dyn Fn(u16, u16) + Send + Sync>,
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> Vec<String> + Send + Sync>,
     pub get_colors: Arc<dyn Fn() -> (u32, u32) + Send + Sync>, // (bg, fg) as 0xRRGGBB
+    pub get_ui_model: Option<Arc<dyn Fn() -> ui::UiLayout + Send + Sync>>,
+    pub on_ui_action: Option<Arc<dyn Fn(ui::UiAction) + Send + Sync>>,
 }
 
 pub struct Renderer {
@@ -88,11 +92,29 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let char_width = (renderer.font_size * 0.6) as i32;
 
     let mut viewport_start = 0usize;
+    let mut cursor_pos: Option<winit::dpi::PhysicalPosition<f64>> = None;
+    let mut last_ui: Option<ui::UiLayout> = None;
 
     event_loop.run(|event, elwt| {
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
+                WindowEvent::CursorMoved { position, .. } => {
+                    cursor_pos = Some(position);
+                }
+                WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+                    if let (Some(get_ui), Some(on_act)) = (&hooks.get_ui_model, &hooks.on_ui_action) {
+                        if let Some(layout) = &last_ui {
+                            if let Some(pos) = cursor_pos {
+                                let act = ui::hit_test(layout, pos.x.round() as i32, pos.y.round() as i32);
+                                (on_act)(act);
+                            }
+                        } else {
+                            let layout = get_ui();
+                            last_ui = Some(layout);
+                        }
+                    }
+                }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
                     handle_key_event(&key_event, &hooks.on_key_bytes);
                 }
@@ -167,6 +189,146 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         pen_x += char_width;
                     }
                 }
+                // Draw UI overlay: sidebar and modal, if provided
+                if let Some(get_ui) = &hooks.get_ui_model {
+                    let layout = get_ui();
+                    // Sidebar background
+                    let s = layout.sidebar_rect;
+                    // fill rect helper (inline)
+                    {
+                        let screen_h = buf.height().get() as usize;
+                        let color = 0x061f2b;
+                        let (r8, g8, b8) = ((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+                        let x0 = s.x.max(0) as usize;
+                        let y0 = s.y.max(0) as usize;
+                        let x1 = (s.x + s.w).max(0) as usize;
+                        let y1 = (s.y + s.h).max(0) as usize;
+                        for y in y0..y1.min(screen_h) {
+                            for x in x0..x1.min(width_usize) {
+                                buf[y * width_usize + x] = (r8 << 16) | (g8 << 8) | b8;
+                            }
+                        }
+                    }
+                    // Headers and items as simple labels and buttons
+                    for cat in &layout.categories {
+                        let screen_h = buf.height().get() as usize;
+                        let data: &mut [u32] = &mut buf;
+                        draw_label_slice(
+                            data,
+                            width_usize,
+                            screen_h,
+                            &font,
+                            renderer.font_size,
+                            cat.header_rect.x,
+                            cat.header_rect.y + line_height - 4,
+                            category_title(&cat.category),
+                            0xE6FBFA,
+                            (bg_r << 16) | (bg_g << 8) | bg_b,
+                        );
+                        draw_label_slice(
+                            data,
+                            width_usize,
+                            screen_h,
+                            &font,
+                            renderer.font_size,
+                            cat.add_rect.x,
+                            cat.add_rect.y + line_height - 4,
+                            "[Add]",
+                            0x2FD8E5,
+                            (bg_r << 16) | (bg_g << 8) | bg_b,
+                        );
+                        for item in &cat.items {
+                            draw_label_slice(
+                                data,
+                                width_usize,
+                                screen_h,
+                                &font,
+                                renderer.font_size,
+                                s.x + 20,
+                                item.edit_rect.y + line_height - 4,
+                                &item.name,
+                                0xE6FBFA,
+                                (bg_r << 16) | (bg_g << 8) | bg_b,
+                            );
+                            draw_label_slice(
+                                data,
+                                width_usize,
+                                screen_h,
+                                &font,
+                                renderer.font_size,
+                                item.edit_rect.x,
+                                item.edit_rect.y + line_height - 4,
+                                "[edit]",
+                                0x94F3F2,
+                                (bg_r << 16) | (bg_g << 8) | bg_b,
+                            );
+                            draw_label_slice(
+                                data,
+                                width_usize,
+                                screen_h,
+                                &font,
+                                renderer.font_size,
+                                item.delete_rect.x,
+                                item.delete_rect.y + line_height - 4,
+                                "[del]",
+                                0x94F3F2,
+                                (bg_r << 16) | (bg_g << 8) | bg_b,
+                            );
+                        }
+                    }
+                    if let Some(modal) = &layout.modal {
+                        // Modal bg
+                        let m = modal.rect;
+                        {
+                            let screen_h = buf.height().get() as usize;
+                            let color = 0x04192A;
+                            let (r8, g8, b8) = ((color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF);
+                            let x0 = m.x.max(0) as usize;
+                            let y0 = m.y.max(0) as usize;
+                            let x1 = (m.x + m.w).max(0) as usize;
+                            let y1 = (m.y + m.h).max(0) as usize;
+                            for y in y0..y1.min(screen_h) {
+                                for x in x0..x1.min(width_usize) {
+                                    buf[y * width_usize + x] = (r8 << 16) | (g8 << 8) | b8;
+                                }
+                            }
+                        }
+                        // Title + Advanced
+                        let title = match &modal.kind {
+                            ui::ModalKind::Add(c) => format!("Add {:?}", c),
+                            ui::ModalKind::Edit { category, name } => format!("Edit {:?}: {}", category, name),
+                            ui::ModalKind::ConfirmDelete { category, name } => format!("Delete {:?}: {}", category, name),
+                        };
+                        let screen_h = buf.height().get() as usize;
+                        let data: &mut [u32] = &mut buf;
+                        draw_label_slice(
+                            data,
+                            width_usize,
+                            screen_h,
+                            &font,
+                            renderer.font_size,
+                            m.x + 10,
+                            m.y + 10 + line_height,
+                            &title,
+                            0xE6FBFA,
+                            0x04192A,
+                        );
+                        let adv = if modal.advanced_open { "[Advanced ▾]" } else { "[Advanced ▸]" };
+                        draw_label_slice(
+                            data,
+                            width_usize,
+                            screen_h,
+                            &font,
+                            renderer.font_size,
+                            m.x + 10,
+                            m.y + 10 + 3 * line_height,
+                            adv,
+                            0x2FD8E5,
+                            0x04192A,
+                        );
+                    }
+                    last_ui = Some(layout);
+                }
                 buf.present().expect("present");
                 window.request_redraw();
             }
@@ -194,5 +356,54 @@ fn handle_key_event(key_event: &winit::event::KeyEvent, on_key_bytes: &Arc<dyn F
         if !seq.is_empty() {
             (on_key_bytes)(seq);
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_label_slice(
+    buf: &mut [u32],
+    screen_width: usize,
+    screen_height: usize,
+    font: &fontdue::Font,
+    font_size: f32,
+    x: i32,
+    baseline: i32,
+    text: &str,
+    fg: u32,
+    bg: u32,
+) {
+    let (bg_r, bg_g, bg_b) = ((bg >> 16) & 0xFF, (bg >> 8) & 0xFF, bg & 0xFF);
+    let (fg_r, fg_g, fg_b) = ((fg >> 16) & 0xFF, (fg >> 8) & 0xFF, fg & 0xFF);
+    let mut pen_x = x;
+    for ch in text.chars() {
+        let (metrics, bitmap) = font.rasterize(ch, font_size);
+        for iy in 0..metrics.height {
+            let y0 = baseline + iy as i32 - metrics.ymin;
+            if y0 < 0 || y0 as usize >= screen_height {
+                continue;
+            }
+            for ix in 0..metrics.width {
+                let x0 = pen_x + ix as i32 + metrics.xmin;
+                if x0 < 0 || x0 as usize >= screen_width {
+                    continue;
+                }
+                let alpha = bitmap[iy * metrics.width + ix] as u32;
+                let r = (fg_r * alpha + bg_r * (255 - alpha)) / 255;
+                let g = (fg_g * alpha + bg_g * (255 - alpha)) / 255;
+                let b = (fg_b * alpha + bg_b * (255 - alpha)) / 255;
+                let idx = y0 as usize * screen_width + x0 as usize;
+                buf[idx] = (r << 16) | (g << 8) | b;
+            }
+        }
+        pen_x += (font_size * 0.6) as i32;
+    }
+}
+
+fn category_title(c: &ui::Category) -> &'static str {
+    match c {
+        ui::Category::Ssh => "SSH",
+        ui::Category::Waypipe => "Waypipe",
+        ui::Category::Tunnels => "Tunnels",
+        ui::Category::X11 => "X11",
     }
 }
