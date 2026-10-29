@@ -7,7 +7,7 @@ description = "Mouser application binary"
 repository = ""
 
 [build-dependencies]
-winres = { version = "0.1", optional = true }
+winres = "0.1"
 
 [dependencies]
 anyhow.workspace = true
