@@ -1,5 +1,10 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.4] - 2026-10-29
+
+- Release: fix sed token replacement for nfpm under strict shell.
+
+
 ## [0.6.3] - 2026-10-29
 
 - Release: fix nfpm env expansion; correct Windows Inno Setup paths.
