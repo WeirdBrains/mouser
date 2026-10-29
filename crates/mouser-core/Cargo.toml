@@ -1,0 +1,36 @@
+[package]
+name = "mouser-core"
+edition = "2024"
+version = "0.4.0"
+license = "MIT"
+description = "Terminal core for Mouser: grid, parser, scrollback with compression, and search"
+repository = ""
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+log.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+regex.workspace = true
+vte.workspace = true
+zstd.workspace = true
+lz4_flex.workspace = true
+time.workspace = true
+instant.workspace = true
+once_cell.workspace = true
+bitflags.workspace = true
+smol_str.workspace = true
+palette.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+dirs = "5.0.1"
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3.10.1"
+#[dev-dependencies]
+env_logger.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+

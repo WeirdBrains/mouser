@@ -1,0 +1,31 @@
+use mouser_core::storage::{Preferences, ThemeMode};
+use mouser_core::themes::{resolve_active_colors, write_builtins_if_absent};
+use std::env;
+
+#[test]
+fn writes_builtins_under_home() {
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        env::set_var("MOUSER_HOME", tmp.path());
+    }
+    write_builtins_if_absent().unwrap();
+    let tokyo = tmp.path().join("themes").join("Tokyo Night");
+    assert!(tokyo.join("dark.toml").exists());
+    assert!(tokyo.join("light.toml").exists());
+}
+
+#[test]
+fn resolves_system_dark_env() {
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        env::set_var("MOUSER_HOME", tmp.path());
+    }
+    write_builtins_if_absent().unwrap();
+    unsafe {
+        env::set_var("MOUSER_SYSTEM_DARK", "1");
+    }
+    let prefs = Preferences { theme: Some("Tokyo Night".into()), font_family: None, font_size: None, mode: Some(ThemeMode::System) };
+    let (bg, fg) = resolve_active_colors(&prefs);
+    assert_eq!(bg, 0x1a1b26);
+    assert_eq!(fg, 0xc0caf5);
+}
