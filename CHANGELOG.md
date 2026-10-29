@@ -27,6 +27,11 @@ Fix: Windows release checksum
 Fix: Windows release checksum path
 - Use absolute path (`Join-Path $PWD $Env:ARTIFACT`) for `Get-FileHash` and output
 
+## [0.4.7] - 2026-10-29
+
+Fix: Windows release checksum path (final)
+- Use `$Env:GITHUB_WORKSPACE` with `Join-Path` for stable absolute path
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
