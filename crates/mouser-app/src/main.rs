@@ -2,7 +2,10 @@ use anyhow::Result;
 use clap::Parser;
 use crossbeam_channel::unbounded;
 use mouser_core::compression::{CompressionAlgo, CompressionConfig};
-use mouser_core::connections::list_connections;
+use mouser_core::connections::{
+    Connection, ConnectionKind, SshConnection, TunnelConnection, TunnelSpec, TunnelType, WaypipeConnection, X11Connection, delete_connection,
+    list_connections, load_connection, save_connection,
+};
 use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::{Scrollback, ScrollbackConfig};
 use mouser_core::types::Size;
@@ -19,6 +22,8 @@ struct AppState {
     mode: Mode,
     command_buf: String,
     sidebar_open: bool,
+    pending_delete: Option<String>,
+    pending_edit: Option<Connection>,
 }
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
 use serde::Deserialize;
@@ -225,7 +230,13 @@ fn main() -> Result<()> {
     let parser = Arc::new(Mutex::new(parser));
 
     // App UI state
-    let app_state = Arc::new(Mutex::new(AppState { mode: Mode::Shell, command_buf: String::new(), sidebar_open: false }));
+    let app_state = Arc::new(Mutex::new(AppState {
+        mode: Mode::Shell,
+        command_buf: String::new(),
+        sidebar_open: false,
+        pending_delete: None,
+        pending_edit: None,
+    }));
 
     // Hooks for renderer
     let fetch = {
@@ -348,11 +359,110 @@ fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppSta
         app_state.lock().unwrap().sidebar_open = true;
     } else if trimmed == "close-sidebar" {
         app_state.lock().unwrap().sidebar_open = false;
+    } else if let Some(name) = trimmed.strip_prefix("del-conn ") {
+        let mut st = app_state.lock().unwrap();
+        st.pending_delete = Some(name.to_string());
+        drop(st);
+        let mut w = writer.clone();
+        let _ = w.write_all(format!("\r\n[mouser] confirm delete '{name}' with :yes or cancel with :no\r\n").as_bytes());
+    } else if trimmed == "yes" || trimmed == ":yes" {
+        let name_opt = app_state.lock().unwrap().pending_delete.take();
+        if let Some(name) = name_opt {
+            let _ = delete_connection(&name);
+            let mut w = writer.clone();
+            let _ = w.write_all(format!("\r\n[mouser] deleted '{name}'\r\n").as_bytes());
+        }
+    } else if trimmed == "no" || trimmed == ":no" {
+        app_state.lock().unwrap().pending_delete = None;
+    } else if let Some(name) = trimmed.strip_prefix("edit-conn ") {
+        if let Ok(Some(conn)) = load_connection(name) {
+            app_state.lock().unwrap().pending_edit = Some(conn.clone());
+            let mut w = writer.clone();
+            let _ = w.write_all(format!("\r\n[mouser] editing '{name}' — use :set key=value (:save-conn to persist)\r\n").as_bytes());
+        } else {
+            let mut w = writer.clone();
+            let _ = w.write_all(format!("\r\n[mouser] no such connection: {name}\r\n").as_bytes());
+        }
+    } else if let Some(kv) = trimmed.strip_prefix("set ") {
+        if let Some(ref mut conn) = app_state.lock().unwrap().pending_edit {
+            apply_set(conn, kv);
+        }
+    } else if trimmed == "save-conn" || trimmed == ":save-conn" {
+        if let Some(conn) = app_state.lock().unwrap().pending_edit.take() {
+            let _ = save_connection(&conn);
+            let mut w = writer.clone();
+            let _ = w.write_all(format!("\r\n[mouser] saved '{}'\r\n", conn.name).as_bytes());
+        }
     } else if let Some(rest) = trimmed.strip_prefix("connect ") {
         let mut w = writer.clone();
         let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
     } else {
         let mut w = writer.clone();
         let _ = w.write_all(format!("\r\n[mouser] unknown command: {trimmed}\r\n").as_bytes());
+    }
+}
+
+fn apply_set(conn: &mut Connection, kv: &str) {
+    if let Some((k, v)) = kv.split_once('=') {
+        match &mut conn.kind {
+            ConnectionKind::Ssh(s) => set_ssh(s, k.trim(), v.trim()),
+            ConnectionKind::Waypipe(w) => set_waypipe(w, k.trim(), v.trim()),
+            ConnectionKind::Tunnel(t) => set_tunnel(t, k.trim(), v.trim()),
+            ConnectionKind::X11(x) => set_x11(x, k.trim(), v.trim()),
+        }
+    }
+}
+
+fn set_ssh(s: &mut SshConnection, k: &str, v: &str) {
+    match k {
+        "host" => s.host = v.into(),
+        "user" => s.user = Some(v.into()),
+        "port" => s.port = v.parse().ok(),
+        "identity_file" => s.identity_file = Some(v.into()),
+        "proxy_jump" => s.proxy_jump = Some(v.into()),
+        "compression" => s.compression = Some(matches!(v, "1" | "true" | "on")),
+        "server_alive_interval" => s.server_alive_interval = v.parse().ok(),
+        "server_alive_count_max" => s.server_alive_count_max = v.parse().ok(),
+        _ => {
+            s.extra_options.insert(k.to_string(), v.to_string());
+        }
+    }
+}
+
+fn set_waypipe(w: &mut WaypipeConnection, k: &str, v: &str) {
+    match k {
+        "host" => w.host = v.into(),
+        "ssh_user" => w.ssh_user = Some(v.into()),
+        "ssh_port" => w.ssh_port = v.parse().ok(),
+        "compression" => w.compression = Some(v.into()),
+        "video" => w.video = Some(v.into()),
+        "socket" => w.socket = Some(v.into()),
+        "arg" => w.args.push(v.into()),
+        _ => {}
+    }
+}
+
+fn set_tunnel(t: &mut TunnelConnection, k: &str, v: &str) {
+    match k {
+        "host" => t.host = v.into(),
+        "user" => t.user = Some(v.into()),
+        "port" => t.port = v.parse().ok(),
+        "forwardL" => t.forwards.push(TunnelSpec { tunnel_type: TunnelType::Local, spec: v.into() }),
+        "forwardR" => t.forwards.push(TunnelSpec { tunnel_type: TunnelType::Remote, spec: v.into() }),
+        "forwardD" => t.forwards.push(TunnelSpec { tunnel_type: TunnelType::Dynamic, spec: v.into() }),
+        _ => {
+            t.extra_options.insert(k.to_string(), v.to_string());
+        }
+    }
+}
+
+fn set_x11(x: &mut X11Connection, k: &str, v: &str) {
+    match k {
+        "host" => x.host = v.into(),
+        "user" => x.user = Some(v.into()),
+        "trusted" => x.trusted = matches!(v, "1" | "true" | "on"),
+        _ => {
+            x.extra_options.insert(k.to_string(), v.to_string());
+        }
     }
 }
