@@ -1,8 +1,10 @@
 use mouser_core::storage::{Preferences, ThemeMode};
 use mouser_core::themes::{resolve_active_colors, write_builtins_if_absent};
+use serial_test::serial;
 use std::env;
 
 #[test]
+#[serial]
 fn writes_builtins_under_home() {
     let tmp = tempfile::tempdir().unwrap();
     unsafe {
@@ -15,6 +17,7 @@ fn writes_builtins_under_home() {
 }
 
 #[test]
+#[serial]
 fn resolves_system_dark_env() {
     let tmp = tempfile::tempdir().unwrap();
     unsafe {
