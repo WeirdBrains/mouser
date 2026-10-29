@@ -112,7 +112,7 @@ jobs:
           pacman -Syu --noconfirm base-devel
           useradd -m builder
           chown -R builder:builder /work
-          su - builder -c 'cd /work && makepkg -f --noconfirm'
+          su - builder -c 'cd /work && makepkg -f --noconfirm -s'
           EOS
           docker run --rm -v "$PWD/packaging/arch/work:/work" archlinux:base-devel bash /work/buildpkg.sh
           # Move built package
