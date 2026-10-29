@@ -1,3 +1,10 @@
+## [0.7.0] - 2026-10-29
+
+Feature: UI scaffolding for connections
+- Real sidebar/modal layout engine with hit-testing
+- Render tests for sidebar, modal, and accordion toggle
+- Basic wiring in app to show sidebar and open modals
+
 ## [0.6.8] - 2026-10-29
 
 Fixes:
