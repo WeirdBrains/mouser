@@ -106,15 +106,8 @@ fn load_config(cli: &Cli) -> Result<AppConfig> {
         let cfg: AppConfig = toml::from_str(&s)?;
         return Ok(merge_with_defaults(cfg));
     }
-    // XDG default
-    let base = if let Some(dir) = &cli.config_dir {
-        dir.clone()
-    } else if let Ok(override_dir) = std::env::var("MOUSER_CONFIG_DIR") {
-        PathBuf::from(override_dir)
-    } else {
-        let xdg_dirs = xdg::BaseDirectories::with_prefix("mouser")?;
-        xdg_dirs.get_config_home()
-    };
+    // Default config directory: explicit CLI override or MOUSER_HOME (via core storage resolver)
+    let base = if let Some(dir) = &cli.config_dir { dir.clone() } else { mouser_core::storage::resolve_home() };
     let path = base.join("config.toml");
     if path.exists() {
         let s = fs::read_to_string(path)?;
