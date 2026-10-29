@@ -1,3 +1,8 @@
+## [0.6.8] - 2026-10-29
+
+Fixes:
+- Release (Linux): move Arch .pkg.tar.zst out of container-mounted work dir using sudo to avoid permission errors.
+
 ## [0.6.7] - 2026-10-29
 
 Fixes:
