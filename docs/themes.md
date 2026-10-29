@@ -3,6 +3,15 @@
 Themes control font size/family, colors, and a light/dark/system mode (default: system, follows OS).
 
 Built-in themes (dark/light variants):
+- Red Star (default)
+  - Dark: foreground `#E6FBFA`, background `#020F1B`
+  - Light: foreground `#04192A`, background `#E6FBFA`
+  - Palette source: `~/Pictures/Wallpapers/redstar-title-starlight/redstar-wallpaper-title-1080x2400-starlight.png`
+  - Extracted accents and highlights:
+    - Background gradient: top `#04192A` → bottom `#020F1B`
+    - Primary accent: `#2FD8E5`
+    - Secondary accents: `#2698A7`, `#44B9C1`, `#49B9C8`
+    - Highlights: `#94F3F2`, `#E6FBFA`
 - Tokyo Night
 - Catppuccin
 - Gruvbox

@@ -31,11 +31,32 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let attrs = winit::window::WindowAttributes::default().with_title("Mouser");
     let window = event_loop.create_window(attrs)?;
-    // Window icon (cross-platform)
-    if let Ok(img) = image::load_from_memory(include_bytes!("../../../resources/icons/png/mouser_64.png")) {
-        let rgba = img.to_rgba8();
-        let (w, h) = rgba.dimensions();
-        if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), w, h) {
+    // Window icon (cross-platform): simple generated glyph to avoid external assets at runtime
+    {
+        let w = 64u32;
+        let h = 64u32;
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let idx = ((y * w + x) * 4) as usize;
+                // rounded-square badge with gradient
+                let rx = x as i32 - 32;
+                let ry = y as i32 - 32;
+                let r2 = rx * rx + ry * ry;
+                let in_round = r2 < (30 * 30);
+                let t = y as f32 / (h - 1) as f32;
+                let (r_top, g_top, b_top) = (0x1f, 0x23, 0x35);
+                let (r_bot, g_bot, b_bot) = (0x10, 0x13, 0x20);
+                let r = ((1.0 - t) * r_top as f32 + t * r_bot as f32) as u8;
+                let g = ((1.0 - t) * g_top as f32 + t * g_bot as f32) as u8;
+                let b = ((1.0 - t) * b_top as f32 + t * b_bot as f32) as u8;
+                buf[idx] = r;
+                buf[idx + 1] = g;
+                buf[idx + 2] = b;
+                buf[idx + 3] = if in_round { 0xFF } else { 0x00 };
+            }
+        }
+        if let Ok(icon) = winit::window::Icon::from_rgba(buf, w, h) {
             window.set_window_icon(Some(icon));
         }
     }
