@@ -1,5 +1,8 @@
 # Mouser — a fast GPU terminal emulator (Linux-first)
 
+<p align="center"><img src="resources/icons/png/mouser_256.png" alt="Mouser icon" width="128" height="128"/></p>
+
+
 Mouser is a new terminal emulator written in Rust. It runs your login shell inside a PTY, parses VT/xterm escape sequences, and renders a text grid with the GPU. Linux is the primary target for now; other platforms may work via `portable-pty` and `winit` but are not tested yet.
 
 ## Highlights
