@@ -40,7 +40,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf desktop-file-utils appstream libxml2-utils librsvg2-bin
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf desktop-file-utils appstream libxml2-utils
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -86,12 +86,6 @@ jobs:
         run: |
           set -eux
           VER="${VERSION#v}"
-          # Generate hicolor PNGs from SVG
-          mkdir -p build/icons/hicolor
-          for s in 16 24 32 48 64 128 256 512; do
-            mkdir -p "build/icons/hicolor/${s}x${s}/apps"
-            rsvg-convert -w $s -h $s resources/icons/mouser.svg -o "build/icons/hicolor/${s}x${s}/apps/mouser.png"
-          done
           # Validate desktop and AppStream
           desktop-file-validate resources/linux/mouser.desktop
           appstreamcli validate resources/linux/io.github.m3talsmith.mouser.metainfo.xml
@@ -99,8 +93,9 @@ jobs:
           echo "BINARY_PATH=target/x86_64-unknown-linux-gnu/release/mouser" >> $GITHUB_ENV
           echo "VERSION=${VER}" >> $GITHUB_ENV
           curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.37.0/nfpm_2.37.0_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin nfpm
-          nfpm package --packager deb --config packaging/nfpm.yaml --target dist/
-          nfpm package --packager rpm --config packaging/nfpm.yaml --target dist/
+          mkdir -p dist
+          nfpm package --packager deb --config packaging/nfpm.yaml --target "dist/mouser_${VER}_amd64.deb"
+          nfpm package --packager rpm --config packaging/nfpm.yaml --target "dist/mouser-${VER}-1.x86_64.rpm"
           # Arch package via container
           TARBALL="mouser-x86_64-unknown-linux-gnu.tar.gz"
           SHA=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
@@ -123,6 +118,16 @@ jobs:
           (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
           # Upload extra artifacts
           echo "EXTRA_DONE=1" >> $GITHUB_ENV
+      - name: Upload Linux packages
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.pkg.tar.zst
+            dist/*.sha256
 
       - name: macOS app bundle + dmg
         if: runner.os == 'macOS'
@@ -132,20 +137,11 @@ jobs:
         run: |
           set -eux
           VER="${VERSION#v}"
-          brew install librsvg
-          # Build .icns
-          ICONSET=build/mouser.iconset
-          mkdir -p "$ICONSET"
-          for s in 16 32 64 128 256 512; do
-            rsvg-convert -w $s -h $s resources/icons/mouser.svg -o "$ICONSET/icon_${s}x${s}.png"
-            rsvg-convert -w $((s*2)) -h $((s*2)) resources/icons/mouser.svg -o "$ICONSET/icon_${s}x${s}@2x.png"
-          done
-          iconutil -c icns "$ICONSET" -o build/mouser.icns
           # App bundle
           APPDIR="Mouser.app/Contents"
           mkdir -p "$APPDIR/MacOS" "$APPDIR/Resources"
           install -Dm755 "target/${{ matrix.target }}/release/mouser-app" "$APPDIR/MacOS/mouser"
-          cp build/mouser.icns "$APPDIR/Resources/mouser.icns"
+          cp resources/macos/mouser.icns "$APPDIR/Resources/mouser.icns"
           cat > "$APPDIR/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -163,6 +159,14 @@ jobs:
           hdiutil create -fs HFS+ -volname "Mouser ${VER}" -srcfolder "Mouser.app" "Mouser-${{ matrix.target }}.dmg"
           shasum -a 256 "Mouser-${{ matrix.target }}.dmg" > "Mouser-${{ matrix.target }}.dmg.sha256"
           echo "DMG_DONE=1" >> $GITHUB_ENV
+      - name: Upload macOS DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-${{ matrix.target }}
+          path: |
+            Mouser-${{ matrix.target }}.dmg
+            Mouser-${{ matrix.target }}.dmg.sha256
 
       - name: Windows installer (Inno Setup) and icon
         if: runner.os == 'Windows'
@@ -171,17 +175,24 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           $ErrorActionPreference = "Stop"
-          choco install -y imagemagick innosetup
-          New-Item -ItemType Directory -Force -Path resources/windows | Out-Null
-          magick convert resources/icons/mouser.svg -resize 256x256 resources/windows/mouser.ico
+          choco install -y innosetup
+          if (-Not (Test-Path resources/windows/mouser.ico)) { throw \"Missing resources/windows/mouser.ico\" }
           # Rename binary to mouser.exe for packaging
           Copy-Item "target/x86_64-pc-windows-msvc/release/mouser-app.exe" "target/x86_64-pc-windows-msvc/release/mouser.exe"
           $ver = $Env:VERSION.Substring(1)
           (Get-Content packaging/windows/installer.iss.tmpl).Replace("@VERSION@",$ver) | Set-Content packaging/windows/installer.iss
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/installer.iss
           Get-FileHash -Algorithm SHA256 "dist\MouserSetup-$ver.exe" | ForEach-Object { $_.Hash.ToLower() } | Out-File -FilePath "dist\MouserSetup-$ver.exe.sha256" -NoNewline -Encoding ASCII
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            dist/MouserSetup-*.exe
+            dist/MouserSetup-*.exe.sha256
  
-      - name: Upload artifacts
+      - name: Upload base artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARTIFACT }}

@@ -4,6 +4,7 @@ members = [
   "crates/mouser-pty",
   "crates/mouser-render",
   "crates/mouser-app",
+  "crates/icon-tools",
 ]
 resolver = "2"
 
@@ -49,4 +50,5 @@ serde_json = "1.0.128"
 pollster = "0.3.0"
 clap = { version = "4.5.7", features = ["derive"] }
 clap_mangen = "0.2.20"
+image = { version = "0.25.2", default-features = false, features = ["png"] }
 
