@@ -242,6 +242,9 @@ jobs:
           set -eux
           VER="${VERSION#v}"
           cd "${GITHUB_WORKSPACE}"
+          # Ensure we're based on the latest main, not the detached tag checkout
+          git fetch origin main
+          git checkout -B main origin/main
           LINUX_TGZ="dist/mouser-x86_64-unknown-linux-gnu.tar.gz"
           MAC_TGZ_AMD="dist/mouser-x86_64-apple-darwin.tar.gz"
           MAC_TGZ_ARM="dist/mouser-aarch64-apple-darwin.tar.gz"
