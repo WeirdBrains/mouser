@@ -42,6 +42,11 @@ Fix: Windows checksum command
 Fix: Windows path quoting
 - Remove unnecessary escaping so PowerShell sees a valid `D:\...` path
 
+## [0.4.10] - 2026-10-29
+
+Fix: GitHub Release permissions
+- Add `permissions: contents: write` so Actions can publish Releases
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
