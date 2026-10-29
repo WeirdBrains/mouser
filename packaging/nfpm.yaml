@@ -25,8 +25,5 @@ contents:
     dst: /usr/share/metainfo/io.github.m3talsmith.mouser.metainfo.xml
 rpm:
   summary: Mouser terminal emulator
-deb:
-  recommends:
-    - desktop-file-utils
-    - hicolor-icon-theme
+
 
