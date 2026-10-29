@@ -17,6 +17,11 @@ Fix: Release workflow stability across platforms
 Fix: Stabilize macOS CI tests
 - Serialize theme tests to avoid `MOUSER_HOME` environment races on macOS runners
 
+## [0.4.5] - 2026-10-29
+
+Fix: Windows release checksum
+- Correct PowerShell quoting for writing `*.sha256` (previously invalid path)
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
