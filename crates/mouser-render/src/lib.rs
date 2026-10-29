@@ -29,8 +29,8 @@ impl Default for Renderer {
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::new()?;
     let window = event_loop.create_window(winit::window::WindowAttributes::default().with_title("Mouser"))?;
-    let context = unsafe { Context::new(&window) }.map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
-    let mut surface = unsafe { Surface::new(&context, &window) }.map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
+    let context = Context::new(&window).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
+    let mut surface = Surface::new(&context, &window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
     let mut width = window.inner_size().width.max(1);
     let mut height = window.inner_size().height.max(1);
     {

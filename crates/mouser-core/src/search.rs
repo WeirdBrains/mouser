@@ -1,15 +1,9 @@
 use crate::scrollback::Scrollback;
 use regex::RegexBuilder;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
     pub case_sensitive: bool,
-}
-
-impl Default for SearchOptions {
-    fn default() -> Self {
-        Self { case_sensitive: false }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
