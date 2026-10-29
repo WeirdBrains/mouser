@@ -5,7 +5,7 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 ## Highlights
 
 - Real PTY-backed terminal with `vte` parsing
-- GPU text rendering via `winit` + `wgpu` + `glyphon`
+- Fast text rendering via `winit` + `softbuffer` + `fontdue` (CPU rasterization, zero-copy blits)
 - Chunked, compressed scrollback using Zstd or LZ4, with idle-based auto-compression and transparent on-demand decompression
 - Scrollback search across compressed history
 - Kitty protocol support (keyboard + graphics) with a public compliance checklist
@@ -15,8 +15,8 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 
 - `portable-pty`: robust, cross-platform PTY spawning also used by other modern terminals. On Linux it integrates cleanly with native PTYs and shells.
 - `vte`: a small, fast xterm/VT parser with a simple `Perform` interface we can implement to update our screen and scrollback.
-- `winit` + `wgpu`: a widely used, portable windowing and GPU stack with good Linux support; `wgpu` selects Vulkan/GL backends automatically.
-- `glyphon`: GPU text rendering built on `wgpu`, simpler than rolling our own text pipeline while allowing rich text shaping later if desired.
+- `winit` + `softbuffer`: portable windowing with a simple, efficient software framebuffer for Linux; this keeps first runs lightweight and avoids driver wrinkles.
+- `fontdue` + system fonts via `fontdb`: fast CPU glyph rasterization with a simple API. We can swap in GPU text later if needed.
 - `zstd` and `lz4_flex`: high-performance compression backends. Zstd is the default; LZ4 is available for lower-latency trade-offs.
 
 ## Architecture
@@ -92,7 +92,6 @@ You can also pass an alternate path with `--config /path/to/config.toml`.
 
 Prerequisites on Linux:
 
-- A working GPU stack (Vulkan, GL, or GLES). For Mesa, ensure appropriate Vulkan/GL drivers are installed.
 - X11 or Wayland libraries as required by `winit`.
 
 Build:
@@ -107,10 +106,10 @@ Run:
 cargo run -p mouser-app --release
 ```
 
-Tests:
+Tests (with a safety timeout):
 
 ```bash
-cargo test -p mouser-core
+timeout 120 cargo test --workspace
 ```
 
 ## Kitty compliance checklist
