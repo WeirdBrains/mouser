@@ -17,16 +17,16 @@ These rules are adapted from the owner's Muninn project for this repository.
 - Never touch the user's real Mouser home for tests or manual runs. Use a temp
   directory (set `MOUSER_HOME` or pass `--config-dir`) for all non-release runs.
 - Never edit files outside this project folder (cargo caches excepted).
-- Git: commit locally in logical steps. Do not push to `main` or push tags, change remotes,
-  force-push, rewrite published history, or skip hooks. You may push your own feature
-  branch to open a PR against `main`.
+- Git: commit locally in logical steps. Work on `main` directly. Never force-push, rewrite
+  published history, or skip hooks.
 - Secrets (keys, tokens, passwords) are never logged, printed in `-v` output, or committed.
 
 ## Versioning and releases
 - Semantic versioning. Pre-1.0: MINOR bump per new feature, PATCH for fixes/docs-only.
 - Each release: bump `Cargo.toml` (+ `Cargo.lock`), update the version shown in the app
   (if displayed), add a summary-level `CHANGELOG.md` entry, commit as `release: vX.Y.Z`,
-  and create an annotated tag `vX.Y.Z` (local only; never push tags).
+  create an annotated tag `vX.Y.Z`, then push `main` with the tag:  
+  `git push origin main --follow-tags`.
 - `CHANGELOG.md` (Keep a Changelog format) stays summary level: a few short one-line
   bullets per release naming the feature. No implementation details or file lists.
 
