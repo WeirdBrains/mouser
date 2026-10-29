@@ -1,5 +1,10 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.1] - 2026-10-29
+
+- Release: fix Windows installer icon/output paths; use committed hicolor icons for Arch.
+
+
 ## [0.6.0] - 2026-10-29
 
 - Icon: redesigned Red Star mouse silhouette; integrated >_ prompt; full palette.
