@@ -103,7 +103,8 @@ jobs:
           sed "s/@VERSION@/${VER}/g; s/@SHA256@/${SHA}/g" packaging/arch/PKGBUILD.tmpl > packaging/arch/work/PKGBUILD
           cp "$TARBALL" packaging/arch/work/
           cp -r resources packaging/arch/work/
-          cp -r build/icons packaging/arch/work/build/
+          mkdir -p packaging/arch/work/build/icons/hicolor
+          cp -r resources/icons/hicolor/* packaging/arch/work/build/icons/hicolor/
           cat > packaging/arch/work/buildpkg.sh <<'EOS'
           set -eux
           pacman -Syu --noconfirm base-devel
