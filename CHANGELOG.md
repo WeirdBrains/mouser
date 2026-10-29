@@ -1,5 +1,10 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.5] - 2026-10-29
+
+- Packaging: fix hicolor tree path and Windows installer source path.
+
+
 ## [0.6.4] - 2026-10-29
 
 - Release: fix sed token replacement for nfpm under strict shell.
