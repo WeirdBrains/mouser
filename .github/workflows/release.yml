@@ -40,7 +40,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf desktop-file-utils appstream librsvg2-bin docker.io
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -51,6 +51,10 @@ jobs:
           set -eux
           OUTDIR=target/${{ matrix.target }}/release
           NAME=mouser
+          # For Linux/macOS, rename binary to 'mouser' in a staging dir
+          if [ "${{ runner.os }}" != "Windows" ]; then
+            install -Dm755 "$OUTDIR/${NAME}-app" "$OUTDIR/mouser"
+          fi
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ART=${NAME}-${{ matrix.target }}.zip
             7z a "$ART" "$OUTDIR/${NAME}-app.exe"
@@ -74,6 +78,109 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $artifactPath).Hash.ToLower()
           $hash | Out-File -FilePath "$artifactPath.sha256" -NoNewline -Encoding ASCII
 
+      - name: Linux packaging (icons + validate + nfpm deb/rpm + Arch)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eux
+          VER="${VERSION#v}"
+          # Generate hicolor PNGs from SVG
+          mkdir -p build/icons/hicolor
+          for s in 16 24 32 48 64 128 256 512; do
+            mkdir -p "build/icons/hicolor/${s}x${s}/apps"
+            rsvg-convert -w $s -h $s resources/icons/mouser.svg -o "build/icons/hicolor/${s}x${s}/apps/mouser.png"
+          done
+          # Validate desktop and AppStream
+          desktop-file-validate resources/linux/mouser.desktop
+          appstreamcli validate resources/linux/io.github.m3talsmith.mouser.metainfo.xml
+          # nfpm: deb and rpm from prebuilt binary
+          echo "BINARY_PATH=target/x86_64-unknown-linux-gnu/release/mouser" >> $GITHUB_ENV
+          echo "VERSION=${VER}" >> $GITHUB_ENV
+          curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.37.0/nfpm_2.37.0_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin nfpm
+          nfpm package --packager deb --config packaging/nfpm.yaml --target dist/
+          nfpm package --packager rpm --config packaging/nfpm.yaml --target dist/
+          # Arch package via container
+          TARBALL="mouser-x86_64-unknown-linux-gnu.tar.gz"
+          SHA=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
+          mkdir -p packaging/arch/work
+          sed "s/@VERSION@/${VER}/g; s/@SHA256@/${SHA}/g" packaging/arch/PKGBUILD.tmpl > packaging/arch/work/PKGBUILD
+          cp "$TARBALL" packaging/arch/work/
+          cp -r resources packaging/arch/work/
+          cp -r build/icons packaging/arch/work/build/
+          cat > packaging/arch/work/buildpkg.sh <<'EOS'
+          set -eux
+          pacman -Syu --noconfirm base-devel
+          useradd -m builder
+          chown -R builder:builder /work
+          su - builder -c 'cd /work && makepkg -f --noconfirm'
+          EOS
+          docker run --rm -v "$PWD/packaging/arch/work:/work" archlinux:base-devel bash /work/buildpkg.sh
+          # Move built package
+          find packaging/arch/work -maxdepth 1 -name "*.pkg.tar.zst" -exec mv {} dist/ \;
+          # Checksums for packages
+          (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
+          # Upload extra artifacts
+          echo "EXTRA_DONE=1" >> $GITHUB_ENV
+
+      - name: macOS app bundle + dmg
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eux
+          VER="${VERSION#v}"
+          brew install librsvg
+          # Build .icns
+          ICONSET=build/mouser.iconset
+          mkdir -p "$ICONSET"
+          for s in 16 32 64 128 256 512; do
+            rsvg-convert -w $s -h $s resources/icons/mouser.svg -o "$ICONSET/icon_${s}x${s}.png"
+            rsvg-convert -w $((s*2)) -h $((s*2)) resources/icons/mouser.svg -o "$ICONSET/icon_${s}x${s}@2x.png"
+          done
+          iconutil -c icns "$ICONSET" -o build/mouser.icns
+          # App bundle
+          APPDIR="Mouser.app/Contents"
+          mkdir -p "$APPDIR/MacOS" "$APPDIR/Resources"
+          install -Dm755 "target/${{ matrix.target }}/release/mouser-app" "$APPDIR/MacOS/mouser"
+          cp build/mouser.icns "$APPDIR/Resources/mouser.icns"
+          cat > "$APPDIR/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Mouser</string>
+            <key>CFBundleDisplayName</key><string>Mouser</string>
+            <key>CFBundleIdentifier</key><string>io.github.m3talsmith.mouser</string>
+            <key>CFBundleVersion</key><string>${VER}</string>
+            <key>CFBundleShortVersionString</key><string>${VER}</string>
+            <key>CFBundleExecutable</key><string>mouser</string>
+            <key>CFBundleIconFile</key><string>mouser</string>
+            <key>LSMinimumSystemVersion</key><string>10.13</string>
+          </dict></plist>
+          PLIST
+          hdiutil create -fs HFS+ -volname "Mouser ${VER}" -srcfolder "Mouser.app" "Mouser-${{ matrix.target }}.dmg"
+          shasum -a 256 "Mouser-${{ matrix.target }}.dmg" > "Mouser-${{ matrix.target }}.dmg.sha256"
+          echo "DMG_DONE=1" >> $GITHUB_ENV
+
+      - name: Windows installer (Inno Setup) and icon
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install -y imagemagick innosetup
+          New-Item -ItemType Directory -Force -Path resources/windows | Out-Null
+          magick convert resources/icons/mouser.svg -resize 256x256 resources/windows/mouser.ico
+          # Rename binary to mouser.exe for packaging
+          Copy-Item "target/x86_64-pc-windows-msvc/release/mouser-app.exe" "target/x86_64-pc-windows-msvc/release/mouser.exe"
+          $ver = $Env:VERSION.Substring(1)
+          (Get-Content packaging/windows/installer.iss.tmpl).Replace("@VERSION@",$ver) | Set-Content packaging/windows/installer.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/installer.iss
+          Get-FileHash -Algorithm SHA256 "dist\MouserSetup-$ver.exe" | ForEach-Object { $_.Hash.ToLower() } | Out-File -FilePath "dist\MouserSetup-$ver.exe.sha256" -NoNewline -Encoding ASCII
+ 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -112,4 +219,67 @@ jobs:
             dist/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate Homebrew formula and cask and push to repo
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -eux
+          VER="${VERSION#v}"
+          cd "${GITHUB_WORKSPACE}"
+          LINUX_TGZ="dist/mouser-x86_64-unknown-linux-gnu.tar.gz"
+          MAC_TGZ_AMD="dist/mouser-x86_64-apple-darwin.tar.gz"
+          MAC_TGZ_ARM="dist/mouser-aarch64-apple-darwin.tar.gz"
+          DMG_AMD="dist/Mouser-x86_64-apple-darwin.dmg"
+          DMG_ARM="dist/Mouser-aarch64-apple-darwin.dmg"
+          SHA_AMD=$(shasum -a 256 "$MAC_TGZ_AMD" | awk '{print $1}')
+          SHA_ARM=$(shasum -a 256 "$MAC_TGZ_ARM" | awk '{print $1}')
+          CSK_AMD=$(shasum -a 256 "$DMG_AMD" | awk '{print $1}')
+          CSK_ARM=$(shasum -a 256 "$DMG_ARM" | awk '{print $1}')
+          mkdir -p Formula Casks
+          cat > Formula/mouser.rb <<'RUBY'
+          class Mouser < Formula
+            desc "Mouser terminal emulator"
+            homepage "https://github.com/m3talsmith/mouser"
+            version "@VER@"
+            on_macos do
+              on_arm do
+                url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/mouser-aarch64-apple-darwin.tar.gz"
+                sha256 "@SHA_ARM@"
+              end
+              on_intel do
+                url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/mouser-x86_64-apple-darwin.tar.gz"
+                sha256 "@SHA_AMD@"
+              end
+            end
+            def install
+              bin.install "mouser-app" => "mouser"
+            end
+          end
+          RUBY
+          sed -i.bak -e "s/@VER@/${VER}/g" -e "s/@SHA_ARM@/${SHA_ARM}/g" -e "s/@SHA_AMD@/${SHA_AMD}/g" Formula/mouser.rb
+          cat > Casks/mouser.rb <<'RUBY'
+          cask "mouser" do
+            version "@VER@"
+            on_arm do
+              sha256 "@CSK_ARM@"
+              url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/Mouser-aarch64-apple-darwin.dmg"
+            end
+            on_intel do
+              sha256 "@CSK_AMD@"
+              url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/Mouser-x86_64-apple-darwin.dmg"
+            end
+            name "Mouser"
+            desc "Mouser terminal emulator"
+            homepage "https://github.com/m3talsmith/mouser"
+            auto_updates false
+            app "Mouser.app"
+          end
+          RUBY
+          sed -i.bak -e "s/@VER@/${VER}/g" -e "s/@CSK_ARM@/${CSK_ARM}/g" -e "s/@CSK_AMD@/${CSK_AMD}/g" Casks/mouser.rb
+          git config user.email "cursoragent@cursor.com"
+          git config user.name "Cursor Agent"
+          git add Formula/mouser.rb Casks/mouser.rb
+          git commit -m "brew: update formula and cask for v${VER}" || true
+          git push origin HEAD:main
 

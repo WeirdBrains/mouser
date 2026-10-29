@@ -106,6 +106,12 @@ Run:
 cargo run -p mouser-app --release
 ```
 
+Prebuilt install packages are attached to each GitHub Release:
+- Linux: `.deb` (Debian/Ubuntu), `.rpm` (Fedora), and an Arch `mouser-bin` `.pkg.tar.zst`
+- macOS: CLI Homebrew formula (`Formula/mouser.rb`) and a `Mouser.app` `.dmg` with a Cask (`Casks/mouser.rb`)
+- Windows: portable `.zip` and an installer `.exe`
+
+See `docs/release.md` for details and per-platform install commands.
 Tests (with a safety timeout):
 
 ```bash
