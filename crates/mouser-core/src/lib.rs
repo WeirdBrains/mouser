@@ -6,6 +6,7 @@ pub mod parser;
 pub mod scrollback;
 pub mod search;
 pub mod storage;
+pub mod themes;
 pub mod types;
 
 pub use compression::{CompressionAlgo, CompressionConfig};

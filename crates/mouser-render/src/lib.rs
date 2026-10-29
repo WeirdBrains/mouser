@@ -12,6 +12,7 @@ pub struct RenderHooks {
     pub on_key_bytes: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
     pub on_resize: Arc<dyn Fn(u16, u16) + Send + Sync>,
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> Vec<String> + Send + Sync>,
+    pub get_colors: Arc<dyn Fn() -> (u32, u32) + Send + Sync>, // (bg, fg) as 0xRRGGBB
 }
 
 pub struct Renderer {
@@ -92,14 +93,22 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             Event::AboutToWait => {
                 let lines = (hooks.fetch_lines)(viewport_start, renderer.rows);
 
-                // Draw simple grayscale text into softbuffer surface
+                // Draw text into softbuffer surface
                 let mut buf = surface.buffer_mut().expect("buffer");
                 let width_usize = width as usize;
                 let height_usize = height as usize;
+                // Colors
+                let (bg, fg) = (hooks.get_colors)();
+                let bg_r = (bg >> 16) & 0xFF;
+                let bg_g = (bg >> 8) & 0xFF;
+                let bg_b = bg & 0xFF;
+                let fg_r = (fg >> 16) & 0xFF;
+                let fg_g = (fg >> 8) & 0xFF;
+                let fg_b = fg & 0xFF;
                 // Clear
                 for y in 0..height_usize {
                     for x in 0..width_usize {
-                        buf[y * width_usize + x] = 0x111111;
+                        buf[y * width_usize + x] = (bg_r << 16) | (bg_g << 8) | bg_b;
                     }
                 }
                 // Render
@@ -119,11 +128,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                                     continue;
                                 }
                                 let alpha = bitmap[iy * metrics.width + ix] as u32;
-                                let fg = 0xDDDDDDu32;
-                                let bg = 0x111111u32;
-                                let r = (((fg >> 16) & 0xFF) * alpha + ((bg >> 16) & 0xFF) * (255 - alpha)) / 255;
-                                let g = (((fg >> 8) & 0xFF) * alpha + ((bg >> 8) & 0xFF) * (255 - alpha)) / 255;
-                                let b = ((fg & 0xFF) * alpha + (bg & 0xFF) * (255 - alpha)) / 255;
+                                let r = (fg_r * alpha + bg_r * (255 - alpha)) / 255;
+                                let g = (fg_g * alpha + bg_g * (255 - alpha)) / 255;
+                                let b = (fg_b * alpha + bg_b * (255 - alpha)) / 255;
                                 buf[y0 as usize * width_usize + x0 as usize] = (r << 16) | (g << 8) | b;
                             }
                         }
