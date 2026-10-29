@@ -94,7 +94,8 @@ jobs:
           curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.37.0/nfpm_2.37.0_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin nfpm
           mkdir -p dist
           # render nfpm config with concrete paths and version
-          sed "s|\\${BINARY_PATH}|${BINPATH}|g; s|\\${VERSION}|${VER}|g" packaging/nfpm.yaml > packaging/nfpm.gen.yaml
+          # Replace literal tokens ${BINARY_PATH} and ${VERSION} without triggering shell expansion
+          sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${VERSION}|'$VER'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
           nfpm package --packager deb --config packaging/nfpm.gen.yaml --target "dist/mouser_${VER}_amd64.deb"
           nfpm package --packager rpm --config packaging/nfpm.gen.yaml --target "dist/mouser-${VER}-1.x86_64.rpm"
           # Arch package via container
