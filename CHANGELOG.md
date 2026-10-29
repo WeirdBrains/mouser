@@ -1,5 +1,12 @@
 ## [0.4.2] - 2026-10-29
 
+## [0.6.0] - 2026-10-29
+
+- Icon: redesigned Red Star mouse silhouette; integrated >_ prompt; full palette.
+- Theme: add Red Star (dark/light) as default; docs updated.
+- Packaging: deb/rpm via nfpm, Arch mouser-bin, macOS DMG + Homebrew formula & cask, Windows Inno Setup installer; desktop launcher & icons.
+
+
 Fix: cross-platform config/home resolution and Windows build
 - Remove `xdg` usage in app config loader; use core `resolve_home()` (respects `MOUSER_HOME`)
 - Unblock Windows build/clippy by avoiding Linux-only XDG calls
