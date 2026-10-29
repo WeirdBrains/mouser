@@ -15,8 +15,6 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -28,6 +26,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -57,10 +57,18 @@ jobs:
           fi
           echo "ARTIFACT=$ART" >> $GITHUB_ENV
 
-      - name: Checksums
+      - name: Checksums (Linux/macOS)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+
+      - name: Checksums (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 $Env:ARTIFACT).Hash.ToLower()
+          Set-Content -Path \"$Env:ARTIFACT.sha256\" -NoNewline -Value $hash
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
