@@ -190,6 +190,8 @@ fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
     let app_cfg = load_config(&cli)?;
+    // Ensure built-in themes exist on disk
+    let _ = mouser_core::themes::write_builtins_if_absent();
     let sb_cfg = make_scrollback_config(&app_cfg);
     let scrollback = Arc::new(Scrollback::new(sb_cfg));
 
