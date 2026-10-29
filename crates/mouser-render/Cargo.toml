@@ -1,0 +1,18 @@
+[package]
+name = "mouser-render"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+description = "GPU renderer and windowing for Mouser"
+repository = ""
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+winit.workspace = true
+palette.workspace = true
+crossbeam-channel.workspace = true
+softbuffer = "0.4.6"
+fontdb = "0.16.2"
+fontdue = "0.7.3"
+
