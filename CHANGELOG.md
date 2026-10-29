@@ -12,6 +12,11 @@ Fix: Release workflow stability across platforms
 - Windows checksums via PowerShell `Get-FileHash` (no `shasum` on Windows)
 - Drop Linux aarch64 artifact for now (needs cross-linker); keep x86_64
 
+## [0.4.4] - 2026-10-29
+
+Fix: Stabilize macOS CI tests
+- Serialize theme tests to avoid `MOUSER_HOME` environment races on macOS runners
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
