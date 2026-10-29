@@ -86,6 +86,16 @@ pub fn save_connection(conn: &Connection) -> std::io::Result<()> {
     fs::write(path, s)
 }
 
+pub fn load_connection(name: &str) -> std::io::Result<Option<Connection>> {
+    let path = connections_dir().join(format!("{}.toml", sanitize_name(name)));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let s = fs::read_to_string(path)?;
+    let c = toml::from_str::<Connection>(&s).ok();
+    Ok(c)
+}
+
 pub fn delete_connection(name: &str) -> std::io::Result<()> {
     let path = connections_dir().join(format!("{}.toml", sanitize_name(name)));
     if path.exists() {
