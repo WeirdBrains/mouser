@@ -117,7 +117,7 @@ jobs:
           EOS
           docker run --rm -v "$PWD/packaging/arch/work:/work" archlinux:base-devel bash /work/buildpkg.sh
           # Move built package
-          find packaging/arch/work -maxdepth 1 -name "*.pkg.tar.zst" -exec mv {} dist/ \;
+          find packaging/arch/work -maxdepth 1 -name "*.pkg.tar.zst" -exec sudo mv {} dist/ \;
           # Checksums for packages
           (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
           # Upload extra artifacts
