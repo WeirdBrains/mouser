@@ -22,6 +22,11 @@ Fix: Stabilize macOS CI tests
 Fix: Windows release checksum
 - Correct PowerShell quoting for writing `*.sha256` (previously invalid path)
 
+## [0.4.6] - 2026-10-29
+
+Fix: Windows release checksum path
+- Use absolute path (`Join-Path $PWD $Env:ARTIFACT`) for `Get-FileHash` and output
+
 ## [0.4.1] - 2026-10-29
 
 CI and release automation:
