@@ -1,16 +1,16 @@
 use anyhow::Result;
 use clap::Parser;
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::unbounded;
 use mouser_core::compression::{CompressionAlgo, CompressionConfig};
 use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::{Scrollback, ScrollbackConfig};
 use mouser_core::types::Size;
 use mouser_render::{run as run_renderer, RenderHooks, Renderer};
-use mouser_pty::{set_winsize, spawn_shell, PtyHandles};
+use mouser_pty::spawn_shell;
 use serde::Deserialize;
 use std::fs;
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 #[derive(Parser, Debug)]
@@ -33,6 +33,7 @@ struct UiConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+#[allow(dead_code)]
 struct ColorsConfig {
     foreground: Option<String>,
     background: Option<String>,
@@ -83,7 +84,7 @@ impl Default for AppConfig {
 fn load_config(cli: &Cli) -> Result<AppConfig> {
     if let Some(path) = &cli.config {
         let s = fs::read_to_string(path)?;
-        let mut cfg: AppConfig = toml::from_str(&s)?;
+        let cfg: AppConfig = toml::from_str(&s)?;
         return Ok(merge_with_defaults(cfg));
     }
     // XDG default
@@ -179,7 +180,7 @@ fn main() -> Result<()> {
     let scrollback = Arc::new(Scrollback::new(sb_cfg));
 
     // Initial size estimate
-    let mut handles = spawn_shell(100, 30)?;
+    let handles = spawn_shell(100, 30)?;
     let master = Arc::new(Mutex::new(handles.master));
     let _child = handles.child; // keep child alive
     let shared_writer = SharedWriter(Arc::new(Mutex::new(handles.writer)));
@@ -256,23 +257,17 @@ fn main() -> Result<()> {
         let parser = parser.clone();
         let sb = scrollback.clone();
         move || {
-            loop {
-                if let Ok(bytes) = rx.recv() {
-                    parser.lock().unwrap().feed(&bytes);
-                    sb.maybe_compress_idle();
-                } else {
-                    break;
-                }
+            while let Ok(bytes) = rx.recv() {
+                parser.lock().unwrap().feed(&bytes);
+                sb.maybe_compress_idle();
             }
         }
     });
 
     let hooks = RenderHooks { on_key_bytes: on_key, on_resize, fetch_lines: fetch };
     let mut r = Renderer::default();
-    if let Some(ui) = &app_cfg.ui {
-        if let Some(fs) = ui.font_size {
-            r.font_size = fs;
-        }
+    if let Some(ui) = &app_cfg.ui && let Some(fs) = ui.font_size {
+        r.font_size = fs;
     }
     run_renderer(r, hooks)?;
     Ok(())
