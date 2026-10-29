@@ -215,6 +215,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist
+      - name: Retry artifact download via gh (best-effort)
+        run: gh run download ${{ github.run_id }} -D dist || true
 
       - name: Extract notes from CHANGELOG
         id: changelog
