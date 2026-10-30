@@ -6,6 +6,7 @@ use std::time::Duration;
 use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
+use winit::window::CursorIcon;
 
 pub mod frame;
 pub mod text;
@@ -38,7 +39,11 @@ pub struct RenderHooks {
     /// Sidebar/modal layout, or `None` when the sidebar is closed.
     pub get_ui_model: Option<UiModelHook>,
     pub on_ui_action: Option<Arc<dyn Fn(ui::UiAction) + Send + Sync>>,
+    /// Command line / status text drawn in a bar at the bottom, if any.
+    pub get_status: Option<StatusHook>,
 }
+
+pub type StatusHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
 pub struct Renderer {
     pub cols: usize,
@@ -98,6 +103,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut last_ui: Option<ui::UiLayout> = None;
     let mut modifiers = ModifiersState::empty();
     let mut grid = (0usize, 0usize);
+    let mut dragging = false;
+    let mut resize_cursor = false;
 
     event_loop.run(|event, elwt| {
         elwt.set_control_flow(ControlFlow::wait_duration(Duration::from_millis(16)));
@@ -106,10 +113,33 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
+                    let (px, py) = (position.x.round() as i32, position.y.round() as i32);
+                    if dragging && let Some(on_act) = &hooks.on_ui_action {
+                        let w = ui::clamp_sidebar_width(width as i32 - px, width as i32, fonts.cell_w);
+                        (on_act)(ui::UiAction::ResizeSidebar(w));
+                    }
+                    let hover = dragging || last_ui.as_ref().is_some_and(|l| ui::on_resize_edge(l, px, py));
+                    if hover != resize_cursor {
+                        resize_cursor = hover;
+                        let icon = if hover { CursorIcon::EwResize } else { CursorIcon::Default };
+                        window.set_cursor(icon);
+                    }
+                }
+                WindowEvent::MouseInput { state: ElementState::Released, .. } => {
+                    if dragging {
+                        dragging = false;
+                        if let Some(on_act) = &hooks.on_ui_action {
+                            (on_act)(ui::UiAction::ResizeSidebarDone);
+                        }
+                    }
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
                 WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
                     if let (Some(on_act), Some(layout), Some(pos)) = (&hooks.on_ui_action, &last_ui, cursor_pos) {
+                        if ui::on_resize_edge(layout, pos.x.round() as i32, pos.y.round() as i32) {
+                            dragging = true;
+                            return;
+                        }
                         let act = ui::hit_test(layout, pos.x.round() as i32, pos.y.round() as i32);
                         (on_act)(act);
                     }
@@ -155,11 +185,12 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 scrolled_back = clamped;
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
                 let (bg, fg) = (hooks.get_colors)();
+                let status = hooks.get_status.as_ref().and_then(|f| f());
                 let Ok(mut buf) = surface.buffer_mut() else { return };
                 let (w, h) = (width as usize, height as usize);
                 if buf.len() >= w * h {
                     let mut canvas = Canvas::new(&mut buf, w, h);
-                    render_frame(&mut canvas, &mut fonts, &Frame { lines: &lines, cursor, bg, fg, ui: layout.as_ref() });
+                    render_frame(&mut canvas, &mut fonts, &Frame { lines: &lines, cursor, bg, fg, ui: layout.as_ref(), status: status.as_deref() });
                 }
                 last_ui = layout;
                 let _ = buf.present();
@@ -190,6 +221,18 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Named(NamedKey::End) => b"\x1b[F".to_vec(),
         Key::Named(NamedKey::PageUp) => b"\x1b[5~".to_vec(),
         Key::Named(NamedKey::PageDown) => b"\x1b[6~".to_vec(),
+        Key::Named(NamedKey::F1) => b"\x1bOP".to_vec(),
+        Key::Named(NamedKey::F2) => b"\x1bOQ".to_vec(),
+        Key::Named(NamedKey::F3) => b"\x1bOR".to_vec(),
+        Key::Named(NamedKey::F4) => b"\x1bOS".to_vec(),
+        Key::Named(NamedKey::F5) => b"\x1b[15~".to_vec(),
+        Key::Named(NamedKey::F6) => b"\x1b[17~".to_vec(),
+        Key::Named(NamedKey::F7) => b"\x1b[18~".to_vec(),
+        Key::Named(NamedKey::F8) => b"\x1b[19~".to_vec(),
+        Key::Named(NamedKey::F9) => b"\x1b[20~".to_vec(),
+        Key::Named(NamedKey::F10) => b"\x1b[21~".to_vec(),
+        Key::Named(NamedKey::F11) => b"\x1b[23~".to_vec(),
+        Key::Named(NamedKey::F12) => b"\x1b[24~".to_vec(),
         Key::Named(NamedKey::ArrowLeft) => b"\x1b[D".to_vec(),
         Key::Named(NamedKey::ArrowRight) => b"\x1b[C".to_vec(),
         Key::Named(NamedKey::ArrowUp) => b"\x1b[A".to_vec(),

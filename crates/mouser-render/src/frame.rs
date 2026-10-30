@@ -14,6 +14,8 @@ pub struct Frame<'a> {
     pub bg: u32,
     pub fg: u32,
     pub ui: Option<&'a UiLayout>,
+    /// Bottom status / command line.
+    pub status: Option<&'a str>,
 }
 
 /// Grid size that fits a `width` x `height` pixel area.
@@ -46,6 +48,14 @@ pub fn render_frame(canvas: &mut Canvas, fonts: &mut FontStack, frame: &Frame) {
     if let Some(layout) = frame.ui {
         draw_ui(canvas, fonts, layout, frame.bg, frame.fg);
     }
+    if let Some(status) = frame.status {
+        let h = ch + 8;
+        let y = canvas.height as i32 - h;
+        let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width as i32);
+        canvas.fill_rect(0, y, w, h, mix(frame.bg, frame.fg, 0.12));
+        canvas.fill_rect(0, y, w, 1, accent_for(frame.bg));
+        canvas.draw_text(fonts, PADDING, y + 4, status, frame.fg);
+    }
 }
 
 fn draw_button(canvas: &mut Canvas, fonts: &mut FontStack, r: ui::Rect, label: &str, fill: u32, text: u32) {
@@ -64,6 +74,17 @@ fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u3
     canvas.fill_rect(s.x, s.y, s.w, s.h, panel);
     canvas.fill_rect(s.x, s.y, 1, s.h, border);
     let cell_h = fonts.cell_h;
+    let c = layout.collapse_rect;
+    if layout.collapsed {
+        // Thin strip: an expand chevron near the top, centred.
+        let x = s.x + (s.w - fonts.cell_w) / 2;
+        canvas.draw_text(fonts, x, ui::SIDEBAR_MARGIN + 4, ui::EXPAND_LABEL, accent);
+    } else {
+        canvas.fill_rect(s.x - 1, s.y, 3, s.h, border);
+        let title_y = c.y + (c.h - cell_h) / 2;
+        canvas.draw_text(fonts, s.x + ui::SIDEBAR_MARGIN, title_y, ui::SIDEBAR_TITLE, muted);
+        draw_button(canvas, fonts, c, ui::COLLAPSE_LABEL, mix(panel, fg, 0.08), accent);
+    }
     let max_chars = |w: i32, cw: i32| (w / cw).max(0) as usize;
     for cat in &layout.categories {
         let h = cat.header_rect;

@@ -27,7 +27,8 @@ fn resolves_system_dark_env() {
     unsafe {
         env::set_var("MOUSER_SYSTEM_DARK", "1");
     }
-    let prefs = Preferences { theme: Some("Red Star".into()), font_family: None, font_size: None, mode: Some(ThemeMode::System) };
+    let prefs =
+        Preferences { theme: Some("Red Star".into()), font_family: None, font_size: None, mode: Some(ThemeMode::System), ..Default::default() };
     let (bg, fg) = resolve_active_colors(&prefs);
     assert_eq!(bg, 0x04192a);
     assert_eq!(fg, 0xe6fbfa);
@@ -54,7 +55,8 @@ fn red_star_light_is_readable() {
     unsafe {
         env::set_var("MOUSER_HOME", tmp.path());
     }
-    let prefs = Preferences { theme: Some("Red Star".into()), font_family: None, font_size: None, mode: Some(ThemeMode::Light) };
+    let prefs =
+        Preferences { theme: Some("Red Star".into()), font_family: None, font_size: None, mode: Some(ThemeMode::Light), ..Default::default() };
     let (bg, fg) = resolve_active_colors(&prefs);
     let lum = |c: u32| ((c >> 16) & 0xff) as f32 * 0.299 + ((c >> 8) & 0xff) as f32 * 0.587 + (c & 0xff) as f32 * 0.114;
     assert!(lum(bg) > 200.0, "light background");

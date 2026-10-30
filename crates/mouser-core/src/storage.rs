@@ -31,6 +31,23 @@ pub struct Preferences {
     pub font_family: Option<String>,
     pub font_size: Option<f32>,
     pub mode: Option<ThemeMode>,
+    /// Sidebar width in physical pixels (clamped to the window when used).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_width: Option<i32>,
+    /// Whether the connections sidebar is open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_open: Option<bool>,
+    /// Whether the open sidebar is collapsed to a thin strip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sidebar_collapsed: Option<bool>,
+}
+
+/// Load preferences, apply `f`, and save them back (keeps unrelated fields).
+pub fn update_preferences(f: impl FnOnce(&mut Preferences)) -> std::io::Result<Preferences> {
+    let mut p = load_preferences();
+    f(&mut p);
+    save_preferences(&p)?;
+    Ok(p)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
