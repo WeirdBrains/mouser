@@ -1,8 +1,10 @@
 //! Input handling and validation for the in-app theme switcher and editor.
 //! Front ends translate key presses into [`EditKey`] and render the state.
 
+use crate::fuzzy::{Filtered, filter_sorted};
 use crate::storage::ThemeMode;
 use crate::themes::{ThemeDef, parse_hex};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EditKey {
@@ -57,6 +59,8 @@ pub enum Outcome {
     Close,
     /// Switch from the picker to the editor.
     OpenEditor,
+    /// A font family was picked from the list: load it (in the background) for preview.
+    FontPicked,
 }
 
 pub fn mode_name(m: &ThemeMode) -> &'static str {
@@ -223,6 +227,63 @@ pub struct ThemeEditor {
     pub fields: Vec<Field>,
     pub focus: usize,
     pub error: Option<String>,
+    /// Dropdown for the font family field.
+    pub fonts: FontList,
+}
+
+/// Rows shown at once in the font dropdown.
+pub const FONT_ROWS: usize = 8;
+
+/// Installed font families, filtered by the font field's text. Keystrokes only
+/// re-filter this list; nothing here loads fonts.
+#[derive(Debug, Clone, Default)]
+pub struct FontList {
+    /// All families, deduplicated and sorted by name. Empty until discovered.
+    pub families: Arc<Vec<String>>,
+    pub loaded: bool,
+    pub open: bool,
+    /// Matching families, in name order.
+    pub matches: Vec<Filtered>,
+    /// Index into `matches`.
+    pub selected: usize,
+    /// First visible row.
+    pub scroll: usize,
+}
+
+impl FontList {
+    pub fn set_families(&mut self, families: Arc<Vec<String>>, query: &str) {
+        self.families = families;
+        self.loaded = true;
+        self.refilter(query);
+    }
+
+    /// Re-filter for `query`; the selection goes back to the first match.
+    pub fn refilter(&mut self, query: &str) {
+        self.matches = filter_sorted(query.trim(), &self.families);
+        self.selected = 0;
+        self.scroll = 0;
+    }
+
+    pub fn move_by(&mut self, delta: isize) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.selected = self.selected.saturating_add_signed(delta).min(self.matches.len() - 1);
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        } else if self.selected >= self.scroll + FONT_ROWS {
+            self.scroll = self.selected + 1 - FONT_ROWS;
+        }
+    }
+
+    pub fn name(&self, i: usize) -> Option<&str> {
+        self.matches.get(i).map(|m| self.families[m.index].as_str())
+    }
+
+    /// Visible rows: (index into matches, name, matched char positions).
+    pub fn visible(&self) -> impl Iterator<Item = (usize, &str, &[usize])> {
+        self.matches.iter().enumerate().skip(self.scroll).take(FONT_ROWS).map(|(i, m)| (i, self.families[m.index].as_str(), m.positions.as_slice()))
+    }
 }
 
 impl ThemeEditor {
@@ -238,17 +299,87 @@ impl ThemeEditor {
         }
         fields.push(Field::new("Font family", font_family.unwrap_or(""), FieldKind::Text));
         fields.push(Field::new("Font size", format_size(font_size), FieldKind::Size));
-        Self { theme: def.name.clone(), variant: def.variant.clone(), fields, focus: 0, error: None }
+        Self { theme: def.name.clone(), variant: def.variant.clone(), fields, focus: 0, error: None, fonts: FontList::default() }
     }
 
     pub fn focus_field(&mut self, i: usize) {
         if i < self.fields.len() {
             self.focus = i;
+            self.sync_dropdown();
+        }
+    }
+
+    /// Provide the discovered font families (from a background scan).
+    pub fn set_families(&mut self, families: Arc<Vec<String>>) {
+        let q = self.fields[FONT_FAMILY].value.clone();
+        self.fonts.set_families(families, &q);
+    }
+
+    /// The dropdown is open exactly while the font family field has focus
+    /// (until Esc or a pick closes it).
+    fn sync_dropdown(&mut self) {
+        let on = self.focus == FONT_FAMILY;
+        if on && !self.fonts.open {
+            let q = self.fields[FONT_FAMILY].value.clone();
+            self.fonts.refilter(&q);
+        }
+        self.fonts.open = on;
+    }
+
+    /// Pick `matches[i]` into the font field and close the list.
+    pub fn pick_font(&mut self, i: usize) -> Outcome {
+        let Some(name) = self.fonts.name(i).map(str::to_string) else { return Outcome::Continue };
+        self.fields[FONT_FAMILY].value = name;
+        self.fonts.open = false;
+        Outcome::FontPicked
+    }
+
+    /// Mouse wheel over the open list.
+    pub fn scroll_fonts(&mut self, delta: isize) {
+        if self.fonts.open {
+            self.fonts.move_by(delta);
         }
     }
 
     pub fn handle(&mut self, key: EditKey) -> Outcome {
         let n = self.fields.len();
+        if self.focus == FONT_FAMILY && self.fonts.open {
+            match key {
+                EditKey::Up => {
+                    self.fonts.move_by(-1);
+                    return Outcome::Continue;
+                }
+                EditKey::Down => {
+                    self.fonts.move_by(1);
+                    return Outcome::Continue;
+                }
+                EditKey::Enter => {
+                    if self.fonts.matches.is_empty() {
+                        // Keep the typed name as is.
+                        self.fonts.open = false;
+                        return Outcome::FontPicked;
+                    }
+                    return self.pick_font(self.fonts.selected);
+                }
+                EditKey::Cancel => {
+                    self.fonts.open = false;
+                    return Outcome::Continue;
+                }
+                _ => {}
+            }
+        }
+        let out = self.handle_field(key, n);
+        if matches!(key, EditKey::Char(_) | EditKey::Backspace) && self.focus == FONT_FAMILY {
+            let q = self.fields[FONT_FAMILY].value.clone();
+            self.fonts.refilter(&q);
+            self.fonts.open = true;
+        } else if !matches!(key, EditKey::Char(_) | EditKey::Backspace) {
+            self.sync_dropdown();
+        }
+        out
+    }
+
+    fn handle_field(&mut self, key: EditKey, n: usize) -> Outcome {
         match key {
             EditKey::Next | EditKey::Down | EditKey::Enter => {
                 self.focus = (self.focus + 1) % n;

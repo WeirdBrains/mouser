@@ -49,3 +49,13 @@ Storage
 Mode and resolution
 - Preferences select `theme` and `mode` (`light`/`dark`/`system`). For tests, system mode is simulated via `MOUSER_SYSTEM_DARK=1`.
 
+
+### Font picker
+
+Clicking (or tabbing to) the editor's **Font family** field — or running `:font`
+with no argument — opens a list of the font families installed on the system,
+in name order. Typing fuzzy-filters it (case-insensitive subsequence; matched
+letters are highlighted) while the list stays alphabetical. ↑/↓ or the mouse
+wheel move, Enter or a click picks (the font then loads in the background), and
+Esc or a click elsewhere closes the list. Families are discovered once, on a
+background thread, at startup; typing only filters.

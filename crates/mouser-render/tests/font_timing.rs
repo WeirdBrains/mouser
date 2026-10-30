@@ -19,3 +19,14 @@ fn font_load_timings() {
     let _g = f.resized(16.0);
     println!("resized: {:?}", t.elapsed());
 }
+
+#[test]
+#[ignore]
+fn installed_family_count() {
+    let t = Instant::now();
+    let raw = mouser_render::text::installed_families(&system_db());
+    let mut names: Vec<String> = raw.iter().map(|s| s.to_lowercase()).collect();
+    names.sort();
+    names.dedup();
+    println!("faces: {}, families: {} ({:?})", raw.len(), names.len(), t.elapsed());
+}

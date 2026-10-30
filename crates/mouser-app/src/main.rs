@@ -385,8 +385,9 @@ fn main() -> Result<()> {
     let get_ui_model = {
         let app_state = app_state.clone();
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
-            let st = app_state.lock().unwrap();
-            let panel = st.ssh.panel_view(vp).or_else(|| st.look.panel_view(vp));
+            let mut st = app_state.lock().unwrap();
+            let panel = st.ssh.panel_view(vp);
+            let panel = panel.or_else(|| st.look.panel_view(vp));
             if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
                 return panel.map(|p| ui::UiLayout { panel: Some(p), ..ui::without_sidebar(vp.width, vp.height) });
             }
@@ -492,6 +493,8 @@ fn main() -> Result<()> {
             | ui::UiAction::SetMode(_)
             | ui::UiAction::EditTheme
             | ui::UiAction::FocusField(_)
+            | ui::UiAction::PickFont(_)
+            | ui::UiAction::ScrollPanel(_)
             | ui::UiAction::SavePanel
             | ui::UiAction::ClosePanel
             | ui::UiAction::FontSize(_) => {
@@ -504,9 +507,16 @@ fn main() -> Result<()> {
                     st.look.action(&act);
                 }
             }
-            ui::UiAction::ToggleAdvanced | ui::UiAction::None => {}
+            ui::UiAction::None => {
+                let mut st = app_state.lock().unwrap();
+                if st.ssh.panel.is_none() {
+                    st.look.action(&act);
+                }
+            }
+            ui::UiAction::ToggleAdvanced => {}
         })
     };
+    discover_font_families();
     let hooks = RenderHooks {
         on_key_bytes: on_key,
         on_resize,
@@ -554,6 +564,24 @@ fn main() -> Result<()> {
 fn startup_sidebar(env: Option<&str>) -> (bool, bool) {
     let open = env.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "no"));
     (true, !open)
+}
+
+static FONT_FAMILIES: std::sync::OnceLock<Arc<Vec<String>>> = std::sync::OnceLock::new();
+
+/// Installed font families once the background scan is done.
+pub(crate) fn font_families() -> Option<Arc<Vec<String>>> {
+    FONT_FAMILIES.get().cloned()
+}
+
+/// Enumerate installed families on a worker thread, then wake the renderer.
+fn discover_font_families() {
+    std::thread::spawn(|| {
+        let t = std::time::Instant::now();
+        let names = mouser_core::fuzzy::dedupe_names(mouser_render::text::installed_families(&mouser_render::text::system_db()));
+        log::info!("found {} font families in {:?}", names.len(), t.elapsed());
+        let _ = FONT_FAMILIES.set(Arc::new(names));
+        wake();
+    });
 }
 
 static WAKER: std::sync::OnceLock<mouser_render::Waker> = std::sync::OnceLock::new();
@@ -643,6 +671,7 @@ fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppSta
                 Some(v) => st.look.set_font_size(v),
                 None => st.look.say("Usage: :font-size 6-48"),
             },
+            (_, arg) if arg.trim().is_empty() => st.look.open_font_picker(),
             (_, arg) => st.look.set_font_family((!arg.trim().is_empty()).then(|| arg.trim().to_string())),
         }
     } else if trimmed == "close-sidebar" || trimmed == ":close-sidebar" {

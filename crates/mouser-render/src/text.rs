@@ -172,6 +172,11 @@ fn parsed_face(db: &fontdb::Database, id: fontdb::ID) -> Option<Arc<Font>> {
     Some(font)
 }
 
+/// Family names of every installed face (may repeat; dedupe before showing).
+pub fn installed_families(db: &fontdb::Database) -> Vec<String> {
+    db.faces().filter_map(|f| f.families.first().map(|(n, _)| n.clone())).collect()
+}
+
 /// System font database (slow to build; load once and reuse).
 pub fn system_db() -> fontdb::Database {
     let mut db = fontdb::Database::new();

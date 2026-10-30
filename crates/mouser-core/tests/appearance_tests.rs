@@ -171,3 +171,72 @@ fn edited_theme_round_trips_and_user_themes_are_listed() {
     let prefs = Preferences { theme: Some("My Star".into()), mode: Some(ThemeMode::Dark), ..Default::default() };
     assert_eq!(resolve_active_theme(&prefs).accent.as_deref(), Some("#FF0066"));
 }
+
+mod font_dropdown {
+    use mouser_core::appearance::{EditKey, FONT_FAMILY, FONT_ROWS, Outcome, ThemeEditor};
+    use std::sync::Arc;
+
+    fn def() -> mouser_core::themes::ThemeDef {
+        mouser_core::themes::builtins().remove(0).1
+    }
+
+    fn editor() -> ThemeEditor {
+        let mut e = ThemeEditor::new(&def(), None, 14.0);
+        let fams = mouser_core::fuzzy::dedupe_names(
+            ["Noto Sans Mono", "Fira Code", "DejaVu Sans", "fira sans", "Hack", "JetBrains Mono", "Fira Code"].map(String::from),
+        );
+        e.set_families(Arc::new(fams));
+        e
+    }
+    fn shown(e: &ThemeEditor) -> Vec<String> {
+        e.fonts.visible().map(|(_, n, _)| n.to_string()).collect()
+    }
+
+    #[test]
+    fn focusing_opens_alphabetical_list_and_typing_filters_in_order() {
+        let mut e = editor();
+        assert!(!e.fonts.open);
+        e.focus_field(FONT_FAMILY);
+        assert!(e.fonts.open);
+        assert_eq!(shown(&e), ["DejaVu Sans", "Fira Code", "fira sans", "Hack", "JetBrains Mono", "Noto Sans Mono"]);
+        e.handle(EditKey::Down);
+        assert_eq!(e.fonts.selected, 1);
+        for c in "fis".chars() {
+            e.handle(EditKey::Char(c));
+        }
+        // Filter only; still alphabetical, selection back on the first row.
+        assert_eq!(shown(&e), ["fira sans"]);
+        assert_eq!(e.fonts.selected, 0);
+        e.handle(EditKey::Backspace);
+        assert_eq!(shown(&e), ["Fira Code", "fira sans"]);
+        e.handle(EditKey::Down);
+        assert_eq!(e.handle(EditKey::Enter), Outcome::FontPicked);
+        assert_eq!(e.fields[FONT_FAMILY].value, "fira sans");
+        assert!(!e.fonts.open);
+    }
+
+    #[test]
+    fn esc_closes_list_only_and_typing_never_loads() {
+        let mut e = editor();
+        e.focus_field(FONT_FAMILY);
+        assert_eq!(e.handle(EditKey::Cancel), Outcome::Continue);
+        assert!(!e.fonts.open);
+        // Typing reopens and only previews (no FontPicked).
+        assert_ne!(e.handle(EditKey::Char('h')), Outcome::FontPicked);
+        assert!(e.fonts.open);
+        e.focus_field(0);
+        assert!(!e.fonts.open);
+    }
+
+    #[test]
+    fn scrolling_keeps_selection_visible() {
+        let mut e = ThemeEditor::new(&def(), None, 14.0);
+        e.set_families(Arc::new((0..30).map(|i| format!("Font {i:02}")).collect()));
+        e.focus_field(FONT_FAMILY);
+        e.scroll_fonts(12);
+        assert_eq!(e.fonts.selected, 12);
+        assert_eq!(e.fonts.scroll, 12 + 1 - FONT_ROWS);
+        assert_eq!(e.pick_font(12), Outcome::FontPicked);
+        assert_eq!(e.fields[FONT_FAMILY].value, "Font 12");
+    }
+}
