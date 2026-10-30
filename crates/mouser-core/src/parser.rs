@@ -162,10 +162,22 @@ impl<W: Write> Perform for TerminalParser<W> {
                     }
                 }
             }
+            // Kitty keyboard protocol: query / push / pop / set, per screen.
             (Some(b'?'), 'u') => {
-                // Kitty keyboard protocol query
-                let resp = self.kitty_keyboard.negotiation_response();
-                self.reply(resp);
+                let resp = self.kitty_keyboard.query_response(self.screen.in_alt_screen());
+                self.reply(&resp);
+            }
+            (Some(b'>'), 'u') => {
+                let f = arg(params, 0, 0) as u32;
+                self.kitty_keyboard.push(self.screen.in_alt_screen(), f);
+            }
+            (Some(b'<'), 'u') => {
+                let n = arg(params, 0, 1) as usize;
+                self.kitty_keyboard.pop(self.screen.in_alt_screen(), n);
+            }
+            (Some(b'='), 'u') => {
+                let (f, mode) = (arg(params, 0, 0) as u32, arg(params, 1, 1) as u32);
+                self.kitty_keyboard.set(self.screen.in_alt_screen(), f, mode);
             }
             _ => trace!("unhandled CSI {:?} {:?}", intermediates, action),
         }
@@ -181,7 +193,10 @@ impl<W: Write> Perform for TerminalParser<W> {
                 self.screen.linefeed();
             }
             (None, b'M') => self.screen.reverse_index(),
-            (None, b'c') => self.screen.clear(),
+            (None, b'c') => {
+                self.screen.clear();
+                self.kitty_keyboard = KeyboardProtocolState::default();
+            }
             (Some(b'_'), b'G') => {
                 // Kitty graphics placeholder (needs a real APC handler).
                 let _event = KittyGraphicsEvent::Begin { id: None, width: None, height: None };
