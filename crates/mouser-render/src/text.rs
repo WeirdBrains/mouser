@@ -143,11 +143,24 @@ impl FontStack {
     pub fn glyph(&mut self, ch: char) -> &Glyph {
         let fonts = &self.fonts;
         let size = self.size;
+        let (cw, chh, ascent) = (self.cell_w, self.cell_h, self.ascent);
         self.cache.entry(ch).or_insert_with(|| {
             let (base, italic) = match italic_base(ch) {
                 Some(b) => (b, true),
                 None => (ch, false),
             };
+            if let Some(bitmap) = crate::boxdraw::render(base, cw, chh) {
+                // Fill the cell exactly: top row at the cell top (see glyph_origin).
+                let metrics = Metrics {
+                    xmin: 0,
+                    ymin: ascent - chh,
+                    width: cw.max(1) as usize,
+                    height: chh.max(1) as usize,
+                    advance_width: cw as f32,
+                    ..Metrics::default()
+                };
+                return Glyph { metrics, bitmap };
+            }
             let font = fonts.iter().find(|f| f.lookup_glyph_index(base) != 0).unwrap_or(&fonts[0]);
             let (metrics, bitmap) = font.rasterize(base, size);
             let g = Glyph { metrics, bitmap };
