@@ -23,7 +23,8 @@ at the repo root (gitignored; ask the maintainer if you don't have it).
 | vttest fixes | DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1 | Run `vttest` inside Mouser |
 | terminfo | `tic -x -o ~/.terminfo extra/mouser.terminfo`, then `TERM=mouser` | `infocmp mouser` |
 
-Not yet verified live: Kitty keyboard and Fuzzball key events in a real app (Fuzzball images verified), connection click opening a
+Verified live (wtype, 2026-10-30): Fuzzball key events, Kitty keyboard flags 1/9/27/31 and `CSI ? u`, vttest menu 5 cursor keys (normal + application). wtype uses a virtual keymap, so `code=` reads `Escape` and Shift does not change the character; physical codes need a real keyboard.
+Not yet verified live: connection click opening a
 tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
 
 ## Known bugs
