@@ -6,6 +6,7 @@ pub mod kitty;
 pub mod parser;
 pub mod scrollback;
 pub mod search;
+pub mod ssh_config;
 pub mod storage;
 pub mod themes;
 pub mod types;

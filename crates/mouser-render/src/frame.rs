@@ -154,6 +154,11 @@ fn draw_sidebar(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, f
         let title_y = c.y + (c.h - cell_h) / 2;
         canvas.draw_text(fonts, s.x + ui::SIDEBAR_MARGIN, title_y, ui::SIDEBAR_TITLE, muted);
         draw_button(canvas, fonts, c, ui::COLLAPSE_LABEL, mix(panel, fg, 0.08), accent);
+        if let Some((r, text)) = &layout.notice {
+            let max = ((r.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+            let t: String = text.chars().take(max).collect();
+            draw_button(canvas, fonts, *r, &t, mix(panel, accent, 0.12), fg);
+        }
         let a = layout.appearance_rect;
         if a.w > 0 {
             draw_button(canvas, fonts, a, ui::APPEARANCE_LABEL, mix(panel, accent, 0.18), accent);
@@ -169,8 +174,12 @@ fn draw_sidebar(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, f
             let avail = item.edit_rect.x - 8 - (h.x + fonts.cell_w);
             let name: String = item.name.chars().take(max_chars(avail, fonts.cell_w)).collect();
             canvas.draw_text(fonts, h.x + fonts.cell_w, item.edit_rect.y + (item.edit_rect.h - cell_h) / 2, &name, muted);
-            draw_button(canvas, fonts, item.edit_rect, ui::EDIT_LABEL, mix(panel, fg, 0.08), muted);
-            draw_button(canvas, fonts, item.delete_rect, ui::DELETE_LABEL, mix(panel, fg, 0.08), muted);
+            if item.read_only {
+                draw_button(canvas, fonts, item.edit_rect, ui::INFO_LABEL, mix(panel, fg, 0.05), mix(panel, fg, 0.45));
+            } else {
+                draw_button(canvas, fonts, item.edit_rect, ui::EDIT_LABEL, mix(panel, fg, 0.08), muted);
+                draw_button(canvas, fonts, item.delete_rect, ui::DELETE_LABEL, mix(panel, fg, 0.08), muted);
+            }
         }
     }
     if let Some(modal) = &layout.modal {
