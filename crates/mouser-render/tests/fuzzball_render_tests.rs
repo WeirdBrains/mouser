@@ -21,6 +21,10 @@ fn b64(data: &[u8]) -> String {
 }
 
 fn render(place: &str) -> (Vec<u32>, DisplayList, usize, (i32, i32)) {
+    render_after(place, "")
+}
+
+fn render_after(place: &str, after: &str) -> (Vec<u32>, DisplayList, usize, (i32, i32)) {
     let mut fonts = FontStack::embedded(15.0);
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let sb = Arc::new(Scrollback::new(Default::default()));
@@ -31,6 +35,7 @@ fn render(place: &str) -> (Vec<u32>, DisplayList, usize, (i32, i32)) {
     let p = b64(&px);
     t.feed(format!("\x1bP=Fzgu;id=1,fmt=rgba,w=2,h=1,size=8,len={}:{p}\x1b\\", p.len()).as_bytes());
     t.feed(format!("\x1b[2;3H\x1bP=Fzgp;{place}\x1b\\").as_bytes());
+    t.feed(after.as_bytes());
     let images = image_draws(&t.fuzzball.gfx, false, t.lines_scrolled, 4);
     let lines = vec![String::new(); 4];
     let frame = Frame {
@@ -100,4 +105,22 @@ fn gpu_display_list_matches_cpu() {
     let mut replayed = vec![0u32; cpu.len()];
     list.replay(&mut Canvas::new(&mut replayed, w, h), &mut fonts);
     assert!(cpu == replayed);
+}
+
+#[test]
+fn placement_pixels_follow_a_scrolled_region() {
+    // Scroll rows 1..4 up by one: the image moves from row 1 to row 0.
+    let (buf, _, w, (cw, ch)) = render_after("id=1,pid=1,cols=4,rows=1,move=0", "\x1b[1;4r\x1b[S");
+    let at = |x: i32, y: i32| buf[y as usize * w + x as usize];
+    let x0 = PADDING + 2 * cw;
+    assert_eq!(at(x0, PADDING), 0xFF0000);
+    assert_eq!(at(x0, PADDING + ch), 0, "old row is blank");
+}
+
+#[test]
+fn evicted_placement_draws_nothing() {
+    // Scrolled into the scrollback: nothing is drawn on the live screen.
+    let (buf, list, _, _) = render_after("id=1,pid=1,cols=4,rows=1,move=0", "\x1b[2S");
+    assert!(buf.iter().all(|&p| p == 0));
+    assert!(!list.ops.iter().any(|o| matches!(o, DrawOp::Image { .. })));
 }

@@ -67,6 +67,12 @@ impl Scrollback {
         }
     }
 
+    /// Drop every saved line (ED 3).
+    pub fn clear(&self) {
+        self.chunks.write().clear();
+        self.tail.write().clear();
+    }
+
     pub fn total_lines(&self) -> usize {
         let chunks = self.chunks.read();
         let chunk_lines: usize = chunks.iter().map(|c| c.line_count()).sum();

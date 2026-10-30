@@ -247,14 +247,53 @@ impl<W: Write> TerminalParser<W> {
     }
 
     pub fn resize(&mut self, size: Size) {
+        if size == self.screen.size {
+            return;
+        }
+        let alt = self.screen.in_alt_screen();
+        let shift = if size.rows > 0 && self.screen.cursor.y >= size.rows { self.screen.cursor.y + 1 - size.rows } else { 0 };
         self.screen.resize(size);
         self.flush_scrollback();
+        if !self.fuzzball.gfx.placements.is_empty()
+            && self.fuzzball.resize(alt, self.lines_scrolled, if alt { shift as i64 } else { 0 }, size.rows, size.cols)
+        {
+            self.graphics_generation += 1;
+        }
     }
 
     fn flush_scrollback(&mut self) {
+        let events = self.screen.take_scroll_events();
+        if !self.fuzzball.gfx.placements.is_empty() {
+            let alt = self.screen.in_alt_screen();
+            let rows = self.screen.size.rows;
+            let mut changed = false;
+            for ev in events {
+                let base = self.lines_scrolled + ev.pushed_before as i64;
+                changed |= self.fuzzball.scrolled(alt, base, ev, rows);
+            }
+            if changed {
+                self.graphics_generation += 1;
+            }
+        }
+        let mut pushed = false;
         for line in self.screen.take_scrolled_off() {
             self.scrollback.push_line(line);
             self.lines_scrolled += 1;
+            pushed = true;
+        }
+        if pushed {
+            self.evict_scrolled_placements();
+        }
+    }
+
+    /// Placements whose anchor row left the scrollback are removed (graphics.md §4).
+    fn evict_scrolled_placements(&mut self) {
+        if self.fuzzball.gfx.placements.is_empty() {
+            return;
+        }
+        let first = self.lines_scrolled - self.scrollback.total_lines() as i64;
+        if self.fuzzball.evict_scrollback(first) {
+            self.graphics_generation += 1;
         }
     }
 
@@ -287,6 +326,7 @@ impl<W: Write> TerminalParser<W> {
         if self.fuzzball.gfx.placements.is_empty() {
             return;
         }
+        self.flush_scrollback();
         let alt = self.screen.in_alt_screen();
         let base = self.lines_scrolled;
         match cols {
@@ -451,8 +491,10 @@ impl<W: Write> TerminalParser<W> {
             2027 => {}
             47 | 1047 => {
                 if set {
+                    self.flush_scrollback();
                     self.screen.enter_alt_screen();
                 } else {
+                    self.flush_scrollback();
                     self.screen.leave_alt_screen();
                     self.fuzzball.leave_alt();
                 }
@@ -467,8 +509,10 @@ impl<W: Write> TerminalParser<W> {
             1049 => {
                 if set {
                     self.save_cursor();
+                    self.flush_scrollback();
                     self.screen.enter_alt_screen();
                 } else {
+                    self.flush_scrollback();
                     self.screen.leave_alt_screen();
                     self.fuzzball.leave_alt();
                     self.restore_cursor();
@@ -798,6 +842,13 @@ impl<W: Write> Perform for TerminalParser<W> {
                 match mode {
                     0 => self.erase_placements(y..rows, None),
                     1 => self.erase_placements(0..y + 1, None),
+                    // ED 3 (xterm): clear the scrollback only, not the screen.
+                    3 => {
+                        self.flush_scrollback();
+                        self.scrollback.clear();
+                        self.evict_scrolled_placements();
+                        return;
+                    }
                     _ => self.erase_placements(0..rows, None),
                 }
                 self.screen.erase_display(mode)
