@@ -1,0 +1,70 @@
+# Mouser handover notes
+
+Public notes for whoever picks up Mouser next. Machine-specific paths, local
+branch/worktree state and other private context live in `HANDOVER.local.md`
+at the repo root (gitignored; ask the maintainer if you don't have it).
+
+## Features and how to test
+
+| Feature | What it does | How to test |
+|---|---|---|
+| Shell exit / Ctrl+D | Tab/window closes when the shell exits | Run the app, press Ctrl+D |
+| Tabs | Each tab has its own PTY, screen, scrollback, title. Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Tab / Ctrl+Shift+Tab cycle, Alt+1..9 jump | Open several tabs |
+| Connections sidebar | Hosts come from your ssh config; clicking one opens `ssh <alias>` in a new tab | Set `MOUSER_SSH_CONFIG` to a temp config |
+| Sidebar state | Starts collapsed unless `MOUSER_OPEN_SIDEBAR` is set; remembers last open/closed state | Toggle, restart (use a temp `HOME`) |
+| Event-driven redraws | `ControlFlow::Wait` + `EventLoopProxy`, glyph cache; ~0% idle CPU | Watch `top` while idle |
+| GPU renderer | wgpu glyph atlas drawn as instanced quads; `MOUSER_RENDERER=cpu` forces the softbuffer fallback | Run both ways and compare |
+| Font picker | Click the font field to list installed families alphabetically; typing fuzzy-filters | Appearance panel |
+| Kitty keyboard | Progressive enhancement (`CSI > flags u`) | `kitten show-key -m kitty` |
+| Kitty graphics | Direct RGB/RGBA/PNG on both renderers | `kitten icat image.png` |
+| Fuzzball | Mouser's own graphics + keyboard protocol (DCS, tag `Fz`). Spec only, in `docs/protocol/` | Read the spec |
+| xterm / ECMA-48 | SGR (truecolour, curly/coloured underline), wide chars, tab stops, modes, DA/DSR, mouse, focus, bracketed paste, OSC titles, OSC 8 links (Ctrl+click), OSC 52, window reports 11/13/20/21t | `cargo test --workspace` + manual |
+| vttest fixes | DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1 | Run `vttest` inside Mouser |
+| terminfo | `tic -x -o ~/.terminfo extra/mouser.terminfo`, then `TERM=mouser` | `infocmp mouser` |
+
+Not yet verified live: Kitty keyboard in a real app, connection click opening a
+tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
+
+## Known bugs
+- Size report says 81 columns on an 80-column grid.
+- Bottom edge of box-drawing characters looks dashed.
+- Website install code blocks clip long commands (scroll sideways).
+
+## Known gaps
+DECSLRM · colour emoji · real italic face (synthetic now) · visible blink ·
+DECCOLM 132-column · G2/G3/national charsets · protected areas · ENQ answerback ·
+OSC 133 UI.
+
+## Fuzzball spec open questions
+DCS vs APC · raw binary through multiplexers · animation · Unicode placeholders ·
+whether to report Mouser's reserved shortcuts · virtual placements · colour space.
+Direction: replace Kitty graphics; keep Kitty keyboard as a fallback.
+
+## Website
+- Lives on the `site` branch in `site/` (plain HTML/CSS/JS).
+- `.github/workflows/pages.yml` deploys GitHub Pages on pushes to `site`.
+- Sections alternate light/dark with subtle gradients, starting light (hero).
+- To do: confirm feature claims (compressed scrollback, Windows builds, Homebrew
+  macOS); retake `site/assets/mouser-app.png` with an opaque background.
+
+## Release process (see AGENTS.md)
+1. Bump version and update CHANGELOG.
+2. Commit `release: vX.Y.Z`, create an annotated tag `vX.Y.Z`.
+3. `git push origin main --follow-tags`.
+4. Check CI with `gh run list` / `gh run watch`.
+Releases happen only with the maintainer's explicit approval.
+
+## Rules
+- Work on `main`, no PRs/branches (exception: `site` for the website).
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo test --workspace` must pass.
+- Never touch the real `~/.mouser`; never force-push; ask before adding dependencies.
+- Tests use `MOUSER_SSH_CONFIG` and a temp `HOME`, never the real `~/.ssh`.
+
+## Suggested next steps
+1. Fix the 81-column size report and dashed box-drawing line.
+2. Live-verify Kitty keyboard, connection-click tabs, vttest menu 5, LNM.
+3. Confirm website claims, retake the screenshot, publish the site.
+4. Cut the next release once approved.
+5. Resolve Fuzzball open questions, then implement it.
+6. Work through the known gaps.
