@@ -391,6 +391,13 @@ pub enum UiAction {
     },
     /// Click on the sidebar notice button.
     Notice,
+    /// Tabs: Ctrl+Shift+T, click, close (× / middle-click / Ctrl+Shift+W),
+    /// Ctrl+(Shift+)Tab, Alt+1..9.
+    NewTab,
+    SelectTab(usize),
+    CloseTab(usize),
+    CloseActiveTab,
+    CycleTab(i32),
     None,
 }
 
@@ -747,4 +754,43 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
         }
     }
     UiAction::None
+}
+
+/// Tab strip state handed to the renderer (only drawn with 2+ tabs).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TabBar {
+    pub titles: Vec<String>,
+    pub active: usize,
+}
+
+/// Height of the tab strip for a cell height.
+pub fn tab_bar_height(cell_h: i32) -> i32 {
+    cell_h + 10
+}
+
+/// (tab, close button) rectangles for `n` tabs across `width` px.
+pub fn tab_rects(n: usize, width: i32, cell_w: i32, cell_h: i32) -> Vec<(Rect, Rect)> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let h = tab_bar_height(cell_h);
+    let w = (width / n as i32).min(cell_w * 28).max(cell_w * 6);
+    (0..n)
+        .map(|i| {
+            let r = Rect { x: i as i32 * w, y: 0, w, h };
+            let c = Rect { x: r.x + w - cell_w * 2 - 2, y: 0, w: cell_w * 2, h };
+            (r, c)
+        })
+        .collect()
+}
+
+/// What a click at (`px`, `py`) on the strip does; `middle` closes.
+pub fn tab_hit(bar: &TabBar, width: i32, cell_w: i32, cell_h: i32, px: i32, py: i32, middle: bool) -> Option<UiAction> {
+    if bar.titles.len() < 2 || py < 0 || py >= tab_bar_height(cell_h) {
+        return None;
+    }
+    let rects = tab_rects(bar.titles.len(), width, cell_w, cell_h);
+    let (i, (_, close)) = rects.iter().enumerate().find(|(_, (r, _))| px >= r.x && px < r.x + r.w)?;
+    let on_close = px >= close.x && px < close.x + close.w;
+    Some(if middle || on_close { UiAction::CloseTab(i) } else { UiAction::SelectTab(i) })
 }

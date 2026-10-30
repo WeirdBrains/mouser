@@ -26,6 +26,15 @@ pub struct Frame<'a> {
     /// cells draw plain in `fg`).
     pub styles: &'a [Vec<CellPaint>],
     pub cursor_shape: CursorShape,
+    /// Tab strip (drawn above the grid when it has 2+ tabs).
+    pub tabs: Option<&'a ui::TabBar>,
+}
+
+impl Frame<'_> {
+    /// Pixels above the first grid row.
+    pub fn top(&self, cell_h: i32) -> i32 {
+        PADDING + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -155,10 +164,10 @@ pub struct ImageDraw {
     pub z: i32,
 }
 
-fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool) {
+fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool, top: i32) {
     for img in images.iter().filter(|i| (i.z < 0) == below) {
         let x = PADDING + img.col * fonts.cell_w + img.x_off;
-        let y = PADDING + img.row * fonts.cell_h + img.y_off;
+        let y = top + img.row * fonts.cell_h + img.y_off;
         canvas.draw_image(img, x, y);
     }
 }
@@ -178,18 +187,19 @@ pub fn accent_for(bg: u32) -> u32 {
 pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
-    draw_images(canvas, fonts, frame.images, true);
+    let top0 = frame.top(ch);
+    draw_images(canvas, fonts, frame.images, true, top0);
     for (row, line) in frame.lines.iter().enumerate() {
-        let top = PADDING + row as i32 * ch;
+        let top = top0 + row as i32 * ch;
         match frame.styles.get(row) {
             Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, top, line, st, frame.fg),
             _ => canvas.draw_text(fonts, PADDING, top, line, frame.fg),
         }
     }
-    draw_images(canvas, fonts, frame.images, false);
+    draw_images(canvas, fonts, frame.images, false, top0);
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
-        let y = PADDING + cy as i32 * ch;
+        let y = top0 + cy as i32 * ch;
         let color = frame.cursor_color.unwrap_or(mix(frame.bg, frame.fg, 0.85));
         let wide = frame.styles.get(cy).and_then(|r| r.get(cx)).is_some_and(|p| p.flags & paint::WIDE != 0);
         let w = if wide { 2 * cw } else { cw };
@@ -203,6 +213,10 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
             CursorShape::Underline => canvas.fill_rect(x, y + ch - 2, w, 2, color),
             CursorShape::Bar => canvas.fill_rect(x, y, 2, ch, color),
         }
+    }
+    if let Some(bar) = frame.tabs.filter(|t| t.titles.len() > 1) {
+        let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width() as i32);
+        draw_tabs(canvas, fonts, bar, w, frame.bg, frame.fg, frame.accent.unwrap_or(accent_for(frame.bg)));
     }
     if let Some(layout) = frame.ui {
         let accent = frame.accent.unwrap_or(accent_for(frame.bg));
@@ -364,5 +378,26 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
         canvas.draw_text(fonts, m.x + 12, m.y + 12, &title, fg);
         let adv = if modal.advanced_open { "Advanced ▾" } else { "Advanced ▸" };
         canvas.draw_text(fonts, m.x + 12, m.y + 12 + 2 * cell_h, adv, accent);
+    }
+}
+
+fn draw_tabs(canvas: &mut dyn Draw, fonts: &mut FontStack, bar: &ui::TabBar, width: i32, bg: u32, fg: u32, accent: u32) {
+    let h = ui::tab_bar_height(fonts.cell_h);
+    let strip = mix(bg, fg, 0.06);
+    canvas.fill_rect(0, 0, width, h, strip);
+    canvas.fill_rect(0, h - 1, width, 1, mix(bg, fg, 0.2));
+    for (i, (r, close)) in ui::tab_rects(bar.titles.len(), width, fonts.cell_w, fonts.cell_h).into_iter().enumerate() {
+        let active = i == bar.active;
+        if active {
+            canvas.fill_rect(r.x, r.y, r.w, r.h, bg);
+            canvas.fill_rect(r.x, r.h - 2, r.w, 2, accent);
+        }
+        canvas.fill_rect(r.x + r.w - 1, 4, 1, r.h - 8, mix(bg, fg, 0.2));
+        let text = if active { fg } else { mix(strip, fg, 0.6) };
+        let max = ((close.x - r.x) / fonts.cell_w - 2).max(0) as usize;
+        let t: String = bar.titles[i].chars().take(max).collect();
+        let ty = (r.h - fonts.cell_h) / 2;
+        canvas.draw_text(fonts, r.x + fonts.cell_w, ty, &t, text);
+        canvas.draw_char(fonts, close.x + fonts.cell_w / 2, ty, '×', mix(strip, fg, 0.5));
     }
 }

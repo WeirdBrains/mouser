@@ -27,6 +27,7 @@ fn render(text: &str, styles: Vec<CellPaint>, cursor: Option<(usize, usize)>, sh
         images: &[],
         styles: &rows,
         cursor_shape: shape,
+        tabs: None,
     };
     render_frame(&mut canvas, &mut fonts, &frame);
     (buf, w, fonts)

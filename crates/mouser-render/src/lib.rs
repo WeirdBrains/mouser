@@ -57,6 +57,8 @@ pub struct RenderHooks {
     pub hold_frame: Option<ExitHook>,
     /// Window title (OSC 0/2).
     pub get_title: Option<StatusHook>,
+    /// Tab strip; drawn when there are 2+ tabs.
+    pub get_tabs: Option<Arc<dyn Fn() -> ui::TabBar + Send + Sync>>,
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> (Vec<String>, usize) + Send + Sync>,
@@ -260,6 +262,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut text_w = width as i32;
     let mut held_since: Option<Instant> = None;
     let mut title = String::new();
+    let mut grid_top = PADDING;
+    let mut tab_bar = ui::TabBar::default();
 
     event_loop.run(|event, elwt| {
         match event {
@@ -285,7 +289,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                     if !dragging
                         && let (Some(on_mouse), Some(hit)) =
-                            (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w))
+                            (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top))
                     {
                         let b = mouse_down.unwrap_or(mouser_core::input::MouseButton::None);
                         on_mouse(mouse_event(mouser_core::input::MouseKind::Motion, b, hit, modifiers));
@@ -300,7 +304,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
                     if !dragging
                         && let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
                     {
                         on_mouse(mouse_event(mouser_core::input::MouseKind::Release, b, hit, modifiers));
                     }
@@ -315,8 +319,24 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
                 WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                    if let (Some(on_act), Some(pos)) = (&hooks.on_ui_action, cursor_pos)
+                        && let Some(act) = ui::tab_hit(
+                            &tab_bar,
+                            text_w,
+                            fonts.cell_w,
+                            fonts.cell_h,
+                            pos.x as i32,
+                            pos.y as i32,
+                            button == winit::event::MouseButton::Middle,
+                        )
+                    {
+                        on_act(act);
+                        scrolled_back = 0;
+                        dirty = true;
+                        return;
+                    }
                     if let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
                         && last_ui.as_ref().is_none_or(|l| l.panel.is_none())
                     {
                         mouse_down = Some(b);
@@ -339,6 +359,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     dirty = true;
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
+                        return;
+                    }
+                    if let (Some(act), Some(on_act)) = (tab_key(&key_event, modifiers), &hooks.on_ui_action) {
+                        scrolled_back = 0;
+                        on_act(act);
                         return;
                     }
                     if key_event.state == ElementState::Pressed
@@ -399,7 +424,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         return;
                     }
                     if let (Some(on_mouse), Some(pos)) = (&hooks.on_mouse, cursor_pos)
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
                         && lines != 0
                         && scrolled_back == 0
                     {
@@ -468,7 +493,12 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
                 // The sidebar takes space from the terminal instead of covering it.
                 text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
-                let new_grid = grid_size(&fonts, text_w, height as i32);
+                if let Some(f) = &hooks.get_tabs {
+                    tab_bar = f();
+                }
+                let tab_h = if tab_bar.titles.len() > 1 { ui::tab_bar_height(fonts.cell_h) } else { 0 };
+                grid_top = PADDING + tab_h;
+                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h);
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;
@@ -507,6 +537,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     cursor_color: colors.cursor,
                     images: &images,
                     styles: &styles,
+                    tabs: Some(&tab_bar),
                     cursor_shape: hooks.get_cursor_shape.as_ref().map(|f| f()).unwrap_or_default(),
                 };
                 last_ui = layout.clone();
@@ -521,8 +552,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
 }
 
 /// Grid cell and in-grid pixel under a window position, if it is over the terminal.
-pub fn grid_hit(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), text_w: i32) -> Option<(usize, usize, u32, u32)> {
-    let (x, y) = (px as i32 - PADDING, py as i32 - PADDING);
+pub fn grid_hit(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), text_w: i32, top: i32) -> Option<(usize, usize, u32, u32)> {
+    let (x, y) = (px as i32 - PADDING, py as i32 - top);
     if x < 0 || y < 0 || px as i32 >= text_w {
         return None;
     }
@@ -555,6 +586,40 @@ fn winit_button(b: winit::event::MouseButton) -> Option<mouser_core::input::Mous
         winit::event::MouseButton::Left => Some(B::Left),
         winit::event::MouseButton::Middle => Some(B::Middle),
         winit::event::MouseButton::Right => Some(B::Right),
+        _ => None,
+    }
+}
+
+/// Tab shortcuts: Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Tab /
+/// Ctrl+Shift+Tab cycle, Alt+1..9 jump.
+pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiAction> {
+    if ev.state != ElementState::Pressed {
+        return None;
+    }
+    let (ctrl, shift, alt) = (m.control_key(), m.shift_key(), m.alt_key());
+    match &ev.logical_key {
+        Key::Named(NamedKey::Tab) if ctrl && !alt => Some(ui::UiAction::CycleTab(if shift { -1 } else { 1 })),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("t") => Some(ui::UiAction::NewTab),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("w") => Some(ui::UiAction::CloseActiveTab),
+        _ if alt && !ctrl && !shift => {
+            // Use the physical digit row so layouts with shifted digits work.
+            use winit::keyboard::{KeyCode, PhysicalKey};
+            let codes = [
+                KeyCode::Digit1,
+                KeyCode::Digit2,
+                KeyCode::Digit3,
+                KeyCode::Digit4,
+                KeyCode::Digit5,
+                KeyCode::Digit6,
+                KeyCode::Digit7,
+                KeyCode::Digit8,
+                KeyCode::Digit9,
+            ];
+            match ev.physical_key {
+                PhysicalKey::Code(k) => codes.iter().position(|c| *c == k).map(ui::UiAction::SelectTab),
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
