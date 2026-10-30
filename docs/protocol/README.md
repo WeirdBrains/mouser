@@ -1,11 +1,9 @@
-# Burrow terminal protocol — draft v0
+# Fuzzball terminal protocol — draft v0
 
 > **Status: DRAFT v0.** Not stable. Wire formats may change incompatibly before v1.
-> Working name: **Burrow** (alternatives under consideration: **Warren**, **MTP — Mouser
-> Terminal Protocol**). The name appears on the wire only as the two-byte family tag `Bw`,
-> so renaming later costs nothing.
+> Name: **Fuzzball**. On the wire it appears only as the two-byte family tag `Fz`.
 
-Burrow is a small family of terminal extensions, implemented first in Mouser, meant to
+Fuzzball is a small family of terminal extensions, implemented first in Mouser, meant to
 replace the Kitty keyboard and graphics protocols with simpler, multiplexer-friendly
 designs:
 
@@ -23,7 +21,7 @@ error replies, security rules, conformance and migration.
 3. **Binary-safe when possible, text-safe always.** Raw length-prefixed payloads on direct
    connections; base64 as the universal fallback.
 4. **Detectable.** An application can find out, with one query and a bounded wait,
-   whether Burrow is available and which version and features it has.
+   whether Fuzzball is available and which version and features it has.
 5. **Bounded.** Terminals publish their limits; applications can rely on them.
 
 ## 2. Conventions
@@ -36,10 +34,10 @@ error replies, security rules, conformance and migration.
 
 ## 3. Framing
 
-All Burrow messages are DCS strings with the private marker `=` and the family tag `Bw`:
+All Fuzzball messages are DCS strings with the private marker `=` and the family tag `Fz`:
 
 ```
-ESC P = B w <subsystem> <verb> ; <params> [: <payload>] ESC \
+ESC P = F z <subsystem> <verb> ; <params> [: <payload>] ESC \
 ```
 
 - `<subsystem>`: one ASCII letter. `c` = common, `g` = graphics, `k` = keyboard.
@@ -51,7 +49,7 @@ Unknown params MUST be ignored. Unknown subsystems or verbs MUST produce an
 `ENOTSUP` error reply (§5) when the request carried an `id`, and be ignored otherwise.
 
 DCS was chosen over APC/OSC because tmux and screen already have a documented
-passthrough for DCS, and parsers that don't know Burrow skip DCS strings cleanly.
+passthrough for DCS, and parsers that don't know Fuzzball skip DCS strings cleanly.
 
 ### 3.1 Payloads
 
@@ -74,8 +72,8 @@ early once `len` bytes are consumed.
 Large payloads are split into **chunks** of at most `max_chunk` bytes (advertised, §4):
 
 ```
-ESC P = B w g u ; id=7,fmt=rgba,w=64,h=64,size=16384,enc=b64,len=8192,more=1 : <8192 b64 chars> ESC \
-ESC P = B w g u ; id=7,enc=b64,len=8192,more=0 : <8192 b64 chars> ESC \
+ESC P = F z g u ; id=7,fmt=rgba,w=64,h=64,size=16384,enc=b64,len=8192,more=1 : <8192 b64 chars> ESC \
+ESC P = F z g u ; id=7,enc=b64,len=8192,more=0 : <8192 b64 chars> ESC \
 ```
 
 Continuation chunks repeat only `id`, `enc`, `len` and `more`. A chunk with a different
@@ -87,7 +85,7 @@ Through tmux (`allow-passthrough on`) the application wraps each message as tmux
 documents, doubling every `ESC` inside:
 
 ```
-ESC P tmux ; ESC ESC P = B w ... ESC ESC \ ESC \
+ESC P tmux ; ESC ESC P = F z ... ESC ESC \ ESC \
 ```
 
 Through GNU screen: `ESC P <message> ESC \`, split into pieces of at most 768 bytes.
@@ -99,20 +97,20 @@ Rules that make this work:
 - Replies are plain DCS from the terminal; multiplexers pass them to the active pane.
 - Graphics placements are cell-anchored (graphics.md §4), so a multiplexer that redraws
   the pane does not move images to wrong pixels; a multiplexer that does not understand
-  Burrow simply hides them when the pane is not visible.
+  Fuzzball simply hides them when the pane is not visible.
 
 ## 4. Capability negotiation and versioning
 
 Query (common subsystem, verb `q`):
 
 ```
-ESC P = B w c q ; id=1 ESC \
+ESC P = F z c q ; id=1 ESC \
 ```
 
 Reply:
 
 ```
-ESC P = B w c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,k=1 ESC \
+ESC P = F z c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,k=1 ESC \
 ```
 
 | key | meaning |
@@ -125,9 +123,9 @@ ESC P = B w c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_di
 
 Detection procedure for applications:
 
-1. Send the Burrow query **followed by** a primary device attributes request `ESC [ c`.
-2. Read replies. Every terminal answers DA1; a Burrow terminal answers the Burrow query
-   first. If DA1 arrives without a Burrow reply, Burrow is unavailable.
+1. Send the Fuzzball query **followed by** a primary device attributes request `ESC [ c`.
+2. Read replies. Every terminal answers DA1; a Fuzzball terminal answers the Fuzzball query
+   first. If DA1 arrives without a Fuzzball reply, Fuzzball is unavailable.
 
 This needs no timeout and works through multiplexers that forward both.
 
@@ -138,8 +136,8 @@ keys) do not bump it; incompatible changes do. An application requests a version
 ## 5. Replies and errors
 
 ```
-ESC P = B w <subsystem> r ; id=<n>,ok=1[,…] ESC \
-ESC P = B w <subsystem> r ; id=<n>,ok=0,err=<CODE>[,msg=<text>] ESC \
+ESC P = F z <subsystem> r ; id=<n>,ok=1[,…] ESC \
+ESC P = F z <subsystem> r ; id=<n>,ok=0,err=<CODE>[,msg=<text>] ESC \
 ```
 
 Replies are sent **only** when the request carried `id=<n>` (n ≥ 1). `quiet=1` suppresses
@@ -172,16 +170,16 @@ success replies, `quiet=2` suppresses all. `msg` is ASCII without `,;=`, ≤ 80 
 ## 7. Migration and compatibility
 
 - **Kitty keyboard protocol: stays supported as a fallback.** Mouser keeps implementing
-  `CSI > u` / `CSI < u` / `CSI = u` / `CSI ? u` until applications adopt Burrow keyboard
-  mode. If both are requested, Burrow keyboard mode wins while it is active.
+  `CSI > u` / `CSI < u` / `CSI = u` / `CSI ? u` until applications adopt Fuzzball keyboard
+  mode. If both are requested, Fuzzball keyboard mode wins while it is active.
 - **Kitty graphics protocol: replaced.** Mouser's current Kitty graphics support (direct
-  RGB/RGBA/PNG) remains during the transition but is frozen; new work goes into Burrow
+  RGB/RGBA/PNG) remains during the transition but is frozen; new work goes into Fuzzball
   graphics, and Kitty graphics may be removed in a later major version.
-- **Detecting Burrow vs. Kitty.** Applications should query Burrow first (§4). If absent,
+- **Detecting Fuzzball vs. Kitty.** Applications should query Fuzzball first (§4). If absent,
   fall back to Kitty detection (`CSI ? u` for keyboard, `a=q` for graphics), then to legacy.
   `TERM` is not used for detection.
-- **Legacy fallback.** Without Burrow keyboard mode, keys are sent as today (xterm/VT
-  sequences). Without Burrow graphics, applications use their existing paths (sixel,
+- **Legacy fallback.** Without Fuzzball keyboard mode, keys are sent as today (xterm/VT
+  sequences). Without Fuzzball graphics, applications use their existing paths (sixel,
   Kitty, or text).
 
 ## 8. Conformance test suite (plan)
@@ -196,12 +194,12 @@ A language-neutral suite in `tests/protocol/` of the Mouser repository:
    state.
 4. **Keyboard tests**: synthetic key events (physical code, logical key, modifiers, text,
    IME phase) → expected bytes.
-5. A small runner (`burrow-conformance`) that drives a terminal through a PTY and reports
+5. A small runner (`fuzzball-conformance`) that drives a terminal through a PTY and reports
    pass/fail per fixture, so other terminals can test themselves.
 
 ## 9. Reference libraries (plan)
 
-- `burrow` (Rust): encoder/decoder for all messages, chunking, base64/raw choice,
+- `fuzzball` (Rust): encoder/decoder for all messages, chunking, base64/raw choice,
   detection helper, tmux/screen wrapping. Used by Mouser itself.
 - A C header-only encoder and a Python module for applications, generated from the same
   message tables.
@@ -209,13 +207,12 @@ A language-neutral suite in `tests/protocol/` of the Mouser repository:
 
 ## 10. Open questions
 
-1. Name: Burrow, Warren or MTP?
-2. DCS vs APC framing: DCS passes through tmux/screen today; is any common terminal or
+1. DCS vs APC framing: DCS passes through tmux/screen today; is any common terminal or
    multiplexer known to mangle DCS strings with `=` as the private marker?
-3. Should `enc=raw` ever be allowed through multiplexers if they start declaring binary
+2. Should `enc=raw` ever be allowed through multiplexers if they start declaring binary
    transparency?
-4. Animation: out of scope for v0, or a minimal frame-list verb?
-5. Unicode placeholder cells (for programs that only output text) — needed for v1?
-6. Should the keyboard mode report key events for Mouser's own reserved shortcuts?
-7. Do we need a "virtual placement" concept for multiplexers that render panes themselves?
-8. Colour management: assume sRGB for all uploads, or add an optional `cs=` param?
+3. Animation: out of scope for v0, or a minimal frame-list verb?
+4. Unicode placeholder cells (for programs that only output text) — needed for v1?
+5. Should the keyboard mode report key events for Mouser's own reserved shortcuts?
+6. Do we need a "virtual placement" concept for multiplexers that render panes themselves?
+7. Colour management: assume sRGB for all uploads, or add an optional `cs=` param?
