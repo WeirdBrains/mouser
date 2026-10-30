@@ -334,6 +334,9 @@ fn main() -> Result<()> {
             while let Ok(bytes) = rx.recv() {
                 parser.lock().unwrap().feed(&bytes);
                 sb.maybe_compress_idle();
+                if rx.is_empty() {
+                    wake();
+                }
             }
         }
     });
@@ -369,6 +372,7 @@ fn main() -> Result<()> {
                         pump_pty(&mut reader, &tx);
                         // EOF / EIO: the shell exited (Ctrl+D, `exit`, ...).
                         shell_exited.store(true, std::sync::atomic::Ordering::SeqCst);
+                        wake();
                     });
                     *writer.0.lock().unwrap() = Some(handles.writer);
                     *child.lock().unwrap() = Some(handles.child);
@@ -512,6 +516,9 @@ fn main() -> Result<()> {
         get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
+        set_waker: Some(Arc::new(|w| {
+            let _ = WAKER.set(w);
+        })),
         should_exit: Some({
             let shell_exited = shell_exited.clone();
             Arc::new(move || shell_exited.load(std::sync::atomic::Ordering::SeqCst))
@@ -547,6 +554,24 @@ fn main() -> Result<()> {
 fn startup_sidebar(env: Option<&str>) -> (bool, bool) {
     let open = env.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "no"));
     (true, !open)
+}
+
+static WAKER: std::sync::OnceLock<mouser_render::Waker> = std::sync::OnceLock::new();
+
+/// Ask the renderer for a redraw (from any thread). The event loop sleeps until
+/// something calls this or a window event arrives.
+pub(crate) fn wake() {
+    if let Some(w) = WAKER.get() {
+        w();
+    }
+}
+
+/// Wake the renderer after `delay` (e.g. when a status message expires).
+pub(crate) fn wake_after(delay: std::time::Duration) {
+    std::thread::spawn(move || {
+        std::thread::sleep(delay);
+        wake();
+    });
 }
 
 /// Forward PTY output to `tx` until EOF or a read error (EIO on Linux once the
