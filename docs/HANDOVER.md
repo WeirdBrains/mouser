@@ -17,14 +17,13 @@ at the repo root (gitignored; ask the maintainer if you don't have it).
 | Event-driven redraws | `ControlFlow::Wait` + `EventLoopProxy`, glyph cache; ~0% idle CPU | Watch `top` while idle |
 | GPU renderer | wgpu glyph atlas drawn as instanced quads; `MOUSER_RENDERER=cpu` forces the softbuffer fallback | Run both ways and compare |
 | Font picker | Click the font field to list installed families alphabetically; typing fuzzy-filters | Appearance panel |
-| Kitty keyboard | Progressive enhancement (`CSI > flags u`) | `kitten show-key -m kitty` |
-| Kitty graphics | Direct RGB/RGBA/PNG on both renderers | `kitten icat image.png` |
-| Fuzzball | Mouser's own graphics + keyboard protocol (DCS, tag `Fz`). Spec only, in `docs/protocol/` | Read the spec |
+| Kitty keyboard | Only Kitty protocol; fallback behind Fuzzball keyboard. Matrix in `docs/kitty-compliance.md` | `kitten show-key -m kitty` |
+| Fuzzball | v0.1: graphics (upload/place/delete/query) + keyboard mode, `crates/mouser-core/src/fuzzball.rs` | `tools/fuzzball-demo.py` inside Mouser |
 | xterm / ECMA-48 | SGR (truecolour, curly/coloured underline), wide chars, tab stops, modes, DA/DSR, mouse, focus, bracketed paste, OSC titles, OSC 8 links (Ctrl+click), OSC 52, window reports 11/13/20/21t | `cargo test --workspace` + manual |
 | vttest fixes | DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1 | Run `vttest` inside Mouser |
 | terminfo | `tic -x -o ~/.terminfo extra/mouser.terminfo`, then `TERM=mouser` | `infocmp mouser` |
 
-Not yet verified live: Kitty keyboard in a real app, connection click opening a
+Not yet verified live: Kitty keyboard and Fuzzball key events in a real app (Fuzzball images verified), connection click opening a
 tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
 
 ## Known bugs
@@ -36,10 +35,11 @@ DECSLRM · colour emoji · real italic face (synthetic now) · visible blink ·
 DECCOLM 132-column · G2/G3/national charsets · protected areas · ENQ answerback ·
 OSC 133 UI.
 
-## Fuzzball spec open questions
-DCS vs APC · raw binary through multiplexers · animation · Unicode placeholders ·
-whether to report Mouser's reserved shortcuts · virtual placements · colour space.
-Direction: replace Kitty graphics; keep Kitty keyboard as a fallback.
+## Fuzzball
+Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. Kitty graphics, OSC 1337
+and xterm-kitty were removed; Kitty keyboard is the only fallback.
+Not yet done: placement removal when rows leave scrollback, reflow movement, IME events,
+lock-key state, upload timeout only checked on the next chunk.
 
 ## Website
 - Lives on the `site` branch in `site/` (plain HTML/CSS/JS).
@@ -64,8 +64,8 @@ Releases happen only with the maintainer's explicit approval.
 - Tests use `MOUSER_SSH_CONFIG` and a temp `HOME`, never the real `~/.ssh`.
 
 ## Suggested next steps
-1. Live-verify Kitty keyboard, connection-click tabs, vttest menu 5, LNM.
+1. Live-verify Kitty keyboard and Fuzzball key events, connection-click tabs, vttest menu 5, LNM.
 2. Confirm website claims, retake the screenshot, publish the site.
 3. Cut the next release once approved.
-4. Resolve Fuzzball open questions, then implement it.
+4. Finish the Fuzzball gaps listed above.
 5. Work through the known gaps.

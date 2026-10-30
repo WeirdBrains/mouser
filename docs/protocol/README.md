@@ -1,6 +1,8 @@
-# Fuzzball terminal protocol — draft v0
+# Fuzzball terminal protocol — v0.1 (implementable draft)
 
-> **Status: DRAFT v0.** Not stable. Wire formats may change incompatibly before v1.
+> **Status: v0.1, implementable draft.** Implemented in Mouser (`crates/mouser-core/src/fuzzball.rs`).
+> The wire version is still `v=0`: formats may change incompatibly before v1, but v0.1 is
+> complete enough to build clients against. Decisions are recorded in §10.
 > Name: **Fuzzball**. On the wire it appears only as the two-byte family tag `Fz`.
 
 Fuzzball is a small family of terminal extensions, implemented first in Mouser, meant to
@@ -169,18 +171,15 @@ success replies, `quiet=2` suppresses all. `msg` is ASCII without `,;=`, ≤ 80 
 
 ## 7. Migration and compatibility
 
-- **Kitty keyboard protocol: stays supported as a fallback.** Mouser keeps implementing
-  `CSI > u` / `CSI < u` / `CSI = u` / `CSI ? u` until applications adopt Fuzzball keyboard
-  mode. If both are requested, Fuzzball keyboard mode wins while it is active.
-- **Kitty graphics protocol: replaced.** Mouser's current Kitty graphics support (direct
-  RGB/RGBA/PNG) remains during the transition but is frozen; new work goes into Fuzzball
-  graphics, and Kitty graphics may be removed in a later major version.
-- **Detecting Fuzzball vs. Kitty.** Applications should query Fuzzball first (§4). If absent,
-  fall back to Kitty detection (`CSI ? u` for keyboard, `a=q` for graphics), then to legacy.
-  `TERM` is not used for detection.
-- **Legacy fallback.** Without Fuzzball keyboard mode, keys are sent as today (xterm/VT
-  sequences). Without Fuzzball graphics, applications use their existing paths (sixel,
-  Kitty, or text).
+- **Kitty keyboard protocol: the only fallback.** Mouser implements the Kitty keyboard
+  protocol (`CSI > u` / `CSI < u` / `CSI = u` / `CSI ? u`) for applications that have not
+  adopted Fuzzball. If both are active, Fuzzball keyboard mode wins.
+- **No other Kitty protocols.** Kitty graphics, iTerm2 `OSC 1337` images and the
+  `xterm-kitty` TERM fallback are not supported; images are Fuzzball graphics only.
+- **Detection.** Query Fuzzball first (§4). If absent, use `CSI ? u` for Kitty keyboard,
+  then legacy. `TERM` is not used for detection.
+- **Legacy fallback.** Without Fuzzball or Kitty keyboard mode, keys are sent as xterm/VT
+  sequences.
 
 ## 8. Conformance test suite (plan)
 
@@ -205,14 +204,27 @@ A language-neutral suite in `tests/protocol/` of the Mouser repository:
   message tables.
 - All libraries ship the conformance fixtures as their own tests.
 
-## 10. Open questions
+## 10. Decisions (v0.1)
 
-1. DCS vs APC framing: DCS passes through tmux/screen today; is any common terminal or
-   multiplexer known to mangle DCS strings with `=` as the private marker?
-2. Should `enc=raw` ever be allowed through multiplexers if they start declaring binary
-   transparency?
-3. Animation: out of scope for v0, or a minimal frame-list verb?
-4. Unicode placeholder cells (for programs that only output text) — needed for v1?
-5. Should the keyboard mode report key events for Mouser's own reserved shortcuts?
-6. Do we need a "virtual placement" concept for multiplexers that render panes themselves?
-7. Colour management: assume sRGB for all uploads, or add an optional `cs=` param?
+The v0 open questions, resolved:
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 1 | DCS vs APC framing | **DCS with `=` private marker** (`ESC P = F z …`). | tmux (`allow-passthrough`) and screen pass DCS through; APC is dropped by several multiplexers. No known terminal mangles `=`. |
+| 2 | `enc=raw` through multiplexers | **Not allowed.** Terminals advertise `raw=0` unless directly attached and binary-safe; Mouser v0.1 always reports `raw=0` and answers `enc=raw` with `EPERM`. | Raw bytes can contain `ESC \` and break passthrough wrapping; base64 is always safe. |
+| 3 | Animation | **Deferred** past v1. | Keeps the image model static and simple; apps can re-upload frames. |
+| 4 | Unicode placeholder cells | **Deferred.** | Only needed for text-only pipelines; adds a large grid dependency. |
+| 5 | Report Mouser's reserved shortcuts? | **No.** Keys the terminal consumes (tab/split hotkeys, UI) are never reported. | Predictable ownership; matches every other terminal. |
+| 6 | Virtual placements | **Deferred.** | No multiplexer renders Fuzzball yet; can be added as a new verb without breaking v0. |
+| 7 | Colour management | **sRGB assumed.** `cs=` is reserved: `cs=srgb` is accepted, anything else is `ENOTSUP`. | Forward-compatible hook without implementing colour management. |
+| 8 | Version | **`v=0`** for the v0.1 draft. | Wire format may still change; `v=1` will mean stable. |
+| 9 | IME and releases | Mouser reports `k_ime=0` (no pre-edit events yet) and `k_release=1`. | winit IME events are not wired through yet. |
+
+Limits Mouser advertises: `max_chunk=65536`, `g_mem=335544320` (320 MiB, least-recently-placed
+unplaced images evicted first), `g_max_dim=10000`, `g_max_place=4096`, `g_fmt=rgba:rgb:png`.
+Uploads abandoned for more than 10 s are discarded when the next chunk arrives.
+
+Not yet implemented in Mouser: removing placements when their rows leave the scrollback,
+moving placements on reflow, IME events, lock-key state (`locks` is always 0).
+
+A demo client is in `tools/fuzzball-demo.py`.

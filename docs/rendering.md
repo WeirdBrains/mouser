@@ -16,7 +16,7 @@ Cells
   line up and underscores/descenders sit below the text.
 
 Terminal
-- The shell is `$SHELL -l`, started at the window's real grid size, with `TERM=xterm-kitty`
+- The shell is `$SHELL -l`, started at the window's real grid size, with `TERM=mouser`
   when that terminfo entry exists and `xterm-256color` otherwise.
 - Supported: deferred autowrap, cursor movement/positioning, erase, insert/delete,
   scroll regions, alternate screen, cursor reports. Colours (SGR) are not drawn yet.

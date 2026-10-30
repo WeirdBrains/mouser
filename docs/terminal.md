@@ -28,7 +28,7 @@ Not yet: DECSLRM (left/right margins), DECCOLM 132-column switching, double-size
 
 ## TERM and terminfo
 
-Mouser sets `COLORTERM=truecolor` and picks `TERM` in this order: `xterm-kitty` (if its terminfo is installed), `mouser`, then `xterm-256color`.
+Mouser sets `COLORTERM=truecolor` and picks `TERM` in this order: `mouser` (if its terminfo is installed), then `xterm-256color`.
 
 To install Mouser's own entry for your user (styled underlines, truecolor, synchronized output, bracketed paste and focus capabilities):
 
