@@ -68,8 +68,11 @@ impl FontStack {
     /// The configured or best available system monospace font, then fallbacks,
     /// then the embedded font.
     pub fn system(family: Option<&str>, size: f32) -> Self {
-        let mut db = fontdb::Database::new();
-        db.load_system_fonts();
+        Self::from_db(&system_db(), family, size)
+    }
+
+    /// Same as [`FontStack::system`] with an already loaded font database.
+    pub fn from_db(db: &fontdb::Database, family: Option<&str>, size: f32) -> Self {
         let mut fonts = Vec::new();
         let mut loaded = Vec::new();
         let mut load = |name: &str, want_mono: bool, fonts: &mut Vec<Font>| {
@@ -125,6 +128,11 @@ impl FontStack {
         Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new() }
     }
 
+    /// The same fonts at another pixel size.
+    pub fn resized(&self, size: f32) -> Self {
+        Self::from_fonts(self.fonts.clone(), size)
+    }
+
     pub fn font_count(&self) -> usize {
         self.fonts.len()
     }
@@ -139,6 +147,13 @@ impl FontStack {
             Glyph { metrics, bitmap }
         })
     }
+}
+
+/// System font database (slow to build; load once and reuse).
+pub fn system_db() -> fontdb::Database {
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+    db
 }
 
 /// A mutable 0x00RRGGBB pixel buffer.

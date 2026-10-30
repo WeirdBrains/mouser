@@ -27,6 +27,18 @@ Built-in themes (dark/light variants):
 - Kanagawa
 - GitHub
 
+Switching
+- Sidebar → **Appearance**, or `:theme`, opens the switcher: built-in themes first, then user themes
+  found in `~/.mouser/themes/`, plus dark/light/system mode. Moving the selection previews live;
+  Apply saves `theme`/`mode` to `preferences.toml`. `:theme <name>` and `:mode <m>` do the same directly.
+
+Editing
+- **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
+  background, cursor, accent and the 16-colour palette as hex (`#rrggbb` or `#rgb`) with swatches,
+  plus font family and size. Valid edits preview live; invalid fields are outlined in red.
+- Save writes `~/.mouser/themes/<Theme>/<variant>.toml` and the font to `preferences.toml`.
+- Theme files may contain `cursor`, `accent` and `palette = [16 colours]`; all are optional.
+
 Accuracy
 - Palettes are sourced from each theme’s canonical definitions (foreground/background primaries).
 

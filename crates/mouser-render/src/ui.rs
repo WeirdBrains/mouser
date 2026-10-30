@@ -48,6 +48,226 @@ pub struct UiLayout {
     pub collapse_rect: Rect,
     /// Drag handle on the sidebar's left edge (empty when collapsed).
     pub resize_rect: Rect,
+    /// "Appearance" button at the bottom of the expanded sidebar.
+    pub appearance_rect: Rect,
+    /// Floating panel (theme switcher / editor), drawn above everything.
+    pub panel: Option<Panel>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelStyle {
+    Title,
+    Label,
+    Hint,
+    Error,
+    /// Selectable list row.
+    Row {
+        selected: bool,
+    },
+    Button {
+        primary: bool,
+    },
+    /// Text input; `valid` false draws it in the error colour.
+    Field {
+        focused: bool,
+        valid: bool,
+    },
+    /// Colour sample.
+    Swatch(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PanelItem {
+    pub rect: Rect,
+    pub text: String,
+    pub style: PanelStyle,
+    pub action: UiAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Panel {
+    pub rect: Rect,
+    pub items: Vec<PanelItem>,
+}
+
+pub const APPEARANCE_LABEL: &str = "Appearance";
+
+/// Data for [`editor_panel`]: one entry per field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditorFieldView {
+    pub label: String,
+    pub value: String,
+    pub valid: bool,
+    pub swatch: Option<u32>,
+}
+
+fn centered(vp_w: i32, vp_h: i32, w: i32, h: i32) -> Rect {
+    let w = w.min(vp_w - 16).max(0);
+    let h = h.min(vp_h - 16).max(0);
+    Rect { x: (vp_w - w) / 2, y: (vp_h - h) / 2, w, h }
+}
+
+/// Theme switcher: theme list, mode buttons, actions.
+pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[String], selected: usize, mode: &str) -> Panel {
+    let row_h = cell_h + 6;
+    let pad = 14;
+    let w = cell_w * 46 + 2 * pad;
+    // Fit as many rows as the window allows (at least 3).
+    let chrome = 6 * row_h + 2 * pad;
+    let max_rows = (((vp_h - 16 - chrome) / row_h).max(3)) as usize;
+    let visible = themes.len().min(max_rows).min(14);
+    let h = chrome + visible as i32 * row_h;
+    let rect = centered(vp_w, vp_h, w, h);
+    let x = rect.x + pad;
+    let inner_w = rect.w - 2 * pad;
+    let mut y = rect.y + pad;
+    let mut items =
+        vec![PanelItem { rect: Rect { x, y, w: inner_w, h: row_h }, text: "Theme".into(), style: PanelStyle::Title, action: UiAction::None }];
+    y += row_h + 4;
+    let first = selected.saturating_sub(visible.saturating_sub(1)).min(themes.len().saturating_sub(visible));
+    for (i, name) in themes.iter().enumerate().skip(first).take(visible) {
+        items.push(PanelItem {
+            rect: Rect { x, y, w: inner_w, h: row_h },
+            text: name.clone(),
+            style: PanelStyle::Row { selected: i == selected },
+            action: UiAction::PickTheme(i),
+        });
+        y += row_h;
+    }
+    y += 8;
+    items.push(PanelItem { rect: Rect { x, y, w: cell_w * 6, h: row_h }, text: "Mode".into(), style: PanelStyle::Label, action: UiAction::None });
+    let mut bx = x + cell_w * 6;
+    for m in ["dark", "light", "system"] {
+        let bw = cell_w * m.len() as i32 + 2 * BUTTON_PAD;
+        items.push(PanelItem {
+            rect: Rect { x: bx, y, w: bw, h: row_h },
+            text: m.into(),
+            style: PanelStyle::Row { selected: m == mode },
+            action: UiAction::SetMode(m.to_string()),
+        });
+        bx += bw + 6;
+    }
+    y += row_h + 12;
+    let mut bx = x;
+    for (label, act, primary) in
+        [("Apply", UiAction::SavePanel, true), ("Edit colours & font", UiAction::EditTheme, false), ("Cancel", UiAction::ClosePanel, false)]
+    {
+        let bw = cell_w * label.chars().count() as i32 + 2 * BUTTON_PAD;
+        items.push(PanelItem { rect: Rect { x: bx, y, w: bw, h: row_h }, text: label.into(), style: PanelStyle::Button { primary }, action: act });
+        bx += bw + 8;
+    }
+    y += row_h + 6;
+    items.push(PanelItem {
+        rect: Rect { x, y, w: inner_w, h: row_h },
+        text: "↑↓ theme  ←→ mode  e edit  Enter apply  Esc cancel".into(),
+        style: PanelStyle::Hint,
+        action: UiAction::None,
+    });
+    Panel { rect, items }
+}
+
+/// Theme/font editor. `fields` follow the editor order: foreground,
+/// background, cursor, accent, 16 palette entries, font family, font size.
+#[allow(clippy::too_many_arguments)]
+pub fn editor_panel(
+    vp_w: i32,
+    vp_h: i32,
+    cell_w: i32,
+    cell_h: i32,
+    title: &str,
+    fields: &[EditorFieldView],
+    focus: usize,
+    error: Option<&str>,
+) -> Panel {
+    let row_h = cell_h + 8;
+    let pad = 14;
+    let gap = cell_w * 2;
+    let main_label = cell_w * 12;
+    let main_field = cell_w * 20;
+    let swatch = cell_w * 2;
+    let pal_label = cell_w * 3;
+    let pal_field = cell_w * 8;
+    let main_w = main_label + main_field + 6 + swatch;
+    let pal_w = pal_label + pal_field + 6 + swatch;
+    let w = 2 * pad + main_w + gap + 2 * pal_w + gap;
+    let h = 2 * pad + row_h * 12;
+    let rect = centered(vp_w, vp_h, w, h);
+    let (x0, y0) = (rect.x + pad, rect.y + pad);
+    let mut items = vec![PanelItem {
+        rect: Rect { x: x0, y: y0, w: rect.w - 2 * pad, h: row_h },
+        text: title.to_string(),
+        style: PanelStyle::Title,
+        action: UiAction::None,
+    }];
+    let top = y0 + row_h + 6;
+    let add_field = |i: usize, x: i32, y: i32, lw: i32, fw: i32, items: &mut Vec<PanelItem>| {
+        let Some(f) = fields.get(i) else { return };
+        items.push(PanelItem {
+            rect: Rect { x, y, w: lw, h: row_h },
+            text: f.label.clone(),
+            style: PanelStyle::Label,
+            action: UiAction::FocusField(i),
+        });
+        items.push(PanelItem {
+            rect: Rect { x: x + lw, y, w: fw, h: row_h - 4 },
+            text: f.value.clone(),
+            style: PanelStyle::Field { focused: i == focus, valid: f.valid },
+            action: UiAction::FocusField(i),
+        });
+        if let Some(c) = f.swatch {
+            items.push(PanelItem {
+                rect: Rect { x: x + lw + fw + 6, y: y + 2, w: swatch, h: row_h - 8 },
+                text: String::new(),
+                style: PanelStyle::Swatch(c),
+                action: UiAction::FocusField(i),
+            });
+        }
+    };
+    // Main column: colours then font.
+    for (row, i) in [0usize, 1, 2, 3, 20, 21].into_iter().enumerate() {
+        let extra = if row >= 4 { row_h / 2 } else { 0 };
+        add_field(i, x0, top + row as i32 * row_h + extra, main_label, main_field, &mut items);
+    }
+    // Palette: two columns of eight.
+    let px = x0 + main_w + gap;
+    items.push(PanelItem {
+        rect: Rect { x: px, y: y0, w: 2 * pal_w, h: row_h },
+        text: "Palette".into(),
+        style: PanelStyle::Label,
+        action: UiAction::None,
+    });
+    for k in 0..16usize {
+        let (col, row) = (k / 8, k % 8);
+        add_field(4 + k, px + col as i32 * (pal_w + gap / 2), top + row as i32 * row_h, pal_label, pal_field, &mut items);
+    }
+    let by = top + 8 * row_h + 10;
+    if let Some(e) = error {
+        items.push(PanelItem {
+            rect: Rect { x: x0, y: by, w: rect.w - 2 * pad, h: row_h },
+            text: e.to_string(),
+            style: PanelStyle::Error,
+            action: UiAction::None,
+        });
+    }
+    let by = by + row_h;
+    let mut bx = x0;
+    for (label, act, primary) in [("Save", UiAction::SavePanel, true), ("Cancel", UiAction::ClosePanel, false)] {
+        let bw = cell_w * label.len() as i32 + 2 * BUTTON_PAD;
+        items.push(PanelItem {
+            rect: Rect { x: bx, y: by, w: bw, h: row_h },
+            text: label.into(),
+            style: PanelStyle::Button { primary },
+            action: act,
+        });
+        bx += bw + 8;
+    }
+    items.push(PanelItem {
+        rect: Rect { x: bx + 12, y: by, w: rect.x + rect.w - pad - bx - 12, h: row_h },
+        text: "Tab next  Ctrl+S save  Esc cancel".into(),
+        style: PanelStyle::Hint,
+        action: UiAction::None,
+    });
+    Panel { rect, items }
 }
 
 #[derive(Debug, Clone)]
@@ -84,6 +304,16 @@ pub enum UiAction {
     ResizeSidebar(i32),
     /// Drag finished; persist the current width.
     ResizeSidebarDone,
+    OpenAppearance,
+    PickTheme(usize),
+    /// "dark", "light" or "system".
+    SetMode(String),
+    EditTheme,
+    FocusField(usize),
+    SavePanel,
+    ClosePanel,
+    /// Ctrl+= (+1), Ctrl+- (-1), Ctrl+0 (0 = reset).
+    FontSize(i8),
     None,
 }
 
@@ -122,7 +352,7 @@ pub const RESIZE_GRIP: i32 = 4;
 
 /// Whether (`px`, `py`) is on the sidebar's draggable left edge.
 pub fn on_resize_edge(layout: &UiLayout, px: i32, py: i32) -> bool {
-    layout.modal.is_none() && layout.resize_rect.contains(px, py)
+    layout.modal.is_none() && layout.panel.is_none() && layout.resize_rect.contains(px, py)
 }
 
 pub fn build_sidebar_layout(
@@ -181,6 +411,8 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             collapsed: true,
             collapse_rect: sidebar_rect,
             resize_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
+            appearance_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
+            panel: None,
         };
     }
     let sidebar_w = match requested_width {
@@ -215,7 +447,25 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
         y += 10;
         cats.push(UiCategory { category: cat, header_rect, add_rect, items });
     }
-    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect }
+    let ap_w = button_w(APPEARANCE_LABEL);
+    let appearance_rect = Rect { x: inner_x, y: (height_px - SIDEBAR_MARGIN - line_h).max(y), w: ap_w.min(inner_right - inner_x), h: line_h };
+    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect, appearance_rect, panel: None }
+}
+
+/// Layout with no sidebar (zero width at the right edge), e.g. to show a panel
+/// while the sidebar is closed.
+pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
+    let empty = Rect { x: width_px, y: 0, w: 0, h: 0 };
+    UiLayout {
+        sidebar_rect: Rect { x: width_px, y: 0, w: 0, h: height_px },
+        categories: Vec::new(),
+        modal: None,
+        collapsed: false,
+        collapse_rect: empty,
+        resize_rect: empty,
+        appearance_rect: empty,
+        panel: None,
+    }
 }
 
 pub fn category_title(c: &Category) -> &'static str {
@@ -228,6 +478,18 @@ pub fn category_title(c: &Category) -> &'static str {
 }
 
 pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
+    if let Some(panel) = &layout.panel {
+        if !panel.rect.contains(px, py) {
+            return UiAction::ClosePanel;
+        }
+        return panel
+            .items
+            .iter()
+            .rev()
+            .find(|i| i.action != UiAction::None && i.rect.contains(px, py))
+            .map(|i| i.action.clone())
+            .unwrap_or(UiAction::None);
+    }
     if let Some(modal) = &layout.modal {
         // Modal consumes clicks
         if modal.rect.contains(px, py) {
@@ -241,6 +503,9 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     }
     if layout.collapse_rect.contains(px, py) {
         return UiAction::ToggleCollapse;
+    }
+    if layout.appearance_rect.contains(px, py) {
+        return UiAction::OpenAppearance;
     }
     for cat in &layout.categories {
         if cat.add_rect.contains(px, py) {

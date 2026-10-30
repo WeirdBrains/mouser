@@ -15,7 +15,11 @@ fn render(text: &str, fonts: &mut FontStack) -> (Vec<u32>, usize, usize) {
     let mut buf = vec![0u32; w * h];
     let lines = vec![text.to_string()];
     let mut canvas = Canvas::new(&mut buf, w, h);
-    render_frame(&mut canvas, fonts, &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: None, status: None });
+    render_frame(
+        &mut canvas,
+        fonts,
+        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: None, status: None, accent: None, cursor_color: None },
+    );
     (buf, w, h)
 }
 
@@ -156,7 +160,11 @@ fn sidebar_labels_are_clean_and_buttons_fit() {
     let mut buf = vec![0u32; w * h];
     let lines: Vec<String> = vec![];
     let mut canvas = Canvas::new(&mut buf, w, h);
-    render_frame(&mut canvas, &mut fonts, &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: Some(&layout), status: None });
+    render_frame(
+        &mut canvas,
+        &mut fonts,
+        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: Some(&layout), status: None, accent: None, cursor_color: None },
+    );
     // No pixel inside the sidebar may show the terminal background (the old
     // renderer blended labels against it, leaving blocks around each glyph).
     for y in s.y as usize..(s.y + s.h) as usize {

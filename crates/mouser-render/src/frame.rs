@@ -16,6 +16,10 @@ pub struct Frame<'a> {
     pub ui: Option<&'a UiLayout>,
     /// Bottom status / command line.
     pub status: Option<&'a str>,
+    /// Theme accent (sidebar buttons, highlights); derived from `bg` if `None`.
+    pub accent: Option<u32>,
+    /// Cursor colour; derived from `fg` if `None`.
+    pub cursor_color: Option<u32>,
 }
 
 /// Grid size that fits a `width` x `height` pixel area.
@@ -40,20 +44,21 @@ pub fn render_frame(canvas: &mut Canvas, fonts: &mut FontStack, frame: &Frame) {
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = PADDING + cy as i32 * ch;
-        canvas.fill_rect(x, y, cw, ch, mix(frame.bg, frame.fg, 0.85));
+        canvas.fill_rect(x, y, cw, ch, frame.cursor_color.unwrap_or(mix(frame.bg, frame.fg, 0.85)));
         if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)) {
             canvas.draw_char(fonts, x, y, c, frame.bg);
         }
     }
     if let Some(layout) = frame.ui {
-        draw_ui(canvas, fonts, layout, frame.bg, frame.fg);
+        let accent = frame.accent.unwrap_or(accent_for(frame.bg));
+        draw_ui(canvas, fonts, layout, frame.bg, frame.fg, accent);
     }
     if let Some(status) = frame.status {
         let h = ch + 8;
         let y = canvas.height as i32 - h;
         let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width as i32);
         canvas.fill_rect(0, y, w, h, mix(frame.bg, frame.fg, 0.12));
-        canvas.fill_rect(0, y, w, 1, accent_for(frame.bg));
+        canvas.fill_rect(0, y, w, 1, frame.accent.unwrap_or(accent_for(frame.bg)));
         canvas.draw_text(fonts, PADDING, y + 4, status, frame.fg);
     }
 }
@@ -64,12 +69,77 @@ fn draw_button(canvas: &mut Canvas, fonts: &mut FontStack, r: ui::Rect, label: &
     canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, top, label, text);
 }
 
-fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u32, fg: u32) {
+fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u32, fg: u32, accent: u32) {
     let dark = luminance(bg) < 128.0;
     let panel = if dark { mix(bg, 0xFFFFFF, 0.05) } else { mix(bg, 0x000000, 0.04) };
     let border = mix(bg, fg, 0.25);
     let muted = mix(panel, fg, 0.65);
-    let accent = accent_for(bg);
+    let s = layout.sidebar_rect;
+    if s.w > 0 {
+        draw_sidebar(canvas, fonts, layout, fg, panel, border, muted, accent);
+    }
+    if let Some(p) = &layout.panel {
+        draw_panel(canvas, fonts, p, bg, fg, panel, border, muted, accent);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_panel(canvas: &mut Canvas, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
+    let r = p.rect;
+    canvas.fill_rect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, border);
+    canvas.fill_rect(r.x, r.y, r.w, r.h, panel);
+    canvas.fill_rect(r.x, r.y, r.w, 2, accent);
+    let ch = fonts.cell_h;
+    for it in &p.items {
+        let b = it.rect;
+        let ty = b.y + (b.h - ch) / 2;
+        let max = (b.w / fonts.cell_w).max(0) as usize;
+        let clip = |t: &str, n: usize| -> String { t.chars().take(n).collect() };
+        match it.style {
+            ui::PanelStyle::Title => canvas.draw_text(fonts, b.x, ty, &clip(&it.text, max), fg),
+            ui::PanelStyle::Label => canvas.draw_text(fonts, b.x, ty, &clip(&it.text, max), muted),
+            ui::PanelStyle::Hint => canvas.draw_text(fonts, b.x, ty, &clip(&it.text, max), mix(panel, fg, 0.45)),
+            ui::PanelStyle::Error => canvas.draw_text(fonts, b.x, ty, &clip(&it.text, max), 0xF7768E),
+            ui::PanelStyle::Row { selected } => {
+                if selected {
+                    canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.22));
+                    canvas.fill_rect(b.x, b.y, 3, b.h, accent);
+                }
+                canvas.draw_text(fonts, b.x + ui::BUTTON_PAD, ty, &clip(&it.text, max.saturating_sub(1)), if selected { fg } else { muted });
+            }
+            ui::PanelStyle::Button { primary } => {
+                let (fill, text) = if primary { (accent, bg) } else { (mix(panel, fg, 0.1), fg) };
+                draw_button(canvas, fonts, b, &it.text, fill, text);
+            }
+            ui::PanelStyle::Field { focused, valid } => {
+                let edge = if !valid {
+                    0xF7768E
+                } else if focused {
+                    accent
+                } else {
+                    border
+                };
+                canvas.fill_rect(b.x, b.y, b.w, b.h, edge);
+                canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, mix(bg, panel, 0.5));
+                let n = max.saturating_sub(1);
+                let chars: Vec<char> = it.text.chars().collect();
+                let shown: String = chars[chars.len().saturating_sub(n)..].iter().collect();
+                canvas.draw_text(fonts, b.x + 4, ty, &shown, fg);
+                if focused {
+                    let cx = b.x + 4 + shown.chars().count() as i32 * fonts.cell_w;
+                    canvas.fill_rect(cx, b.y + 3, 2, b.h - 6, accent);
+                }
+            }
+            ui::PanelStyle::Swatch(c) => {
+                canvas.fill_rect(b.x, b.y, b.w, b.h, border);
+                canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, c);
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_sidebar(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let s = layout.sidebar_rect;
     canvas.fill_rect(s.x, s.y, s.w, s.h, panel);
     canvas.fill_rect(s.x, s.y, 1, s.h, border);
@@ -84,6 +154,10 @@ fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u3
         let title_y = c.y + (c.h - cell_h) / 2;
         canvas.draw_text(fonts, s.x + ui::SIDEBAR_MARGIN, title_y, ui::SIDEBAR_TITLE, muted);
         draw_button(canvas, fonts, c, ui::COLLAPSE_LABEL, mix(panel, fg, 0.08), accent);
+        let a = layout.appearance_rect;
+        if a.w > 0 {
+            draw_button(canvas, fonts, a, ui::APPEARANCE_LABEL, mix(panel, accent, 0.18), accent);
+        }
     }
     let max_chars = |w: i32, cw: i32| (w / cw).max(0) as usize;
     for cat in &layout.categories {
