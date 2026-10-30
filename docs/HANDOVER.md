@@ -1,5 +1,7 @@
 # Mouser handover notes
 
+Current release: v0.7.1.
+
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`
 at the repo root (gitignored; ask the maintainer if you don't have it).
@@ -26,8 +28,7 @@ Not yet verified live: Kitty keyboard in a real app, connection click opening a
 tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
 
 ## Known bugs
-- Size report says 81 columns on an 80-column grid.
-- Bottom edge of box-drawing characters looks dashed.
+- (Fixed in 0.7.1: dashed box-drawing lines, now drawn procedurally in `crates/mouser-render/src/boxdraw.rs`; the "81 wide" vttest report was the window really being 81 columns, covered by a regression test.)
 - Website install code blocks clip long commands (scroll sideways).
 
 ## Known gaps
@@ -63,9 +64,8 @@ Releases happen only with the maintainer's explicit approval.
 - Tests use `MOUSER_SSH_CONFIG` and a temp `HOME`, never the real `~/.ssh`.
 
 ## Suggested next steps
-1. Fix the 81-column size report and dashed box-drawing line.
-2. Live-verify Kitty keyboard, connection-click tabs, vttest menu 5, LNM.
-3. Confirm website claims, retake the screenshot, publish the site.
-4. Cut the next release once approved.
-5. Resolve Fuzzball open questions, then implement it.
-6. Work through the known gaps.
+1. Live-verify Kitty keyboard, connection-click tabs, vttest menu 5, LNM.
+2. Confirm website claims, retake the screenshot, publish the site.
+3. Cut the next release once approved.
+4. Resolve Fuzzball open questions, then implement it.
+5. Work through the known gaps.
