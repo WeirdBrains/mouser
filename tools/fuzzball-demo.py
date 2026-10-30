@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Fuzzball demo client: negotiate, upload and place an image, then echo
 Fuzzball key events until Ctrl+C or q. Run inside Mouser (or any Fuzzball
-terminal). Usage: tools/fuzzball-demo.py [--no-keys]"""
+terminal). Usage: tools/fuzzball-demo.py [--no-keys]
+Set FUZZBALL_DEMO_LOG=<file> to also append each key event to a file."""
 import base64, os, re, select, sys, termios, tty
 
 ESC = "\x1b"
@@ -22,6 +23,8 @@ def gradient(w, h):
         for x in range(w):
             px += bytes((255 * x // (w - 1), 255 * y // (h - 1), 255 - 255 * x // (w - 1), 255))
     return bytes(px)
+
+LOG = open(os.environ["FUZZBALL_DEMO_LOG"], "a") if os.environ.get("FUZZBALL_DEMO_LOG") else None
 
 def main():
     fd = sys.stdin.fileno()
@@ -57,6 +60,7 @@ def main():
             if not ev: break
             for e in re.findall(r"Fzke;([^\x1b]*)", ev):
                 out(f"  key {e}\r\n")
+                if LOG: LOG.write(e + "\n"); LOG.flush()
                 if "key=U+0071" in e and "t=p" in e and "mods=0" in e: return
     finally:
         out(dcs("ks;on=0"))
