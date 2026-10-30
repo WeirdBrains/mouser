@@ -23,7 +23,7 @@ pub struct Appearance {
     pub default_font_size: f32,
     preview_colors: Option<ThemeColors>,
     preview_font: Option<(f32, Option<String>)>,
-    cache: Option<(Instant, Colors)>,
+    cache: Option<(Instant, ThemeColors)>,
     pub message: Option<(String, Instant)>,
 }
 
@@ -41,13 +41,18 @@ impl Appearance {
     }
 
     pub fn colors(&mut self) -> Colors {
+        to_colors(self.theme_colors())
+    }
+
+    /// Active theme colours including the ANSI palette (preview wins).
+    pub fn theme_colors(&mut self) -> ThemeColors {
         if let Some(c) = self.preview_colors {
-            return to_colors(c);
+            return c;
         }
         match self.cache {
             Some((at, c)) if at.elapsed() < Duration::from_secs(1) => c,
             _ => {
-                let c = to_colors(resolve_active_theme(&load_preferences()).colors());
+                let c = resolve_active_theme(&load_preferences()).colors();
                 self.cache = Some((Instant::now(), c));
                 c
             }

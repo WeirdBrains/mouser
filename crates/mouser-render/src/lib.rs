@@ -16,7 +16,7 @@ pub mod keys;
 pub mod text;
 pub mod ui;
 
-pub use frame::{Frame, ImageDraw, PADDING, grid_size, render_frame};
+pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, render_frame};
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
@@ -29,6 +29,11 @@ pub struct UiViewport {
 }
 
 pub type CursorHook = Arc<dyn Fn() -> Option<(usize, usize)> + Send + Sync>;
+/// `(scrolled_back, rows)` -> (lines, per-cell paint, clamped scrolled_back).
+pub type ViewHook = Arc<dyn Fn(usize, usize) -> (Vec<String>, Vec<Vec<CellPaint>>, usize) + Send + Sync>;
+/// A mouse event over the terminal grid; return true when it was consumed
+/// (reported to the app or a link opened) so the renderer does not scroll.
+pub type MouseHook = Arc<dyn Fn(mouser_core::input::MouseEvent) -> bool + Send + Sync>;
 pub type UiModelHook = Arc<dyn Fn(UiViewport) -> Option<ui::UiLayout> + Send + Sync>;
 
 pub struct RenderHooks {
@@ -39,7 +44,19 @@ pub struct RenderHooks {
     pub on_key_event: Option<KeyEventHook>,
     /// Image placements for the view (`scrolled_back`, rows, cell size in px).
     pub get_images: Option<ImagesHook>,
-    pub on_resize: Arc<dyn Fn(u16, u16) + Send + Sync>,
+    /// (cols, rows, pixel width, pixel height) of the terminal grid.
+    pub on_resize: Arc<dyn Fn(u16, u16, u16, u16) + Send + Sync>,
+    /// Styled view; preferred over `fetch_lines` when set.
+    pub fetch_view: Option<ViewHook>,
+    pub get_cursor_shape: Option<Arc<dyn Fn() -> CursorShape + Send + Sync>>,
+    pub on_mouse: Option<MouseHook>,
+    pub on_focus: Option<Arc<dyn Fn(bool) + Send + Sync>>,
+    /// Ctrl+Shift+V.
+    pub on_paste: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// True while the app holds output (synchronized update, mode 2026).
+    pub hold_frame: Option<ExitHook>,
+    /// Window title (OSC 0/2).
+    pub get_title: Option<StatusHook>,
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> (Vec<String>, usize) + Send + Sync>,
@@ -239,6 +256,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut resize_cursor = false;
     let mut dirty = true;
     let mut last_frame: Option<Instant> = None;
+    let mut mouse_down: Option<mouser_core::input::MouseButton> = None;
+    let mut text_w = width as i32;
+    let mut held_since: Option<Instant> = None;
+    let mut title = String::new();
 
     event_loop.run(|event, elwt| {
         match event {
@@ -262,6 +283,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         (on_act)(ui::UiAction::ResizeSidebar(w));
                         dirty = true;
                     }
+                    if !dragging
+                        && let (Some(on_mouse), Some(hit)) =
+                            (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w))
+                    {
+                        let b = mouse_down.unwrap_or(mouser_core::input::MouseButton::None);
+                        on_mouse(mouse_event(mouser_core::input::MouseKind::Motion, b, hit, modifiers));
+                    }
                     let hover = dragging || last_ui.as_ref().is_some_and(|l| ui::on_resize_edge(l, px, py));
                     if hover != resize_cursor {
                         resize_cursor = hover;
@@ -269,7 +297,14 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         window.set_cursor(icon);
                     }
                 }
-                WindowEvent::MouseInput { state: ElementState::Released, .. } => {
+                WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if !dragging
+                        && let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                    {
+                        on_mouse(mouse_event(mouser_core::input::MouseKind::Release, b, hit, modifiers));
+                    }
+                    mouse_down = None;
                     if dragging {
                         dragging = false;
                         if let Some(on_act) = &hooks.on_ui_action {
@@ -279,7 +314,17 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
-                WindowEvent::MouseInput { state: ElementState::Pressed, .. } => {
+                WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                    if let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                        && last_ui.as_ref().is_none_or(|l| l.panel.is_none())
+                    {
+                        mouse_down = Some(b);
+                        if on_mouse(mouse_event(mouser_core::input::MouseKind::Press, b, hit, modifiers)) {
+                            dirty = true;
+                            return;
+                        }
+                    }
                     if let (Some(on_act), Some(layout), Some(pos)) = (&hooks.on_ui_action, &last_ui, cursor_pos) {
                         if ui::on_resize_edge(layout, pos.x.round() as i32, pos.y.round() as i32) {
                             dragging = true;
@@ -294,6 +339,16 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     dirty = true;
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
+                        return;
+                    }
+                    if key_event.state == ElementState::Pressed
+                        && modifiers.control_key()
+                        && modifiers.shift_key()
+                        && let (Key::Character(c), Some(paste)) = (&key_event.logical_key, &hooks.on_paste)
+                        && c.eq_ignore_ascii_case("v")
+                    {
+                        scrolled_back = 0;
+                        paste();
                         return;
                     }
                     if let Some(on_event) = &hooks.on_key_event {
@@ -323,7 +378,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     painter.resize(width, height);
                     dirty = true;
                 }
-                WindowEvent::RedrawRequested | WindowEvent::Focused(_) | WindowEvent::Occluded(false) => dirty = true,
+                WindowEvent::Focused(f) => {
+                    if let Some(on_focus) = &hooks.on_focus {
+                        on_focus(f);
+                    }
+                    dirty = true;
+                }
+                WindowEvent::RedrawRequested | WindowEvent::Occluded(false) => dirty = true,
                 WindowEvent::MouseWheel { delta, .. } => {
                     let lines = match delta {
                         MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
@@ -336,6 +397,21 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             (on_act)(ui::UiAction::ScrollPanel(-lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32));
                         }
                         return;
+                    }
+                    if let (Some(on_mouse), Some(pos)) = (&hooks.on_mouse, cursor_pos)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w)
+                        && lines != 0
+                        && scrolled_back == 0
+                    {
+                        use mouser_core::input::{MouseButton as B, MouseKind as K};
+                        let b = if lines > 0 { B::WheelUp } else { B::WheelDown };
+                        let mut used = false;
+                        for _ in 0..lines.unsigned_abs().div_ceil(3) {
+                            used |= on_mouse(mouse_event(K::Press, b, hit, modifiers));
+                        }
+                        if used {
+                            return;
+                        }
                     }
                     scrolled_back = scrolled_back.saturating_add_signed(lines);
                 }
@@ -351,6 +427,16 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     elwt.set_control_flow(ControlFlow::Wait);
                     return;
                 }
+                // Synchronized output (2026): hold the old frame until the app
+                // finishes its update, but never longer than 150 ms.
+                if hooks.hold_frame.as_ref().is_some_and(|f| f()) {
+                    let since = *held_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() < Duration::from_millis(150) {
+                        elwt.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(8)));
+                        return;
+                    }
+                }
+                held_since = None;
                 if let Some(at) = last_frame
                     && at.elapsed() < MIN_FRAME
                 {
@@ -381,16 +467,29 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let viewport = UiViewport { width: width as i32, height: height as i32, cell_w: fonts.cell_w, cell_h: fonts.cell_h };
                 let layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
                 // The sidebar takes space from the terminal instead of covering it.
-                let text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
+                text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
                 let new_grid = grid_size(&fonts, text_w, height as i32);
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;
                     renderer.rows = grid.1;
-                    (hooks.on_resize)(grid.0 as u16, grid.1 as u16);
+                    let (pw, ph) = (grid.0 as i32 * fonts.cell_w, grid.1 as i32 * fonts.cell_h);
+                    (hooks.on_resize)(grid.0 as u16, grid.1 as u16, pw.clamp(0, u16::MAX as i32) as u16, ph.clamp(0, u16::MAX as i32) as u16);
                 }
-                let (lines, clamped) = (hooks.fetch_lines)(scrolled_back, renderer.rows);
+                let (lines, styles, clamped) = match &hooks.fetch_view {
+                    Some(f) => f(scrolled_back, renderer.rows),
+                    None => {
+                        let (l, c) = (hooks.fetch_lines)(scrolled_back, renderer.rows);
+                        (l, Vec::new(), c)
+                    }
+                };
                 scrolled_back = clamped;
+                if let Some(t) = hooks.get_title.as_ref().and_then(|f| f())
+                    && t != title
+                {
+                    window.set_title(if t.is_empty() { "Mouser" } else { &t });
+                    title = t;
+                }
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
@@ -407,6 +506,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     accent: colors.accent,
                     cursor_color: colors.cursor,
                     images: &images,
+                    styles: &styles,
+                    cursor_shape: hooks.get_cursor_shape.as_ref().map(|f| f()).unwrap_or_default(),
                 };
                 last_ui = layout.clone();
                 if !painter.paint(&mut fonts, &frame, width, height) {
@@ -417,6 +518,45 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
         }
     })?;
     Ok(())
+}
+
+/// Grid cell and in-grid pixel under a window position, if it is over the terminal.
+pub fn grid_hit(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), text_w: i32) -> Option<(usize, usize, u32, u32)> {
+    let (x, y) = (px as i32 - PADDING, py as i32 - PADDING);
+    if x < 0 || y < 0 || px as i32 >= text_w {
+        return None;
+    }
+    let (c, r) = ((x / cell.0) as usize, (y / cell.1) as usize);
+    (c < grid.0 && r < grid.1).then_some((c, r, x as u32, y as u32))
+}
+
+fn mouse_event(
+    kind: mouser_core::input::MouseKind,
+    button: mouser_core::input::MouseButton,
+    hit: (usize, usize, u32, u32),
+    m: ModifiersState,
+) -> mouser_core::input::MouseEvent {
+    mouser_core::input::MouseEvent {
+        kind,
+        button,
+        col: hit.0,
+        row: hit.1,
+        px: hit.2,
+        py: hit.3,
+        shift: m.shift_key(),
+        alt: m.alt_key(),
+        ctrl: m.control_key(),
+    }
+}
+
+fn winit_button(b: winit::event::MouseButton) -> Option<mouser_core::input::MouseButton> {
+    use mouser_core::input::MouseButton as B;
+    match b {
+        winit::event::MouseButton::Left => Some(B::Left),
+        winit::event::MouseButton::Middle => Some(B::Middle),
+        winit::event::MouseButton::Right => Some(B::Right),
+        _ => None,
+    }
 }
 
 /// Ctrl+= / Ctrl++ (+1), Ctrl+- (-1), Ctrl+0 (reset).
@@ -494,10 +634,32 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
     if seq.is_empty() {
         return None;
     }
+    if let Some(m) = modified_csi(&seq, mods) {
+        return Some(m);
+    }
     if mods.alt_key() && !matches!(key_event.logical_key, Key::Named(NamedKey::Escape)) {
         let mut v = vec![0x1b];
         v.extend(seq);
         return Some(v);
     }
     Some(seq)
+}
+
+/// xterm modifier encoding for cursor/edit/function keys: `CSI A` + Ctrl becomes
+/// `CSI 1;5A`, `CSI 3~` becomes `CSI 3;5~`, `SS3 P` becomes `CSI 1;5P`.
+pub fn modified_csi(seq: &[u8], mods: ModifiersState) -> Option<Vec<u8>> {
+    let m = 1 + u8::from(mods.shift_key()) + 2 * u8::from(mods.alt_key()) + 4 * u8::from(mods.control_key());
+    if m == 1 || seq.first() != Some(&0x1b) || seq.len() < 3 {
+        return None;
+    }
+    let last = *seq.last()?;
+    match (seq[1], last) {
+        (b'[', b'A'..=b'D' | b'H' | b'F') if seq.len() == 3 => Some(format!("\x1b[1;{m}{}", last as char).into_bytes()),
+        (b'O', b'P'..=b'S') if seq.len() == 3 => Some(format!("\x1b[1;{m}{}", last as char).into_bytes()),
+        (b'[', b'~') => {
+            let num = std::str::from_utf8(&seq[2..seq.len() - 1]).ok()?;
+            Some(format!("\x1b[{num};{m}~").into_bytes())
+        }
+        _ => None,
+    }
 }

@@ -22,6 +22,110 @@ pub struct Frame<'a> {
     pub cursor_color: Option<u32>,
     /// Kitty graphics placements, lowest z first.
     pub images: &'a [ImageDraw],
+    /// Per-cell colours and decorations, parallel to `lines` (missing rows or
+    /// cells draw plain in `fg`).
+    pub styles: &'a [Vec<CellPaint>],
+    pub cursor_shape: CursorShape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorShape {
+    #[default]
+    Block,
+    Underline,
+    Bar,
+}
+
+/// Paint flags for [`CellPaint`].
+pub mod paint {
+    pub const BOLD: u8 = 1;
+    pub const STRIKE: u8 = 2;
+    pub const OVERLINE: u8 = 4;
+    /// Glyph is hidden (SGR 8) or the right half of a wide char.
+    pub const NO_GLYPH: u8 = 8;
+    pub const WIDE: u8 = 16;
+}
+
+/// Resolved paint for one cell (colours already themed, inverse/dim applied).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CellPaint {
+    pub fg: u32,
+    /// Background fill, or `None` for the window background.
+    pub bg: Option<u32>,
+    /// 0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed.
+    pub underline: u8,
+    pub ul_color: u32,
+    pub flags: u8,
+    /// Combining marks drawn over the base glyph (`'\0'` = none).
+    pub comb: [char; 2],
+}
+
+impl CellPaint {
+    pub fn plain(fg: u32) -> Self {
+        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 2] }
+    }
+}
+
+fn draw_underline(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, style: u8, color: u32) {
+    match style {
+        2 => {
+            canvas.fill_rect(x, y, w, 1, color);
+            canvas.fill_rect(x, y + 2, w, 1, color);
+        }
+        3 => {
+            // Curly: a 1px zigzag with a 4px period.
+            for i in 0..w {
+                let phase = (x + i).rem_euclid(4);
+                let dy = [0, -1, 0, 1][phase as usize];
+                canvas.fill_rect(x + i, y + 1 + dy, 1, 1, color);
+            }
+        }
+        4 => {
+            for i in (0..w).filter(|i| (x + i) % 2 == 0) {
+                canvas.fill_rect(x + i, y, 1, 1, color);
+            }
+        }
+        5 => {
+            for i in (0..w).filter(|i| (x + i).rem_euclid(6) < 4) {
+                canvas.fill_rect(x + i, y, 1, 1, color);
+            }
+        }
+        _ => canvas.fill_rect(x, y, w, 1, color),
+    }
+}
+
+fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+    let (cw, ch) = (fonts.cell_w, fonts.cell_h);
+    // Backgrounds first so wide glyphs and italics overhang cleanly.
+    for (col, p) in styles.iter().enumerate() {
+        if let Some(bg) = p.bg {
+            canvas.fill_rect(PADDING + col as i32 * cw, top, cw, ch, bg);
+        }
+    }
+    let under_y = top + (fonts.ascent + 2).min(ch - 3);
+    for (col, c) in line.chars().enumerate() {
+        let x = PADDING + col as i32 * cw;
+        let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
+        let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
+        if p.flags & paint::NO_GLYPH == 0 {
+            canvas.draw_char(fonts, x, top, c, p.fg);
+            if p.flags & paint::BOLD != 0 {
+                canvas.draw_char(fonts, x + 1, top, c, p.fg);
+            }
+            for m in p.comb.into_iter().filter(|m| *m != '\0') {
+                canvas.draw_char(fonts, x, top, m, p.fg);
+            }
+        }
+        if p.underline > 0 {
+            draw_underline(canvas, x, under_y, w, p.underline, p.ul_color);
+        }
+        if p.flags & paint::STRIKE != 0 {
+            canvas.fill_rect(x, top + ch / 2, w, 1, p.fg);
+        }
+        if p.flags & paint::OVERLINE != 0 {
+            canvas.fill_rect(x, top, w, 1, p.fg);
+        }
+    }
 }
 
 /// One image placement to draw, anchored to a grid cell.
@@ -72,15 +176,27 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
     draw_images(canvas, fonts, frame.images, true);
     for (row, line) in frame.lines.iter().enumerate() {
         let top = PADDING + row as i32 * ch;
-        canvas.draw_text(fonts, PADDING, top, line, frame.fg);
+        match frame.styles.get(row) {
+            Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, top, line, st, frame.fg),
+            _ => canvas.draw_text(fonts, PADDING, top, line, frame.fg),
+        }
     }
     draw_images(canvas, fonts, frame.images, false);
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = PADDING + cy as i32 * ch;
-        canvas.fill_rect(x, y, cw, ch, frame.cursor_color.unwrap_or(mix(frame.bg, frame.fg, 0.85)));
-        if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)) {
-            canvas.draw_char(fonts, x, y, c, frame.bg);
+        let color = frame.cursor_color.unwrap_or(mix(frame.bg, frame.fg, 0.85));
+        let wide = frame.styles.get(cy).and_then(|r| r.get(cx)).is_some_and(|p| p.flags & paint::WIDE != 0);
+        let w = if wide { 2 * cw } else { cw };
+        match frame.cursor_shape {
+            CursorShape::Block => {
+                canvas.fill_rect(x, y, w, ch, color);
+                if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)) {
+                    canvas.draw_char(fonts, x, y, c, frame.bg);
+                }
+            }
+            CursorShape::Underline => canvas.fill_rect(x, y + ch - 2, w, 2, color),
+            CursorShape::Bar => canvas.fill_rect(x, y, 2, ch, color),
         }
     }
     if let Some(layout) = frame.ui {

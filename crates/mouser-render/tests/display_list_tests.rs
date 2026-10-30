@@ -26,6 +26,8 @@ fn display_list_replay_matches_cpu_canvas() {
         accent: Some(0xE0404A),
         cursor_color: None,
         images: &[],
+        styles: &[],
+        cursor_shape: Default::default(),
     };
     let mut fonts = FontStack::embedded(15.0);
     let mut direct = vec![0u32; w * h];
@@ -61,7 +63,19 @@ fn images_draw_under_and_over_text_same_on_both_paths() {
         z,
     };
     let images = vec![img(-1, [255, 0, 0, 255], 0), img(1, [0, 0, 255, 255], 5)];
-    let frame = Frame { lines: &lines, cursor: None, bg: 0, fg: 0xFFFFFF, ui: None, status: None, accent: None, cursor_color: None, images: &images };
+    let frame = Frame {
+        lines: &lines,
+        cursor: None,
+        bg: 0,
+        fg: 0xFFFFFF,
+        ui: None,
+        status: None,
+        accent: None,
+        cursor_color: None,
+        images: &images,
+        styles: &[],
+        cursor_shape: Default::default(),
+    };
     let mut fonts = FontStack::embedded(15.0);
     let mut direct = vec![0u32; w * h];
     render_frame(&mut Canvas::new(&mut direct, w, h), &mut fonts, &frame);

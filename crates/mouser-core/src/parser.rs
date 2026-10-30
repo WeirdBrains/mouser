@@ -42,6 +42,8 @@ pub struct TerminalParser<W: Write> {
     /// OSC 133 prompt marks: (absolute row, kind A/B/C/D).
     pub prompt_marks: Vec<(i64, char)>,
     pub title: String,
+    /// `$TERM` given to the child (answers XTGETTCAP `TN`).
+    pub term_name: String,
     saved_style: Style,
     last_char: Option<char>,
     dcs: Option<Dcs>,
@@ -195,6 +197,7 @@ impl<W: Write> TerminalParser<W> {
             cwd: None,
             prompt_marks: Vec::new(),
             title: String::new(),
+            term_name: "xterm-256color".into(),
             saved_style: Style::default(),
             last_char: None,
             dcs: None,
@@ -519,7 +522,8 @@ impl<W: Write> TerminalParser<W> {
             DcsKind::GetTcap => {
                 for name_hex in text.split(';') {
                     let name = hex::decode(name_hex).ok().map(|b| String::from_utf8_lossy(&b).to_string()).unwrap_or_default();
-                    match tcap(&name) {
+                    let v = if name == "TN" || name == "name" { Some(self.term_name.clone()) } else { tcap(&name) };
+                    match v {
                         Some(v) => {
                             let r = format!("\x1bP1+r{}={}\x1b\\", name_hex, hex::encode(v));
                             self.reply(&r);
