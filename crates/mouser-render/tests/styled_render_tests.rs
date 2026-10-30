@@ -92,3 +92,51 @@ fn modified_cursor_and_function_keys() {
     assert_eq!(mouser_render::modified_csi(b"\x1bOP", ModifiersState::ALT).unwrap(), b"\x1b[1;3P");
     assert_eq!(mouser_render::modified_csi(b"\x1b[A", ModifiersState::empty()), None);
 }
+
+fn ink_cols(buf: &[u32], w: usize, color: u32) -> Vec<usize> {
+    let mut v: Vec<usize> = (0..buf.len()).filter(|i| buf[*i] & 0xFFFFFF != BG && buf[*i] != 0 && buf[*i] != color).map(|i| i % w).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+#[test]
+fn combining_mark_draws_over_its_base_cell() {
+    let mut p = CellPaint::plain(FG);
+    p.comb[0] = '\u{301}';
+    let (buf, w, f) = render(" ", vec![p], None, CursorShape::Block);
+    let cols = ink_cols(&buf, w, 0);
+    assert!(!cols.is_empty());
+    let (lo, hi) = (PADDING as usize, (PADDING + f.cell_w) as usize);
+    assert!(cols.iter().all(|&c| c >= lo && c < hi), "mark ink outside its cell: {cols:?}");
+}
+
+#[test]
+fn italic_slants_the_glyph() {
+    let mut f = FontStack::embedded(16.0);
+    let up = f.glyph('l').clone();
+    let it = f.glyph(mouser_render::text::italic_key('l')).clone();
+    assert!(it.metrics.width > up.metrics.width);
+    // Top row ink sits further right than bottom row ink.
+    // Ink centroid of the top quarter sits right of the bottom quarter's, more than upright.
+    let lean = |g: &mouser_render::text::Glyph| {
+        let (w, h) = (g.metrics.width, g.metrics.height);
+        let c = |rows: std::ops::Range<usize>| {
+            let (mut sx, mut n) = (0f32, 0f32);
+            for y in rows {
+                for x in 0..w {
+                    let a = g.bitmap[y * w + x] as f32;
+                    sx += a * x as f32;
+                    n += a;
+                }
+            }
+            sx / n.max(1.0)
+        };
+        c(0..h / 4) - c(h - h / 4..h)
+    };
+    assert!(lean(&it) > lean(&up) + 1.0, "{} vs {}", lean(&it), lean(&up));
+    let mut p = CellPaint::plain(FG);
+    p.flags = paint::ITALIC;
+    let (buf, _, _) = render("l", vec![p], None, CursorShape::Block);
+    assert!(buf.iter().any(|&c| c & 0xFFFFFF != BG && c != 0));
+}

@@ -61,6 +61,9 @@ pub fn cell_paint<W: std::io::Write>(c: &Cell, p: &TerminalParser<W>) -> CellPai
     if bold {
         flags |= paint::BOLD;
     }
+    if st.attrs & attr::ITALIC != 0 {
+        flags |= paint::ITALIC;
+    }
     if st.attrs & attr::STRIKE != 0 {
         flags |= paint::STRIKE;
     }
