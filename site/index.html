@@ -10,8 +10,8 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<header class="nav">
-  <a class="brand" href="#top"><img class="logo" src="assets/logo.svg" alt="" width="28" height="28"> mouser</a>
+<header class="nav light">
+  <a class="brand" href="#top"><img class="logo" src="assets/logo.svg" alt="" width="36" height="36"> mouser</a>
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main">
     <a href="#features">Features</a>
@@ -21,9 +21,9 @@
   </nav>
 </header>
 <main id="main">
-<section class="hero" id="top">
+<section class="hero light" id="top">
   <div class="hero-text">
-    <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="22" height="22"><span aria-hidden="true">$ mouser</span></p>
+    <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
     <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. Linux first.</p>
     <p class="cta">
@@ -36,7 +36,7 @@
   </figure>
 </section>
 
-<section class="light" id="features" aria-labelledby="f-h">
+<section id="features" aria-labelledby="f-h">
   <h2 id="f-h">Features</h2>
   <ul class="grid">
     <li><h3>GPU rendering</h3><p>wgpu renderer with a CPU fallback (<code>MOUSER_RENDERER=cpu</code>).</p></li>
@@ -50,7 +50,7 @@
   </ul>
 </section>
 
-<section id="install" aria-labelledby="i-h">
+<section class="light" id="install" aria-labelledby="i-h">
   <h2 id="i-h">Install</h2>
   <div class="cols">
     <div>
@@ -79,7 +79,7 @@ cargo run -p mouser-app --release</code></pre>
   <p>Optional terminfo entry: <code>tic -x -o ~/.terminfo extra/mouser.terminfo</code></p>
 </section>
 
-<section class="light" id="start" aria-labelledby="s-h">
+<section id="start" aria-labelledby="s-h">
   <h2 id="s-h">Quick start</h2>
   <p>Launch Mouser and your login shell starts in the first tab. Open the sidebar to add or pick an SSH host; clicking it opens <code>ssh &lt;alias&gt;</code> in a new tab.</p>
   <table>
@@ -98,7 +98,7 @@ cargo run -p mouser-app --release</code></pre>
   </table>
 </section>
 </main>
-<footer>
+<footer class="light">
   <p><a href="https://github.com/m3talsmith/mouser">GitHub</a> · <a href="https://github.com/m3talsmith/mouser/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/m3talsmith/mouser/blob/main/docs/terminal.md">Terminal docs</a></p>
 </footer>
 <script src="main.js"></script>
