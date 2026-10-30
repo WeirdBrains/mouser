@@ -7,6 +7,7 @@ Added:
 
 Changed:
 - Kitty keyboard protocol is the only Kitty protocol, kept as a fallback behind Fuzzball keyboard mode
+- Kitty keyboard: Ctrl/Alt/Super keys carry no associated text (flag 16)
 - Kitty keyboard compliance fixes: F13+/media/keypad keys, lock bits on text keys, Enter/Tab/Backspace releases, Ctrl+Backspace, Ctrl+Shift/Super text keys in legacy mode; tests per spec section
 
 Removed:
