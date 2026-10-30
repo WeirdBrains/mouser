@@ -282,7 +282,7 @@ fn osc_color_query_and_set() {
 fn device_reports() {
     let (mut t, out) = term(10, 5);
     t.feed(b"\x1b[c");
-    assert_eq!(out.take(), "\x1b[?62;22;52c");
+    assert_eq!(out.take(), "\x1b[?62;22c");
     t.feed(b"\x1b[>c");
     assert!(out.take().starts_with("\x1b[>1;"));
     t.feed(b"\x1b[=c");
@@ -318,4 +318,33 @@ fn full_reset_clears_modes_and_style() {
     assert!(!t.modes.bracketed_paste);
     assert!(t.color_overrides.is_empty());
     assert_eq!(cell(&t, 1, 0).style.fg, Color::Default);
+}
+
+#[test]
+fn dec_special_graphics_and_shift_in_out() {
+    let (mut t, _) = term(10, 2);
+    t.feed(b"\x1b(0lqk\x1b(Bq\x1b)0\x0eqx\x0fq\x1b(A#");
+    assert_eq!(t.screen.row_string(0), "┌─┐q─│q£");
+    t.feed(b"\x1b(0\x1bc`");
+    assert_eq!(t.screen.row_string(0), "`");
+}
+
+#[test]
+fn decscnm_reverse_video() {
+    let (mut t, out) = term(10, 2);
+    t.feed(b"\x1b[?5h\x1b[?5$p");
+    assert!(t.modes.reverse_video);
+    assert_eq!(out.take(), "\x1b[?5;1$y");
+    t.feed(b"\x1b[?5l");
+    assert!(!t.modes.reverse_video);
+}
+
+#[test]
+fn lnm_and_decreqtparm() {
+    let (mut t, out) = term(10, 3);
+    t.feed(b"ab\x1b[20hc\nd");
+    assert_eq!(t.screen.row_string(1), "d");
+    assert!(t.modes.newline);
+    t.feed(b"\x1b[20$p\x1b[20l\x1b[x\x1b[1x");
+    assert_eq!(out.take(), "\x1b[20;1$y\x1b[2;1;1;128;128;1;0x\x1b[3;1;1;128;128;1;0x");
 }

@@ -342,6 +342,7 @@ fn main() -> Result<()> {
                     } else {
                         let modes = parser.lock().unwrap().modes;
                         let bytes = mouser_core::input::apply_cursor_mode(bytes, &modes);
+                        let bytes = if modes.newline && bytes == b"\r" { b"\r\n".to_vec() } else { bytes };
                         let mut w = writer.clone();
                         let _ = w.write_all(&bytes);
                     }
@@ -394,8 +395,15 @@ fn main() -> Result<()> {
     });
 
     let get_colors = {
-        let app_state = app_state.clone();
-        Arc::new(move || app_state.lock().unwrap().look.colors())
+        let (app_state, parser) = (app_state.clone(), parser.clone());
+        Arc::new(move || {
+            let mut c = app_state.lock().unwrap().look.colors();
+            // DECSCNM reverse video swaps the window colours too.
+            if parser.lock().unwrap().modes.reverse_video {
+                std::mem::swap(&mut c.bg, &mut c.fg);
+            }
+            c
+        })
     };
     let get_font = {
         let app_state = app_state.clone();

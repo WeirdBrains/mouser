@@ -45,8 +45,46 @@ pub struct TerminalParser<W: Write> {
     /// `$TERM` given to the child (answers XTGETTCAP `TN`).
     pub term_name: String,
     saved_style: Style,
+    /// G0/G1 designations and which one is invoked into GL (SI/SO).
+    charsets: [Charset; 2],
+    gl: usize,
+    saved_charsets: ([Charset; 2], usize),
     last_char: Option<char>,
     dcs: Option<Dcs>,
+}
+
+/// Character sets that can be designated into G0/G1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Charset {
+    Ascii,
+    /// `ESC ( A`: `#` is the pound sign.
+    British,
+    /// `ESC ( 0`: DEC Special Graphics (line drawing).
+    DecSpecial,
+}
+
+/// Translate `c` through a designated character set.
+pub fn translate(c: char, set: Charset) -> char {
+    match set {
+        Charset::Ascii => c,
+        Charset::British => {
+            if c == '#' {
+                '£'
+            } else {
+                c
+            }
+        }
+        Charset::DecSpecial => {
+            const T: [char; 32] = [
+                '\u{a0}', '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺', '⎻', '─', '⎼', '⎽', '├', '┤', '┴', '┬',
+                '│', '≤', '≥', 'π', '≠', '£', '·',
+            ];
+            match c as u32 {
+                0x5f..=0x7e => T[c as usize - 0x5f],
+                _ => c,
+            }
+        }
+    }
 }
 
 /// Terminal modes tracked for the front end.
@@ -67,6 +105,10 @@ pub struct Modes {
     pub synchronized: bool,
     /// 2027 grapheme clustering (always on; reported as permanently set).
     pub grapheme: bool,
+    /// DECSCNM: whole-screen reverse video.
+    pub reverse_video: bool,
+    /// LNM (ANSI mode 20): LF also returns the carriage; Return sends CR LF.
+    pub newline: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -199,6 +241,9 @@ impl<W: Write> TerminalParser<W> {
             title: String::new(),
             term_name: "xterm-256color".into(),
             saved_style: Style::default(),
+            charsets: [Charset::Ascii; 2],
+            gl: 0,
+            saved_charsets: ([Charset::Ascii; 2], 0),
             last_char: None,
             dcs: None,
         }
@@ -402,14 +447,20 @@ impl<W: Write> TerminalParser<W> {
 
     fn mode(&mut self, private: bool, n: u16, set: bool) {
         if !private {
-            if n == 4 {
-                self.screen.insert = set;
+            match n {
+                4 => self.screen.insert = set,
+                20 => self.modes.newline = set,
+                _ => {}
             }
             return;
         }
         let m = &mut self.modes;
         match n {
             1 => m.app_cursor = set,
+            5 => {
+                m.reverse_video = set;
+                self.graphics_generation += 1;
+            }
             6 => {
                 self.screen.origin = set;
                 self.screen.move_to_origin(0, 0);
@@ -460,12 +511,13 @@ impl<W: Write> TerminalParser<W> {
         if !private {
             return match n {
                 4 => b(self.screen.insert),
-                20 => 4,
+                20 => b(self.modes.newline),
                 _ => 0,
             };
         }
         match n {
             1 => b(m.app_cursor),
+            5 => b(m.reverse_video),
             6 => b(self.screen.origin),
             7 => b(self.screen.autowrap),
             12 => b(self.screen.cursor_blink),
@@ -487,11 +539,13 @@ impl<W: Write> TerminalParser<W> {
     fn save_cursor(&mut self) {
         self.screen.save_cursor();
         self.saved_style = self.style;
+        self.saved_charsets = (self.charsets, self.gl);
     }
 
     fn restore_cursor(&mut self) {
         self.screen.restore_cursor();
         self.style = self.saved_style;
+        (self.charsets, self.gl) = self.saved_charsets;
     }
 
     fn reset(&mut self) {
@@ -503,6 +557,8 @@ impl<W: Write> TerminalParser<W> {
         self.graphics_generation += 1;
         self.modes = Modes { grapheme: true, ..Modes::default() };
         self.color_overrides.clear();
+        self.charsets = [Charset::Ascii; 2];
+        self.gl = 0;
     }
 
     fn osc_color(&mut self, slot: u16, spec: &[u8], st: &str, prefix: &str) {
@@ -581,17 +637,25 @@ fn arg(params: &Params, i: usize, default: u16) -> u16 {
 
 impl<W: Write> Perform for TerminalParser<W> {
     fn print(&mut self, c: char) {
+        let c = translate(c, self.charsets[self.gl]);
         self.screen.put_char(c, self.style);
         self.last_char = Some(c);
     }
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            b'\n' | 0x0b | 0x0c => self.screen.linefeed(),
+            b'\n' | 0x0b | 0x0c => {
+                if self.modes.newline {
+                    self.screen.carriage_return();
+                }
+                self.screen.linefeed();
+            }
             b'\r' => self.screen.carriage_return(),
             0x08 => self.screen.backspace(),
             b'\t' => self.screen.tab(),
             0x07 => self.events.push(TermEvent::Bell),
+            0x0e => self.gl = 1,
+            0x0f => self.gl = 0,
             _ => {}
         }
     }
@@ -787,13 +851,18 @@ impl<W: Write> Perform for TerminalParser<W> {
                 self.reply(&format!("\x1b[?{};{}R", c.y + 1, c.x + 1));
             }
             // DA1: VT220-class with ANSI colour (22) and clipboard (52).
-            (None, 'c') if arg(params, 0, 0) == 0 => self.reply("\x1b[?62;22;52c"),
+            (None, 'c') if arg(params, 0, 0) == 0 => self.reply("\x1b[?62;22c"),
             (Some(b'>'), 'c') if arg(params, 0, 0) == 0 => {
                 let v: Vec<u32> = VERSION.split('.').filter_map(|x| x.parse().ok()).collect();
                 let num = v.first().unwrap_or(&0) * 10000 + v.get(1).unwrap_or(&0) * 100 + v.get(2).unwrap_or(&0);
                 self.reply(&format!("\x1b[>1;{num};0c"));
             }
             (Some(b'='), 'c') if arg(params, 0, 0) == 0 => self.reply("\x1bP!|4D4F5553\x1b\\"),
+            // DECREQTPARM: no parity, 8 bits, 38400 baud, clock multiplier 1.
+            (None, 'x') if arg(params, 0, 0) <= 1 => {
+                let kind = arg(params, 0, 0) + 2;
+                self.reply(&format!("\x1b[{kind};1;1;128;128;1;0x"));
+            }
             (Some(b'>'), 'q') if arg(params, 0, 0) == 0 => self.reply(&format!("\x1bP>|{NAME}({VERSION})\x1b\\")),
             (None, 'm') => self.sgr(params),
             (Some(b'?'), 'h') | (Some(b'?'), 'l') | (None, 'h') | (None, 'l') => {
@@ -849,6 +918,14 @@ impl<W: Write> Perform for TerminalParser<W> {
             (None, b'7') => self.save_cursor(),
             (None, b'8') => self.restore_cursor(),
             (None, b'H') => self.screen.set_tab(),
+            (Some(g @ (b'(' | b')')), set) => {
+                let slot = usize::from(g == b')');
+                self.charsets[slot] = match set {
+                    b'0' => Charset::DecSpecial,
+                    b'A' => Charset::British,
+                    _ => Charset::Ascii,
+                };
+            }
             (None, b'=') => self.modes.app_keypad = true,
             (None, b'>') => self.modes.app_keypad = false,
             (Some(b'#'), b'8') => {
