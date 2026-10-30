@@ -109,10 +109,18 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
   no scrollback), is removed.
 - When the anchor row is dropped from the scrollback (the scrollback limit, or ED 3
   "clear scrollback"), the whole placement is removed, even if it spans later rows.
-- On resize the terminal moves placements with their lines. Terminals that rewrap text
-  move the anchor with its cell; terminals that don't (Mouser) keep it in place and
-  remove placements whose anchor cell was cut off (right of the last column or below
-  the last row). A placement wider than the new screen is clipped, not removed.
+- **Scaling to the screen width.** The terminal keeps the requested anchor column and
+  `cols`/`rows`, and shows each placement fitted to the current width (also when it is
+  first placed): unchanged if it fits; scaled down, aspect kept, if it overhangs the
+  right edge; moved left to the column where it fits (and scaled if wider than the
+  screen) if its anchor column is cut off. The rows it covers scale by the same factor.
+  A wider screen grows it back toward the request, never beyond. Images are not
+  scaled to the screen height: tall placements scroll like text.
+- On a shorter screen, lines pushed into the scrollback keep their placements; a
+  placement whose anchor line is cut off below the last row is removed with that line
+  (its text is gone too).
+- Placements are sized in cells: when the cell size changes (font zoom, DPI) they keep
+  their cells and their pixels are rescaled.
 - Removing a placement never frees its image: unplaced images stay until deleted
   (`gd` with `free=1`, re-upload) or evicted for memory (§3).
 - An upload that receives no chunk for 10 s is discarded.

@@ -40,7 +40,9 @@ Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. Kitty graph
 and xterm-kitty were removed; Kitty keyboard is the only fallback.
 Placements follow their text (scroll regions, IL/DL, scrollback, resize) and are removed
 when their anchor row leaves the scrollback; abandoned uploads expire on a timer
-(`Session::watch_upload` in `crates/mouser-app/src/tabs.rs`). Decisions: protocol README §10 #10–14.
+(`Session::watch_upload` in `crates/mouser-app/src/tabs.rs`). Resize scales placements to the screen width (`Placement::fit`, requested
+col/cols/rows kept) and `ImageScaler` caches area-averaged downscales for both renderers.
+Decisions: protocol README §10 #10–15.
 Not yet done: IME events, lock-key state.
 
 ## Website
