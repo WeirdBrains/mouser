@@ -63,13 +63,16 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
 (`--config-dir DIR` overrides it for `config.toml`; `--config FILE` points at one file).
 
 - `config.toml` — static settings: fonts, scrollback, compression.
-- The sidebar starts collapsed to a thin strip (click `«` to expand); start Mouser with
-  `MOUSER_OPEN_SIDEBAR=1` to open it expanded. The saved `sidebar_width` is used when expanding.
+- The sidebar comes back the way you left it: its open/collapsed state and width are saved
+  to `preferences.toml` whenever they change and when the window closes (including when the
+  shell exits). A fresh install starts with the collapsed strip (click `«` to expand).
+  `MOUSER_OPEN_SIDEBAR=1` forces it open and expanded for that run without overwriting the
+  saved state.
 - Rendering uses the GPU (wgpu) when available and falls back to the CPU; set
   `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
-  `font_family`/`font_size` overrides, and the sidebar's `sidebar_width` (`sidebar_open` /
-  `sidebar_collapsed` are recorded but startup always follows `MOUSER_OPEN_SIDEBAR`). Values here win over `config.toml`.
+  `font_family`/`font_size` overrides, and the sidebar's `sidebar_width`, `sidebar_open` and
+  `sidebar_collapsed`. Values here win over `config.toml`.
 - `themes/<Theme>/{dark,light}.toml` — theme colours (foreground, background, cursor, accent, palette).
 
 SSH connections live in `~/.ssh/config` (override with `MOUSER_SSH_CONFIG`); Mouser edits it in
