@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mouser — a fast GPU terminal emulator</title>
-<meta name="description" content="Mouser is a terminal emulator written in Rust with GPU rendering, tabs, an SSH connection manager, compressed scrollback and Kitty protocol support.">
+<meta name="description" content="Mouser is a terminal emulator written in Rust with GPU rendering, tabs, an SSH connection manager, compressed scrollback and the Fuzzball graphics and keyboard protocol.">
 <link rel="icon" href="assets/icon.png">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -36,14 +36,14 @@
   </figure>
 </section>
 
-<section id="features" aria-labelledby="f-h">
+<section class="light" id="features" aria-labelledby="f-h">
   <h2 id="f-h">Features</h2>
   <ul class="grid">
     <li><h3>GPU rendering</h3><p>wgpu renderer with a CPU fallback (<code>MOUSER_RENDERER=cpu</code>).</p></li>
     <li><h3>Tabs</h3><p>Each tab has its own PTY, screen, scrollback and title. Connections open in new tabs.</p></li>
     <li><h3>Connection manager</h3><p>Sidebar for SSH hosts from your ssh config, plus Waypipe, tunnels and X11.</p></li>
     <li><h3>Compressed scrollback</h3><p>Chunked history compressed with Zstd or LZ4 when idle, searchable across compressed chunks.</p></li>
-    <li><h3>Kitty protocols</h3><p>Keyboard protocol, graphics protocol and iTerm2 <code>OSC 1337</code> images, with a public compliance checklist.</p></li>
+    <li><h3>Fuzzball protocol</h3><p>Mouser's own open graphics and keyboard protocol. Read the <a href="https://github.com/m3talsmith/mouser/tree/main/docs/protocol">spec</a>. Kitty keyboard/graphics and iTerm2 <code>OSC 1337</code> images stay supported as a fallback.</p></li>
     <li><h3>Modern xterm</h3><p>Truecolour, curly and coloured underlines, wide characters, mouse, focus, bracketed paste, OSC 8 links and OSC 52.</p></li>
     <li><h3>Red Star theme</h3><p>Dark and light Red Star themes by default, following the system mode.</p></li>
     <li><h3>TOML config</h3><p>Font, colours, scrollback size, compression algorithm and level, and idle thresholds.</p></li>
@@ -79,7 +79,7 @@ cargo run -p mouser-app --release</code></pre>
   <p>Optional terminfo entry: <code>tic -x -o ~/.terminfo extra/mouser.terminfo</code></p>
 </section>
 
-<section id="start" aria-labelledby="s-h">
+<section class="light" id="start" aria-labelledby="s-h">
   <h2 id="s-h">Quick start</h2>
   <p>Launch Mouser and your login shell starts in the first tab. Open the sidebar to add or pick an SSH host; clicking it opens <code>ssh &lt;alias&gt;</code> in a new tab.</p>
   <table>
