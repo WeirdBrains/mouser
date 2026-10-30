@@ -1,3 +1,19 @@
+## [Unreleased]
+
+Added:
+- Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
+- Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
+- `tools/fuzzball-demo.py` demo client
+
+Changed:
+- Kitty keyboard protocol is the only Kitty protocol, kept as a fallback behind Fuzzball keyboard mode
+- Kitty keyboard compliance fixes: F13+/media/keypad keys, lock bits on text keys, Enter/Tab/Backspace releases, Ctrl+Backspace, Ctrl+Shift/Super text keys in legacy mode; tests per spec section
+
+Removed:
+- Kitty graphics protocol (APC `_G`)
+- `OSC 1337` image claims from the docs (never implemented)
+- `xterm-kitty` TERM fallback; TERM is `mouser` or `xterm-256color`
+
 ## [0.7.2] - 2026-10-30
 
 Fixes:

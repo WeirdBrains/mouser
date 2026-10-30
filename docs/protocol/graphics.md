@@ -1,4 +1,4 @@
-# Fuzzball graphics — draft v0
+# Fuzzball graphics — v0.1 (implementable draft)
 
 Subsystem letter: `g`. Framing, replies and errors: see [README](README.md).
 
@@ -128,9 +128,12 @@ Delete it and free the data:
 ESC P = F z g d ; what=image,id=1,free=1 ESC \
 ```
 
-## 6. Differences from Kitty graphics
+## 6. Design notes (compared with Kitty graphics)
+
+Mouser does not implement Kitty graphics; these notes explain the design choices.
+
 
 - One encoding of each concept (no `a=T` shortcut, no `I=` numbers, no `t=f/t/s`).
-- Explicit payload length; raw binary allowed on direct links.
+- Explicit payload length; base64 only in v0.1 (`raw=0`, see README §10).
 - Placements are text-grid objects with defined erase/reflow rules.
 - Limits are advertised rather than implicit.

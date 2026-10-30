@@ -11,7 +11,7 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 - Fast text rendering via `winit` + `softbuffer` + `fontdue` (CPU rasterization, zero-copy blits)
 - Chunked, compressed scrollback using Zstd or LZ4, with idle-based auto-compression and transparent on-demand decompression
 - Scrollback search across compressed history
-- Kitty protocol support (keyboard + graphics) with a public compliance checklist
+- Fuzzball protocol (graphics + keyboard, `docs/protocol/`), with the Kitty keyboard protocol as the only fallback
 - TOML configuration for font, colors, scrollback size, compression algorithm/level, and idle thresholds
 
 ## Why these crates?
@@ -47,15 +47,14 @@ Data flow:
 - To avoid UI stalls, the renderer prefetches ±1 chunk around the viewport and schedules recompression after those chunks again go idle.
 - The maximum scrollback is bounded (`max_scrollback_lines`) and drops the oldest chunks when exceeded.
 
-## Kitty protocol support
+## Fuzzball and Kitty keyboard
 
-Mouser aims for full support over time. Today’s status lives in [`docs/kitty-compliance.md`](docs/kitty-compliance.md) and is summarized here:
-
-- Keyboard protocol: negotiation commands recognized; extended `CSI u` key reporting enabled when requested.
-- Graphics protocol: parses Kitty graphics sequences and iTerm2-compatible `OSC 1337` image transfers; basic placement and deletion supported. More features tracked in the checklist.
-- Extensions: OSC 8 hyperlinks, OSC 52 clipboard, synchronized output (2026), OSC 99 desktop notifications — initial parsing and handling where feasible; details in the checklist.
-
-If a feature your workflow depends on is missing, please open an issue referencing the checklist item.
+- **Fuzzball** is Mouser's own protocol for images and structured key events (DCS, tag `Fz`,
+  tmux/screen-friendly). Spec: [`docs/protocol/`](docs/protocol/README.md). Try it with
+  `tools/fuzzball-demo.py` inside Mouser.
+- **Kitty keyboard protocol** is supported as the only fallback, for apps that don't speak
+  Fuzzball yet. Compliance matrix: [`docs/kitty-compliance.md`](docs/kitty-compliance.md).
+- Kitty graphics and iTerm2 `OSC 1337` images are **not** supported; use Fuzzball graphics.
 
 ## Tabs
 
@@ -81,7 +80,7 @@ An ssh tab that exits with an error stays open showing
 - **Ctrl+Shift+V** pastes (bracketed when the app asks for it).
 - **Ctrl+click** opens an OSC 8 hyperlink.
 - **Shift+mouse** bypasses an app's mouse capture.
-- Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (unless `xterm-kitty` is installed).
+- Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (otherwise `xterm-256color`).
 
 See [docs/terminal.md](docs/terminal.md) for the supported sequences.
 
@@ -167,15 +166,15 @@ Tests (with a safety timeout):
 timeout 120 cargo test --workspace
 ```
 
-## Kitty compliance checklist
+## Kitty keyboard compliance
 
-See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). We keep this updated as we implement features. Tests for keyboard and graphics parsers live under `mouser-core/tests/`.
+See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). Tests live in `crates/mouser-core/tests/kitty_keyboard_*`.
 
 ## Roadmap
 
 - Rich text shaping and ligatures
 - Tabs and multiple terminals
-- Full Kitty graphics feature coverage, animations, and shared memory transport
+- Fuzzball: IME events, placements on reflow and scrollback eviction
 - Cross-platform validation (Windows/macOS)
 
 ## License

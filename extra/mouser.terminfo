@@ -1,5 +1,5 @@
 # Mouser terminfo. Install for your user with:  tic -x -o ~/.terminfo extra/mouser.terminfo
-# Mouser sets TERM=mouser when this entry is found (xterm-kitty still wins if installed).
+# Mouser sets TERM=mouser when this entry is found (xterm-256color otherwise).
 mouser|Mouser terminal emulator,
 	Tc, RGB, AX, XT, bce, ccc,
 	colors#256, pairs#0x10000,
