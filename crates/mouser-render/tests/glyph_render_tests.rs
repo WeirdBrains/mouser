@@ -18,7 +18,7 @@ fn render(text: &str, fonts: &mut FontStack) -> (Vec<u32>, usize, usize) {
     render_frame(
         &mut canvas,
         fonts,
-        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: None, status: None, accent: None, cursor_color: None },
+        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: None, status: None, accent: None, cursor_color: None, images: &[] },
     );
     (buf, w, h)
 }
@@ -163,7 +163,7 @@ fn sidebar_labels_are_clean_and_buttons_fit() {
     render_frame(
         &mut canvas,
         &mut fonts,
-        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: Some(&layout), status: None, accent: None, cursor_color: None },
+        &Frame { lines: &lines, cursor: None, bg: BG, fg: FG, ui: Some(&layout), status: None, accent: None, cursor_color: None, images: &[] },
     );
     // No pixel inside the sidebar may show the terminal background (the old
     // renderer blended labels against it, leaving blocks around each glyph).

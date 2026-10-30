@@ -218,6 +218,8 @@ pub trait Draw {
     fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32);
     /// Draw one glyph in the cell whose top-left corner is (`cell_x`, `cell_top`).
     fn draw_char(&mut self, fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char, color: u32);
+    /// Draw an image placement with its top-left corner at (`x`, `y`).
+    fn draw_image(&mut self, img: &crate::frame::ImageDraw, x: i32, y: i32);
     /// Draw `text` on the monospace grid starting at cell (`x`, `top`).
     fn draw_text(&mut self, fonts: &mut FontStack, x: i32, top: i32, text: &str, color: u32) {
         let cw = fonts.cell_w;
@@ -253,6 +255,12 @@ pub enum DrawOp {
         ch: char,
         color: u32,
     },
+    /// `images[index]` with its top-left corner at (`x`, `y`).
+    Image {
+        index: usize,
+        x: i32,
+        y: i32,
+    },
 }
 
 /// A frame as a list of operations, in painting order.
@@ -262,6 +270,7 @@ pub struct DisplayList {
     pub height: usize,
     pub clear: u32,
     pub ops: Vec<DrawOp>,
+    pub images: Vec<crate::frame::ImageDraw>,
 }
 
 impl DisplayList {
@@ -276,6 +285,7 @@ impl DisplayList {
             match *op {
                 DrawOp::Rect { x, y, w, h, color } => canvas.fill_rect(x, y, w, h, color),
                 DrawOp::Glyph { x, y, ch, color } => canvas.blit_glyph(fonts, x, y, ch, color),
+                DrawOp::Image { index, x, y } => canvas.blit_image(&self.images[index], x, y),
             }
         }
     }
@@ -291,6 +301,11 @@ impl Draw for DisplayList {
     fn clear(&mut self, color: u32) {
         self.clear = color;
         self.ops.clear();
+        self.images.clear();
+    }
+    fn draw_image(&mut self, img: &crate::frame::ImageDraw, x: i32, y: i32) {
+        self.images.push(img.clone());
+        self.ops.push(DrawOp::Image { index: self.images.len() - 1, x, y });
     }
     fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
         if w > 0 && h > 0 {
@@ -321,6 +336,9 @@ impl Draw for Canvas<'_> {
     }
     fn draw_char(&mut self, fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char, color: u32) {
         Canvas::draw_char(self, fonts, cell_x, cell_top, ch, color)
+    }
+    fn draw_image(&mut self, img: &crate::frame::ImageDraw, x: i32, y: i32) {
+        self.blit_image(img, x, y)
     }
 }
 
@@ -358,6 +376,27 @@ impl Canvas<'_> {
         }
         let (left, top) = glyph_origin(fonts, cell_x, cell_top, ch);
         self.blit_glyph(fonts, left, top, ch, color);
+    }
+
+    /// Draw an image placement scaled (nearest neighbour) to its display size,
+    /// alpha-blended, with its top-left corner at (`x`, `y`).
+    pub fn blit_image(&mut self, img: &crate::frame::ImageDraw, x: i32, y: i32) {
+        let (sx, sy, sw, sh) = img.src;
+        let (dw, dh) = (img.width.max(1) as i32, img.height.max(1) as i32);
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + dw).min(self.width as i32);
+        let y1 = (y + dh).min(self.height as i32);
+        for py in y0..y1 {
+            let iy = sy + ((py - y) as u64 * sh as u64 / dh as u64) as u32;
+            for px in x0..x1 {
+                let ix = sx + ((px - x) as u64 * sw as u64 / dw as u64) as u32;
+                let o = ((iy.min(img.img_h - 1) * img.img_w + ix.min(img.img_w - 1)) * 4) as usize;
+                let Some(p) = img.rgba.get(o..o + 4) else { continue };
+                let c = (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32;
+                self.blend_px(px, py, c, p[3] as u32);
+            }
+        }
     }
 
     /// Blend `ch`'s bitmap with its top-left corner at (`left`, `top`).

@@ -1,5 +1,6 @@
+use crate::graphics::{self, Graphics};
 use crate::grid::{Screen, Style};
-use crate::kitty::{KeyboardProtocolState, KittyGraphicsEvent, parse_kitty_graphics_params};
+use crate::kitty::KeyboardProtocolState;
 use crate::scrollback::Scrollback;
 use crate::types::Size;
 use log::trace;
@@ -16,7 +17,29 @@ pub struct TerminalParser<W: Write> {
     /// vte state persists across reads so escape sequences split between
     /// PTY chunks are still recognised.
     vte: Parser,
+    apc: Apc,
+    /// Kitty graphics images and placements.
+    pub graphics: Graphics,
+    /// Lines scrolled off the top so far (monotonic; anchors image rows).
+    pub lines_scrolled: i64,
+    /// Cell size in pixels (for image placement), set by the front end.
+    pub cell_px: (u32, u32),
+    /// Bumped when images change so the front end can redraw.
+    pub graphics_generation: u64,
 }
+
+/// APC strings (`ESC _ ... ESC \`) are cut out before vte, which ignores them.
+#[derive(Default)]
+enum Apc {
+    #[default]
+    Ground,
+    Esc,
+    Body(Vec<u8>),
+    BodyEsc(Vec<u8>),
+}
+
+/// Largest APC body kept (chunked images arrive in many smaller ones).
+const APC_MAX: usize = 16 * 1024 * 1024;
 
 impl<W: Write> TerminalParser<W> {
     pub fn new(size: Size, scrollback: Arc<Scrollback>, writer: W) -> Self {
@@ -27,13 +50,49 @@ impl<W: Write> TerminalParser<W> {
             writer,
             style: Style::default(),
             vte: Parser::new(),
+            apc: Apc::Ground,
+            graphics: Graphics::default(),
+            lines_scrolled: 0,
+            cell_px: (9, 18),
+            graphics_generation: 0,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         let mut vte = std::mem::take(&mut self.vte);
         for &b in bytes {
-            vte.advance(self, b);
+            self.apc = match std::mem::take(&mut self.apc) {
+                Apc::Ground if b == 0x1b => Apc::Esc,
+                Apc::Ground => {
+                    vte.advance(self, b);
+                    Apc::Ground
+                }
+                Apc::Esc if b == b'_' => Apc::Body(Vec::new()),
+                Apc::Esc => {
+                    vte.advance(self, 0x1b);
+                    if b == 0x1b {
+                        Apc::Esc
+                    } else {
+                        vte.advance(self, b);
+                        Apc::Ground
+                    }
+                }
+                Apc::Body(buf) if b == 0x1b => Apc::BodyEsc(buf),
+                Apc::Body(mut buf) => {
+                    if buf.len() < APC_MAX {
+                        buf.push(b);
+                    }
+                    Apc::Body(buf)
+                }
+                Apc::BodyEsc(buf) if b == b'\\' => {
+                    self.apc_dispatch(&buf);
+                    Apc::Ground
+                }
+                Apc::BodyEsc(mut buf) => {
+                    buf.extend_from_slice(&[0x1b, b]);
+                    Apc::Body(buf)
+                }
+            };
         }
         self.vte = vte;
         self.flush_scrollback();
@@ -47,6 +106,34 @@ impl<W: Write> TerminalParser<W> {
     fn flush_scrollback(&mut self) {
         for line in self.screen.take_scrolled_off() {
             self.scrollback.push_line(line);
+            self.lines_scrolled += 1;
+        }
+    }
+
+    fn apc_dispatch(&mut self, body: &[u8]) {
+        let Some(rest) = body.strip_prefix(b"G") else { return };
+        self.flush_scrollback();
+        let top = self.lines_scrolled;
+        let cur = graphics::Cursor {
+            top,
+            abs_row: top + self.screen.cursor.y as i64,
+            col: self.screen.cursor.x as u32,
+            cell_w: self.cell_px.0,
+            cell_h: self.cell_px.1,
+        };
+        let eff = self.graphics.command(rest, cur);
+        self.graphics_generation += 1;
+        if let Some(r) = eff.reply {
+            self.reply(&r);
+        }
+        if let Some((dx, dy)) = eff.cursor {
+            for _ in 0..dy {
+                self.screen.linefeed();
+            }
+            self.flush_scrollback();
+            let x = (cur.col as usize + dx as usize).min(self.screen.size.cols - 1);
+            let y = self.screen.cursor.y;
+            self.screen.move_to(x, y);
         }
     }
 
@@ -196,11 +283,7 @@ impl<W: Write> Perform for TerminalParser<W> {
             (None, b'c') => {
                 self.screen.clear();
                 self.kitty_keyboard = KeyboardProtocolState::default();
-            }
-            (Some(b'_'), b'G') => {
-                // Kitty graphics placeholder (needs a real APC handler).
-                let _event = KittyGraphicsEvent::Begin { id: None, width: None, height: None };
-                let _ = parse_kitty_graphics_params("");
+                self.graphics = Graphics::default();
             }
             _ => {}
         }
