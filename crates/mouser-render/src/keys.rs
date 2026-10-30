@@ -260,7 +260,9 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
         }
         _ => (None, None),
     };
-    let text = ev.text.as_ref().map(|t| t.to_string()).filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
+    // Ctrl/Alt/Super combinations carry no associated text (some keymaps, e.g. virtual
+    // keyboards, still report the plain character).
+    let text = text_for(ev.text.as_deref(), bits);
     Some(KeyInput { key, shifted, base, mods: bits, event, text })
 }
 
@@ -314,4 +316,29 @@ pub fn fuzzball_event(ev: &KeyEvent, m: ModifiersState) -> Option<mouser_core::f
     // Text only for presses/repeats without Ctrl/Alt/Super (those are shortcuts).
     let text = ev.text.as_ref().map(|t| t.to_string()).filter(|t| !t.is_empty() && bits & (fm::CTRL | fm::ALT | fm::SUPER) == 0);
     Some(mouser_core::fuzzball::KeyEvent { action, code, key, mods: bits, locks: 0, text })
+}
+
+/// Kitty associated text: none when Ctrl, Alt or Super is held, or for control characters.
+pub fn text_for(text: Option<&str>, mods: u8) -> Option<String> {
+    use mouser_core::kitty::mods as km;
+    if mods & (km::CTRL | km::ALT | km::SUPER) != 0 {
+        return None;
+    }
+    text.map(str::to_string).filter(|t| !t.is_empty() && !t.chars().any(char::is_control))
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::text_for;
+    use mouser_core::kitty::mods;
+
+    #[test]
+    fn modified_keys_have_no_text() {
+        assert_eq!(text_for(Some("x"), mods::CTRL), None);
+        assert_eq!(text_for(Some("x"), mods::ALT), None);
+        assert_eq!(text_for(Some("x"), mods::SUPER), None);
+        assert_eq!(text_for(Some("\u{18}"), 0), None);
+        assert_eq!(text_for(Some("A"), mods::SHIFT).as_deref(), Some("A"));
+        assert_eq!(text_for(Some("a"), mods::CAPS_LOCK).as_deref(), Some("a"));
+    }
 }
