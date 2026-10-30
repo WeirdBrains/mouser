@@ -3,7 +3,8 @@
 Mouser manages SSH sessions, Waypipe sessions, SSH tunnels (local/remote/dynamic), and X11-forwarded SSH connections.
 
 UI
-- A collapsible right sidebar lists categories: SSH, Waypipe, Tunnels, X11.
+- A collapsible right sidebar lists categories: SSH, Waypipe, Tunnels, X11. Toggle it with Alt+Esc
+  (plain Esc goes to the shell). While open, the terminal grid shrinks so nothing is hidden.
 - Each category has an Add action (command-mode: `:add-ssh`, `:add-waypipe`, `:add-tunnel`, `:add-x11`).
 - Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`).
 

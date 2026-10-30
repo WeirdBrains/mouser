@@ -166,7 +166,8 @@ fn make_scrollback_config(app: &AppConfig) -> ScrollbackConfig {
     }
 }
 
-struct SharedWriter(std::sync::Arc<Mutex<Box<dyn Write + Send>>>);
+/// PTY writer; `None` until the shell is spawned at the window's real size.
+struct SharedWriter(std::sync::Arc<Mutex<Option<Box<dyn Write + Send>>>>);
 
 impl Clone for SharedWriter {
     fn clone(&self) -> Self {
@@ -176,12 +177,16 @@ impl Clone for SharedWriter {
 
 impl Write for SharedWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut guard = self.0.lock().unwrap();
-        guard.write(buf)
+        match self.0.lock().unwrap().as_mut() {
+            Some(w) => w.write(buf),
+            None => Ok(buf.len()),
+        }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut guard = self.0.lock().unwrap();
-        guard.flush()
+        match self.0.lock().unwrap().as_mut() {
+            Some(w) => w.flush(),
+            None => Ok(()),
+        }
     }
 }
 
@@ -194,31 +199,13 @@ fn main() -> Result<()> {
     let sb_cfg = make_scrollback_config(&app_cfg);
     let scrollback = Arc::new(Scrollback::new(sb_cfg));
 
-    // Initial size estimate
-    let handles = spawn_shell(100, 30)?;
-    let master = Arc::new(Mutex::new(handles.master));
-    let _child = handles.child; // keep child alive
-    let shared_writer = SharedWriter(Arc::new(Mutex::new(handles.writer)));
-
-    // Reader thread -> channel
+    // The shell is spawned on the first resize, once the real grid size is
+    // known, so its first prompt is drawn for the right width.
+    let master: Arc<Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>> = Arc::new(Mutex::new(None));
+    let child: Arc<Mutex<Option<Box<dyn mouser_pty::Child + Send>>>> = Arc::new(Mutex::new(None));
+    let shared_writer = SharedWriter(Arc::new(Mutex::new(None)));
     let (tx, rx) = unbounded::<Vec<u8>>();
-    std::thread::spawn({
-        let mut reader = handles.reader;
-        move || {
-            let mut buf = [0u8; 8192];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let _ = tx.send(buf[..n].to_vec());
-                    }
-                    Err(_) => break,
-                }
-            }
-        }
-    });
 
-    // Terminal parser lives on main thread guarded by a mutex for closures
     let size = Size { cols: 100, rows: 30 };
     let parser = TerminalParser::new(size, scrollback.clone(), shared_writer.clone());
     let parser = Arc::new(Mutex::new(parser));
@@ -236,39 +223,39 @@ fn main() -> Result<()> {
     let fetch = {
         let parser = parser.clone();
         let sb = scrollback.clone();
-        let app_state = app_state.clone();
-        Arc::new(move |start: usize, rows: usize| -> Vec<String> {
-            // Compose: scrollback tail + screen
-            // We take rows from end of (scrollback + screen)
-            let screen_lines = parser.lock().unwrap().screen.visible_lines();
+        Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, usize) {
+            let screen_lines = {
+                let p = parser.lock().unwrap();
+                if p.screen.in_alt_screen() {
+                    return (p.screen.visible_lines(), 0);
+                }
+                p.screen.visible_lines()
+            };
             let sb_total = sb.total_lines();
-            let full_total = sb_total + screen_lines.len();
-            let start = start.min(full_total.saturating_sub(1));
-            let end = (start + rows).min(full_total);
-            // Collect from sb
-            let sb_take = end.saturating_sub(sb_total).min(rows);
-            let mut out = Vec::new();
-            if start < sb_total {
-                let cnt = (end.min(sb_total)).saturating_sub(start);
-                out.extend(sb.get_lines(start, cnt));
+            let back = scrolled_back.min(sb_total);
+            if back == 0 {
+                return (screen_lines, 0);
             }
-            if sb_take > 0 {
-                out.extend(screen_lines.into_iter().take(sb_take));
+            // Window of `rows` lines ending `back` lines above the live screen.
+            let total = sb_total + screen_lines.len();
+            let end = total - back;
+            let start = end.saturating_sub(rows);
+            let mut out = Vec::with_capacity(rows);
+            if start < sb_total {
+                out.extend(sb.get_lines(start, end.min(sb_total) - start));
+            }
+            if end > sb_total {
+                out.extend(screen_lines.into_iter().take(end - sb_total));
             }
             sb.prefetch_around(start, end);
-            if app_state.lock().unwrap().sidebar_open {
-                out.push(String::from(""));
-                out.push(String::from("==== Connections ===="));
-                match list_connections() {
-                    Ok(list) if !list.is_empty() => {
-                        for c in list {
-                            out.push(format!("- {}", c.name));
-                        }
-                    }
-                    _ => out.push(String::from("(no connections)")),
-                }
-            }
-            out
+            (out, back)
+        })
+    };
+    let get_cursor = {
+        let parser = parser.clone();
+        Arc::new(move || {
+            let p = parser.lock().unwrap();
+            p.screen.cursor_visible.then_some((p.screen.cursor.x, p.screen.cursor.y))
         })
     };
     let on_key = {
@@ -278,8 +265,11 @@ fn main() -> Result<()> {
             let mut state = app_state.lock().unwrap();
             match state.mode {
                 Mode::Shell => {
-                    if bytes == b"\x1b" {
-                        // ESC toggles sidebar for demo
+                    if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
+                        state.pending_edit = None;
+                        state.pending_delete = None;
+                    } else if bytes == b"\x1b\x1b" {
+                        // Alt+Esc toggles the connections sidebar; plain Esc goes to the shell.
                         state.sidebar_open = !state.sidebar_open;
                     } else {
                         let mut w = writer.clone();
@@ -304,9 +294,7 @@ fn main() -> Result<()> {
             }
         })
     };
-    // on_resize is defined below with dims tracking
 
-    // Drain PTY bytes periodically in the AboutToWait tick
     std::thread::spawn({
         let parser = parser.clone();
         let sb = scrollback.clone();
@@ -318,72 +306,82 @@ fn main() -> Result<()> {
         }
     });
 
-    // Theme resolver closure
+    // Theme colours, re-read from preferences at most once a second.
     let get_colors = {
+        let cache: Mutex<Option<(std::time::Instant, (u32, u32))>> = Mutex::new(None);
         Arc::new(move || {
-            let prefs = mouser_core::storage::load_preferences();
-            mouser_core::themes::resolve_active_colors(&prefs)
+            let mut c = cache.lock().unwrap();
+            match *c {
+                Some((at, colors)) if at.elapsed() < std::time::Duration::from_secs(1) => colors,
+                _ => {
+                    let prefs = mouser_core::storage::load_preferences();
+                    let colors = mouser_core::themes::resolve_active_colors(&prefs);
+                    *c = Some((std::time::Instant::now(), colors));
+                    colors
+                }
+            }
         })
     };
-    // Track last known cols/rows to approximate pixel size for UI layout
-    let dims = Arc::new(Mutex::new((100u16, 30u16)));
-    let dims_for_resize = dims.clone();
     let on_resize = {
         let parser = parser.clone();
         let master = master.clone();
-        let dims_for_resize = dims_for_resize.clone();
+        let child = child.clone();
+        let writer = shared_writer.clone();
         Arc::new(move |cols: u16, rows: u16| {
-            if let Ok(mut guard) = master.lock() {
-                let _ = mouser_pty::set_master_winsize(&mut **guard, cols, rows);
-            }
-            *dims_for_resize.lock().unwrap() = (cols, rows);
             parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+            let mut m = master.lock().unwrap();
+            if let Some(m) = m.as_mut() {
+                let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows);
+                return;
+            }
+            match spawn_shell(cols, rows) {
+                Ok(handles) => {
+                    let tx = tx.clone();
+                    let mut reader = handles.reader;
+                    std::thread::spawn(move || {
+                        let mut buf = [0u8; 8192];
+                        while let Ok(n) = reader.read(&mut buf) {
+                            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                    *writer.0.lock().unwrap() = Some(handles.writer);
+                    *child.lock().unwrap() = Some(handles.child);
+                    *m = Some(handles.master);
+                }
+                Err(e) => log::error!("failed to spawn shell: {e}"),
+            }
         })
     };
-    let font_size = app_cfg.ui.as_ref().and_then(|u| u.font_size).unwrap_or(16.0);
     let get_ui_model = {
         let app_state = app_state.clone();
-        Arc::new(move || {
-            let (cols, rows) = *dims.lock().unwrap();
-            let width_px = (cols as f32 * (font_size * 0.6)).round() as i32 + 20;
-            let height_px = (rows as f32 * (font_size * 1.3)).round() as i32 + 20;
-            // Group connections by category
+        Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
+            let st = app_state.lock().unwrap();
+            if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
+                return None;
+            }
             let mut groups: std::collections::BTreeMap<ui::Category, Vec<String>> = Default::default();
             if let Ok(list) = list_connections() {
                 for c in list {
-                    let cat = match c.kind {
-                        ConnectionKind::Ssh(_) => ui::Category::Ssh,
-                        ConnectionKind::Waypipe(_) => ui::Category::Waypipe,
-                        ConnectionKind::Tunnel(_) => ui::Category::Tunnels,
-                        ConnectionKind::X11(_) => ui::Category::X11,
-                    };
-                    groups.entry(cat).or_default().push(c.name);
+                    groups.entry(category_of(&c.kind)).or_default().push(c.name);
                 }
             }
-            // Modal from state
-            let st = app_state.lock().unwrap();
+            let center = |w: i32, h: i32| ui::Rect { x: (vp.width - w) / 2, y: (vp.height - h) / 2, w, h };
             let modal = if let Some(name) = &st.pending_delete {
                 Some(ui::ModalState {
                     kind: ui::ModalKind::ConfirmDelete { category: ui::Category::Ssh, name: name.clone() },
                     advanced_open: false,
-                    rect: ui::Rect { x: width_px / 2 - 200, y: height_px / 2 - 120, w: 400, h: 240 },
-                })
-            } else if let Some(conn) = &st.pending_edit {
-                let cat = match conn.kind {
-                    ConnectionKind::Ssh(_) => ui::Category::Ssh,
-                    ConnectionKind::Waypipe(_) => ui::Category::Waypipe,
-                    ConnectionKind::Tunnel(_) => ui::Category::Tunnels,
-                    ConnectionKind::X11(_) => ui::Category::X11,
-                };
-                Some(ui::ModalState {
-                    kind: ui::ModalKind::Edit { category: cat, name: conn.name.clone() },
-                    advanced_open: false,
-                    rect: ui::Rect { x: width_px / 2 - 240, y: height_px / 2 - 160, w: 480, h: 320 },
+                    rect: center(vp.cell_w * 40, vp.cell_h * 8),
                 })
             } else {
-                None
+                st.pending_edit.as_ref().map(|conn| ui::ModalState {
+                    kind: ui::ModalKind::Edit { category: category_of(&conn.kind), name: conn.name.clone() },
+                    advanced_open: false,
+                    rect: center(vp.cell_w * 48, vp.cell_h * 12),
+                })
             };
-            ui::build_sidebar_layout(width_px, height_px, font_size, &groups, modal)
+            Some(ui::build_sidebar_layout_metrics(vp.width, vp.height, vp.cell_w, vp.cell_h, &groups, modal))
         })
     };
     let on_ui_action = {
@@ -413,10 +411,12 @@ fn main() -> Result<()> {
                     let _ = delete_connection(&name);
                 }
             }
-            ui::UiAction::CancelModal | ui::UiAction::ToggleAdvanced | ui::UiAction::None => {
+            ui::UiAction::CancelModal => {
                 let mut st = app_state.lock().unwrap();
                 st.pending_delete = None;
+                st.pending_edit = None;
             }
+            ui::UiAction::ToggleAdvanced | ui::UiAction::None => {}
         })
     };
     let hooks = RenderHooks {
@@ -424,17 +424,31 @@ fn main() -> Result<()> {
         on_resize,
         fetch_lines: fetch,
         get_colors,
+        get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
     };
+    let prefs = mouser_core::storage::load_preferences();
     let mut r = Renderer::default();
-    if let Some(ui) = &app_cfg.ui
-        && let Some(fs) = ui.font_size
-    {
+    let ui_cfg = app_cfg.ui.as_ref();
+    if let Some(fs) = ui_cfg.and_then(|u| u.font_size).or(prefs.font_size) {
         r.font_size = fs;
+    }
+    r.font_family = ui_cfg.and_then(|u| u.font_family.clone()).or(prefs.font_family);
+    if std::env::var_os("MOUSER_OPEN_SIDEBAR").is_some() {
+        app_state.lock().unwrap().sidebar_open = true;
     }
     run_renderer(r, hooks)?;
     Ok(())
+}
+
+fn category_of(kind: &ConnectionKind) -> ui::Category {
+    match kind {
+        ConnectionKind::Ssh(_) => ui::Category::Ssh,
+        ConnectionKind::Waypipe(_) => ui::Category::Waypipe,
+        ConnectionKind::Tunnel(_) => ui::Category::Tunnels,
+        ConnectionKind::X11(_) => ui::Category::X11,
+    }
 }
 
 // no proxy needed; master is stored separately

@@ -4,6 +4,7 @@
 - [Connection manager](./connection-manager.md)
 - [Modes](./modes.md)
 - [Themes](./themes.md)
+- [Rendering and fonts](./rendering.md)
 - [Storage](./storage.md)
 - [Release process](./release.md)
 
