@@ -522,7 +522,43 @@ fn main() -> Result<()> {
     };
     discover_font_families();
     let hooks = RenderHooks {
-        on_key_bytes: on_key,
+        on_key_bytes: on_key.clone(),
+        on_key_event: Some({
+            let (writer, app_state, parser, on_key) = (shared_writer.clone(), app_state.clone(), parser.clone(), on_key.clone());
+            Arc::new(move |legacy: Option<Vec<u8>>, input: mouser_core::kitty::KeyInput| {
+                use mouser_core::kitty::{Encoded, encode_key};
+                let ui_owns = {
+                    let st = app_state.lock().unwrap();
+                    st.mode == Mode::Command
+                        || st.ssh.panel.is_some()
+                        || st.look.panel.is_some()
+                        || st.pending_edit.is_some()
+                        || st.pending_delete.is_some()
+                };
+                // Mouser's own hotkeys (F10, Alt+Esc) keep working in any mode.
+                let hotkey = legacy.as_deref().is_some_and(|b| b == b"\x1b[21~" || b == b"\x1b\x1b");
+                let flags = {
+                    let p = parser.lock().unwrap();
+                    p.kitty_keyboard.current(p.screen.in_alt_screen())
+                };
+                if ui_owns || hotkey || flags == 0 {
+                    if let Some(b) = legacy {
+                        on_key(b);
+                    }
+                    return;
+                }
+                let bytes = match encode_key(&input, flags) {
+                    Encoded::Bytes(b) => b,
+                    Encoded::Legacy => match legacy {
+                        Some(b) => b,
+                        None => return,
+                    },
+                    Encoded::Nothing => return,
+                };
+                let mut w = writer.clone();
+                let _ = w.write_all(&bytes);
+            })
+        }),
         on_resize,
         fetch_lines: fetch,
         get_colors,

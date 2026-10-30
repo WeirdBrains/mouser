@@ -12,6 +12,7 @@ use winit::window::CursorIcon;
 
 pub mod frame;
 pub mod gpu;
+pub mod keys;
 pub mod text;
 pub mod ui;
 
@@ -32,6 +33,10 @@ pub type UiModelHook = Arc<dyn Fn(UiViewport) -> Option<ui::UiLayout> + Send + S
 
 pub struct RenderHooks {
     pub on_key_bytes: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
+    /// Every key event (press, repeat, release) with its legacy bytes (none for
+    /// releases) and a kitty-protocol description. When set, it replaces
+    /// `on_key_bytes` for keyboard input.
+    pub on_key_event: Option<KeyEventHook>,
     pub on_resize: Arc<dyn Fn(u16, u16) + Send + Sync>,
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
@@ -55,6 +60,8 @@ pub struct RenderHooks {
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput) + Send + Sync>;
 
 pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 
@@ -285,7 +292,18 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         (on_act)(ui::UiAction::FontSize(delta));
                         return;
                     }
-                    if let Some(seq) = key_bytes(&key_event, modifiers) {
+                    if let Some(on_event) = &hooks.on_key_event {
+                        let legacy = key_bytes(&key_event, modifiers);
+                        if let Some(input) = keys::kitty_input(&key_event, modifiers) {
+                            if key_event.state == ElementState::Pressed {
+                                scrolled_back = 0;
+                            }
+                            on_event(legacy, input);
+                        } else if let Some(seq) = legacy {
+                            scrolled_back = 0;
+                            (hooks.on_key_bytes)(seq);
+                        }
+                    } else if let Some(seq) = key_bytes(&key_event, modifiers) {
                         scrolled_back = 0;
                         (hooks.on_key_bytes)(seq);
                     }
