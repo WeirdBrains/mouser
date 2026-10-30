@@ -1,6 +1,6 @@
 # Mouser handover notes
 
-Current release: v0.7.1. Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
+Current release: v0.7.2. Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
 
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`

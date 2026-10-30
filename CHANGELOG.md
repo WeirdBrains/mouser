@@ -1,3 +1,13 @@
+## [0.7.2] - 2026-10-30
+
+Fixes:
+- Box-drawing lines align identically on the CPU and GPU renderers
+- Double-line box characters drawn procedurally to match single lines
+- Windows CI: glyph snapshot tests ignore CRLF line endings
+
+Docs:
+- Handover notes updated
+
 ## [0.7.1] - 2026-10-30
 
 Added:
