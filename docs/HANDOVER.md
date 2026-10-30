@@ -24,8 +24,7 @@ at the repo root (gitignored; ask the maintainer if you don't have it).
 | terminfo | `tic -x -o ~/.terminfo extra/mouser.terminfo`, then `TERM=mouser` | `infocmp mouser` |
 
 Verified live (wtype, 2026-10-30): Fuzzball key events, Kitty keyboard flags 1/9/27/31 and `CSI ? u`, vttest menu 5 cursor keys (normal + application) and function keys F1–F12 (F10 is Mouser's command line, so it never reaches the app; F13+ send nothing in legacy mode). Clicking a sidebar connection opens it in a new tab (ydotool click; a failed ssh shows "[process exited 255] press any key to close" and a key closes the tab). wtype uses a virtual keymap, so `code=` reads `Escape` and Shift does not change the character; physical codes need a real keyboard.
-Not yet verified live: connection click opening a
-tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
+Not yet verified live: vttest menu 5 subtests other than cursor and function keys, and the cause of vttest's LNM "Not expected".
 
 ## Known bugs
 - (Fixed in 0.7.1: dashed box-drawing lines, now drawn procedurally with one shared integer geometry (light, heavy and double lines) in `crates/mouser-render/src/boxdraw.rs`, identical on CPU and GPU; the "81 wide" vttest report was the window really being 81 columns, covered by a regression test.)
@@ -65,7 +64,7 @@ Releases happen only with the maintainer's explicit approval.
 - Tests use `MOUSER_SSH_CONFIG` and a temp `HOME`, never the real `~/.ssh`.
 
 ## Suggested next steps
-1. Live-verify Kitty keyboard and Fuzzball key events, connection-click tabs, vttest menu 5, LNM.
+1. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
 2. Confirm website claims, retake the screenshot, publish the site.
 3. Cut the next release once approved.
 4. Finish the Fuzzball gaps listed above.
