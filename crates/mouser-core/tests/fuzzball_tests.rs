@@ -239,7 +239,7 @@ fn place_sizes_and_cursor_move() {
     t.feed(&msg("zgp;id=1,pid=1,id=1"));
     let p = t.fuzzball.gfx.placements[0].clone();
     assert_eq!((p.col, p.row, p.cols, p.rows), (2, 1, 3, 2));
-    assert_eq!((p.width, p.height), (30, 40));
+    assert_eq!(p.pixel_size((10, 20)), (30, 40));
     // Cursor after the last column on the last row.
     assert_eq!((t.screen.cursor.x, t.screen.cursor.y), (5, 2));
     out.take();

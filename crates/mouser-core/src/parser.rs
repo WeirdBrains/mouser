@@ -301,8 +301,14 @@ impl<W: Write> TerminalParser<W> {
         self.flush_scrollback();
         let alt = self.screen.in_alt_screen();
         let col = self.screen.cursor.x as u32;
-        let ctx =
-            fuzzball::Ctx { abs_row: self.lines_scrolled + self.screen.cursor.y as i64, col, cell_w: self.cell_px.0, cell_h: self.cell_px.1, alt };
+        let ctx = fuzzball::Ctx {
+            abs_row: self.lines_scrolled + self.screen.cursor.y as i64,
+            col,
+            cell_w: self.cell_px.0,
+            cell_h: self.cell_px.1,
+            alt,
+            screen_cols: self.screen.size.cols,
+        };
         let eff = self.fuzzball.handle(body, ctx);
         if eff.changed {
             self.graphics_generation += 1;

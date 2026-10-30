@@ -286,13 +286,14 @@ fn main() -> Result<()> {
     };
     let get_images = {
         let parser = parser.clone();
+        let scaler = Mutex::new(mouser_render::ImageScaler::default());
         Arc::new(move |scrolled_back: usize, rows: usize, cell: (u32, u32)| -> Vec<mouser_render::ImageDraw> {
             let pa = parser.get();
             let mut p = pa.lock().unwrap();
             p.cell_px = cell;
             let top = if p.screen.in_alt_screen() { p.lines_scrolled } else { p.lines_scrolled - scrolled_back as i64 };
             let alt = p.screen.in_alt_screen();
-            mouser_render::image_draws(&p.fuzzball.gfx, alt, top, rows)
+            mouser_render::image_draws(&p.fuzzball.gfx, alt, top, rows, cell, &mut scaler.lock().unwrap())
         })
     };
     let on_key = {

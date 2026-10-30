@@ -30,20 +30,55 @@ pub struct Placement {
     /// Absolute row (lines scrolled off so far + screen row) and column of the top-left cell.
     pub row: i64,
     pub col: u32,
-    /// Size in cells.
+    /// Size in cells as shown now (scaled down to fit the screen width if needed).
     pub cols: u32,
     pub rows: u32,
+    /// Column and size the application asked for; [`Placement::fit`] derives
+    /// `col`/`cols`/`rows` from these, so scaling on resize is reversible.
+    pub req_col: u32,
+    pub req_cols: u32,
+    pub req_rows: u32,
     /// Source rectangle in image pixels.
     pub src: (u32, u32, u32, u32),
-    /// Displayed size in pixels (`cols * cell_w`, `rows * cell_h`).
-    pub width: u32,
-    pub height: u32,
     /// -1 behind text, 0 above text, 1 above text and cursor.
     pub z: i32,
     /// Alternate screen placement.
     pub alt: bool,
     /// Last time it was placed (for eviction order).
     pub stamp: u64,
+}
+
+impl Placement {
+    /// Fit the requested box into a screen `screen_cols` wide: unchanged when it
+    /// fits; scaled down (aspect kept) when it overhangs the right edge; moved left
+    /// (and scaled if wider than the screen) when its anchor column is cut off.
+    pub fn fit(&mut self, screen_cols: usize) {
+        let w = (screen_cols.max(1) as u64).min(u32::MAX as u64) as u32;
+        let (col, cols) = if self.req_col + self.req_cols <= w {
+            (self.req_col, self.req_cols)
+        } else if self.req_col < w {
+            (self.req_col, w - self.req_col)
+        } else {
+            let c = self.req_cols.min(w);
+            (w - c, c)
+        };
+        self.col = col;
+        self.cols = cols.max(1);
+        self.rows = ((self.req_rows as u64 * self.cols as u64).div_ceil(self.req_cols.max(1) as u64) as u32).max(1);
+    }
+
+    /// Displayed size in pixels for a cell size: `cols` cells wide, and as tall as
+    /// the requested box scaled by the same factor.
+    pub fn pixel_size(&self, cell: (u32, u32)) -> (u32, u32) {
+        let (cw, ch) = (cell.0.max(1) as u64, cell.1.max(1) as u64);
+        let w = self.cols as u64 * cw;
+        let h = if self.cols == self.req_cols {
+            self.rows as u64 * ch
+        } else {
+            (self.req_rows as u64 * ch * self.cols as u64 / self.req_cols.max(1) as u64).max(1)
+        };
+        (w as u32, h as u32)
+    }
 }
 
 /// A published limit (`g_mem`, `g_max_place`) would be exceeded.
