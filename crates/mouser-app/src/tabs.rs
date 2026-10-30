@@ -33,6 +33,8 @@ pub struct Session {
     pub exited: Mutex<Option<u32>>,
     /// The tab should be removed.
     pub closed: AtomicBool,
+    /// A timer is waiting to expire an abandoned Fuzzball upload.
+    upload_timer: AtomicBool,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -63,6 +65,7 @@ impl Session {
             child: Mutex::new(None),
             exited: Mutex::new(None),
             closed: AtomicBool::new(false),
+            upload_timer: AtomicBool::new(false),
         })
     }
 
@@ -102,6 +105,7 @@ impl Session {
                     Ok(0) => break,
                     Ok(n) => {
                         me.feed(&buf[..n]);
+                        me.watch_upload();
                         wake();
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -112,6 +116,27 @@ impl Session {
             let code = me.child.lock().unwrap().as_mut().and_then(|c| c.wait().ok()).map(|s| s.exit_code()).unwrap_or(0);
             me.finish(code);
             wake();
+        });
+    }
+
+    /// While a chunked Fuzzball upload is pending, keep one timer thread that drops
+    /// it once it has been idle for `UPLOAD_TIMEOUT` (frees its buffer).
+    fn watch_upload(self: &Arc<Self>) {
+        if !self.parser.lock().unwrap().fuzzball.upload_pending() || self.upload_timer.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            loop {
+                let next = me.parser.lock().unwrap().fuzzball.expire_upload(std::time::Instant::now());
+                match next {
+                    Some(t) => std::thread::sleep(t.saturating_duration_since(std::time::Instant::now())),
+                    None => break,
+                }
+            }
+            me.upload_timer.store(false, Ordering::Release);
+            // An upload may have started between the last check and clearing the flag.
+            me.watch_upload();
         });
     }
 
