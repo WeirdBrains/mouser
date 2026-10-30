@@ -1054,6 +1054,7 @@ mod tests {
         tabs::Session::new("t", tabs::Launch::Command(argv), Size { cols: 40, rows: 5 }, ScrollbackConfig::default())
     }
 
+    #[cfg(unix)]
     fn wait_until(mut f: impl FnMut() -> bool) {
         let t = std::time::Instant::now();
         while !f() {
