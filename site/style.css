@@ -1,4 +1,4 @@
-:root{--bg:#04192A;--bg2:#0a2a40;--panel:#0a2438;--line:#16405c;--fg:#d6e6f2;--dim:#8fb0c6;--cyan:#3fd8e8;--font:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace}
+:root{--radius:20px;--bg:#04192A;--bg2:#0a2a40;--panel:#0a2438;--line:#16405c;--fg:#d6e6f2;--dim:#8fb0c6;--cyan:#3fd8e8;--font:ui-monospace,"JetBrains Mono","Fira Code",Menlo,Consolas,monospace}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
@@ -35,3 +35,8 @@ kbd{border:1px solid var(--line);background:var(--panel);padding:.05rem .4rem;fo
 footer{text-align:center;padding:2rem;color:var(--dim);background:linear-gradient(160deg,var(--bg),var(--bg2));border-top:1px solid var(--line)}
 @media (max-width:820px){.hero{grid-template-columns:1fr}.menu{display:block}nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border-bottom:1px solid var(--line);padding:.5rem 1rem}nav.open{display:flex;flex-direction:column}nav a{margin:.4rem 0}}
 .logo{height:1.9em;width:auto;display:block;flex:none}.wordmark{display:flex;align-items:center;gap:.5rem}.wordmark{font-size:1.5rem;font-weight:700;color:var(--fg)}.wordmark .logo{height:2.2em}
+.btn,.grid li,pre,.shot img,.logo,.menu,kbd,table,input,button{border-radius:var(--radius)}
+.grid li,pre,.shot{overflow:hidden}.shot{border-radius:var(--radius)}
+table{border-collapse:separate;border-spacing:0;border:1px solid var(--line);overflow:hidden}tbody tr:last-child td{border-bottom:0}
+kbd{border-radius:calc(var(--radius)/2.5)}
+pre{padding:1rem 1.25rem}
