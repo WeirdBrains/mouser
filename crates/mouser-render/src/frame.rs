@@ -1,7 +1,7 @@
 //! Pure frame composition: terminal text, cursor and the connections sidebar.
 //! Kept free of windowing so it can be snapshot-tested.
 
-use crate::text::{Canvas, FontStack, luminance, mix};
+use crate::text::{Draw, FontStack, luminance, mix};
 use crate::ui::{self, UiLayout};
 
 /// Padding between the window edge and the terminal grid, in pixels.
@@ -34,7 +34,7 @@ pub fn accent_for(bg: u32) -> u32 {
     if luminance(bg) < 128.0 { 0x2FD8E5 } else { 0x0B7C88 }
 }
 
-pub fn render_frame(canvas: &mut Canvas, fonts: &mut FontStack, frame: &Frame) {
+pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     for (row, line) in frame.lines.iter().enumerate() {
@@ -55,21 +55,21 @@ pub fn render_frame(canvas: &mut Canvas, fonts: &mut FontStack, frame: &Frame) {
     }
     if let Some(status) = frame.status {
         let h = ch + 8;
-        let y = canvas.height as i32 - h;
-        let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width as i32);
+        let y = canvas.height() as i32 - h;
+        let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width() as i32);
         canvas.fill_rect(0, y, w, h, mix(frame.bg, frame.fg, 0.12));
         canvas.fill_rect(0, y, w, 1, frame.accent.unwrap_or(accent_for(frame.bg)));
         canvas.draw_text(fonts, PADDING, y + 4, status, frame.fg);
     }
 }
 
-fn draw_button(canvas: &mut Canvas, fonts: &mut FontStack, r: ui::Rect, label: &str, fill: u32, text: u32) {
+fn draw_button(canvas: &mut dyn Draw, fonts: &mut FontStack, r: ui::Rect, label: &str, fill: u32, text: u32) {
     canvas.fill_rect(r.x, r.y, r.w, r.h, fill);
     let top = r.y + (r.h - fonts.cell_h) / 2;
     canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, top, label, text);
 }
 
-fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u32, fg: u32, accent: u32) {
+fn draw_ui(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, bg: u32, fg: u32, accent: u32) {
     let dark = luminance(bg) < 128.0;
     let panel = if dark { mix(bg, 0xFFFFFF, 0.05) } else { mix(bg, 0x000000, 0.04) };
     let border = mix(bg, fg, 0.25);
@@ -84,7 +84,7 @@ fn draw_ui(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, bg: u3
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_panel(canvas: &mut Canvas, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
+fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let r = p.rect;
     canvas.fill_rect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, border);
     canvas.fill_rect(r.x, r.y, r.w, r.h, panel);
@@ -139,7 +139,7 @@ fn draw_panel(canvas: &mut Canvas, fonts: &mut FontStack, p: &ui::Panel, bg: u32
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_sidebar(canvas: &mut Canvas, fonts: &mut FontStack, layout: &UiLayout, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
+fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let s = layout.sidebar_rect;
     canvas.fill_rect(s.x, s.y, s.w, s.h, panel);
     canvas.fill_rect(s.x, s.y, 1, s.h, border);
