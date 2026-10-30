@@ -346,7 +346,9 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move || app_state.lock().unwrap().look.font())
     };
+    let shell_exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let on_resize = {
+        let shell_exited = shell_exited.clone();
         let parser = parser.clone();
         let master = master.clone();
         let child = child.clone();
@@ -362,13 +364,11 @@ fn main() -> Result<()> {
                 Ok(handles) => {
                     let tx = tx.clone();
                     let mut reader = handles.reader;
+                    let shell_exited = shell_exited.clone();
                     std::thread::spawn(move || {
-                        let mut buf = [0u8; 8192];
-                        while let Ok(n) = reader.read(&mut buf) {
-                            if n == 0 || tx.send(buf[..n].to_vec()).is_err() {
-                                break;
-                            }
-                        }
+                        pump_pty(&mut reader, &tx);
+                        // EOF / EIO: the shell exited (Ctrl+D, `exit`, ...).
+                        shell_exited.store(true, std::sync::atomic::Ordering::SeqCst);
                     });
                     *writer.0.lock().unwrap() = Some(handles.writer);
                     *child.lock().unwrap() = Some(handles.child);
@@ -512,6 +512,10 @@ fn main() -> Result<()> {
         get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
+        should_exit: Some({
+            let shell_exited = shell_exited.clone();
+            Arc::new(move || shell_exited.load(std::sync::atomic::Ordering::SeqCst))
+        }),
         get_status: Some({
             let app_state = app_state.clone();
             Arc::new(move || {
@@ -527,7 +531,32 @@ fn main() -> Result<()> {
         st.sidebar_collapsed = false;
     }
     run_renderer(r, hooks)?;
+    // Reap the shell if it is still around (window closed by the user).
+    if let Some(mut c) = child.lock().unwrap().take()
+        && c.try_wait().ok().flatten().is_none()
+    {
+        let _ = c.kill();
+        let _ = c.wait();
+    }
     Ok(())
+}
+
+/// Forward PTY output to `tx` until EOF or a read error (EIO on Linux once the
+/// shell has exited and the last slave fd closed).
+fn pump_pty(reader: &mut dyn Read, tx: &crossbeam_channel::Sender<Vec<u8>>) {
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
 }
 
 /// `theme [name]`, `mode m`, `edit-theme`, `font-size n`, `font [family]` (leading ':' optional).
@@ -692,5 +721,60 @@ fn set_x11(x: &mut X11Connection, k: &str, v: &str) {
         _ => {
             x.extra_options.insert(k.to_string(), v.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pump_stops_at_eof_and_on_error() {
+        let (tx, rx) = unbounded();
+        let mut data: &[u8] = b"bye\r\n";
+        pump_pty(&mut data, &tx);
+        assert_eq!(rx.try_recv().unwrap(), b"bye\r\n");
+        struct Eio;
+        impl Read for Eio {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::from_raw_os_error(5))
+            }
+        }
+        pump_pty(&mut Eio, &tx); // returns instead of spinning
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_exit_ends_the_pty_stream() {
+        // A real PTY session: Ctrl+D (0x04) at an empty `sh` prompt ends it.
+        let unique = std::env::temp_dir().join(format!("mouser-exit-{}", std::process::id()));
+        std::fs::create_dir_all(&unique).unwrap();
+        let mut cmd = portable_pty_cmd();
+        cmd.env("HOME", &unique);
+        let pty = mouser_pty::portable_pty::native_pty_system();
+        let pair = pty.openpty(mouser_pty::portable_pty::PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let mut reader = pair.master.try_clone_reader().unwrap();
+        let mut writer = pair.master.take_writer().unwrap();
+        let (tx, rx) = unbounded();
+        let done = std::thread::spawn(move || pump_pty(&mut reader, &tx));
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        writer.write_all(&[0x04]).unwrap();
+        let status = child.wait().unwrap();
+        assert!(status.success());
+        drop(writer);
+        drop(pair.master);
+        done.join().unwrap();
+        while rx.try_recv().is_ok() {}
+        let _ = std::fs::remove_dir_all(unique);
+    }
+
+    #[cfg(unix)]
+    fn portable_pty_cmd() -> mouser_pty::portable_pty::CommandBuilder {
+        let mut c = mouser_pty::portable_pty::CommandBuilder::new("/bin/sh");
+        c.env("PS1", "$ ");
+        c
     }
 }

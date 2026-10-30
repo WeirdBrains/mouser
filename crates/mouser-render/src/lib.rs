@@ -43,7 +43,12 @@ pub struct RenderHooks {
     pub on_ui_action: Option<Arc<dyn Fn(ui::UiAction) + Send + Sync>>,
     /// Command line / status text drawn in a bar at the bottom, if any.
     pub get_status: Option<StatusHook>,
+    /// Returns true once the session has ended (e.g. the shell exited); the
+    /// window then closes and `run` returns.
+    pub should_exit: Option<ExitHook>,
 }
+
+pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub type FontHook = Arc<dyn Fn() -> (f32, Option<String>) + Send + Sync>;
 
@@ -188,6 +193,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 _ => {}
             },
             Event::AboutToWait => {
+                if hooks.should_exit.as_ref().is_some_and(|f| f()) {
+                    elwt.exit();
+                    return;
+                }
                 if let Some(get_font) = &hooks.get_font {
                     let (size, family) = get_font();
                     if family != renderer.font_family {
