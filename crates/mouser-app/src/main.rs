@@ -22,6 +22,8 @@ struct AppState {
     mode: Mode,
     command_buf: String,
     sidebar_open: bool,
+    sidebar_collapsed: bool,
+    sidebar_width: Option<i32>,
     pending_delete: Option<String>,
     pending_edit: Option<Connection>,
 }
@@ -210,11 +212,14 @@ fn main() -> Result<()> {
     let parser = TerminalParser::new(size, scrollback.clone(), shared_writer.clone());
     let parser = Arc::new(Mutex::new(parser));
 
+    let prefs0 = mouser_core::storage::load_preferences();
     // App UI state
     let app_state = Arc::new(Mutex::new(AppState {
         mode: Mode::Shell,
         command_buf: String::new(),
-        sidebar_open: false,
+        sidebar_open: prefs0.sidebar_open.unwrap_or(false),
+        sidebar_collapsed: prefs0.sidebar_collapsed.unwrap_or(false),
+        sidebar_width: prefs0.sidebar_width,
         pending_delete: None,
         pending_edit: None,
     }));
@@ -268,9 +273,14 @@ fn main() -> Result<()> {
                     if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
                         state.pending_edit = None;
                         state.pending_delete = None;
+                    } else if bytes == b"\x1b[21~" {
+                        // F10: Mouser command line
+                        state.mode = Mode::Command;
+                        state.command_buf.clear();
                     } else if bytes == b"\x1b\x1b" {
                         // Alt+Esc toggles the connections sidebar; plain Esc goes to the shell.
                         state.sidebar_open = !state.sidebar_open;
+                        persist_sidebar(&state);
                     } else {
                         let mut w = writer.clone();
                         let _ = w.write_all(&bytes);
@@ -282,9 +292,14 @@ fn main() -> Result<()> {
                         state.command_buf.clear();
                     } else if bytes == b"\r" {
                         let cmd = std::mem::take(&mut state.command_buf);
+                        state.mode = Mode::Shell;
                         drop(state);
                         handle_command(&cmd, &writer, &app_state);
-                    } else if let Ok(s) = std::str::from_utf8(&bytes) {
+                    } else if bytes == b"\x7f" || bytes == b"\x08" {
+                        state.command_buf.pop();
+                    } else if let Ok(s) = std::str::from_utf8(&bytes)
+                        && !s.starts_with('\x1b')
+                    {
                         state.command_buf.push_str(s);
                     }
                 }
@@ -381,7 +396,15 @@ fn main() -> Result<()> {
                     rect: center(vp.cell_w * 48, vp.cell_h * 12),
                 })
             };
-            Some(ui::build_sidebar_layout_metrics(vp.width, vp.height, vp.cell_w, vp.cell_h, &groups, modal))
+            let spec = ui::SidebarSpec {
+                width_px: vp.width,
+                height_px: vp.height,
+                cell_w: vp.cell_w,
+                cell_h: vp.cell_h,
+                requested_width: st.sidebar_width,
+                collapsed: st.sidebar_collapsed && modal.is_none(),
+            };
+            Some(ui::build_sidebar(spec, &groups, modal))
         })
     };
     let on_ui_action = {
@@ -416,6 +439,17 @@ fn main() -> Result<()> {
                 st.pending_delete = None;
                 st.pending_edit = None;
             }
+            ui::UiAction::ToggleCollapse => {
+                let mut st = app_state.lock().unwrap();
+                st.sidebar_collapsed = !st.sidebar_collapsed;
+                persist_sidebar(&st);
+            }
+            ui::UiAction::ResizeSidebar(w) => {
+                let mut st = app_state.lock().unwrap();
+                st.sidebar_width = Some(w);
+                st.sidebar_collapsed = false;
+            }
+            ui::UiAction::ResizeSidebarDone => persist_sidebar(&app_state.lock().unwrap()),
             ui::UiAction::ToggleAdvanced | ui::UiAction::None => {}
         })
     };
@@ -427,19 +461,41 @@ fn main() -> Result<()> {
         get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
+        get_status: Some({
+            let app_state = app_state.clone();
+            Arc::new(move || {
+                let st = app_state.lock().unwrap();
+                (st.mode == Mode::Command).then(|| format!(":{}", st.command_buf))
+            })
+        }),
     };
     let prefs = mouser_core::storage::load_preferences();
     let mut r = Renderer::default();
     let ui_cfg = app_cfg.ui.as_ref();
-    if let Some(fs) = ui_cfg.and_then(|u| u.font_size).or(prefs.font_size) {
+    // In-app choices (preferences.toml) win over config.toml.
+    if let Some(fs) = prefs.font_size.or(ui_cfg.and_then(|u| u.font_size)) {
         r.font_size = fs;
     }
-    r.font_family = ui_cfg.and_then(|u| u.font_family.clone()).or(prefs.font_family);
+    r.font_family = prefs.font_family.clone().or(ui_cfg.and_then(|u| u.font_family.clone()));
     if std::env::var_os("MOUSER_OPEN_SIDEBAR").is_some() {
-        app_state.lock().unwrap().sidebar_open = true;
+        let mut st = app_state.lock().unwrap();
+        st.sidebar_open = true;
+        st.sidebar_collapsed = false;
     }
     run_renderer(r, hooks)?;
     Ok(())
+}
+
+/// Save sidebar open/collapsed/width to preferences.toml.
+fn persist_sidebar(st: &AppState) {
+    let (open, collapsed, width) = (st.sidebar_open, st.sidebar_collapsed, st.sidebar_width);
+    let _ = mouser_core::storage::update_preferences(|p| {
+        p.sidebar_open = Some(open);
+        p.sidebar_collapsed = Some(collapsed);
+        if width.is_some() {
+            p.sidebar_width = width;
+        }
+    });
 }
 
 fn category_of(kind: &ConnectionKind) -> ui::Category {
@@ -455,10 +511,15 @@ fn category_of(kind: &ConnectionKind) -> ui::Category {
 
 fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppState>>) {
     let trimmed = cmd.trim();
-    if trimmed == "open-sidebar" {
-        app_state.lock().unwrap().sidebar_open = true;
-    } else if trimmed == "close-sidebar" {
-        app_state.lock().unwrap().sidebar_open = false;
+    if trimmed == "open-sidebar" || trimmed == ":open-sidebar" {
+        let mut st = app_state.lock().unwrap();
+        st.sidebar_open = true;
+        st.sidebar_collapsed = false;
+        persist_sidebar(&st);
+    } else if trimmed == "close-sidebar" || trimmed == ":close-sidebar" {
+        let mut st = app_state.lock().unwrap();
+        st.sidebar_open = false;
+        persist_sidebar(&st);
     } else if let Some(name) = trimmed.strip_prefix("del-conn ") {
         let mut st = app_state.lock().unwrap();
         st.pending_delete = Some(name.to_string());

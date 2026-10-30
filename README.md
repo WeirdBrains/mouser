@@ -59,23 +59,21 @@ If a feature your workflow depends on is missing, please open an issue referenci
 
 ## Configuration
 
-Create a config at:
+Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if set
+(`--config-dir DIR` overrides it for `config.toml`; `--config FILE` points at one file).
 
-- Linux: `~/.config/mouser/config.toml`
+- `config.toml` — static settings: fonts, scrollback, compression.
+- `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
+  `font_family`/`font_size` overrides, and the sidebar's `sidebar_open`, `sidebar_collapsed`,
+  `sidebar_width`. Values here win over `config.toml`.
+- `themes/<Theme>/{dark,light}.toml` — theme colours.
 
-Example:
+`config.toml` example:
 
 ```toml
 [ui]
-font_family = "FiraCode Nerd Font"
+font_family = "JetBrains Mono"
 font_size = 14.0
-theme = "dark"
-
-[colors]
-foreground = "#c0caf5"
-background = "#1a1b26"
-cursor = "#c8d3f5"
-palette = ["#1e1e2e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6"]
 
 [scrollback]
 max_scrollback_lines = 200000
@@ -89,7 +87,14 @@ algorithm = "zstd"   # zstd | lz4 | none
 level = 3
 ```
 
-You can also pass an alternate path with `--config /path/to/config.toml`.
+`preferences.toml` example:
+
+```toml
+theme = "Red Star"
+mode = "system"
+sidebar_open = true
+sidebar_width = 320
+```
 
 ## Build and run
 

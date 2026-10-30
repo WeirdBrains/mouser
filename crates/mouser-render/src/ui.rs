@@ -42,6 +42,12 @@ pub struct UiLayout {
     pub sidebar_rect: Rect,
     pub categories: Vec<UiCategory>,
     pub modal: Option<ModalState>,
+    /// Sidebar is collapsed to a thin strip (`sidebar_rect` is the strip).
+    pub collapsed: bool,
+    /// Chevron that collapses (or, when collapsed, expands) the sidebar.
+    pub collapse_rect: Rect,
+    /// Drag handle on the sidebar's left edge (empty when collapsed).
+    pub resize_rect: Rect,
 }
 
 #[derive(Debug, Clone)]
@@ -61,12 +67,62 @@ pub struct ModalState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UiAction {
     OpenAdd(Category),
-    OpenEdit { category: Category, name: String },
-    OpenDeleteConfirm { category: Category, name: String },
+    OpenEdit {
+        category: Category,
+        name: String,
+    },
+    OpenDeleteConfirm {
+        category: Category,
+        name: String,
+    },
     ToggleAdvanced,
     ConfirmDelete,
     CancelModal,
+    /// Collapse an expanded sidebar, or expand a collapsed one.
+    ToggleCollapse,
+    /// Live sidebar width (already clamped) while dragging its edge.
+    ResizeSidebar(i32),
+    /// Drag finished; persist the current width.
+    ResizeSidebarDone,
     None,
+}
+
+/// Width of the collapsed sidebar strip, in pixels.
+pub fn collapsed_width(cell_w: i32) -> i32 {
+    (cell_w * 2).max(20)
+}
+
+/// Sidebar width limits for a window: at least ~22 cells (>= 200 px), at most
+/// 60% of the window while leaving the terminal at least 20 columns.
+pub fn sidebar_width_bounds(window_w: i32, cell_w: i32) -> (i32, i32) {
+    let min = (cell_w * 22).max(200);
+    let max = ((window_w as f32 * 0.6) as i32).min(window_w - cell_w * 20);
+    (min, max.max(min))
+}
+
+pub fn clamp_sidebar_width(requested: i32, window_w: i32, cell_w: i32) -> i32 {
+    let (min, max) = sidebar_width_bounds(window_w, cell_w);
+    requested.clamp(min, max).min(window_w.max(0))
+}
+
+/// Inputs for [`build_sidebar`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarSpec {
+    pub width_px: i32,
+    pub height_px: i32,
+    pub cell_w: i32,
+    pub cell_h: i32,
+    /// Saved width, if any; clamped to the window.
+    pub requested_width: Option<i32>,
+    pub collapsed: bool,
+}
+
+/// Grab zone half-width around the sidebar's left edge, in pixels.
+pub const RESIZE_GRIP: i32 = 4;
+
+/// Whether (`px`, `py`) is on the sidebar's draggable left edge.
+pub fn on_resize_edge(layout: &UiLayout, px: i32, py: i32) -> bool {
+    layout.modal.is_none() && layout.resize_rect.contains(px, py)
 }
 
 pub fn build_sidebar_layout(
@@ -105,14 +161,40 @@ pub fn build_sidebar_layout_metrics(
     groups: &BTreeMap<Category, Vec<String>>,
     modal: Option<ModalState>,
 ) -> UiLayout {
-    let sidebar_w = sidebar_width(width_px, cell_w);
-    let sidebar_rect = Rect { x: width_px - sidebar_w, y: 0, w: sidebar_w, h: height_px };
+    build_sidebar(SidebarSpec { width_px, height_px, cell_w, cell_h, requested_width: None, collapsed: false }, groups, modal)
+}
+
+pub const COLLAPSE_LABEL: &str = "»";
+pub const EXPAND_LABEL: &str = "«";
+pub const SIDEBAR_TITLE: &str = "Connections";
+
+pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>, modal: Option<ModalState>) -> UiLayout {
+    let SidebarSpec { width_px, height_px, cell_w, cell_h, requested_width, collapsed } = spec;
     let line_h = cell_h + 8;
+    if collapsed {
+        let w = collapsed_width(cell_w).min(width_px);
+        let sidebar_rect = Rect { x: width_px - w, y: 0, w, h: height_px };
+        return UiLayout {
+            sidebar_rect,
+            categories: Vec::new(),
+            modal,
+            collapsed: true,
+            collapse_rect: sidebar_rect,
+            resize_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
+        };
+    }
+    let sidebar_w = match requested_width {
+        Some(w) => clamp_sidebar_width(w, width_px, cell_w),
+        None => sidebar_width(width_px, cell_w),
+    };
+    let sidebar_rect = Rect { x: width_px - sidebar_w, y: 0, w: sidebar_w, h: height_px };
     let text_w = |s: &str| s.chars().count() as i32 * cell_w;
     let button_w = |s: &str| text_w(s) + 2 * BUTTON_PAD;
     let inner_x = sidebar_rect.x + SIDEBAR_MARGIN;
     let inner_right = sidebar_rect.x + sidebar_rect.w - SIDEBAR_MARGIN;
-    let mut y = SIDEBAR_MARGIN;
+    let collapse_rect = Rect { x: inner_right - button_w(COLLAPSE_LABEL), y: SIDEBAR_MARGIN, w: button_w(COLLAPSE_LABEL), h: line_h };
+    let resize_rect = Rect { x: sidebar_rect.x - RESIZE_GRIP, y: 0, w: 2 * RESIZE_GRIP, h: height_px };
+    let mut y = SIDEBAR_MARGIN + line_h + 10;
     let mut cats = Vec::new();
     for cat in [Category::Ssh, Category::Waypipe, Category::Tunnels, Category::X11] {
         let add_w = button_w(ADD_LABEL);
@@ -133,7 +215,7 @@ pub fn build_sidebar_layout_metrics(
         y += 10;
         cats.push(UiCategory { category: cat, header_rect, add_rect, items });
     }
-    UiLayout { sidebar_rect, categories: cats, modal }
+    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect }
 }
 
 pub fn category_title(c: &Category) -> &'static str {
@@ -156,6 +238,9 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     }
     if !layout.sidebar_rect.contains(px, py) {
         return UiAction::None;
+    }
+    if layout.collapse_rect.contains(px, py) {
+        return UiAction::ToggleCollapse;
     }
     for cat in &layout.categories {
         if cat.add_rect.contains(px, py) {

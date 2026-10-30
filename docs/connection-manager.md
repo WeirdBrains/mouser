@@ -4,7 +4,13 @@ Mouser manages SSH sessions, Waypipe sessions, SSH tunnels (local/remote/dynamic
 
 UI
 - A collapsible right sidebar lists categories: SSH, Waypipe, Tunnels, X11. Toggle it with Alt+Esc
-  (plain Esc goes to the shell). While open, the terminal grid shrinks so nothing is hidden.
+  (plain Esc goes to the shell), or with `:open-sidebar` / `:close-sidebar` (F10 opens the
+  command line). While open, the terminal grid shrinks so nothing is hidden.
+- Resize: drag the sidebar's left edge (the pointer turns into a resize cursor). Width is clamped
+  between ~22 cells (min 200 px) and 60% of the window, leaving the terminal at least 20 columns.
+- Collapse: click `»` in the sidebar header to shrink it to a thin strip; click the strip (`«`) to
+  expand it again.
+- Open/collapsed state and width are saved in `preferences.toml`.
 - Each category has an Add action (command-mode: `:add-ssh`, `:add-waypipe`, `:add-tunnel`, `:add-x11`).
 - Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`).
 
