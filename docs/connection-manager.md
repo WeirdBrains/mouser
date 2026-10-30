@@ -10,7 +10,8 @@ UI
   between ~22 cells (min 200 px) and 60% of the window, leaving the terminal at least 20 columns.
 - Collapse: click `»` in the sidebar header to shrink it to a thin strip; click the strip (`«`) to
   expand it again.
-- Open/collapsed state and width are saved in `preferences.toml`.
+- Width is saved in `preferences.toml`. At startup the sidebar is collapsed to the strip unless
+  `MOUSER_OPEN_SIDEBAR=1` is set, which opens it expanded.
 - Each category has an Add action (command-mode: `:add-ssh`, `:add-waypipe`, `:add-tunnel`, `:add-x11`).
 - Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`).
 

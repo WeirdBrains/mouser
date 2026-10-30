@@ -525,10 +525,11 @@ fn main() -> Result<()> {
         }),
     };
     let r = Renderer { font_size: font_size0, font_family: font_family0, ..Renderer::default() };
-    if std::env::var_os("MOUSER_OPEN_SIDEBAR").is_some() {
+    {
+        // Start collapsed to the strip unless MOUSER_OPEN_SIDEBAR asks for it open;
+        // the saved width is kept for when it is expanded.
         let mut st = app_state.lock().unwrap();
-        st.sidebar_open = true;
-        st.sidebar_collapsed = false;
+        (st.sidebar_open, st.sidebar_collapsed) = startup_sidebar(std::env::var("MOUSER_OPEN_SIDEBAR").ok().as_deref());
     }
     run_renderer(r, hooks)?;
     // Reap the shell if it is still around (window closed by the user).
@@ -539,6 +540,13 @@ fn main() -> Result<()> {
         let _ = c.wait();
     }
     Ok(())
+}
+
+/// Sidebar (open, collapsed) at startup: expanded only when `MOUSER_OPEN_SIDEBAR`
+/// is set (to anything but empty/0/false), otherwise the collapsed strip.
+fn startup_sidebar(env: Option<&str>) -> (bool, bool) {
+    let open = env.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "no"));
+    (true, !open)
 }
 
 /// Forward PTY output to `tx` until EOF or a read error (EIO on Linux once the
@@ -727,6 +735,15 @@ fn set_x11(x: &mut X11Connection, k: &str, v: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sidebar_starts_collapsed_unless_env_opens_it() {
+        assert_eq!(startup_sidebar(None), (true, true));
+        assert_eq!(startup_sidebar(Some("")), (true, true));
+        assert_eq!(startup_sidebar(Some("0")), (true, true));
+        assert_eq!(startup_sidebar(Some("1")), (true, false));
+        assert_eq!(startup_sidebar(Some("yes")), (true, false));
+    }
 
     #[test]
     fn pump_stops_at_eof_and_on_error() {
