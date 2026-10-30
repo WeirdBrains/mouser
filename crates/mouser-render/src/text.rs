@@ -2,6 +2,7 @@
 
 use fontdue::{Font, FontSettings, Metrics};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Built-in fallback face (Liberation Mono, SIL OFL 1.1) so Mouser always has a
 /// real monospace font, even on systems without one.
@@ -50,7 +51,7 @@ pub struct Glyph {
 /// Every character occupies one `cell_w` x `cell_h` cell; glyphs are placed on a
 /// shared baseline `ascent` pixels below the top of the cell.
 pub struct FontStack {
-    fonts: Vec<Font>,
+    fonts: Vec<Arc<Font>>,
     pub size: f32,
     pub cell_w: i32,
     pub cell_h: i32,
@@ -61,8 +62,7 @@ pub struct FontStack {
 impl FontStack {
     /// Only the embedded font (deterministic; used by tests).
     pub fn embedded(size: f32) -> Self {
-        let font = Font::from_bytes(EMBEDDED_MONO, FontSettings::default()).expect("embedded font");
-        Self::from_fonts(vec![font], size)
+        Self::from_fonts(vec![embedded_font()], size)
     }
 
     /// The configured or best available system monospace font, then fallbacks,
@@ -73,9 +73,9 @@ impl FontStack {
 
     /// Same as [`FontStack::system`] with an already loaded font database.
     pub fn from_db(db: &fontdb::Database, family: Option<&str>, size: f32) -> Self {
-        let mut fonts = Vec::new();
+        let mut fonts: Vec<Arc<Font>> = Vec::new();
         let mut loaded = Vec::new();
-        let mut load = |name: &str, want_mono: bool, fonts: &mut Vec<Font>| {
+        let mut load = |name: &str, want_mono: bool, fonts: &mut Vec<Arc<Font>>| {
             let query = fontdb::Query { families: &[fontdb::Family::Name(name)], ..Default::default() };
             let Some(id) = db.query(&query) else { return false };
             if loaded.contains(&id) {
@@ -84,10 +84,7 @@ impl FontStack {
             if want_mono && !db.face(id).is_some_and(|f| f.monospaced) {
                 return false;
             }
-            let font = db
-                .with_face_data(id, |data, index| Font::from_bytes(data, FontSettings { collection_index: index, ..Default::default() }).ok())
-                .flatten();
-            match font {
+            match parsed_face(db, id) {
                 Some(f) => {
                     loaded.push(id);
                     fonts.push(f);
@@ -105,16 +102,16 @@ impl FontStack {
             }
         }
         if fonts.is_empty() {
-            fonts.push(Font::from_bytes(EMBEDDED_MONO, FontSettings::default()).expect("embedded font"));
+            fonts.push(embedded_font());
         }
         for name in FALLBACK_FAMILIES {
             load(name, false, &mut fonts);
         }
-        fonts.push(Font::from_bytes(EMBEDDED_MONO, FontSettings::default()).expect("embedded font"));
+        fonts.push(embedded_font());
         Self::from_fonts(fonts, size)
     }
 
-    fn from_fonts(fonts: Vec<Font>, size: f32) -> Self {
+    fn from_fonts(fonts: Vec<Arc<Font>>, size: f32) -> Self {
         let primary = &fonts[0];
         let (ascent, descent, gap) =
             primary.horizontal_line_metrics(size).map(|m| (m.ascent, m.descent, m.line_gap)).unwrap_or((size * 0.8, -size * 0.2, 0.0));
@@ -128,7 +125,7 @@ impl FontStack {
         Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new() }
     }
 
-    /// The same fonts at another pixel size.
+    /// The same fonts at another pixel size (cheap: parsed faces are shared).
     pub fn resized(&self, size: f32) -> Self {
         Self::from_fonts(self.fonts.clone(), size)
     }
@@ -147,6 +144,28 @@ impl FontStack {
             Glyph { metrics, bitmap }
         })
     }
+}
+
+/// The embedded face, parsed once per process.
+fn embedded_font() -> Arc<Font> {
+    static EMBEDDED: OnceLock<Arc<Font>> = OnceLock::new();
+    EMBEDDED.get_or_init(|| Arc::new(Font::from_bytes(EMBEDDED_MONO, FontSettings::default()).expect("embedded font"))).clone()
+}
+
+/// Parse a system face once per process; later font stacks reuse it, so
+/// switching family only parses the new primary face.
+fn parsed_face(db: &fontdb::Database, id: fontdb::ID) -> Option<Arc<Font>> {
+    static FACES: OnceLock<Mutex<HashMap<fontdb::ID, Arc<Font>>>> = OnceLock::new();
+    let faces = FACES.get_or_init(Default::default);
+    if let Some(f) = faces.lock().unwrap().get(&id) {
+        return Some(f.clone());
+    }
+    let font = db
+        .with_face_data(id, |data, index| Font::from_bytes(data, FontSettings { collection_index: index, ..Default::default() }).ok())
+        .flatten()
+        .map(Arc::new)?;
+    faces.lock().unwrap().insert(id, font.clone());
+    Some(font)
 }
 
 /// System font database (slow to build; load once and reuse).
