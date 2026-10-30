@@ -348,3 +348,10 @@ fn lnm_and_decreqtparm() {
     t.feed(b"\x1b[20$p\x1b[20l\x1b[x\x1b[1x");
     assert_eq!(out.take(), "\x1b[20;1$y\x1b[2;1;1;128;128;1;0x\x1b[3;1;1;128;128;1;0x");
 }
+
+#[test]
+fn xterm_window_reports() {
+    let (mut t, out) = term(10, 3);
+    t.feed(b"\x1b]2;hi\x07\x1b[11t\x1b[13t\x1b[13;2t\x1b[14;2t\x1b[20t\x1b[21t");
+    assert_eq!(out.take(), "\x1b[1t\x1b[3;0;0t\x1b[3;0;0t\x1b[4;54;90t\x1b]L\x1b\\\x1b]lhi\x1b\\");
+}

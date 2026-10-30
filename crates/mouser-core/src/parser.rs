@@ -879,6 +879,15 @@ impl<W: Write> Perform for TerminalParser<W> {
                 self.reply(&format!("\x1b[{q}{m};{state}$y"));
             }
             (Some(b'!'), 'p') => self.reset_soft(),
+            // Window state is always "not iconified"; Wayland has no global
+            // window position, so 13t reports the origin.
+            (None, 't') if arg(params, 0, 0) == 11 => self.reply("\x1b[1t"),
+            (None, 't') if arg(params, 0, 0) == 13 => self.reply("\x1b[3;0;0t"),
+            (None, 't') if arg(params, 0, 0) == 20 => self.reply("\x1b]L\x1b\\"),
+            (None, 't') if arg(params, 0, 0) == 21 => {
+                let t = self.title.replace(['\x1b', '\x07'], "");
+                self.reply(&format!("\x1b]l{t}\x1b\\"));
+            }
             (None, 't') if arg(params, 0, 0) == 18 => {
                 let s = self.screen.size;
                 self.reply(&format!("\x1b[8;{};{}t", s.rows, s.cols));
