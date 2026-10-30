@@ -17,7 +17,7 @@ pub mod keys;
 pub mod text;
 pub mod ui;
 
-pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, render_frame};
+pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, image_draws, render_frame};
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
@@ -85,7 +85,7 @@ pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 pub type ImagesHook = Arc<dyn Fn(usize, usize, (u32, u32)) -> Vec<ImageDraw> + Send + Sync>;
 
-pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput) + Send + Sync>;
+pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput, Option<mouser_core::fuzzball::KeyEvent>) + Send + Sync>;
 
 pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 
@@ -383,7 +383,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             if key_event.state == ElementState::Pressed {
                                 scrolled_back = 0;
                             }
-                            on_event(legacy, input);
+                            on_event(legacy, input, keys::fuzzball_event(&key_event, modifiers));
                         } else if let Some(seq) = legacy {
                             scrolled_back = 0;
                             (hooks.on_key_bytes)(seq);
@@ -658,7 +658,9 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Named(NamedKey::Space) if mods.control_key() => vec![0],
         Key::Named(NamedKey::Space) => vec![b' '],
         Key::Named(NamedKey::Escape) => vec![0x1b],
+        Key::Named(NamedKey::Backspace) if mods.control_key() => vec![0x08],
         Key::Named(NamedKey::Backspace) => vec![0x7f],
+        Key::Named(NamedKey::ContextMenu) => b"\x1b[29~".to_vec(),
         Key::Named(NamedKey::Delete) => b"\x1b[3~".to_vec(),
         Key::Named(NamedKey::Insert) => b"\x1b[2~".to_vec(),
         Key::Named(NamedKey::Home) => b"\x1b[H".to_vec(),
@@ -682,15 +684,24 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Named(NamedKey::ArrowUp) => b"\x1b[A".to_vec(),
         Key::Named(NamedKey::ArrowDown) => b"\x1b[B".to_vec(),
         Key::Character(s) if !s.is_empty() => {
+            // Kitty legacy text keys: Ctrl+Shift (or Super) combos have no
+            // legacy form and go out as `CSI code ; mods u`.
+            let base = match winit::platform::modifier_supplement::KeyEventExtModifierSupplement::key_without_modifiers(key_event) {
+                Key::Character(b) => b.chars().next(),
+                _ => None,
+            };
+            if let Some(b) = base.filter(|b| b.is_ascii_graphic() || *b == ' ')
+                && ((mods.control_key() && mods.shift_key()) || mods.super_key())
+            {
+                let m =
+                    1 + u8::from(mods.shift_key()) + 2 * u8::from(mods.alt_key()) + 4 * u8::from(mods.control_key()) + 8 * u8::from(mods.super_key());
+                return Some(format!("\x1b[{};{m}u", b.to_ascii_lowercase() as u32).into_bytes());
+            }
             let mut chars = s.chars();
             match (chars.next(), chars.next()) {
-                (Some(c), None) if mods.control_key() && c.is_ascii() => match c.to_ascii_lowercase() {
-                    l @ 'a'..='z' => vec![l as u8 - b'a' + 1],
-                    '[' => vec![0x1b],
-                    '\\' => vec![0x1c],
-                    ']' => vec![0x1d],
-                    '/' | '_' => vec![0x1f],
-                    _ => s.as_bytes().to_vec(),
+                (Some(c), None) if mods.control_key() && c.is_ascii() => match legacy_ctrl(base.unwrap_or(c)) {
+                    Some(b) => vec![b],
+                    None => s.as_bytes().to_vec(),
                 },
                 _ => s.as_bytes().to_vec(),
             }
@@ -709,6 +720,21 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         return Some(v);
     }
     Some(seq)
+}
+
+/// Kitty's "legacy ctrl mapping of ASCII keys" table.
+pub fn legacy_ctrl(c: char) -> Option<u8> {
+    Some(match c.to_ascii_lowercase() {
+        ' ' | '2' | '@' => 0,
+        l @ 'a'..='z' => l as u8 - b'a' + 1,
+        '3' | '[' => 27,
+        '4' | '\\' => 28,
+        '5' | ']' => 29,
+        '6' | '^' | '~' => 30,
+        '7' | '/' | '_' => 31,
+        '8' | '?' => 127,
+        _ => return None,
+    })
 }
 
 /// xterm modifier encoding for cursor/edit/function keys: `CSI A` + Ctrl becomes

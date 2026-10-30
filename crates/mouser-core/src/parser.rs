@@ -1,4 +1,5 @@
-use crate::graphics::{self, Graphics};
+use crate::fuzzball::{self, Fuzzball};
+use crate::graphics;
 use crate::grid::{Color, CursorShape, Rgb, Screen, Style, attr};
 use crate::kitty::KeyboardProtocolState;
 use crate::scrollback::Scrollback;
@@ -18,9 +19,8 @@ pub struct TerminalParser<W: Write> {
     /// vte state persists across reads so escape sequences split between
     /// PTY chunks are still recognised.
     vte: Parser,
-    apc: Apc,
-    /// Kitty graphics images and placements.
-    pub graphics: Graphics,
+    /// Fuzzball protocol state: images, placements, keyboard mode.
+    pub fuzzball: Fuzzball,
     /// Lines scrolled off the top so far (monotonic; anchors image rows).
     pub lines_scrolled: i64,
     /// Cell size in pixels (for image placement), set by the front end.
@@ -198,24 +198,13 @@ enum DcsKind {
     Rqss,
     /// `DCS = F z …` Fuzzball
     Fuzzball,
+    /// A Fuzzball message longer than `fuzzball::MAX_MESSAGE` (dropped).
+    Overflow,
 }
 
 /// Name the terminal identifies as (XTVERSION, terminfo TN).
 pub const NAME: &str = "Mouser";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// APC strings (`ESC _ ... ESC \`) are cut out before vte, which ignores them.
-#[derive(Default)]
-enum Apc {
-    #[default]
-    Ground,
-    Esc,
-    Body(Vec<u8>),
-    BodyEsc(Vec<u8>),
-}
-
-/// Largest APC body kept (chunked images arrive in many smaller ones).
-const APC_MAX: usize = 16 * 1024 * 1024;
 
 impl<W: Write> TerminalParser<W> {
     pub fn new(size: Size, scrollback: Arc<Scrollback>, writer: W) -> Self {
@@ -226,8 +215,7 @@ impl<W: Write> TerminalParser<W> {
             writer,
             style: Style::default(),
             vte: Parser::new(),
-            apc: Apc::Ground,
-            graphics: Graphics::default(),
+            fuzzball: Fuzzball::default(),
             lines_scrolled: 0,
             cell_px: (9, 18),
             graphics_generation: 0,
@@ -252,38 +240,7 @@ impl<W: Write> TerminalParser<W> {
     pub fn feed(&mut self, bytes: &[u8]) {
         let mut vte = std::mem::take(&mut self.vte);
         for &b in bytes {
-            self.apc = match std::mem::take(&mut self.apc) {
-                Apc::Ground if b == 0x1b => Apc::Esc,
-                Apc::Ground => {
-                    vte.advance(self, b);
-                    Apc::Ground
-                }
-                Apc::Esc if b == b'_' => Apc::Body(Vec::new()),
-                Apc::Esc => {
-                    vte.advance(self, 0x1b);
-                    if b == 0x1b {
-                        Apc::Esc
-                    } else {
-                        vte.advance(self, b);
-                        Apc::Ground
-                    }
-                }
-                Apc::Body(buf) if b == 0x1b => Apc::BodyEsc(buf),
-                Apc::Body(mut buf) => {
-                    if buf.len() < APC_MAX {
-                        buf.push(b);
-                    }
-                    Apc::Body(buf)
-                }
-                Apc::BodyEsc(buf) if b == b'\\' => {
-                    self.apc_dispatch(&buf);
-                    Apc::Ground
-                }
-                Apc::BodyEsc(mut buf) => {
-                    buf.extend_from_slice(&[0x1b, b]);
-                    Apc::Body(buf)
-                }
-            };
+            vte.advance(self, b);
         }
         self.vte = vte;
         self.flush_scrollback();
@@ -301,19 +258,16 @@ impl<W: Write> TerminalParser<W> {
         }
     }
 
-    fn apc_dispatch(&mut self, body: &[u8]) {
-        let Some(rest) = body.strip_prefix(b"G") else { return };
+    fn fuzzball_dispatch(&mut self, body: &[u8]) {
         self.flush_scrollback();
-        let top = self.lines_scrolled;
-        let cur = graphics::Cursor {
-            top,
-            abs_row: top + self.screen.cursor.y as i64,
-            col: self.screen.cursor.x as u32,
-            cell_w: self.cell_px.0,
-            cell_h: self.cell_px.1,
-        };
-        let eff = self.graphics.command(rest, cur);
-        self.graphics_generation += 1;
+        let alt = self.screen.in_alt_screen();
+        let col = self.screen.cursor.x as u32;
+        let ctx =
+            fuzzball::Ctx { abs_row: self.lines_scrolled + self.screen.cursor.y as i64, col, cell_w: self.cell_px.0, cell_h: self.cell_px.1, alt };
+        let eff = self.fuzzball.handle(body, ctx);
+        if eff.changed {
+            self.graphics_generation += 1;
+        }
         if let Some(r) = eff.reply {
             self.reply(&r);
         }
@@ -322,10 +276,28 @@ impl<W: Write> TerminalParser<W> {
                 self.screen.linefeed();
             }
             self.flush_scrollback();
-            let x = (cur.col as usize + dx as usize).min(self.screen.size.cols - 1);
+            let x = (col as usize + dx as usize).min(self.screen.size.cols - 1);
             let y = self.screen.cursor.y;
             self.screen.move_to(x, y);
         }
+    }
+
+    /// Erasing cells removes Fuzzball placements that cover them (graphics.md §4).
+    fn erase_placements(&mut self, rows: std::ops::Range<usize>, cols: Option<(usize, usize)>) {
+        if self.fuzzball.gfx.placements.is_empty() {
+            return;
+        }
+        let alt = self.screen.in_alt_screen();
+        let base = self.lines_scrolled;
+        match cols {
+            None => self.fuzzball.erase_rows(alt, base + rows.start as i64, base + rows.end as i64),
+            Some((c0, c1)) => {
+                for r in rows {
+                    self.fuzzball.erase_cells(alt, base + r as i64, c0 as u32, c1 as u32);
+                }
+            }
+        }
+        self.graphics_generation += 1;
     }
 
     /// Current SGR as a DECRQSS-style parameter string (e.g. `0;1;38;2;1;2;3`).
@@ -482,6 +454,7 @@ impl<W: Write> TerminalParser<W> {
                     self.screen.enter_alt_screen();
                 } else {
                     self.screen.leave_alt_screen();
+                    self.fuzzball.leave_alt();
                 }
             }
             1048 => {
@@ -497,6 +470,7 @@ impl<W: Write> TerminalParser<W> {
                     self.screen.enter_alt_screen();
                 } else {
                     self.screen.leave_alt_screen();
+                    self.fuzzball.leave_alt();
                     self.restore_cursor();
                 }
             }
@@ -553,7 +527,7 @@ impl<W: Write> TerminalParser<W> {
         self.style = Style::default();
         self.saved_style = Style::default();
         self.kitty_keyboard = KeyboardProtocolState::default();
-        self.graphics = Graphics::default();
+        self.fuzzball = Fuzzball::default();
         self.graphics_generation += 1;
         self.modes = Modes { grapheme: true, ..Modes::default() };
         self.color_overrides.clear();
@@ -609,15 +583,8 @@ impl<W: Write> TerminalParser<W> {
                     None => self.reply("\x1bP0$r\x1b\\"),
                 }
             }
-            DcsKind::Fuzzball => {
-                // `DCS = F z c q ; id=N ST` capability query. The first byte
-                // after `F` is the rest of the family tag.
-                let Some(body) = text.strip_prefix('z') else { return };
-                if let Some(rest) = body.strip_prefix("cq") {
-                    let id = rest.trim_start_matches(';').split(',').find_map(|kv| kv.strip_prefix("id=")).unwrap_or("0");
-                    self.reply(&format!("\x1bP=Fzcr;id={id},v=0,sub=,ver={VERSION}\x1b\\"));
-                }
-            }
+            DcsKind::Fuzzball => self.fuzzball_dispatch(&d.data),
+            DcsKind::Overflow => {}
         }
     }
 
@@ -671,10 +638,13 @@ impl<W: Write> Perform for TerminalParser<W> {
     }
 
     fn put(&mut self, byte: u8) {
-        if let Some(d) = &mut self.dcs
-            && d.data.len() < 4096
-        {
+        let Some(d) = &mut self.dcs else { return };
+        let cap = if d.kind == DcsKind::Fuzzball { fuzzball::MAX_MESSAGE } else { 4096 };
+        if d.data.len() < cap {
             d.data.push(byte);
+        } else if d.kind == DcsKind::Fuzzball {
+            d.kind = DcsKind::Overflow;
+            d.data = Vec::new();
         }
     }
 
@@ -822,9 +792,33 @@ impl<W: Write> Perform for TerminalParser<W> {
                 };
                 self.screen.cursor_blink = v == 0 || v % 2 == 1;
             }
-            (None, 'J') => self.screen.erase_display(params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0)),
-            (None, 'K') => self.screen.erase_line(params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0)),
-            (None, 'X') => self.screen.erase_chars(n),
+            (None, 'J') => {
+                let mode = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
+                let (y, rows) = (self.screen.cursor.y, self.screen.size.rows);
+                match mode {
+                    0 => self.erase_placements(y..rows, None),
+                    1 => self.erase_placements(0..y + 1, None),
+                    _ => self.erase_placements(0..rows, None),
+                }
+                self.screen.erase_display(mode)
+            }
+            (None, 'K') => {
+                let mode = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
+                let (x, y, cols) = (self.screen.cursor.x, self.screen.cursor.y, self.screen.size.cols);
+                let span = match mode {
+                    0 => (x, cols),
+                    1 => (0, x + 1),
+                    _ => (0, cols),
+                };
+                self.erase_placements(y..y + 1, Some(span));
+                self.screen.erase_line(mode)
+            }
+            (None, 'X') => {
+                let (x, y) = (self.screen.cursor.x, self.screen.cursor.y);
+                self.erase_placements(y..y + 1, Some((x, x + n)));
+                self.screen.erase_chars(n)
+            }
+
             (None, '@') => self.screen.insert_chars(n),
             (None, 'P') => self.screen.delete_chars(n),
             (None, 'L') => self.screen.insert_lines(n),
@@ -1049,6 +1043,8 @@ pub fn tcap(name: &str) -> Option<String> {
             "fd" => "\x1b[?1004l",
             "fe" => "\x1b[?1004h",
             "smxx" => "\x1b[9m",
+            // Fuzzball protocol version (docs/protocol/README.md §4).
+            "Fz" => "0",
             "rmxx" => "\x1b[29m",
             _ => return None,
         }

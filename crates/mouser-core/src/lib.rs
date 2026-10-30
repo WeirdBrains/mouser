@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod compression;
 pub mod connections;
+pub mod fuzzball;
 pub mod fuzzy;
 pub mod graphics;
 pub mod grid;
