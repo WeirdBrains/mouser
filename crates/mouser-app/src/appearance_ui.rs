@@ -12,6 +12,9 @@ pub enum Panel {
 }
 
 /// Live appearance state: fonts, colours (with preview) and the open panel.
+/// How long a status message stays in the bar.
+const STATUS_TTL: Duration = Duration::from_secs(4);
+
 pub struct Appearance {
     pub panel: Option<Panel>,
     pub font_size: f32,
@@ -57,10 +60,11 @@ impl Appearance {
 
     pub fn say(&mut self, msg: impl Into<String>) {
         self.message = Some((msg.into(), Instant::now()));
+        crate::wake_after(STATUS_TTL + Duration::from_millis(50));
     }
 
     pub fn status(&self) -> Option<String> {
-        self.message.as_ref().filter(|(_, at)| at.elapsed() < Duration::from_secs(4)).map(|(m, _)| m.clone())
+        self.message.as_ref().filter(|(_, at)| at.elapsed() < STATUS_TTL).map(|(m, _)| m.clone())
     }
 
     fn invalidate(&mut self) {
@@ -133,7 +137,9 @@ impl Appearance {
                 Some(Panel::Editor(e)) => {
                     if let Ok(r) = e.validate() {
                         self.preview_colors = Some(r.theme.colors());
-                        self.preview_font = Some((r.font_size, r.font_family));
+                        // Live preview covers colours and size only; the family is resolved and
+                        // loaded once, on save, so typing in the field stays cheap.
+                        self.preview_font = Some((r.font_size, self.font_family.clone()));
                     }
                 }
                 None => {}
