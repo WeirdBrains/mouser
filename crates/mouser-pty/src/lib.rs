@@ -1,4 +1,5 @@
 use anyhow::Result;
+pub use portable_pty;
 pub use portable_pty::{Child, MasterPty};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::env;
