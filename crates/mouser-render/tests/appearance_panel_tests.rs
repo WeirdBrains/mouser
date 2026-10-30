@@ -28,7 +28,7 @@ fn editor_fields_fit_and_are_clickable() {
     let fields: Vec<EditorFieldView> = (0..22)
         .map(|i| EditorFieldView { label: format!("f{i}"), value: "#04192A".into(), valid: i != 5, swatch: (i < 20).then_some(0x04192A) })
         .collect();
-    let p = ui::editor_panel(1200, 800, 9, 18, "Edit Red Star (dark)", &fields, 21, Some("Palette 1: use #rrggbb"));
+    let p = ui::editor_panel(1200, 800, 9, 18, "Edit Red Star (dark)", &fields, 21, Some("Palette 1: use #rrggbb"), None);
     for it in &p.items {
         assert!(inside(p.rect, it.rect), "{it:?} outside {:?}", p.rect);
     }

@@ -1,6 +1,7 @@
 pub mod appearance;
 pub mod compression;
 pub mod connections;
+pub mod fuzzy;
 pub mod grid;
 pub mod kitty;
 pub mod parser;

@@ -91,6 +91,7 @@ impl Appearance {
 
     pub fn key(&mut self, bytes: &[u8]) {
         let Some(key) = appearance::parse_key(bytes) else { return };
+        self.sync_families();
         let outcome = match &mut self.panel {
             Some(Panel::Picker(p)) => p.handle(key),
             Some(Panel::Editor(e)) => e.handle(key),
@@ -110,6 +111,16 @@ impl Appearance {
             (Some(Panel::Picker(_)), ui::UiAction::EditTheme) => Outcome::OpenEditor,
             (Some(Panel::Editor(e)), ui::UiAction::FocusField(i)) => {
                 e.focus_field(*i);
+                Outcome::Continue
+            }
+            (Some(Panel::Editor(e)), ui::UiAction::PickFont(i)) => e.pick_font(*i),
+            (Some(Panel::Editor(e)), ui::UiAction::ScrollPanel(d)) => {
+                e.scroll_fonts(*d as isize);
+                Outcome::Continue
+            }
+            // A click on empty panel space closes the font list.
+            (Some(Panel::Editor(e)), ui::UiAction::None) => {
+                e.fonts.open = false;
                 Outcome::Continue
             }
             (Some(Panel::Picker(p)), ui::UiAction::SavePanel) => p.handle(EditKey::Save),
@@ -132,6 +143,14 @@ impl Appearance {
                 self.invalidate();
             }
             Outcome::OpenEditor => self.open_editor(),
+            Outcome::FontPicked => {
+                if let Some(Panel::Editor(e)) = &self.panel {
+                    let fam = e.fields[appearance::FONT_FAMILY].value.trim().to_string();
+                    let size = self.preview_font.as_ref().map(|p| p.0).unwrap_or(self.font_size);
+                    // The renderer resolves and loads it on a worker thread.
+                    self.preview_font = Some((size, (!fam.is_empty()).then_some(fam)));
+                }
+            }
             Outcome::Preview => match &self.panel {
                 Some(Panel::Picker(p)) => self.preview_colors = Some(load_theme(p.theme(), variant_for(&p.mode)).colors()),
                 Some(Panel::Editor(e)) => {
@@ -139,7 +158,8 @@ impl Appearance {
                         self.preview_colors = Some(r.theme.colors());
                         // Live preview covers colours and size only; the family is resolved and
                         // loaded once, on save, so typing in the field stays cheap.
-                        self.preview_font = Some((r.font_size, self.font_family.clone()));
+                        let family = self.preview_font.take().map(|p| p.1).unwrap_or_else(|| self.font_family.clone());
+                        self.preview_font = Some((r.font_size, family));
                     }
                 }
                 None => {}
@@ -181,6 +201,25 @@ impl Appearance {
                 }
             }
         }
+    }
+
+    /// Hand the background font scan's result to an open editor.
+    fn sync_families(&mut self) {
+        if let (Some(Panel::Editor(e)), Some(f)) = (&mut self.panel, crate::font_families())
+            && !e.fonts.loaded
+        {
+            e.set_families(f);
+        }
+    }
+
+    /// `:font` with no argument: open the editor on the font field.
+    pub fn open_font_picker(&mut self) {
+        self.open_picker();
+        self.open_editor();
+        if let Some(Panel::Editor(e)) = &mut self.panel {
+            e.focus_field(appearance::FONT_FAMILY);
+        }
+        self.sync_families();
     }
 
     /// Ctrl+= / Ctrl+- / Ctrl+0.
@@ -235,7 +274,8 @@ impl Appearance {
     }
 
     /// Panel layout for the renderer.
-    pub fn panel_view(&self, vp: mouser_render::UiViewport) -> Option<ui::Panel> {
+    pub fn panel_view(&mut self, vp: mouser_render::UiViewport) -> Option<ui::Panel> {
+        self.sync_families();
         match self.panel.as_ref()? {
             Panel::Picker(p) => {
                 Some(ui::picker_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &p.themes, p.selected, appearance::mode_name(&p.mode)))
@@ -247,7 +287,12 @@ impl Appearance {
                     .map(|f| ui::EditorFieldView { label: f.label.clone(), value: f.value.clone(), valid: f.is_valid(), swatch: f.swatch() })
                     .collect();
                 let title = format!("Edit {} ({})", e.theme, e.variant);
-                Some(ui::editor_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &title, &fields, e.focus, e.error.as_deref()))
+                let dropdown = (e.focus == appearance::FONT_FAMILY && e.fonts.open).then(|| ui::FontDropdownView {
+                    rows: e.fonts.visible().map(|(i, n, p)| (i, n.to_string(), p.to_vec())).collect(),
+                    selected: e.fonts.selected,
+                    counts: e.fonts.loaded.then(|| (e.fonts.matches.len(), e.fonts.families.len())),
+                });
+                Some(ui::editor_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &title, &fields, e.focus, e.error.as_deref(), dropdown.as_ref()))
             }
         }
     }

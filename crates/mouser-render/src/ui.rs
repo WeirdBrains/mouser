@@ -80,6 +80,13 @@ pub enum PanelStyle {
     },
     /// Colour sample.
     Swatch(u32),
+    /// Background of a dropdown drawn over the panel.
+    Popup,
+    /// Dropdown row; bit `i` of `highlight` marks char `i` as matched.
+    Option {
+        selected: bool,
+        highlight: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +104,20 @@ pub struct Panel {
 }
 
 pub const APPEARANCE_LABEL: &str = "Appearance";
+
+/// Font dropdown under the font family field.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FontDropdownView {
+    /// Visible rows: (index into the filtered list, name, matched char positions).
+    pub rows: Vec<(usize, String, Vec<usize>)>,
+    pub selected: usize,
+    /// Matches in total / families known; `None` while still discovering.
+    pub counts: Option<(usize, usize)>,
+}
+
+fn highlight_bits(pos: &[usize]) -> u64 {
+    pos.iter().filter(|&&p| p < 64).fold(0, |m, &p| m | (1 << p))
+}
 
 /// Data for [`editor_panel`]: one entry per field.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,6 +205,7 @@ pub fn editor_panel(
     fields: &[EditorFieldView],
     focus: usize,
     error: Option<&str>,
+    fonts: Option<&FontDropdownView>,
 ) -> Panel {
     let row_h = cell_h + 8;
     let pad = 14;
@@ -273,6 +295,44 @@ pub fn editor_panel(
         style: PanelStyle::Hint,
         action: UiAction::None,
     });
+    // Font dropdown, drawn last so it sits over the fields below it.
+    if let (Some(dd), Some(field)) =
+        (fonts, items.iter().find(|i| i.action == UiAction::FocusField(20) && matches!(i.style, PanelStyle::Field { .. })).map(|i| i.rect))
+    {
+        let opt_h = cell_h + 4;
+        let n = dd.rows.len().max(1) as i32 + 1;
+        let w = field.w.max(cell_w * 28);
+        let popup = Rect { x: field.x, y: field.y + field.h + 2, w, h: n * opt_h + 4 };
+        items.push(PanelItem { rect: popup, text: String::new(), style: PanelStyle::Popup, action: UiAction::None });
+        let mut y = popup.y + 2;
+        if dd.rows.is_empty() {
+            let msg = if dd.counts.is_none() { "Loading fonts…" } else { "No match (Enter keeps the typed name)" };
+            items.push(PanelItem {
+                rect: Rect { x: popup.x + 4, y, w: w - 8, h: opt_h },
+                text: msg.into(),
+                style: PanelStyle::Hint,
+                action: UiAction::None,
+            });
+            y += opt_h;
+        }
+        for (i, name, pos) in &dd.rows {
+            items.push(PanelItem {
+                rect: Rect { x: popup.x + 2, y, w: w - 4, h: opt_h },
+                text: name.clone(),
+                style: PanelStyle::Option { selected: *i == dd.selected, highlight: highlight_bits(pos) },
+                action: UiAction::PickFont(*i),
+            });
+            y += opt_h;
+        }
+        if let Some((shown, total)) = dd.counts {
+            items.push(PanelItem {
+                rect: Rect { x: popup.x + 4, y, w: w - 8, h: opt_h },
+                text: format!("{shown} of {total} fonts  ↑↓ move  Enter pick  Esc close"),
+                style: PanelStyle::Hint,
+                action: UiAction::None,
+            });
+        }
+    }
     Panel { rect, items }
 }
 
@@ -316,6 +376,10 @@ pub enum UiAction {
     SetMode(String),
     EditTheme,
     FocusField(usize),
+    /// Pick row `n` (index into the filtered list) of the font dropdown.
+    PickFont(usize),
+    /// Mouse wheel over a panel, in rows (positive = down).
+    ScrollPanel(i32),
     SavePanel,
     ClosePanel,
     /// Ctrl+= (+1), Ctrl+- (-1), Ctrl+0 (0 = reset).
@@ -634,16 +698,17 @@ pub fn category_title(c: &Category) -> &'static str {
 
 pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     if let Some(panel) = &layout.panel {
+        // Topmost item first; a popup may hang below the panel and swallows
+        // clicks on its own background.
+        for i in panel.items.iter().rev() {
+            if i.rect.contains(px, py) && (i.action != UiAction::None || i.style == PanelStyle::Popup) {
+                return i.action.clone();
+            }
+        }
         if !panel.rect.contains(px, py) {
             return UiAction::ClosePanel;
         }
-        return panel
-            .items
-            .iter()
-            .rev()
-            .find(|i| i.action != UiAction::None && i.rect.contains(px, py))
-            .map(|i| i.action.clone())
-            .unwrap_or(UiAction::None);
+        return UiAction::None;
     }
     if let Some(modal) = &layout.modal {
         // Modal consumes clicks

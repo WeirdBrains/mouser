@@ -307,8 +307,15 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
                         MouseScrollDelta::PixelDelta(p) => (p.y / fonts.cell_h as f64) as isize,
                     };
-                    scrolled_back = scrolled_back.saturating_add_signed(lines);
                     dirty = true;
+                    // Over a panel (e.g. the font list) the wheel scrolls the panel.
+                    if let (Some(on_act), Some(true)) = (&hooks.on_ui_action, last_ui.as_ref().map(|l| l.panel.is_some())) {
+                        if lines != 0 {
+                            (on_act)(ui::UiAction::ScrollPanel(-lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32));
+                        }
+                        return;
+                    }
+                    scrolled_back = scrolled_back.saturating_add_signed(lines);
                 }
                 _ => {}
             },

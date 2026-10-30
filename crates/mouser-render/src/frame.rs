@@ -130,6 +130,21 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                     canvas.fill_rect(cx, b.y + 3, 2, b.h - 6, accent);
                 }
             }
+            ui::PanelStyle::Popup => {
+                canvas.fill_rect(b.x - 1, b.y - 1, b.w + 2, b.h + 2, accent);
+                canvas.fill_rect(b.x, b.y, b.w, b.h, mix(bg, panel, 0.35));
+            }
+            ui::PanelStyle::Option { selected, highlight } => {
+                if selected {
+                    canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.22));
+                    canvas.fill_rect(b.x, b.y, 3, b.h, accent);
+                }
+                let base = if selected { fg } else { muted };
+                for (i, c) in it.text.chars().take(max.saturating_sub(1)).enumerate() {
+                    let color = if i < 64 && highlight & (1 << i) != 0 { accent } else { base };
+                    canvas.draw_char(fonts, b.x + ui::BUTTON_PAD + i as i32 * fonts.cell_w, ty, c, color);
+                }
+            }
             ui::PanelStyle::Swatch(c) => {
                 canvas.fill_rect(b.x, b.y, b.w, b.h, border);
                 canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, c);
