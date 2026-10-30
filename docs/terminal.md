@@ -20,10 +20,11 @@ OSC 52 clipboard *writes* are passed to `wl-copy`; clipboard *reads* are never a
 - Cursor movement, DECSTBM, ICH/DCH/IL/DL/ECH/REP, IRM, HTS/TBC/CHT/CBT, DECSC/DECRC, DECOM, DECAWM, DECSCUSR, DECSTR, DECALN, DECCKM, DECKPAM.
 - Modes 1000/1002/1003/1006/1016 mouse, 1004 focus, 1049/1047/47 alternate screen, 2004 bracketed paste, 2026 synchronized output, 2027 grapheme clustering.
 - OSC 0/2 title, 4/10/11/12 colour query and set, 104/110–112 reset, 7 cwd, 8 hyperlinks, 52 clipboard, 133 prompt marks.
-- DA1/DA2/DA3, DSR 5/6, DECRQM, XTVERSION, XTGETTCAP, DECRQSS, window reports 14/16/18t, Fuzzball `DCS = Fz c q`.
+- DEC Special Graphics and British sets in G0/G1 (`ESC ( 0`, `ESC ) 0`, SI/SO), DECSCNM reverse video, LNM (mode 20).
+- DA1/DA2/DA3, DSR 5/6, DECRQM, DECREQTPARM, XTVERSION, XTGETTCAP, DECRQSS, window reports 11/13/14/16/18/20/21t, Fuzzball `DCS = Fz c q`.
 - The PTY gets the grid's pixel size (`TIOCSWINSZ`).
 
-Not yet: DECSLRM (left/right margins), colour emoji, an italic face from the font family.
+Not yet: DECSLRM (left/right margins), DECCOLM 132-column switching, double-size lines (DECDHL/DECDWL), G2/G3 and NRC sets, protected areas (DECSCA), user-defined keys, colour emoji, an italic face from the font family, visible blink.
 
 ## TERM and terminfo
 
