@@ -1,19 +1,17 @@
 mod appearance_ui;
 mod ssh_ui;
+mod tabs;
 mod term_view;
 
 use anyhow::Result;
 use clap::Parser;
-use crossbeam_channel::unbounded;
 use mouser_core::compression::{CompressionAlgo, CompressionConfig};
 use mouser_core::connections::{
     Connection, ConnectionKind, SshConnection, TunnelConnection, TunnelSpec, TunnelType, WaypipeConnection, X11Connection, delete_connection,
     list_connections, load_connection, save_connection,
 };
-use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::{Scrollback, ScrollbackConfig};
 use mouser_core::types::Size;
-use mouser_pty::spawn_shell;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 enum Mode {
@@ -40,7 +38,7 @@ use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
 use serde::Deserialize;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -208,18 +206,14 @@ fn main() -> Result<()> {
     // Ensure built-in themes exist on disk
     let _ = mouser_core::themes::write_builtins_if_absent();
     let sb_cfg = make_scrollback_config(&app_cfg);
-    let scrollback = Arc::new(Scrollback::new(sb_cfg));
 
-    // The shell is spawned on the first resize, once the real grid size is
-    // known, so its first prompt is drawn for the right width.
-    let master: Arc<Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>> = Arc::new(Mutex::new(None));
-    let child: Arc<Mutex<Option<Box<dyn mouser_pty::Child + Send>>>> = Arc::new(Mutex::new(None));
-    let shared_writer = SharedWriter(Arc::new(Mutex::new(None)));
-    let (tx, rx) = unbounded::<Vec<u8>>();
-
+    // The first tab's shell is spawned on the first resize, once the real grid
+    // size is known, so its first prompt is drawn for the right width.
     let size = Size { cols: 100, rows: 30 };
-    let parser = TerminalParser::new(size, scrollback.clone(), shared_writer.clone());
-    let parser = Arc::new(Mutex::new(parser));
+    let tabs = Arc::new(Mutex::new(tabs::Tabs::default()));
+    tabs.lock().unwrap().open(tabs::Session::new("shell", tabs::Launch::Shell, size, sb_cfg.clone()), wake);
+    let parser = ActiveParser { tabs: tabs.clone(), dummy: tabs.lock().unwrap().list[0].parser.clone() };
+    let shared_writer = tabs::ActiveWriter(tabs.clone());
 
     let prefs0 = mouser_core::storage::load_preferences();
     // In-app choices (preferences.toml) win over config.toml.
@@ -243,12 +237,13 @@ fn main() -> Result<()> {
     // Hooks for renderer
     let fetch = {
         let parser = parser.clone();
-        let sb = scrollback.clone();
         let app_state = app_state.clone();
         Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, Vec<Vec<mouser_render::CellPaint>>, usize) {
             let theme = app_state.lock().unwrap().look.theme_colors();
+            let sb = parser.scrollback();
             let (screen_lines, screen_paint) = {
-                let mut p = parser.lock().unwrap();
+                let pa = parser.get();
+                let mut p = pa.lock().unwrap();
                 term_view::sync_theme(&mut p, &theme);
                 let lines = p.screen.visible_lines();
                 let paint = term_view::screen_paint(&p);
@@ -284,14 +279,16 @@ fn main() -> Result<()> {
     let get_cursor = {
         let parser = parser.clone();
         Arc::new(move || {
-            let p = parser.lock().unwrap();
+            let pa = parser.get();
+            let p = pa.lock().unwrap();
             p.screen.cursor_visible.then_some((p.screen.cursor.x, p.screen.cursor.y))
         })
     };
     let get_images = {
         let parser = parser.clone();
         Arc::new(move |scrolled_back: usize, rows: usize, cell: (u32, u32)| -> Vec<mouser_render::ImageDraw> {
-            let mut p = parser.lock().unwrap();
+            let pa = parser.get();
+            let mut p = pa.lock().unwrap();
             p.cell_px = cell;
             let top = if p.screen.in_alt_screen() { p.lines_scrolled } else { p.lines_scrolled - scrolled_back as i64 };
             p.graphics
@@ -316,6 +313,7 @@ fn main() -> Result<()> {
     };
     let on_key = {
         let writer = shared_writer.clone();
+        let tabs_k = tabs.clone();
         let app_state = app_state.clone();
         let parser = parser.clone();
         Arc::new(move |bytes: Vec<u8>| {
@@ -339,8 +337,11 @@ fn main() -> Result<()> {
                         // Alt+Esc toggles the connections sidebar; plain Esc goes to the shell.
                         state.sidebar_open = !state.sidebar_open;
                         persist_sidebar(&mut state);
+                    } else if let Some(t) = exited_tab(&tabs_k) {
+                        // "[process exited N] press any key to close"
+                        tabs_k.lock().unwrap().close(t);
                     } else {
-                        let modes = parser.lock().unwrap().modes;
+                        let modes = parser.get().lock().unwrap().modes;
                         let bytes = mouser_core::input::apply_cursor_mode(bytes, &modes);
                         let bytes = if modes.newline && bytes == b"\r" { b"\r\n".to_vec() } else { bytes };
                         let mut w = writer.clone();
@@ -371,35 +372,12 @@ fn main() -> Result<()> {
         })
     };
 
-    std::thread::spawn({
-        let parser = parser.clone();
-        let sb = scrollback.clone();
-        move || {
-            while let Ok(bytes) = rx.recv() {
-                let events = {
-                    let mut p = parser.lock().unwrap();
-                    p.feed(&bytes);
-                    std::mem::take(&mut p.events)
-                };
-                for ev in events {
-                    if let mouser_core::parser::TermEvent::Clipboard(text) = ev {
-                        set_clipboard(&text);
-                    }
-                }
-                sb.maybe_compress_idle();
-                if rx.is_empty() {
-                    wake();
-                }
-            }
-        }
-    });
-
     let get_colors = {
         let (app_state, parser) = (app_state.clone(), parser.clone());
         Arc::new(move || {
             let mut c = app_state.lock().unwrap().look.colors();
             // DECSCNM reverse video swaps the window colours too.
-            if parser.lock().unwrap().modes.reverse_video {
+            if parser.get().lock().unwrap().modes.reverse_video {
                 std::mem::swap(&mut c.bg, &mut c.fg);
             }
             c
@@ -409,42 +387,9 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move || app_state.lock().unwrap().look.font())
     };
-    let shell_exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let on_resize = {
-        let shell_exited = shell_exited.clone();
-        let parser = parser.clone();
-        let master = master.clone();
-        let child = child.clone();
-        let writer = shared_writer.clone();
-        Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| {
-            {
-                let mut p = parser.lock().unwrap();
-                p.resize(Size { cols: cols as usize, rows: rows as usize });
-                p.term_name = mouser_pty::term_name().to_string();
-            }
-            let mut m = master.lock().unwrap();
-            if let Some(m) = m.as_mut() {
-                let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows, pw, ph);
-                return;
-            }
-            match spawn_shell(cols, rows, pw, ph) {
-                Ok(handles) => {
-                    let tx = tx.clone();
-                    let mut reader = handles.reader;
-                    let shell_exited = shell_exited.clone();
-                    std::thread::spawn(move || {
-                        pump_pty(&mut reader, &tx);
-                        // EOF / EIO: the shell exited (Ctrl+D, `exit`, ...).
-                        shell_exited.store(true, std::sync::atomic::Ordering::SeqCst);
-                        wake();
-                    });
-                    *writer.0.lock().unwrap() = Some(handles.writer);
-                    *child.lock().unwrap() = Some(handles.child);
-                    *m = Some(handles.master);
-                }
-                Err(e) => log::error!("failed to spawn shell: {e}"),
-            }
-        })
+        let tabs = tabs.clone();
+        Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| tabs.lock().unwrap().resize(cols, rows, pw, ph, wake))
     };
     let get_ui_model = {
         let app_state = app_state.clone();
@@ -497,20 +442,36 @@ fn main() -> Result<()> {
     };
     let on_ui_action = {
         let app_state = app_state.clone();
-        let connect_writer = shared_writer.clone();
+        let (tabs_ui, sb_cfg) = (tabs.clone(), sb_cfg.clone());
         Arc::new(move |act: ui::UiAction| match act.clone() {
             ui::UiAction::OpenAdd(ui::Category::Ssh) => app_state.lock().unwrap().ssh.open_add(),
             ui::UiAction::OpenEdit { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_edit(&name),
             ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
             ui::UiAction::Notice => app_state.lock().unwrap().ssh.open_migrate(),
             ui::UiAction::Connect { category, name } => {
-                let st = app_state.lock().unwrap();
-                let cmd = if category == ui::Category::Ssh { Some(st.ssh.connect_command(&name)) } else { None };
-                drop(st);
-                if let Some(cmd) = cmd {
-                    let mut w = connect_writer.clone();
-                    let _ = w.write_all(cmd.as_bytes());
+                let argv = {
+                    let st = app_state.lock().unwrap();
+                    connect_argv(&st.ssh, &category, &name)
+                };
+                match argv {
+                    Some(argv) => {
+                        let s = tabs::Session::new(name.clone(), tabs::Launch::Command(argv), Size { cols: 100, rows: 30 }, sb_cfg.clone());
+                        tabs_ui.lock().unwrap().open(s, wake);
+                    }
+                    None => app_state.lock().unwrap().look.say(format!("No connection named {name}")),
                 }
+            }
+            ui::UiAction::NewTab => {
+                let s = tabs::Session::new("shell", tabs::Launch::Shell, Size { cols: 100, rows: 30 }, sb_cfg.clone());
+                tabs_ui.lock().unwrap().open(s, wake);
+            }
+            ui::UiAction::SelectTab(i) => tabs_ui.lock().unwrap().select(i),
+            ui::UiAction::CycleTab(d) => tabs_ui.lock().unwrap().cycle(d),
+            ui::UiAction::CloseTab(i) => tabs_ui.lock().unwrap().close(i),
+            ui::UiAction::CloseActiveTab => {
+                let mut t = tabs_ui.lock().unwrap();
+                let i = t.active;
+                t.close(i);
             }
             ui::UiAction::OpenAdd(cat) => {
                 let mut st = app_state.lock().unwrap();
@@ -585,9 +546,16 @@ fn main() -> Result<()> {
         on_key_bytes: on_key.clone(),
         get_images: Some(get_images),
         on_key_event: Some({
-            let (writer, app_state, parser, on_key) = (shared_writer.clone(), app_state.clone(), parser.clone(), on_key.clone());
+            let (writer, app_state, parser, on_key, tabs_e) =
+                (shared_writer.clone(), app_state.clone(), parser.clone(), on_key.clone(), tabs.clone());
             Arc::new(move |legacy: Option<Vec<u8>>, input: mouser_core::kitty::KeyInput| {
                 use mouser_core::kitty::{Encoded, encode_key};
+                if exited_tab(&tabs_e).is_some() {
+                    if let Some(b) = legacy {
+                        on_key(b);
+                    }
+                    return;
+                }
                 let ui_owns = {
                     let st = app_state.lock().unwrap();
                     st.mode == Mode::Command
@@ -599,7 +567,8 @@ fn main() -> Result<()> {
                 // Mouser's own hotkeys (F10, Alt+Esc) keep working in any mode.
                 let hotkey = legacy.as_deref().is_some_and(|b| b == b"\x1b[21~" || b == b"\x1b\x1b");
                 let flags = {
-                    let p = parser.lock().unwrap();
+                    let pa = parser.get();
+                    let p = pa.lock().unwrap();
                     p.kitty_keyboard.current(p.screen.in_alt_screen())
                 };
                 if ui_owns || hotkey || flags == 0 {
@@ -625,7 +594,7 @@ fn main() -> Result<()> {
         fetch_view: Some(fetch),
         get_cursor_shape: Some({
             let parser = parser.clone();
-            Arc::new(move || match parser.lock().unwrap().screen.cursor_shape {
+            Arc::new(move || match parser.get().lock().unwrap().screen.cursor_shape {
                 mouser_core::grid::CursorShape::Block => mouser_render::CursorShape::Block,
                 mouser_core::grid::CursorShape::Underline => mouser_render::CursorShape::Underline,
                 mouser_core::grid::CursorShape::Bar => mouser_render::CursorShape::Bar,
@@ -633,12 +602,12 @@ fn main() -> Result<()> {
         }),
         on_mouse: Some({
             let (parser, writer) = (parser.clone(), shared_writer.clone());
-            Arc::new(move |ev: mouser_core::input::MouseEvent| on_mouse(&parser, &writer, ev))
+            Arc::new(move |ev: mouser_core::input::MouseEvent| on_mouse(&parser.get(), &writer, ev))
         }),
         on_focus: Some({
             let (parser, writer) = (parser.clone(), shared_writer.clone());
             Arc::new(move |focused: bool| {
-                let modes = parser.lock().unwrap().modes;
+                let modes = parser.get().lock().unwrap().modes;
                 if let Some(b) = mouser_core::input::encode_focus(focused, &modes) {
                     let mut w = writer.clone();
                     let _ = w.write_all(b);
@@ -658,18 +627,18 @@ fn main() -> Result<()> {
                     return;
                 }
                 drop(st);
-                let modes = parser.lock().unwrap().modes;
+                let modes = parser.get().lock().unwrap().modes;
                 let mut w = writer.clone();
                 let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
             })
         }),
         hold_frame: Some({
             let parser = parser.clone();
-            Arc::new(move || parser.lock().unwrap().modes.synchronized)
+            Arc::new(move || parser.get().lock().unwrap().modes.synchronized)
         }),
         get_title: Some({
             let parser = parser.clone();
-            Arc::new(move || Some(parser.lock().unwrap().title.clone()))
+            Arc::new(move || Some(parser.title()))
         }),
         get_colors,
         get_font: Some(get_font),
@@ -679,9 +648,14 @@ fn main() -> Result<()> {
         set_waker: Some(Arc::new(|w| {
             let _ = WAKER.set(w);
         })),
+        // The window closes when the last tab's process has exited.
         should_exit: Some({
-            let shell_exited = shell_exited.clone();
-            Arc::new(move || shell_exited.load(std::sync::atomic::Ordering::SeqCst))
+            let tabs = tabs.clone();
+            Arc::new(move || tabs.lock().unwrap().reap())
+        }),
+        get_tabs: Some({
+            let tabs = tabs.clone();
+            Arc::new(move || tabs.lock().unwrap().bar())
         }),
         get_status: Some({
             let app_state = app_state.clone();
@@ -708,22 +682,64 @@ fn main() -> Result<()> {
         }
     }
     result?;
-    // Reap the shell if it is still around (window closed by the user).
-    if let Some(mut c) = child.lock().unwrap().take()
-        && c.try_wait().ok().flatten().is_none()
-    {
-        let _ = c.kill();
-        let _ = c.wait();
+    // Kill and reap anything still running (window closed by the user).
+    for s in std::mem::take(&mut tabs.lock().unwrap().list) {
+        s.kill();
     }
     Ok(())
+}
+
+/// The active parser, following tab switches.
+#[derive(Clone)]
+struct ActiveParser {
+    tabs: Arc<Mutex<tabs::Tabs>>,
+    /// Used once every tab is gone (the window is about to close).
+    dummy: Arc<Mutex<tabs::Parser>>,
+}
+
+impl ActiveParser {
+    fn session(&self) -> Option<Arc<tabs::Session>> {
+        self.tabs.lock().unwrap().active()
+    }
+    fn get(&self) -> Arc<Mutex<tabs::Parser>> {
+        self.session().map(|s| s.parser.clone()).unwrap_or_else(|| self.dummy.clone())
+    }
+    fn scrollback(&self) -> Arc<Scrollback> {
+        self.session().map(|s| s.scrollback.clone()).unwrap_or_else(|| self.dummy.lock().unwrap().scrollback.clone())
+    }
+    fn title(&self) -> String {
+        self.session().map(|s| s.title()).unwrap_or_default()
+    }
+}
+
+/// Index of the active tab if its process already exited (waiting for a key).
+fn exited_tab(tabs: &Mutex<tabs::Tabs>) -> Option<usize> {
+    let t = tabs.lock().unwrap();
+    let s = t.active()?;
+    s.exited.lock().unwrap().is_some().then_some(t.active)
+}
+
+/// argv for a sidebar connection: run directly as a tab's process.
+fn connect_argv(ssh: &ssh_ui::SshUi, category: &ui::Category, name: &str) -> Option<Vec<String>> {
+    if *category == ui::Category::Ssh {
+        return Some(ssh.connect_argv(name));
+    }
+    let conn = load_connection(name).ok().flatten()?;
+    Some(match &conn.kind {
+        ConnectionKind::Ssh(c) => mouser_core::connections::build_ssh_args(c),
+        ConnectionKind::Waypipe(c) => mouser_core::connections::build_waypipe_args(c),
+        ConnectionKind::Tunnel(c) => mouser_core::connections::build_tunnel_args(c),
+        ConnectionKind::X11(c) => mouser_core::connections::build_x11_args(c),
+    })
 }
 
 /// Mouse over the terminal: report it when the app asked (Shift bypasses),
 /// open OSC 8 links on Ctrl+click, and turn the wheel into arrow keys on the
 /// alternate screen (xterm's alternateScroll).
-fn on_mouse(parser: &Mutex<TerminalParser<SharedWriter>>, writer: &SharedWriter, ev: mouser_core::input::MouseEvent) -> bool {
+fn on_mouse(parser: &Mutex<tabs::Parser>, writer: &tabs::ActiveWriter, ev: mouser_core::input::MouseEvent) -> bool {
     use mouser_core::input::{MouseButton, MouseKind};
-    let p = parser.lock().unwrap();
+    let pa = parser;
+    let p = pa.lock().unwrap();
     let mut w = writer.clone();
     if p.modes.mouse != mouser_core::parser::MouseMode::Off && !ev.shift {
         if let Some(b) = mouser_core::input::encode_mouse(&ev, &p.modes) {
@@ -762,7 +778,7 @@ fn open_link(uri: &str) {
 }
 
 /// OSC 52 write: hand the text to wl-copy (Wayland) if it is installed.
-fn set_clipboard(text: &str) {
+pub(crate) fn set_clipboard(text: &str) {
     use std::process::{Command, Stdio};
     if let Ok(mut c) = Command::new("wl-copy").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
         if let Some(mut stdin) = c.stdin.take() {
@@ -833,24 +849,6 @@ pub(crate) fn wake_after(delay: std::time::Duration) {
     });
 }
 
-/// Forward PTY output to `tx` until EOF or a read error (EIO on Linux once the
-/// shell has exited and the last slave fd closed).
-fn pump_pty(reader: &mut dyn Read, tx: &crossbeam_channel::Sender<Vec<u8>>) {
-    let mut buf = [0u8; 8192];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                if tx.send(buf[..n].to_vec()).is_err() {
-                    break;
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        }
-    }
-}
-
 /// `theme [name]`, `mode m`, `edit-theme`, `font-size n`, `font [family]` (leading ':' optional).
 fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
     let cmd = cmd.trim_start_matches(':');
@@ -889,7 +887,7 @@ fn category_of(kind: &ConnectionKind) -> ui::Category {
 
 // no proxy needed; master is stored separately
 
-fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppState>>) {
+fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) {
     let trimmed = cmd.trim();
     if trimmed == "open-sidebar" || trimmed == ":open-sidebar" {
         let mut st = app_state.lock().unwrap();
@@ -1049,53 +1047,64 @@ mod tests {
         assert_eq!(start(&fresh, Some("yes")), (true, false, true));
     }
 
-    #[test]
-    fn pump_stops_at_eof_and_on_error() {
-        let (tx, rx) = unbounded();
-        let mut data: &[u8] = b"bye\r\n";
-        pump_pty(&mut data, &tx);
-        assert_eq!(rx.try_recv().unwrap(), b"bye\r\n");
-        struct Eio;
-        impl Read for Eio {
-            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::from_raw_os_error(5))
-            }
+    fn noop() {}
+
+    fn cmd_tab(argv: &[&str]) -> Arc<tabs::Session> {
+        let argv = argv.iter().map(|a| a.to_string()).collect();
+        tabs::Session::new("t", tabs::Launch::Command(argv), Size { cols: 40, rows: 5 }, ScrollbackConfig::default())
+    }
+
+    fn wait_until(mut f: impl FnMut() -> bool) {
+        let t = std::time::Instant::now();
+        while !f() {
+            assert!(t.elapsed() < std::time::Duration::from_secs(5), "timed out");
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        pump_pty(&mut Eio, &tx); // returns instead of spinning
-        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn exit_policy() {
+        assert!(tabs::closes_on_exit(&tabs::Launch::Shell, 1));
+        assert!(tabs::closes_on_exit(&tabs::Launch::Command(vec![]), 0));
+        assert!(!tabs::closes_on_exit(&tabs::Launch::Command(vec![]), 255));
+        assert_eq!(tabs::exit_banner(3), "\r\n\x1b[0m[process exited 3] press any key to close");
     }
 
     #[cfg(unix)]
     #[test]
-    fn shell_exit_ends_the_pty_stream() {
-        // A real PTY session: Ctrl+D (0x04) at an empty `sh` prompt ends it.
-        let unique = std::env::temp_dir().join(format!("mouser-exit-{}", std::process::id()));
-        std::fs::create_dir_all(&unique).unwrap();
-        let mut cmd = portable_pty_cmd();
-        cmd.env("HOME", &unique);
-        let pty = mouser_pty::portable_pty::native_pty_system();
-        let pair = pty.openpty(mouser_pty::portable_pty::PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-        let mut reader = pair.master.try_clone_reader().unwrap();
-        let mut writer = pair.master.take_writer().unwrap();
-        let (tx, rx) = unbounded();
-        let done = std::thread::spawn(move || pump_pty(&mut reader, &tx));
-        std::thread::sleep(std::time::Duration::from_millis(300));
-        writer.write_all(&[0x04]).unwrap();
-        let status = child.wait().unwrap();
-        assert!(status.success());
-        drop(writer);
-        drop(pair.master);
-        done.join().unwrap();
-        while rx.try_recv().is_ok() {}
-        let _ = std::fs::remove_dir_all(unique);
+    fn command_tabs_close_or_show_their_exit_code() {
+        let mut t = tabs::Tabs::default();
+        t.resize(40, 5, 360, 90, noop);
+        t.open(cmd_tab(&["/bin/sh", "-c", "echo hi; exit 0"]), noop);
+        let bad = cmd_tab(&["/bin/sh", "-c", "echo oops >&2; exit 3"]);
+        t.open(bad.clone(), noop);
+        assert_eq!(t.active, 1);
+        wait_until(|| t.list[0].closed.load(std::sync::atomic::Ordering::SeqCst) && bad.exited.lock().unwrap().is_some());
+        assert!(!t.reap());
+        assert_eq!(t.list.len(), 1);
+        assert_eq!(t.active, 0);
+        let screen = bad.parser.lock().unwrap().screen.visible_lines().join("\n");
+        assert!(screen.contains("oops") && screen.contains("[process exited 3]"), "{screen}");
+        t.close(0);
+        assert!(t.reap());
     }
 
-    #[cfg(unix)]
-    fn portable_pty_cmd() -> mouser_pty::portable_pty::CommandBuilder {
-        let mut c = mouser_pty::portable_pty::CommandBuilder::new("/bin/sh");
-        c.env("PS1", "$ ");
-        c
+    #[test]
+    fn tab_selection_cycles_and_survives_closes() {
+        let mut t = tabs::Tabs::default();
+        for _ in 0..4 {
+            t.open(cmd_tab(&["/bin/true"]), noop); // size unknown: not started
+        }
+        assert_eq!(t.active, 3);
+        t.cycle(1);
+        assert_eq!(t.active, 0);
+        t.cycle(-1);
+        assert_eq!(t.active, 3);
+        t.select(1);
+        t.close(3);
+        assert_eq!((t.list.len(), t.active), (3, 1));
+        t.close(1);
+        assert_eq!((t.list.len(), t.active), (2, 0));
+        assert_eq!(t.bar().titles.len(), 2);
     }
 }

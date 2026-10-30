@@ -57,6 +57,25 @@ Mouser aims for full support over time. Today’s status lives in [`docs/kitty-c
 
 If a feature your workflow depends on is missing, please open an issue referencing the checklist item.
 
+## Tabs
+
+Each tab has its own PTY, screen, scrollback and title (OSC 0/2, otherwise the
+connection name). Clicking a connection in the sidebar opens a new tab running
+`ssh [-F config] <alias>` directly; Waypipe, tunnel and X11 launches open in
+tabs too. The tab bar is hidden while only one tab is open.
+
+| Keys | Action |
+|---|---|
+| Ctrl+Shift+T | New shell tab |
+| Ctrl+Shift+W | Close the active tab |
+| Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
+| Alt+1 … Alt+9 | Jump to tab N |
+| Click / middle-click / × | Switch / close a tab |
+
+A tab closes when its process exits, and the window closes with the last tab.
+An ssh tab that exits with an error stays open showing
+`[process exited N] press any key to close`.
+
 ## Terminal
 
 - **Ctrl+Shift+V** pastes (bracketed when the app asks for it).

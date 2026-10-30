@@ -63,6 +63,18 @@ impl SshUi {
     }
 
     /// The command that launches `alias` (ssh reads the config itself).
+    /// `ssh [-F cfg] alias`, run directly as a tab's process.
+    pub fn connect_argv(&self, alias: &str) -> Vec<String> {
+        let mut v = vec!["ssh".to_string()];
+        if std::env::var_os("MOUSER_SSH_CONFIG").is_some() {
+            v.push("-F".into());
+            v.push(self.root.display().to_string());
+        }
+        v.push(alias.to_string());
+        v
+    }
+
+    #[allow(dead_code)]
     pub fn connect_command(&self, alias: &str) -> String {
         if std::env::var_os("MOUSER_SSH_CONFIG").is_some() {
             format!("ssh -F '{}' {}\r", self.root.display(), alias)

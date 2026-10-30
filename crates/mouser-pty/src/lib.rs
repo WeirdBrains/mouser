@@ -13,10 +13,32 @@ pub struct PtyHandles {
 }
 
 pub fn spawn_shell(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
+    spawn_in_pty(shell_command(), cols, rows, pixel_width, pixel_height)
+}
+
+/// Run `argv` directly as the PTY's process (no shell in between), with the
+/// same terminal environment as the login shell.
+pub fn spawn_argv(argv: &[String], cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
+    let (prog, args) = argv.split_first().ok_or_else(|| anyhow::anyhow!("empty command"))?;
+    let mut cmd = CommandBuilder::new(prog);
+    cmd.args(args);
+    if let Some(home) = env::var_os("HOME") {
+        cmd.cwd(home);
+    }
+    term_env(&mut cmd);
+    spawn_in_pty(cmd, cols, rows, pixel_width, pixel_height)
+}
+
+fn term_env(cmd: &mut CommandBuilder) {
+    cmd.env("TERM", term_name());
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "Mouser");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+}
+
+fn spawn_in_pty(cmd: CommandBuilder, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize { rows, cols, pixel_width, pixel_height })?;
-
-    let cmd = shell_command();
     let child = pair.slave.spawn_command(cmd)?;
     drop(pair.slave);
 
@@ -46,10 +68,7 @@ pub fn shell_command() -> CommandBuilder {
     if let Some(home) = env::var_os("HOME") {
         cmd.cwd(home);
     }
-    cmd.env("TERM", term_name());
-    cmd.env("COLORTERM", "truecolor");
-    cmd.env("TERM_PROGRAM", "Mouser");
-    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    term_env(&mut cmd);
     cmd
 }
 
