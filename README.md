@@ -57,6 +57,15 @@ Mouser aims for full support over time. Today’s status lives in [`docs/kitty-c
 
 If a feature your workflow depends on is missing, please open an issue referencing the checklist item.
 
+## Terminal
+
+- **Ctrl+Shift+V** pastes (bracketed when the app asks for it).
+- **Ctrl+click** opens an OSC 8 hyperlink.
+- **Shift+mouse** bypasses an app's mouse capture.
+- Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (unless `xterm-kitty` is installed).
+
+See [docs/terminal.md](docs/terminal.md) for the supported sequences.
+
 ## Configuration
 
 Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if set

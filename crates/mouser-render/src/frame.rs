@@ -44,6 +44,7 @@ pub mod paint {
     /// Glyph is hidden (SGR 8) or the right half of a wide char.
     pub const NO_GLYPH: u8 = 8;
     pub const WIDE: u8 = 16;
+    pub const ITALIC: u8 = 32;
 }
 
 /// Resolved paint for one cell (colours already themed, inverse/dim applied).
@@ -108,12 +109,16 @@ fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line:
         let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
         let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
         if p.flags & paint::NO_GLYPH == 0 {
-            canvas.draw_char(fonts, x, top, c, p.fg);
+            let g = if p.flags & paint::ITALIC != 0 { crate::text::italic_key(c) } else { c };
+            canvas.draw_char(fonts, x, top, g, p.fg);
             if p.flags & paint::BOLD != 0 {
-                canvas.draw_char(fonts, x + 1, top, c, p.fg);
+                canvas.draw_char(fonts, x + 1, top, g, p.fg);
             }
             for m in p.comb.into_iter().filter(|m| *m != '\0') {
-                canvas.draw_char(fonts, x, top, m, p.fg);
+                // Marks have zero advance and a negative bearing meant for the
+                // previous pen position; centre them on the base cell instead.
+                let mx = fonts.mark_cell_x(m, x, w);
+                canvas.draw_char(fonts, mx, top, m, p.fg);
             }
         }
         if p.underline > 0 {

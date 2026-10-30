@@ -139,14 +139,65 @@ impl FontStack {
     }
 
     /// Rasterised glyph for `ch`, from the first font in the stack that has it.
+    /// Keys made by [`italic_key`] give a synthetically slanted glyph.
     pub fn glyph(&mut self, ch: char) -> &Glyph {
         let fonts = &self.fonts;
         let size = self.size;
         self.cache.entry(ch).or_insert_with(|| {
-            let font = fonts.iter().find(|f| f.lookup_glyph_index(ch) != 0).unwrap_or(&fonts[0]);
-            let (metrics, bitmap) = font.rasterize(ch, size);
-            Glyph { metrics, bitmap }
+            let (base, italic) = match italic_base(ch) {
+                Some(b) => (b, true),
+                None => (ch, false),
+            };
+            let font = fonts.iter().find(|f| f.lookup_glyph_index(base) != 0).unwrap_or(&fonts[0]);
+            let (metrics, bitmap) = font.rasterize(base, size);
+            let g = Glyph { metrics, bitmap };
+            if italic { shear(g) } else { g }
         })
+    }
+}
+
+/// Italic glyphs are cached under a private key: the BMP char moved into
+/// Supplementary Private Use Area-B (U+100000 + c). Real PUA-B text is rare;
+/// such characters simply draw upright.
+pub fn italic_key(c: char) -> char {
+    let v = c as u32;
+    if v < 0x10000 { char::from_u32(0x100000 + v).unwrap_or(c) } else { c }
+}
+
+fn italic_base(c: char) -> Option<char> {
+    let v = c as u32;
+    (0x100000..0x110000).contains(&v).then(|| char::from_u32(v - 0x100000)).flatten()
+}
+
+/// Slant a bitmap ~12° about the baseline (rows above lean right).
+fn shear(g: Glyph) -> Glyph {
+    const SLANT: f32 = 0.21;
+    let m = g.metrics;
+    if m.width == 0 || m.height == 0 {
+        return g;
+    }
+    let base_row = m.height as i32 + m.ymin; // rows above the baseline
+    let shift = |iy: usize| ((base_row - iy as i32) as f32 * SLANT).round() as i32;
+    let (top, bottom) = (shift(0), shift(m.height - 1));
+    let (lo, hi) = (top.min(bottom), top.max(bottom));
+    let w = m.width + (hi - lo) as usize;
+    let mut out = vec![0u8; w * m.height];
+    for iy in 0..m.height {
+        let off = (shift(iy) - lo) as usize;
+        out[iy * w + off..iy * w + off + m.width].copy_from_slice(&g.bitmap[iy * m.width..(iy + 1) * m.width]);
+    }
+    let mut metrics = m;
+    metrics.width = w;
+    metrics.xmin = m.xmin + lo;
+    Glyph { metrics, bitmap: out }
+}
+
+impl FontStack {
+    /// Left x for drawing a zero-width mark centred over a base glyph of
+    /// `width` px whose cell starts at `cell_x` (pass it to `draw_char`).
+    pub fn mark_cell_x(&mut self, mark: char, cell_x: i32, width: i32) -> i32 {
+        let m = self.glyph(mark).metrics;
+        cell_x + (width - m.width as i32) / 2 - m.xmin
     }
 }
 
