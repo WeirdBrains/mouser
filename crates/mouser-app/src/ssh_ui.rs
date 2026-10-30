@@ -38,6 +38,7 @@ impl SshUi {
                     if now != last {
                         last = now;
                         *hosts.lock().unwrap() = ssh_config::load_hosts(&root);
+                        crate::wake();
                     }
                 }
             });

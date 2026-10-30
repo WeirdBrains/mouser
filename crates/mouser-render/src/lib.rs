@@ -2,7 +2,8 @@
 use anyhow::Result;
 use softbuffer::{Context, Surface};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
@@ -46,7 +47,12 @@ pub struct RenderHooks {
     /// Returns true once the session has ended (e.g. the shell exited); the
     /// window then closes and `run` returns.
     pub should_exit: Option<ExitHook>,
+    /// Receives a [`Waker`] that requests a redraw from any thread. The loop is
+    /// event driven: without a wake-up or input it sleeps.
+    pub set_waker: Option<Arc<dyn Fn(Waker) + Send + Sync>>,
 }
+
+pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
 pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 
@@ -76,10 +82,19 @@ impl Default for Renderer {
     }
 }
 
-pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
-    let event_loop = EventLoop::new()?;
-    let attrs = winit::window::WindowAttributes::default().with_title("Mouser").with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
-    let window = event_loop.create_window(attrs)?;
+/// Events delivered to the render loop from other threads.
+enum UserEvent {
+    /// Something changed (PTY output, shell exit, config reload): redraw.
+    Wake,
+    /// A font stack finished loading off the UI thread.
+    Fonts(u64, Box<FontStack>),
+}
+
+/// Upper bound on frame rate while output streams in; redraws are coalesced
+/// so a flood of PTY data costs at most one frame per interval.
+const MIN_FRAME: Duration = Duration::from_millis(8);
+
+fn set_icon(window: &winit::window::Window) {
     // Window icon (cross-platform): simple generated glyph to avoid external assets at runtime
     {
         let w = 64u32;
@@ -109,13 +124,34 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             window.set_window_icon(Some(icon));
         }
     }
-    let context = Context::new(&window).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
-    let mut surface = Surface::new(&context, &window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
+}
+
+pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let attrs = winit::window::WindowAttributes::default().with_title("Mouser").with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    let window = Arc::new(event_loop.create_window(attrs)?);
+    set_icon(&window);
+    let proxy = event_loop.create_proxy();
+    // Coalesce wakeups: at most one Wake event is queued at a time.
+    let wake_pending = Arc::new(AtomicBool::new(false));
+    if let Some(set_waker) = &hooks.set_waker {
+        let proxy = proxy.clone();
+        let pending = wake_pending.clone();
+        set_waker(Arc::new(move || {
+            if !pending.swap(true, Ordering::AcqRel) {
+                let _ = proxy.send_event(UserEvent::Wake);
+            }
+        }));
+    }
+    let context = Context::new(window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
+    let mut surface = Surface::new(&context, window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
     let mut width = window.inner_size().width.max(1);
     let mut height = window.inner_size().height.max(1);
     let mut scale = window.scale_factor();
-    let font_db = text::system_db();
+    let font_db = Arc::new(text::system_db());
     let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
+    // Family switches load on a worker thread; `font_gen` drops stale results.
+    let mut font_gen = 0u64;
 
     let mut scrolled_back = 0usize;
     let mut cursor_pos: Option<winit::dpi::PhysicalPosition<f64>> = None;
@@ -124,10 +160,21 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut grid = (0usize, 0usize);
     let mut dragging = false;
     let mut resize_cursor = false;
+    let mut dirty = true;
+    let mut last_frame: Option<Instant> = None;
 
     event_loop.run(|event, elwt| {
-        elwt.set_control_flow(ControlFlow::wait_duration(Duration::from_millis(16)));
         match event {
+            Event::UserEvent(UserEvent::Wake) => {
+                wake_pending.store(false, Ordering::Release);
+                dirty = true;
+            }
+            Event::UserEvent(UserEvent::Fonts(generation, stack)) => {
+                if generation == font_gen {
+                    fonts = *stack;
+                    dirty = true;
+                }
+            }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
                 WindowEvent::CursorMoved { position, .. } => {
@@ -136,6 +183,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     if dragging && let Some(on_act) = &hooks.on_ui_action {
                         let w = ui::clamp_sidebar_width(width as i32 - px, width as i32, fonts.cell_w);
                         (on_act)(ui::UiAction::ResizeSidebar(w));
+                        dirty = true;
                     }
                     let hover = dragging || last_ui.as_ref().is_some_and(|l| ui::on_resize_edge(l, px, py));
                     if hover != resize_cursor {
@@ -150,6 +198,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         if let Some(on_act) = &hooks.on_ui_action {
                             (on_act)(ui::UiAction::ResizeSidebarDone);
                         }
+                        dirty = true;
                     }
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
@@ -161,9 +210,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         }
                         let act = ui::hit_test(layout, pos.x.round() as i32, pos.y.round() as i32);
                         (on_act)(act);
+                        dirty = true;
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
+                    dirty = true;
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
                         return;
@@ -176,19 +227,23 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                     scale = scale_factor;
                     fonts = fonts.resized(renderer.font_size * scale as f32);
+                    dirty = true;
                 }
                 WindowEvent::Resized(new_size) => {
                     width = new_size.width.max(1);
                     height = new_size.height.max(1);
                     use std::num::NonZeroU32;
                     let _ = surface.resize(NonZeroU32::new(width).unwrap(), NonZeroU32::new(height).unwrap());
+                    dirty = true;
                 }
+                WindowEvent::RedrawRequested | WindowEvent::Focused(_) | WindowEvent::Occluded(false) => dirty = true,
                 WindowEvent::MouseWheel { delta, .. } => {
                     let lines = match delta {
                         MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
                         MouseScrollDelta::PixelDelta(p) => (p.y / fonts.cell_h as f64) as isize,
                     };
                     scrolled_back = scrolled_back.saturating_add_signed(lines);
+                    dirty = true;
                 }
                 _ => {}
             },
@@ -197,12 +252,33 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     elwt.exit();
                     return;
                 }
+                if !dirty {
+                    // Nothing to do: sleep until an input event or a wake-up.
+                    elwt.set_control_flow(ControlFlow::Wait);
+                    return;
+                }
+                if let Some(at) = last_frame
+                    && at.elapsed() < MIN_FRAME
+                {
+                    elwt.set_control_flow(ControlFlow::WaitUntil(at + MIN_FRAME));
+                    return;
+                }
+                dirty = false;
+                last_frame = Some(Instant::now());
+                elwt.set_control_flow(ControlFlow::Wait);
                 if let Some(get_font) = &hooks.get_font {
                     let (size, family) = get_font();
                     if family != renderer.font_family {
-                        renderer.font_family = family;
+                        // Resolve the new family off the UI thread; keep drawing
+                        // with the current fonts until it is ready.
+                        renderer.font_family = family.clone();
                         renderer.font_size = size;
-                        fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), size * scale as f32);
+                        font_gen += 1;
+                        let (generation, db, proxy, px) = (font_gen, font_db.clone(), proxy.clone(), size * scale as f32);
+                        std::thread::spawn(move || {
+                            let stack = FontStack::from_db(&db, family.as_deref(), px);
+                            let _ = proxy.send_event(UserEvent::Fonts(generation, Box::new(stack)));
+                        });
                     } else if (size - renderer.font_size).abs() > f32::EPSILON {
                         renderer.font_size = size;
                         fonts = fonts.resized(size * scale as f32);
@@ -250,7 +326,6 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             _ => {}
         }
     })?;
-    #[allow(unreachable_code)]
     Ok(())
 }
 
