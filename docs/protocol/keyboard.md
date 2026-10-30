@@ -1,4 +1,4 @@
-# Burrow keyboard — draft v0
+# Fuzzball keyboard — draft v0
 
 Subsystem letter: `k`. Framing, replies and errors: see [README](README.md).
 
@@ -11,10 +11,10 @@ While it is off, the terminal sends legacy (xterm/VT) bytes.
 Enable / disable (per screen; the main and alternate screens are independent):
 
 ```
-ESC P = B w k s ; on=1[,v=0][,id=<n>] ESC \     enable
-ESC P = B w k s ; on=0[,id=<n>] ESC \           disable
-ESC P = B w k q ; id=<n> ESC \                  query
-→ ESC P = B w k r ; id=<n>,ok=1,on=1 ESC \
+ESC P = F z k s ; on=1[,v=0][,id=<n>] ESC \     enable
+ESC P = F z k s ; on=0[,id=<n>] ESC \           disable
+ESC P = F z k q ; id=<n> ESC \                  query
+→ ESC P = F z k r ; id=<n>,ok=1,on=1 ESC \
 ```
 
 The mode is also turned off by RIS and when the program's screen is left (e.g. leaving
@@ -25,7 +25,7 @@ the alternate screen restores the main screen's own state).
 Sent by the terminal to the application:
 
 ```
-ESC P = B w k e ; t=<p|r|u>,code=<phys>,key=<logical>[,mods=<n>][,locks=<n>][,text=<hex>][,ime=<phase>] ESC \
+ESC P = F z k e ; t=<p|r|u>,code=<phys>,key=<logical>[,mods=<n>][,locks=<n>][,text=<hex>][,ime=<phase>] ESC \
 ```
 
 | field | meaning |
@@ -44,14 +44,14 @@ reflecting the state **after** the event.
 Examples:
 
 ```
-a              ESC P = B w k e ; t=p,code=KeyA,key=U+0061,text=61 ESC \
-Shift+a        ESC P = B w k e ; t=p,code=KeyA,key=U+0061,mods=1,text=41 ESC \
-release a      ESC P = B w k e ; t=u,code=KeyA,key=U+0061 ESC \
-Ctrl+c         ESC P = B w k e ; t=p,code=KeyC,key=U+0063,mods=4 ESC \
-Ctrl+ф (RU)    ESC P = B w k e ; t=p,code=KeyA,key=U+0444,mods=4 ESC \
-Enter          ESC P = B w k e ; t=p,code=Enter,key=Enter,text=0d ESC \
-Up (repeat)    ESC P = B w k e ; t=r,code=ArrowUp,key=ArrowUp ESC \
-Left Shift     ESC P = B w k e ; t=p,code=ShiftLeft,key=Shift,mods=1 ESC \
+a              ESC P = F z k e ; t=p,code=KeyA,key=U+0061,text=61 ESC \
+Shift+a        ESC P = F z k e ; t=p,code=KeyA,key=U+0061,mods=1,text=41 ESC \
+release a      ESC P = F z k e ; t=u,code=KeyA,key=U+0061 ESC \
+Ctrl+c         ESC P = F z k e ; t=p,code=KeyC,key=U+0063,mods=4 ESC \
+Ctrl+ф (RU)    ESC P = F z k e ; t=p,code=KeyA,key=U+0444,mods=4 ESC \
+Enter          ESC P = F z k e ; t=p,code=Enter,key=Enter,text=0d ESC \
+Up (repeat)    ESC P = F z k e ; t=r,code=ArrowUp,key=ArrowUp ESC \
+Left Shift     ESC P = F z k e ; t=p,code=ShiftLeft,key=Shift,mods=1 ESC \
 ```
 
 Applications get both the physical key (for shortcuts that should not move with the
@@ -64,10 +64,10 @@ Composition is reported separately from key presses so applications don't mistak
 pre-edit keystrokes for input:
 
 ```
-ESC P = B w k e ; t=p,ime=start ESC \
-ESC P = B w k e ; t=p,ime=update,text=e3818b ESC \        pre-edit "か", not inserted
-ESC P = B w k e ; t=p,ime=commit,text=e6bca2e5ad97 ESC \  insert "漢字"
-ESC P = B w k e ; t=p,ime=cancel ESC \
+ESC P = F z k e ; t=p,ime=start ESC \
+ESC P = F z k e ; t=p,ime=update,text=e3818b ESC \        pre-edit "か", not inserted
+ESC P = F z k e ; t=p,ime=commit,text=e6bca2e5ad97 ESC \  insert "漢字"
+ESC P = F z k e ; t=p,ime=cancel ESC \
 ```
 
 Key events consumed by the IME are not reported. Dead keys behave like a one-character

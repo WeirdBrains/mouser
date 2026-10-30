@@ -1,4 +1,4 @@
-# Burrow graphics — draft v0
+# Fuzzball graphics — draft v0
 
 Subsystem letter: `g`. Framing, replies and errors: see [README](README.md).
 
@@ -27,7 +27,7 @@ Subsystem letter: `g`. Framing, replies and errors: see [README](README.md).
 ### 2.1 Upload — `u`
 
 ```
-ESC P = B w g u ; id=<n>,fmt=<fmt>[,w=<px>,h=<px>],size=<bytes>,enc=<b64|raw>,len=<n>[,more=1] : <payload> ESC \
+ESC P = F z g u ; id=<n>,fmt=<fmt>[,w=<px>,h=<px>],size=<bytes>,enc=<b64|raw>,len=<n>[,more=1] : <payload> ESC \
 ```
 
 | param | |
@@ -40,13 +40,13 @@ ESC P = B w g u ; id=<n>,fmt=<fmt>[,w=<px>,h=<px>],size=<bytes>,enc=<b64|raw>,le
 Reply on completion (for uploads, `id` is both the image id and the reply id; `quiet` applies as usual):
 
 ```
-ESC P = B w g r ; id=7,ok=1,w=64,h=64 ESC \
+ESC P = F z g r ; id=7,ok=1,w=64,h=64 ESC \
 ```
 
 ### 2.2 Place — `p`
 
 ```
-ESC P = B w g p ; id=<image>,pid=<n>[,cols=<n>,rows=<n>][,sx=,sy=,sw=,sh=][,z=<-1|0|1>][,move=<0|1>] ESC \
+ESC P = F z g p ; id=<image>,pid=<n>[,cols=<n>,rows=<n>][,sx=,sy=,sw=,sh=][,z=<-1|0|1>][,move=<0|1>] ESC \
 ```
 
 - Anchored at the **cursor cell**.
@@ -66,7 +66,7 @@ Placing an existing `(id, pid)` moves it.
 ### 2.3 Delete — `d`
 
 ```
-ESC P = B w g d ; what=<target>[,id=<n>][,pid=<n>][,free=1] ESC \
+ESC P = F z g d ; what=<target>[,id=<n>][,pid=<n>][,free=1] ESC \
 ```
 
 | `what` | removes |
@@ -80,8 +80,8 @@ ESC P = B w g d ; what=<target>[,id=<n>][,pid=<n>][,free=1] ESC \
 ### 2.4 Query — `q`
 
 ```
-ESC P = B w g q ; id=1 ESC \
-→ ESC P = B w g r ; id=1,ok=1,mem_used=1048576,mem_max=335544320,images=3,cell_w=9,cell_h=18 ESC \
+ESC P = F z g q ; id=1 ESC \
+→ ESC P = F z g r ; id=1,ok=1,mem_used=1048576,mem_max=335544320,images=3,cell_w=9,cell_h=18 ESC \
 ```
 
 Also answers with the current cell pixel size so applications can pick image sizes.
@@ -112,20 +112,20 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
 Upload a 2×1 RGBA image (red, blue) and show it in a 4×2 cell box:
 
 ```
-ESC P = B w g u ; id=1,fmt=rgba,w=2,h=1,size=8,enc=b64,len=12 : /wAA/wAA//8= ESC \
-ESC P = B w g p ; id=1,pid=1,cols=4,rows=2 ESC \
+ESC P = F z g u ; id=1,fmt=rgba,w=2,h=1,size=8,enc=b64,len=12 : /wAA/wAA//8= ESC \
+ESC P = F z g p ; id=1,pid=1,cols=4,rows=2 ESC \
 ```
 
 Same upload, raw (only after `raw=1` was advertised):
 
 ```
-ESC P = B w g u ; id=1,fmt=rgba,w=2,h=1,size=8,enc=raw,len=8 : FF 00 00 FF 00 00 FF FF ESC \
+ESC P = F z g u ; id=1,fmt=rgba,w=2,h=1,size=8,enc=raw,len=8 : FF 00 00 FF 00 00 FF FF ESC \
 ```
 
 Delete it and free the data:
 
 ```
-ESC P = B w g d ; what=image,id=1,free=1 ESC \
+ESC P = F z g d ; what=image,id=1,free=1 ESC \
 ```
 
 ## 6. Differences from Kitty graphics
