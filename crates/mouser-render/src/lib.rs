@@ -10,6 +10,7 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+pub mod boxdraw;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
