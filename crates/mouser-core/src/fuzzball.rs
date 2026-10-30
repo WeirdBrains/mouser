@@ -36,6 +36,8 @@ pub struct Ctx {
     pub cell_w: u32,
     pub cell_h: u32,
     pub alt: bool,
+    /// Screen width in columns.
+    pub screen_cols: usize,
 }
 
 /// What the parser should do after a message.
@@ -200,9 +202,15 @@ impl Fuzzball {
             if p.alt != alt {
                 return !p.alt && p.row >= top;
             }
-            p.row >= bottom || p.col as usize >= cols || (p.alt && p.row < top)
+            p.row >= bottom || (p.alt && p.row < top)
         });
-        before != self.gfx.placements.len() || shift != 0
+        let mut changed = before != self.gfx.placements.len() || shift != 0;
+        for p in &mut self.gfx.placements {
+            let old = (p.col, p.cols, p.rows);
+            p.fit(cols);
+            changed |= old != (p.col, p.cols, p.rows);
+        }
+        changed
     }
 
     /// Erase covered rows `from..to` (absolute) on a screen: placements touching them go.
@@ -401,20 +409,23 @@ impl Fuzzball {
             _ => return Err((Error::Inval, "z must be -1 0 or 1")),
         };
         let pid = num(p, "pid").unwrap_or(0);
-        let pl = Placement {
+        let mut pl = Placement {
             image_id: id,
             id: pid,
             row: ctx.abs_row,
             col: ctx.col,
             cols,
             rows,
+            req_col: ctx.col,
+            req_cols: cols,
+            req_rows: rows,
             src: (sx, sy, sw, sh),
-            width: cols * cw as u32,
-            height: rows * ch as u32,
             z,
             alt: ctx.alt,
             stamp: 0,
         };
+        pl.fit(ctx.screen_cols);
+        let (cols, rows) = (pl.cols, pl.rows);
         self.gfx.place(pl).map_err(|_| (Error::NoMem, "over g_max_place"))?;
         eff.changed = true;
         if num(p, "move").unwrap_or(1) == 1 {

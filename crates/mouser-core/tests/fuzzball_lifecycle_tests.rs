@@ -98,15 +98,78 @@ fn ed3_keeps_the_visible_text() {
     assert!(t.screen.visible_lines()[0].starts_with("hello"));
 }
 
+fn boxed(t: &TerminalParser<std::io::Sink>, pid: u32) -> (u32, u32, u32) {
+    let p = t.fuzzball.gfx.placements.iter().find(|p| p.id == pid).expect("placement");
+    (p.col, p.cols, p.rows)
+}
+
 #[test]
-fn narrower_resize_drops_cut_off_anchors() {
+fn narrower_resize_scales_overhanging_placements() {
     let mut t = term();
-    place(&mut t, 1, 2, 3, 4, 1);
-    place(&mut t, 2, 3, 15, 4, 1);
-    t.resize(Size { cols: 10, rows: 6 });
-    // Anchor col 14 is gone; col 2 stays (it may be clipped at the edge).
-    assert_eq!(pids(&t), vec![1]);
+    // col 10 (0-based), 8x4 cells; screen 20 -> 14 leaves 4 columns: half size.
+    place(&mut t, 1, 2, 11, 8, 4);
+    t.resize(Size { cols: 14, rows: 6 });
+    assert_eq!(boxed(&t, 1), (10, 4, 2));
+    assert_eq!(t.fuzzball.gfx.placements[0].pixel_size((10, 20)), (40, 40));
     assert_eq!(screen_row(&t, 1), 1);
+}
+
+#[test]
+fn anchor_beyond_the_edge_moves_left_instead_of_dropping() {
+    let mut t = term();
+    place(&mut t, 1, 3, 16, 4, 2);
+    t.resize(Size { cols: 10, rows: 6 });
+    assert_eq!(boxed(&t, 1), (6, 4, 2), "moved to the last column where it fits");
+    // Narrower than the image itself: anchored at 0 and scaled.
+    t.resize(Size { cols: 2, rows: 6 });
+    assert_eq!(boxed(&t, 1), (0, 2, 1));
+}
+
+#[test]
+fn wider_resize_grows_back_to_the_requested_size_only() {
+    let mut t = term();
+    place(&mut t, 1, 2, 11, 8, 4);
+    t.resize(Size { cols: 14, rows: 6 });
+    t.resize(Size { cols: 16, rows: 6 });
+    assert_eq!(boxed(&t, 1), (10, 6, 3));
+    t.resize(Size { cols: 40, rows: 6 });
+    assert_eq!(boxed(&t, 1), (10, 8, 4), "back to the request, not larger");
+    let p = &t.fuzzball.gfx.placements[0];
+    assert_eq!((p.req_col, p.req_cols, p.req_rows), (10, 8, 4));
+}
+
+#[test]
+fn placement_wider_than_the_screen_is_fitted_when_placed() {
+    let mut t = term();
+    place(&mut t, 1, 1, 11, 20, 2);
+    assert_eq!(boxed(&t, 1), (10, 10, 1));
+    t.resize(Size { cols: 40, rows: 6 });
+    assert_eq!(boxed(&t, 1), (10, 20, 2));
+}
+
+#[test]
+fn cell_size_change_keeps_cells_and_rescales_pixels() {
+    let mut t = term();
+    place(&mut t, 1, 1, 1, 3, 2);
+    let p = t.fuzzball.gfx.placements[0].clone();
+    assert_eq!(p.pixel_size((10, 20)), (30, 40));
+    // Font zoom / DPI change: same cells, more pixels.
+    assert_eq!(p.pixel_size((15, 30)), (45, 60));
+    assert_eq!((p.cols, p.rows), (3, 2));
+}
+
+#[test]
+fn alt_screen_placements_scale_too() {
+    let mut t = term();
+    t.feed(b"\x1b[?1049h");
+    place(&mut t, 1, 1, 13, 8, 2);
+    t.feed(b"\x1b[1;1H");
+    t.resize(Size { cols: 10, rows: 6 });
+    assert_eq!(boxed(&t, 1), (2, 8, 2));
+    t.resize(Size { cols: 4, rows: 6 });
+    assert_eq!(boxed(&t, 1), (0, 4, 1));
+    t.resize(Size { cols: 30, rows: 6 });
+    assert_eq!(boxed(&t, 1), (12, 8, 2));
 }
 
 #[test]

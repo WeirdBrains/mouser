@@ -14,10 +14,12 @@ pub mod boxdraw;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
+pub mod scale;
 pub mod text;
 pub mod ui;
 
 pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, image_draws, render_frame};
+pub use scale::ImageScaler;
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.

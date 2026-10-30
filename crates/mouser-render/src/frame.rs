@@ -165,25 +165,39 @@ pub struct ImageDraw {
 }
 
 /// Fuzzball placements on screen `alt` visible in absolute rows `top .. top + rows`,
-/// as draw commands (row relative to `top`), lowest z first.
-pub fn image_draws(gfx: &mouser_core::graphics::Graphics, alt: bool, top: i64, rows: usize) -> Vec<ImageDraw> {
-    gfx.visible(alt, top, rows)
+/// as draw commands (row relative to `top`) sized for `cell` pixels, lowest z first.
+/// Downscaled images come from `scaler`'s cache.
+pub fn image_draws(
+    gfx: &mouser_core::graphics::Graphics,
+    alt: bool,
+    top: i64,
+    rows: usize,
+    cell: (u32, u32),
+    scaler: &mut crate::scale::ImageScaler,
+) -> Vec<ImageDraw> {
+    let mut draws: Vec<ImageDraw> = gfx
+        .visible(alt, top, rows)
         .into_iter()
-        .map(|(pl, im)| ImageDraw {
-            key: im.key,
-            rgba: im.rgba.clone(),
-            img_w: im.width,
-            img_h: im.height,
-            src: pl.src,
-            col: pl.col as i32,
-            row: (pl.row - top) as i32,
-            x_off: 0,
-            y_off: 0,
-            width: pl.width,
-            height: pl.height,
-            z: pl.z,
+        .map(|(pl, im)| {
+            let (width, height) = pl.pixel_size(cell);
+            ImageDraw {
+                key: im.key,
+                rgba: im.rgba.clone(),
+                img_w: im.width,
+                img_h: im.height,
+                src: pl.src,
+                col: pl.col as i32,
+                row: (pl.row - top) as i32,
+                x_off: 0,
+                y_off: 0,
+                width,
+                height,
+                z: pl.z,
+            }
         })
-        .collect()
+        .collect();
+    scaler.prepare(&mut draws);
+    draws
 }
 
 fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool, top: i32) {
