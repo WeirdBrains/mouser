@@ -1,5 +1,6 @@
 mod appearance_ui;
 mod ssh_ui;
+mod term_view;
 
 use anyhow::Result;
 use clap::Parser;
@@ -243,32 +244,41 @@ fn main() -> Result<()> {
     let fetch = {
         let parser = parser.clone();
         let sb = scrollback.clone();
-        Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, usize) {
-            let screen_lines = {
-                let p = parser.lock().unwrap();
+        let app_state = app_state.clone();
+        Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, Vec<Vec<mouser_render::CellPaint>>, usize) {
+            let theme = app_state.lock().unwrap().look.theme_colors();
+            let (screen_lines, screen_paint) = {
+                let mut p = parser.lock().unwrap();
+                term_view::sync_theme(&mut p, &theme);
+                let lines = p.screen.visible_lines();
+                let paint = term_view::screen_paint(&p);
                 if p.screen.in_alt_screen() {
-                    return (p.screen.visible_lines(), 0);
+                    return (lines, paint, 0);
                 }
-                p.screen.visible_lines()
+                (lines, paint)
             };
             let sb_total = sb.total_lines();
             let back = scrolled_back.min(sb_total);
             if back == 0 {
-                return (screen_lines, 0);
+                return (screen_lines, screen_paint, 0);
             }
             // Window of `rows` lines ending `back` lines above the live screen.
             let total = sb_total + screen_lines.len();
             let end = total - back;
             let start = end.saturating_sub(rows);
             let mut out = Vec::with_capacity(rows);
+            let mut paint = Vec::with_capacity(rows);
             if start < sb_total {
-                out.extend(sb.get_lines(start, end.min(sb_total) - start));
+                let lines = sb.get_lines(start, end.min(sb_total) - start);
+                paint.extend(lines.iter().map(|_| Vec::new()));
+                out.extend(lines);
             }
             if end > sb_total {
                 out.extend(screen_lines.into_iter().take(end - sb_total));
+                paint.extend(screen_paint.into_iter().take(end - sb_total));
             }
             sb.prefetch_around(start, end);
-            (out, back)
+            (out, paint, back)
         })
     };
     let get_cursor = {
@@ -307,6 +317,7 @@ fn main() -> Result<()> {
     let on_key = {
         let writer = shared_writer.clone();
         let app_state = app_state.clone();
+        let parser = parser.clone();
         Arc::new(move |bytes: Vec<u8>| {
             let mut state = app_state.lock().unwrap();
             match state.mode {
@@ -329,6 +340,8 @@ fn main() -> Result<()> {
                         state.sidebar_open = !state.sidebar_open;
                         persist_sidebar(&mut state);
                     } else {
+                        let modes = parser.lock().unwrap().modes;
+                        let bytes = mouser_core::input::apply_cursor_mode(bytes, &modes);
                         let mut w = writer.clone();
                         let _ = w.write_all(&bytes);
                     }
@@ -362,7 +375,16 @@ fn main() -> Result<()> {
         let sb = scrollback.clone();
         move || {
             while let Ok(bytes) = rx.recv() {
-                parser.lock().unwrap().feed(&bytes);
+                let events = {
+                    let mut p = parser.lock().unwrap();
+                    p.feed(&bytes);
+                    std::mem::take(&mut p.events)
+                };
+                for ev in events {
+                    if let mouser_core::parser::TermEvent::Clipboard(text) = ev {
+                        set_clipboard(&text);
+                    }
+                }
                 sb.maybe_compress_idle();
                 if rx.is_empty() {
                     wake();
@@ -386,14 +408,18 @@ fn main() -> Result<()> {
         let master = master.clone();
         let child = child.clone();
         let writer = shared_writer.clone();
-        Arc::new(move |cols: u16, rows: u16| {
-            parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+        Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| {
+            {
+                let mut p = parser.lock().unwrap();
+                p.resize(Size { cols: cols as usize, rows: rows as usize });
+                p.term_name = mouser_pty::term_name().to_string();
+            }
             let mut m = master.lock().unwrap();
             if let Some(m) = m.as_mut() {
-                let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows);
+                let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows, pw, ph);
                 return;
             }
-            match spawn_shell(cols, rows) {
+            match spawn_shell(cols, rows, pw, ph) {
                 Ok(handles) => {
                     let tx = tx.clone();
                     let mut reader = handles.reader;
@@ -587,7 +613,56 @@ fn main() -> Result<()> {
             })
         }),
         on_resize,
-        fetch_lines: fetch,
+        fetch_lines: Arc::new(|_, _| (Vec::new(), 0)),
+        fetch_view: Some(fetch),
+        get_cursor_shape: Some({
+            let parser = parser.clone();
+            Arc::new(move || match parser.lock().unwrap().screen.cursor_shape {
+                mouser_core::grid::CursorShape::Block => mouser_render::CursorShape::Block,
+                mouser_core::grid::CursorShape::Underline => mouser_render::CursorShape::Underline,
+                mouser_core::grid::CursorShape::Bar => mouser_render::CursorShape::Bar,
+            })
+        }),
+        on_mouse: Some({
+            let (parser, writer) = (parser.clone(), shared_writer.clone());
+            Arc::new(move |ev: mouser_core::input::MouseEvent| on_mouse(&parser, &writer, ev))
+        }),
+        on_focus: Some({
+            let (parser, writer) = (parser.clone(), shared_writer.clone());
+            Arc::new(move |focused: bool| {
+                let modes = parser.lock().unwrap().modes;
+                if let Some(b) = mouser_core::input::encode_focus(focused, &modes) {
+                    let mut w = writer.clone();
+                    let _ = w.write_all(b);
+                }
+            })
+        }),
+        on_paste: Some({
+            let (parser, writer, app_state) = (parser.clone(), shared_writer.clone(), app_state.clone());
+            Arc::new(move || {
+                let Some(text) = get_clipboard() else { return };
+                let mut st = app_state.lock().unwrap();
+                if st.mode == Mode::Command {
+                    st.command_buf.push_str(text.lines().next().unwrap_or(""));
+                    return;
+                }
+                if st.ssh.panel.is_some() || st.look.panel.is_some() {
+                    return;
+                }
+                drop(st);
+                let modes = parser.lock().unwrap().modes;
+                let mut w = writer.clone();
+                let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
+            })
+        }),
+        hold_frame: Some({
+            let parser = parser.clone();
+            Arc::new(move || parser.lock().unwrap().modes.synchronized)
+        }),
+        get_title: Some({
+            let parser = parser.clone();
+            Arc::new(move || Some(parser.lock().unwrap().title.clone()))
+        }),
         get_colors,
         get_font: Some(get_font),
         get_cursor: Some(get_cursor),
@@ -633,6 +708,67 @@ fn main() -> Result<()> {
         let _ = c.wait();
     }
     Ok(())
+}
+
+/// Mouse over the terminal: report it when the app asked (Shift bypasses),
+/// open OSC 8 links on Ctrl+click, and turn the wheel into arrow keys on the
+/// alternate screen (xterm's alternateScroll).
+fn on_mouse(parser: &Mutex<TerminalParser<SharedWriter>>, writer: &SharedWriter, ev: mouser_core::input::MouseEvent) -> bool {
+    use mouser_core::input::{MouseButton, MouseKind};
+    let p = parser.lock().unwrap();
+    let mut w = writer.clone();
+    if p.modes.mouse != mouser_core::parser::MouseMode::Off && !ev.shift {
+        if let Some(b) = mouser_core::input::encode_mouse(&ev, &p.modes) {
+            drop(p);
+            let _ = w.write_all(&b);
+        }
+        return true;
+    }
+    if ev.kind == MouseKind::Press && ev.button == MouseButton::Left && ev.ctrl {
+        if let Some(uri) = p.link_at(ev.col, ev.row) {
+            open_link(uri);
+            return true;
+        }
+        return false;
+    }
+    if ev.kind == MouseKind::Press && matches!(ev.button, MouseButton::WheelUp | MouseButton::WheelDown) && p.screen.in_alt_screen() {
+        let key: &[u8] = if ev.button == MouseButton::WheelUp { b"\x1b[A" } else { b"\x1b[B" };
+        let bytes = mouser_core::input::apply_cursor_mode(key.to_vec(), &p.modes);
+        drop(p);
+        for _ in 0..3 {
+            let _ = w.write_all(&bytes);
+        }
+        return true;
+    }
+    false
+}
+
+/// Only web, mail and file links are opened, and never through a shell.
+fn open_link(uri: &str) {
+    let ok = ["http://", "https://", "mailto:", "file://"].iter().any(|s| uri.starts_with(s));
+    if !ok {
+        log::warn!("not opening link with unsupported scheme: {uri}");
+        return;
+    }
+    let _ = std::process::Command::new("xdg-open").arg(uri).stdin(std::process::Stdio::null()).spawn();
+}
+
+/// OSC 52 write: hand the text to wl-copy (Wayland) if it is installed.
+fn set_clipboard(text: &str) {
+    use std::process::{Command, Stdio};
+    if let Ok(mut c) = Command::new("wl-copy").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        if let Some(mut stdin) = c.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        std::thread::spawn(move || {
+            let _ = c.wait();
+        });
+    }
+}
+
+fn get_clipboard() -> Option<String> {
+    let out = std::process::Command::new("wl-paste").arg("--no-newline").output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

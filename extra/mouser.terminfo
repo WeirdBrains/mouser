@@ -1,0 +1,17 @@
+# Mouser terminfo. Install for your user with:  tic -x -o ~/.terminfo extra/mouser.terminfo
+# Mouser sets TERM=mouser when this entry is found (xterm-kitty still wins if installed).
+mouser|Mouser terminal emulator,
+	Tc, RGB, AX, XT, bce, ccc,
+	colors#256, pairs#0x10000,
+	setrgbf=\E[38:2::%p1%d:%p2%d:%p3%dm,
+	setrgbb=\E[48:2::%p1%d:%p2%d:%p3%dm,
+	Smulx=\E[4:%p1%dm,
+	Setulc=\E[58:2::%p1%{65536}%/%d:%p1%{256}%/%{255}%&%d:%p1%{255}%&%dm,
+	Ss=\E[%p1%d q, Se=\E[2 q,
+	Sync=\E[?2026%?%p1%{1}%-%tl%eh%;,
+	BD=\E[?2004l, BE=\E[?2004h, PS=\E[200~, PE=\E[201~,
+	fd=\E[?1004l, fe=\E[?1004h, kxIN=\E[I, kxOUT=\E[O,
+	smxx=\E[9m, rmxx=\E[29m,
+	Smol=\E[53m, Rmol=\E[55m,
+	XM=\E[?1006;1000%?%p1%{1}%=%th%el%;, xm=\E[<%i%p3%d;%p1%d;%p2%d;%?%p4%tM%em%;,
+	use=xterm-256color,

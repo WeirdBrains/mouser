@@ -31,6 +31,8 @@ pub struct ThemeColors {
     pub foreground: u32,
     pub cursor: Option<u32>,
     pub accent: Option<u32>,
+    /// ANSI 0-15.
+    pub palette: [u32; 16],
 }
 
 impl ThemeDef {
@@ -40,6 +42,10 @@ impl ThemeDef {
             foreground: parse_hex_rgb(&self.foreground),
             cursor: self.cursor.as_deref().and_then(parse_hex),
             accent: self.accent.as_deref().and_then(parse_hex),
+            palette: {
+                let full = self.full_palette();
+                std::array::from_fn(|i| parse_hex_rgb(&full[i]))
+            },
         }
     }
 

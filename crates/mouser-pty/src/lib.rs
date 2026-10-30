@@ -12,9 +12,9 @@ pub struct PtyHandles {
     pub master: Box<dyn MasterPty + Send>,
 }
 
-pub fn spawn_shell(cols: u16, rows: u16) -> Result<PtyHandles> {
+pub fn spawn_shell(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
     let pty_system = native_pty_system();
-    let pair = pty_system.openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+    let pair = pty_system.openpty(PtySize { rows, cols, pixel_width, pixel_height })?;
 
     let cmd = shell_command();
     let child = pair.slave.spawn_command(cmd)?;
@@ -31,8 +31,9 @@ pub fn set_winsize(handles: &mut PtyHandles, cols: u16, rows: u16) -> Result<()>
     Ok(())
 }
 
-pub fn set_master_winsize(master: &mut (dyn MasterPty + Send), cols: u16, rows: u16) -> Result<()> {
-    master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })?;
+/// TIOCSWINSZ with the grid's pixel size, so `ws_xpixel`/`ws_ypixel` are real.
+pub fn set_master_winsize(master: &mut (dyn MasterPty + Send), cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<()> {
+    master.resize(PtySize { rows, cols, pixel_width, pixel_height })?;
     Ok(())
 }
 
@@ -56,10 +57,17 @@ fn default_shell() -> String {
     if cfg!(windows) { "powershell.exe".to_string() } else { "/bin/sh".to_string() }
 }
 
-/// `xterm-kitty` when its terminfo entry is installed, otherwise
-/// `xterm-256color` so shells do not fall back to a dumb terminal.
+/// `xterm-kitty` when its terminfo entry is installed (tools detect Kitty
+/// graphics from it), then Mouser's own `mouser` entry (`extra/mouser.terminfo`,
+/// installed with `tic -x`), otherwise `xterm-256color`.
 pub fn term_name() -> &'static str {
-    if terminfo_exists("xterm-kitty") { "xterm-kitty" } else { "xterm-256color" }
+    if terminfo_exists("xterm-kitty") {
+        "xterm-kitty"
+    } else if terminfo_exists("mouser") {
+        "mouser"
+    } else {
+        "xterm-256color"
+    }
 }
 
 fn terminfo_exists(name: &str) -> bool {
