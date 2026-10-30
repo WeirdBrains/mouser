@@ -1,3 +1,24 @@
+## [0.7.1] - 2026-10-30
+
+Added:
+- Tabs; clicking a connection opens it in a new tab
+- GPU renderer (wgpu) with CPU fallback (`MOUSER_RENDERER=cpu`)
+- Fuzzy font picker listing installed fonts
+- Sidebar remembers its open/closed state; starts collapsed by default
+- Kitty keyboard and graphics protocols
+- Fuzzball protocol draft spec (`docs/protocol/`)
+- Broader xterm/ECMA-48 support: SGR styles, wide chars, mouse, focus, bracketed paste, OSC titles, links and clipboard, window reports
+- Public handover notes (`docs/HANDOVER.md`)
+
+Changed:
+- Event-driven redraws and glyph cache: near-zero idle CPU
+
+Fixes:
+- Window closes when the shell exits (Ctrl+D)
+- Font editor no longer freezes while typing
+- vttest fixes: DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1
+- Box-drawing lines are continuous (no dashed edges)
+
 ## [0.7.0] - 2026-10-29
 
 Feature: UI scaffolding for connections
