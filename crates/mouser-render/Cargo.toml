@@ -16,4 +16,6 @@ softbuffer = "0.4.6"
 fontdb = "0.16.2"
 fontdue = "0.7.3"
 image.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
 

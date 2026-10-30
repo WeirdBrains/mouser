@@ -1,6 +1,7 @@
 #![allow(deprecated)]
 use anyhow::Result;
 use softbuffer::{Context, Surface};
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -10,11 +11,12 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
 pub mod frame;
+pub mod gpu;
 pub mod text;
 pub mod ui;
 
 pub use frame::{Frame, PADDING, grid_size, render_frame};
-pub use text::{Canvas, FontStack};
+pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +84,71 @@ impl Default for Renderer {
     }
 }
 
+type CpuSurface = Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>;
+
+/// The active backend: wgpu when available, else softbuffer.
+enum Painter {
+    Cpu(Box<CpuSurface>),
+    Gpu(Box<gpu::GpuPainter>, DisplayList),
+}
+
+impl Painter {
+    /// GPU unless `MOUSER_RENDERER=cpu` or wgpu cannot get an adapter/surface.
+    fn pick(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self> {
+        let want_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
+        if !want_cpu {
+            match gpu::GpuPainter::new(window.clone(), width, height) {
+                Ok(g) => {
+                    log::info!("renderer: gpu (wgpu, {})", g.description);
+                    eprintln!("mouser: renderer: gpu (wgpu, {})", g.description);
+                    return Ok(Painter::Gpu(Box::new(g), DisplayList::default()));
+                }
+                Err(e) => {
+                    log::warn!("wgpu unavailable ({e}); falling back to CPU");
+                    eprintln!("mouser: wgpu unavailable ({e}); falling back to CPU renderer");
+                }
+            }
+        }
+        let context = Context::new(window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
+        let mut surface = Surface::new(&context, window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
+        let _ = surface.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
+        log::info!("renderer: cpu (softbuffer)");
+        eprintln!("mouser: renderer: cpu (softbuffer){}", if want_cpu { " [MOUSER_RENDERER=cpu]" } else { "" });
+        Ok(Painter::Cpu(Box::new(surface)))
+    }
+
+    fn resize(&mut self, width: u32, height: u32) {
+        match self {
+            Painter::Cpu(s) => {
+                let _ = s.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
+            }
+            Painter::Gpu(g, _) => g.resize(width, height),
+        }
+    }
+
+    /// Paint and present; false asks for another frame (surface was reset).
+    fn paint(&mut self, fonts: &mut FontStack, frame: &Frame, width: u32, height: u32) -> bool {
+        let (w, h) = (width as usize, height as usize);
+        match self {
+            Painter::Cpu(surface) => {
+                let Ok(mut buf) = surface.buffer_mut() else { return true };
+                if buf.len() >= w * h {
+                    let mut canvas = Canvas::new(&mut buf, w, h);
+                    render_frame(&mut canvas, fonts, frame);
+                }
+                let _ = buf.present();
+                true
+            }
+            Painter::Gpu(g, list) => {
+                list.width = w;
+                list.height = h;
+                render_frame(list, fonts, frame);
+                g.draw(list, fonts)
+            }
+        }
+    }
+}
+
 /// Events delivered to the render loop from other threads.
 enum UserEvent {
     /// Something changed (PTY output, shell exit, config reload): redraw.
@@ -143,11 +210,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             }
         }));
     }
-    let context = Context::new(window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
-    let mut surface = Surface::new(&context, window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
     let mut width = window.inner_size().width.max(1);
     let mut height = window.inner_size().height.max(1);
     let mut scale = window.scale_factor();
+    let mut painter = Painter::pick(window.clone(), width, height)?;
     let font_db = Arc::new(text::system_db());
     let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
     // Family switches load on a worker thread; `font_gen` drops stale results.
@@ -232,8 +298,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::Resized(new_size) => {
                     width = new_size.width.max(1);
                     height = new_size.height.max(1);
-                    use std::num::NonZeroU32;
-                    let _ = surface.resize(NonZeroU32::new(width).unwrap(), NonZeroU32::new(height).unwrap());
+                    painter.resize(width, height);
                     dirty = true;
                 }
                 WindowEvent::RedrawRequested | WindowEvent::Focused(_) | WindowEvent::Occluded(false) => dirty = true,
@@ -301,27 +366,20 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
                 let status = hooks.get_status.as_ref().and_then(|f| f());
-                let Ok(mut buf) = surface.buffer_mut() else { return };
-                let (w, h) = (width as usize, height as usize);
-                if buf.len() >= w * h {
-                    let mut canvas = Canvas::new(&mut buf, w, h);
-                    render_frame(
-                        &mut canvas,
-                        &mut fonts,
-                        &Frame {
-                            lines: &lines,
-                            cursor,
-                            bg,
-                            fg,
-                            ui: layout.as_ref(),
-                            status: status.as_deref(),
-                            accent: colors.accent,
-                            cursor_color: colors.cursor,
-                        },
-                    );
+                let frame = Frame {
+                    lines: &lines,
+                    cursor,
+                    bg,
+                    fg,
+                    ui: layout.as_ref(),
+                    status: status.as_deref(),
+                    accent: colors.accent,
+                    cursor_color: colors.cursor,
+                };
+                last_ui = layout.clone();
+                if !painter.paint(&mut fonts, &frame, width, height) {
+                    dirty = true;
                 }
-                last_ui = layout;
-                let _ = buf.present();
             }
             _ => {}
         }

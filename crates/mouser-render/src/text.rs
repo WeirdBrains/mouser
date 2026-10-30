@@ -57,6 +57,8 @@ pub struct FontStack {
     pub cell_h: i32,
     pub ascent: i32,
     cache: HashMap<char, Glyph>,
+    /// Unique per (fonts, size); lets GPU atlases know when to start over.
+    pub generation: u64,
 }
 
 impl FontStack {
@@ -122,7 +124,9 @@ impl FontStack {
         let cell_w = advance.round().max(1.0) as i32;
         // Spread any line gap evenly above and below the glyphs.
         let top_pad = (cell_h - ascent_px - descent_px) / 2;
-        Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new() }
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new(), generation }
     }
 
     /// The same fonts at another pixel size (cheap: parsed faces are shared).
@@ -200,6 +204,121 @@ pub fn luminance(c: u32) -> f32 {
     ((c >> 16) & 0xFF) as f32 * 0.299 + ((c >> 8) & 0xFF) as f32 * 0.587 + (c & 0xFF) as f32 * 0.114
 }
 
+/// Drawing surface used by [`crate::render_frame`]: the CPU [`Canvas`] paints
+/// pixels directly, [`DisplayList`] records the same operations for the GPU.
+pub trait Draw {
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+    fn clear(&mut self, color: u32);
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32);
+    /// Draw one glyph in the cell whose top-left corner is (`cell_x`, `cell_top`).
+    fn draw_char(&mut self, fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char, color: u32);
+    /// Draw `text` on the monospace grid starting at cell (`x`, `top`).
+    fn draw_text(&mut self, fonts: &mut FontStack, x: i32, top: i32, text: &str, color: u32) {
+        let cw = fonts.cell_w;
+        for (i, ch) in text.chars().enumerate() {
+            self.draw_char(fonts, x + i as i32 * cw, top, ch, color);
+        }
+    }
+}
+
+/// Top-left pixel of `ch`'s bitmap when drawn in the cell at (`cell_x`, `cell_top`).
+pub fn glyph_origin(fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char) -> (i32, i32) {
+    let baseline = cell_top + fonts.ascent;
+    let m = fonts.glyph(ch).metrics;
+    // fontdue: ymin is the bottom edge relative to the baseline (negative for
+    // descenders), so the bitmap's top row sits at baseline - (height + ymin).
+    (cell_x + m.xmin, baseline - (m.height as i32 + m.ymin))
+}
+
+/// One recorded drawing operation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DrawOp {
+    Rect {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        color: u32,
+    },
+    /// Glyph bitmap with its top-left corner at (`x`, `y`).
+    Glyph {
+        x: i32,
+        y: i32,
+        ch: char,
+        color: u32,
+    },
+}
+
+/// A frame as a list of operations, in painting order.
+#[derive(Debug, Clone, Default)]
+pub struct DisplayList {
+    pub width: usize,
+    pub height: usize,
+    pub clear: u32,
+    pub ops: Vec<DrawOp>,
+}
+
+impl DisplayList {
+    pub fn new(width: usize, height: usize) -> Self {
+        Self { width, height, ..Default::default() }
+    }
+
+    /// Paint the recorded frame on a CPU canvas (reference for the GPU path).
+    pub fn replay(&self, canvas: &mut Canvas, fonts: &mut FontStack) {
+        canvas.clear(self.clear);
+        for op in &self.ops {
+            match *op {
+                DrawOp::Rect { x, y, w, h, color } => canvas.fill_rect(x, y, w, h, color),
+                DrawOp::Glyph { x, y, ch, color } => canvas.blit_glyph(fonts, x, y, ch, color),
+            }
+        }
+    }
+}
+
+impl Draw for DisplayList {
+    fn width(&self) -> usize {
+        self.width
+    }
+    fn height(&self) -> usize {
+        self.height
+    }
+    fn clear(&mut self, color: u32) {
+        self.clear = color;
+        self.ops.clear();
+    }
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        if w > 0 && h > 0 {
+            self.ops.push(DrawOp::Rect { x, y, w, h, color });
+        }
+    }
+    fn draw_char(&mut self, fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char, color: u32) {
+        if ch == ' ' || ch == '\0' {
+            return;
+        }
+        let (x, y) = glyph_origin(fonts, cell_x, cell_top, ch);
+        self.ops.push(DrawOp::Glyph { x, y, ch, color });
+    }
+}
+
+impl Draw for Canvas<'_> {
+    fn width(&self) -> usize {
+        self.width
+    }
+    fn height(&self) -> usize {
+        self.height
+    }
+    fn clear(&mut self, color: u32) {
+        Canvas::clear(self, color)
+    }
+    fn fill_rect(&mut self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+        Canvas::fill_rect(self, x, y, w, h, color)
+    }
+    fn draw_char(&mut self, fonts: &mut FontStack, cell_x: i32, cell_top: i32, ch: char, color: u32) {
+        Canvas::draw_char(self, fonts, cell_x, cell_top, ch, color)
+    }
+}
+
 impl Canvas<'_> {
     pub fn new(buf: &mut [u32], width: usize, height: usize) -> Canvas<'_> {
         Canvas { buf, width, height }
@@ -232,13 +351,14 @@ impl Canvas<'_> {
         if ch == ' ' || ch == '\0' {
             return;
         }
-        let baseline = cell_top + fonts.ascent;
+        let (left, top) = glyph_origin(fonts, cell_x, cell_top, ch);
+        self.blit_glyph(fonts, left, top, ch, color);
+    }
+
+    /// Blend `ch`'s bitmap with its top-left corner at (`left`, `top`).
+    pub fn blit_glyph(&mut self, fonts: &mut FontStack, left: i32, top: i32, ch: char, color: u32) {
         let glyph = fonts.glyph(ch);
         let m = glyph.metrics;
-        // fontdue: ymin is the bottom edge relative to the baseline (negative for
-        // descenders), so the bitmap's top row sits at baseline - (height + ymin).
-        let top = baseline - (m.height as i32 + m.ymin);
-        let left = cell_x + m.xmin;
         for iy in 0..m.height {
             for ix in 0..m.width {
                 let a = glyph.bitmap[iy * m.width + ix] as u32;

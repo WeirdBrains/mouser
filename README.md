@@ -65,6 +65,8 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
 - `config.toml` — static settings: fonts, scrollback, compression.
 - The sidebar starts collapsed to a thin strip (click `«` to expand); start Mouser with
   `MOUSER_OPEN_SIDEBAR=1` to open it expanded. The saved `sidebar_width` is used when expanding.
+- Rendering uses the GPU (wgpu) when available and falls back to the CPU; set
+  `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
   `font_family`/`font_size` overrides, and the sidebar's `sidebar_width` (`sidebar_open` /
   `sidebar_collapsed` are recorded but startup always follows `MOUSER_OPEN_SIDEBAR`). Values here win over `config.toml`.

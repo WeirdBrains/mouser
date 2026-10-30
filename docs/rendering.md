@@ -21,3 +21,16 @@ Terminal
 - Supported: deferred autowrap, cursor movement/positioning, erase, insert/delete,
   scroll regions, alternate screen, cursor reports. Colours (SGR) are not drawn yet.
 - Scroll back with the mouse wheel; typing returns to the live screen.
+
+## Renderers
+
+Mouser picks a renderer at startup and logs it (`mouser: renderer: ...` on stderr):
+
+- **GPU (default):** wgpu. Glyphs are rasterised with fontdue into an R8 atlas
+  texture; each rect and glyph of the frame's display list is one instanced quad
+  with its colour. Blending matches the CPU path.
+- **CPU fallback:** softbuffer with the per-size glyph cache. Used when wgpu can't
+  get an adapter, device or surface, or when `MOUSER_RENDERER=cpu` is set.
+
+Both are event driven: the loop sleeps in `ControlFlow::Wait` and redraws only on
+input or a wake-up from the PTY/config threads, capped at ~120 fps.
