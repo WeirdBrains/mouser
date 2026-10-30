@@ -44,6 +44,7 @@ Direction: replace Kitty graphics; keep Kitty keyboard as a fallback.
 - Lives on the `site` branch in `site/` (plain HTML/CSS/JS).
 - `.github/workflows/pages.yml` deploys GitHub Pages on pushes to `site`.
 - Sections alternate light/dark with subtle gradients, starting light (hero).
+- Rounded corners use `--radius: 20px` in `site/style.css` (cards, code, buttons, images, tables).
 - To do: confirm feature claims (compressed scrollback, Windows builds, Homebrew
   macOS); retake `site/assets/mouser-app.png` with an opaque background.
 
