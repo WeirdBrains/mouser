@@ -1,11 +1,15 @@
 # Theming
 
 Themes control font size/family, colors, and a light/dark/system mode (default: system, follows OS).
+In system mode Mouser reads the desktop colour-scheme preference (GNOME/freedesktop
+`color-scheme`, macOS `AppleInterfaceStyle`); if the desktop does not explicitly prefer
+light, the dark variant is used. `MOUSER_SYSTEM_DARK=1|0` overrides detection.
 
 Built-in themes (dark/light variants):
 - Red Star (default)
-  - Dark: foreground `#E6FBFA`, background `#020F1B`
-  - Light: foreground `#04192A`, background `#E6FBFA`
+  - Dark: foreground `#E6FBFA`, background `#04192A`
+  - Light: foreground `#0B2A3F`, background `#F2FAFB`
+  - Unedited theme files from older releases are upgraded on start; edited files are kept.
   - Palette source: `~/Pictures/Wallpapers/redstar-title-starlight/redstar-wallpaper-title-1080x2400-starlight.png`
   - Extracted accents and highlights:
     - Background gradient: top `#04192A` → bottom `#020F1B`
