@@ -17,15 +17,70 @@ pub fn write_builtins_if_absent() -> std::io::Result<()> {
         let dir = resolve_home().join("themes").join(&name);
         fs::create_dir_all(&dir)?;
         let dark_path = dir.join("dark.toml");
-        if !dark_path.exists() {
-            fs::write(&dark_path, toml::to_string_pretty(&dark).unwrap())?;
-        }
-        let light_path = dir.join("light.toml");
-        if !light_path.exists() {
-            fs::write(&light_path, toml::to_string_pretty(&light).unwrap())?;
-        }
+        write_builtin(&dark_path, &dark)?;
+        write_builtin(&dir.join("light.toml"), &light)?;
     }
     Ok(())
+}
+
+/// Write a built-in theme file if it is missing, or if it still holds an older
+/// built-in default (so palette fixes reach existing installs without
+/// overwriting user edits).
+fn write_builtin(path: &std::path::Path, def: &ThemeDef) -> std::io::Result<()> {
+    let fresh = toml::to_string_pretty(def).unwrap();
+    match fs::read_to_string(path) {
+        Err(_) => fs::write(path, fresh),
+        Ok(existing) => {
+            let is_legacy = toml::from_str::<ThemeDef>(&existing).is_ok_and(|old| {
+                LEGACY_BUILTINS.iter().any(|(n, v, fg, bg)| {
+                    old.name == *n && old.variant == *v && old.foreground.eq_ignore_ascii_case(fg) && old.background.eq_ignore_ascii_case(bg)
+                })
+            });
+            if is_legacy { fs::write(path, fresh) } else { Ok(()) }
+        }
+    }
+}
+
+/// Previously shipped built-in palettes: (name, variant, fg, bg).
+const LEGACY_BUILTINS: &[(&str, &str, &str, &str)] = &[("Red Star", "dark", "#E6FBFA", "#020F1B"), ("Red Star", "light", "#04192A", "#E6FBFA")];
+
+/// Whether the desktop prefers a dark appearance. `MOUSER_SYSTEM_DARK=1|0`
+/// overrides detection. When the desktop does not say, Mouser defaults to dark.
+pub fn system_prefers_dark() -> bool {
+    if let Ok(v) = std::env::var("MOUSER_SYSTEM_DARK") {
+        return v.trim() == "1" || v.trim().eq_ignore_ascii_case("true");
+    }
+    static DETECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DETECTED.get_or_init(detect_system_dark)
+}
+
+#[cfg(target_os = "linux")]
+fn detect_system_dark() -> bool {
+    // freedesktop / GNOME colour-scheme preference; only an explicit light
+    // preference selects the light variant.
+    std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| !String::from_utf8_lossy(&o.stdout).contains("prefer-light"))
+        .unwrap_or(true)
+}
+
+#[cfg(target_os = "macos")]
+fn detect_system_dark() -> bool {
+    // `AppleInterfaceStyle` is only set (to "Dark") in dark mode, but treat an
+    // unreadable setting as dark too.
+    std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output()
+        .map(|o| !o.status.success() || String::from_utf8_lossy(&o.stdout).contains("Dark"))
+        .unwrap_or(true)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn detect_system_dark() -> bool {
+    true
 }
 
 pub fn resolve_active_colors(prefs: &Preferences) -> (u32, u32) {
@@ -33,7 +88,7 @@ pub fn resolve_active_colors(prefs: &Preferences) -> (u32, u32) {
     let use_dark = match prefs.mode.clone().unwrap_or_default() {
         ThemeMode::Dark => true,
         ThemeMode::Light => false,
-        ThemeMode::System => std::env::var("MOUSER_SYSTEM_DARK").ok().as_deref() == Some("1"),
+        ThemeMode::System => system_prefers_dark(),
     };
     // Try disk first
     let variant = if use_dark { "dark" } else { "light" };
@@ -50,8 +105,10 @@ pub fn resolve_active_colors(prefs: &Preferences) -> (u32, u32) {
             return (parse_hex_rgb(&def.background), parse_hex_rgb(&def.foreground));
         }
     }
-    // Default pleasant dark
-    (parse_hex_rgb("#1a1b26"), parse_hex_rgb("#c0caf5"))
+    // Unknown theme: fall back to Red Star
+    let (_, dark, light) = builtins().remove(0);
+    let def = if use_dark { dark } else { light };
+    (parse_hex_rgb(&def.background), parse_hex_rgb(&def.foreground))
 }
 
 fn parse_hex_rgb(s: &str) -> u32 {
@@ -67,7 +124,7 @@ fn parse_hex_rgb(s: &str) -> u32 {
 pub fn builtins() -> Vec<(String, ThemeDef, ThemeDef)> {
     vec![
         // Red Star (Starlight variant) — extracted from owner's wallpaper palette
-        theme_pair("Red Star", "#E6FBFA", "#020F1B", "#04192A", "#E6FBFA"),
+        theme_pair("Red Star", "#E6FBFA", "#04192A", "#0B2A3F", "#F2FAFB"),
         theme_pair("Tokyo Night", "#c0caf5", "#1a1b26", "#3760bf", "#e1e2e7"),
         theme_pair("Catppuccin", "#cdd6f4", "#1e1e2e", "#4c4f69", "#eff1f5"),
         theme_pair("Gruvbox", "#ebdbb2", "#282828", "#3c3836", "#fbf1c7"),
