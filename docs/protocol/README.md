@@ -1,0 +1,221 @@
+# Burrow terminal protocol — draft v0
+
+> **Status: DRAFT v0.** Not stable. Wire formats may change incompatibly before v1.
+> Working name: **Burrow** (alternatives under consideration: **Warren**, **MTP — Mouser
+> Terminal Protocol**). The name appears on the wire only as the two-byte family tag `Bw`,
+> so renaming later costs nothing.
+
+Burrow is a small family of terminal extensions, implemented first in Mouser, meant to
+replace the Kitty keyboard and graphics protocols with simpler, multiplexer-friendly
+designs:
+
+- [`graphics.md`](graphics.md) — images: upload, place, delete, query.
+- [`keyboard.md`](keyboard.md) — one opt-in mode for structured key events.
+
+This document defines what both share: framing, capability negotiation, versioning,
+error replies, security rules, conformance and migration.
+
+## 1. Goals
+
+1. **One way to do each thing.** No layered flag bits, no alternative spellings.
+2. **Survives multiplexers.** Every sequence can travel through tmux and GNU screen
+   passthrough unchanged; nothing depends on side channels (files, shared memory).
+3. **Binary-safe when possible, text-safe always.** Raw length-prefixed payloads on direct
+   connections; base64 as the universal fallback.
+4. **Detectable.** An application can find out, with one query and a bounded wait,
+   whether Burrow is available and which version and features it has.
+5. **Bounded.** Terminals publish their limits; applications can rely on them.
+
+## 2. Conventions
+
+- `ESC` = 0x1B, `ST` = `ESC \` (0x1B 0x5C). C1 forms (8-bit) are never used.
+- `<n>` is an unsigned decimal integer without leading `+`, at most 10 digits.
+- Keys are lowercase ASCII `[a-z0-9_]`, values are printable ASCII without `;` `,` `=`
+  or spaces unless stated otherwise.
+- MUST / SHOULD / MAY as in RFC 2119.
+
+## 3. Framing
+
+All Burrow messages are DCS strings with the private marker `=` and the family tag `Bw`:
+
+```
+ESC P = B w <subsystem> <verb> ; <params> [: <payload>] ESC \
+```
+
+- `<subsystem>`: one ASCII letter. `c` = common, `g` = graphics, `k` = keyboard.
+- `<verb>`: one ASCII letter, defined per subsystem.
+- `<params>`: zero or more `key=value` pairs separated by `,`.
+- `<payload>`: present only when the verb takes data; see §3.1.
+
+Unknown params MUST be ignored. Unknown subsystems or verbs MUST produce an
+`ENOTSUP` error reply (§5) when the request carried an `id`, and be ignored otherwise.
+
+DCS was chosen over APC/OSC because tmux and screen already have a documented
+passthrough for DCS, and parsers that don't know Burrow skip DCS strings cleanly.
+
+### 3.1 Payloads
+
+Every payload declares its encoding and exact length:
+
+| param | meaning |
+|---|---|
+| `enc=b64` | payload is standard base64 (RFC 4648 §4, padding optional). Default. |
+| `enc=raw` | payload is raw bytes. Only allowed after the terminal advertised `raw` (§4). |
+| `len=<n>` | **required** for payloads: number of payload bytes on the wire (after `:`). |
+
+With `enc=raw` the terminal reads exactly `len` bytes after `:` without interpreting them
+(they may contain `ESC`, NUL or anything else), then MUST see `ST`. If the next two bytes
+are not `ST`, the message is malformed: the terminal discards it, replies `EPROTO`, and
+resumes normal parsing at the following byte.
+
+With `enc=b64`, `len` counts base64 characters; the terminal MAY stop scanning for `ST`
+early once `len` bytes are consumed.
+
+Large payloads are split into **chunks** of at most `max_chunk` bytes (advertised, §4):
+
+```
+ESC P = B w g u ; id=7,fmt=rgba,w=64,h=64,size=16384,enc=b64,len=8192,more=1 : <8192 b64 chars> ESC \
+ESC P = B w g u ; id=7,enc=b64,len=8192,more=0 : <8192 b64 chars> ESC \
+```
+
+Continuation chunks repeat only `id`, `enc`, `len` and `more`. A chunk with a different
+`id` arriving mid-upload aborts the pending upload with `EPROTO`.
+
+### 3.2 Multiplexer passthrough
+
+Through tmux (`allow-passthrough on`) the application wraps each message as tmux
+documents, doubling every `ESC` inside:
+
+```
+ESC P tmux ; ESC ESC P = B w ... ESC ESC \ ESC \
+```
+
+Through GNU screen: `ESC P <message> ESC \`, split into pieces of at most 768 bytes.
+
+Rules that make this work:
+
+- Applications MUST use `enc=b64` when `TMUX` or `STY` is set, or when the capability
+  reply came back wrapped (the terminal saw the query through a multiplexer).
+- Replies are plain DCS from the terminal; multiplexers pass them to the active pane.
+- Graphics placements are cell-anchored (graphics.md §4), so a multiplexer that redraws
+  the pane does not move images to wrong pixels; a multiplexer that does not understand
+  Burrow simply hides them when the pane is not visible.
+
+## 4. Capability negotiation and versioning
+
+Query (common subsystem, verb `q`):
+
+```
+ESC P = B w c q ; id=1 ESC \
+```
+
+Reply:
+
+```
+ESC P = B w c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,k=1 ESC \
+```
+
+| key | meaning |
+|---|---|
+| `v` | protocol version implemented (this document: `0`). |
+| `sub` | supported subsystems, as letters. |
+| `raw` | `1` if `enc=raw` is accepted on this connection, else `0`. |
+| `max_chunk` | largest accepted payload per message, in wire bytes. |
+| `g_*`, `k_*` | subsystem limits/features (see graphics.md, keyboard.md). |
+
+Detection procedure for applications:
+
+1. Send the Burrow query **followed by** a primary device attributes request `ESC [ c`.
+2. Read replies. Every terminal answers DA1; a Burrow terminal answers the Burrow query
+   first. If DA1 arrives without a Burrow reply, Burrow is unavailable.
+
+This needs no timeout and works through multiplexers that forward both.
+
+Versioning: `v` is a single integer. Minor additions (new optional params, new reply
+keys) do not bump it; incompatible changes do. An application requests a version with
+`v=<n>` on mode-setting verbs; a terminal that cannot serve it replies `EVERSION`.
+
+## 5. Replies and errors
+
+```
+ESC P = B w <subsystem> r ; id=<n>,ok=1[,…] ESC \
+ESC P = B w <subsystem> r ; id=<n>,ok=0,err=<CODE>[,msg=<text>] ESC \
+```
+
+Replies are sent **only** when the request carried `id=<n>` (n ≥ 1). `quiet=1` suppresses
+success replies, `quiet=2` suppresses all. `msg` is ASCII without `,;=`, ≤ 80 chars.
+
+| code | meaning |
+|---|---|
+| `ENOTSUP` | unknown subsystem/verb/value |
+| `EINVAL` | bad or missing parameter |
+| `EPROTO` | framing error (bad length, aborted chunking) |
+| `ENOENT` | referenced image/placement does not exist |
+| `ENOMEM` | over a published limit |
+| `EPERM` | refused by policy (e.g. disabled feature) |
+| `EVERSION` | requested version not available |
+
+## 6. Security considerations
+
+- **No file system access by default.** Payloads come only from the byte stream. A
+  terminal MAY add an opt-in, user-configured path transmission later; it MUST be off by
+  default and restricted to regular files the user allowed.
+- **Bounded memory.** Terminals MUST enforce `g_mem`, `g_max_dim` and `max_chunk` and
+  reply `ENOMEM` rather than grow without limit. Partial uploads are discarded after
+  10 s without a chunk, on reset (RIS), and when the pane closes.
+- **No reflection of payloads.** Replies never echo payload bytes, only ids and codes, so a
+  hostile `cat` of a file cannot inject keystrokes through replies.
+- **Keyboard mode is per-screen and reset on RIS**, so a crashed program cannot leave the
+  shell in a mode it doesn't understand after `reset`.
+- Decoders (PNG) MUST treat input as untrusted: check dimensions before allocating.
+
+## 7. Migration and compatibility
+
+- **Kitty keyboard protocol: stays supported as a fallback.** Mouser keeps implementing
+  `CSI > u` / `CSI < u` / `CSI = u` / `CSI ? u` until applications adopt Burrow keyboard
+  mode. If both are requested, Burrow keyboard mode wins while it is active.
+- **Kitty graphics protocol: replaced.** Mouser's current Kitty graphics support (direct
+  RGB/RGBA/PNG) remains during the transition but is frozen; new work goes into Burrow
+  graphics, and Kitty graphics may be removed in a later major version.
+- **Detecting Burrow vs. Kitty.** Applications should query Burrow first (§4). If absent,
+  fall back to Kitty detection (`CSI ? u` for keyboard, `a=q` for graphics), then to legacy.
+  `TERM` is not used for detection.
+- **Legacy fallback.** Without Burrow keyboard mode, keys are sent as today (xterm/VT
+  sequences). Without Burrow graphics, applications use their existing paths (sixel,
+  Kitty, or text).
+
+## 8. Conformance test suite (plan)
+
+A language-neutral suite in `tests/protocol/` of the Mouser repository:
+
+1. **Golden byte tests**: input byte streams → expected reply bytes and expected terminal
+   state (images, placements, cursor position, active key mode), as JSON fixtures.
+2. **Framing fuzz**: random splits of every fixture across read boundaries; truncated and
+   oversized payloads; raw payloads containing `ESC \`.
+3. **Passthrough tests**: every fixture wrapped for tmux and screen must give the same
+   state.
+4. **Keyboard tests**: synthetic key events (physical code, logical key, modifiers, text,
+   IME phase) → expected bytes.
+5. A small runner (`burrow-conformance`) that drives a terminal through a PTY and reports
+   pass/fail per fixture, so other terminals can test themselves.
+
+## 9. Reference libraries (plan)
+
+- `burrow` (Rust): encoder/decoder for all messages, chunking, base64/raw choice,
+  detection helper, tmux/screen wrapping. Used by Mouser itself.
+- A C header-only encoder and a Python module for applications, generated from the same
+  message tables.
+- All libraries ship the conformance fixtures as their own tests.
+
+## 10. Open questions
+
+1. Name: Burrow, Warren or MTP?
+2. DCS vs APC framing: DCS passes through tmux/screen today; is any common terminal or
+   multiplexer known to mangle DCS strings with `=` as the private marker?
+3. Should `enc=raw` ever be allowed through multiplexers if they start declaring binary
+   transparency?
+4. Animation: out of scope for v0, or a minimal frame-list verb?
+5. Unicode placeholder cells (for programs that only output text) — needed for v1?
+6. Should the keyboard mode report key events for Mouser's own reserved shortcuts?
+7. Do we need a "virtual placement" concept for multiplexers that render panes themselves?
+8. Colour management: assume sRGB for all uploads, or add an optional `cs=` param?
