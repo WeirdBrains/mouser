@@ -1,3 +1,5 @@
+mod appearance_ui;
+
 use anyhow::Result;
 use clap::Parser;
 use crossbeam_channel::unbounded;
@@ -24,6 +26,7 @@ struct AppState {
     sidebar_open: bool,
     sidebar_collapsed: bool,
     sidebar_width: Option<i32>,
+    look: appearance_ui::Appearance,
     pending_delete: Option<String>,
     pending_edit: Option<Connection>,
 }
@@ -213,6 +216,10 @@ fn main() -> Result<()> {
     let parser = Arc::new(Mutex::new(parser));
 
     let prefs0 = mouser_core::storage::load_preferences();
+    // In-app choices (preferences.toml) win over config.toml.
+    let config_font_size = app_cfg.ui.as_ref().and_then(|u| u.font_size).unwrap_or(16.0);
+    let font_size0 = prefs0.font_size.unwrap_or(config_font_size);
+    let font_family0 = prefs0.font_family.clone().or(app_cfg.ui.as_ref().and_then(|u| u.font_family.clone()));
     // App UI state
     let app_state = Arc::new(Mutex::new(AppState {
         mode: Mode::Shell,
@@ -220,6 +227,7 @@ fn main() -> Result<()> {
         sidebar_open: prefs0.sidebar_open.unwrap_or(false),
         sidebar_collapsed: prefs0.sidebar_collapsed.unwrap_or(false),
         sidebar_width: prefs0.sidebar_width,
+        look: appearance_ui::Appearance::new(font_size0, font_family0.clone(), config_font_size),
         pending_delete: None,
         pending_edit: None,
     }));
@@ -270,7 +278,9 @@ fn main() -> Result<()> {
             let mut state = app_state.lock().unwrap();
             match state.mode {
                 Mode::Shell => {
-                    if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
+                    if state.look.panel.is_some() {
+                        state.look.key(&bytes);
+                    } else if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
                         state.pending_edit = None;
                         state.pending_delete = None;
                     } else if bytes == b"\x1b[21~" {
@@ -321,21 +331,13 @@ fn main() -> Result<()> {
         }
     });
 
-    // Theme colours, re-read from preferences at most once a second.
     let get_colors = {
-        let cache: Mutex<Option<(std::time::Instant, (u32, u32))>> = Mutex::new(None);
-        Arc::new(move || {
-            let mut c = cache.lock().unwrap();
-            match *c {
-                Some((at, colors)) if at.elapsed() < std::time::Duration::from_secs(1) => colors,
-                _ => {
-                    let prefs = mouser_core::storage::load_preferences();
-                    let colors = mouser_core::themes::resolve_active_colors(&prefs);
-                    *c = Some((std::time::Instant::now(), colors));
-                    colors
-                }
-            }
-        })
+        let app_state = app_state.clone();
+        Arc::new(move || app_state.lock().unwrap().look.colors())
+    };
+    let get_font = {
+        let app_state = app_state.clone();
+        Arc::new(move || app_state.lock().unwrap().look.font())
     };
     let on_resize = {
         let parser = parser.clone();
@@ -373,8 +375,9 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
             let st = app_state.lock().unwrap();
+            let panel = st.look.panel_view(vp);
             if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
-                return None;
+                return panel.map(|p| ui::UiLayout { panel: Some(p), ..ui::without_sidebar(vp.width, vp.height) });
             }
             let mut groups: std::collections::BTreeMap<ui::Category, Vec<String>> = Default::default();
             if let Ok(list) = list_connections() {
@@ -404,12 +407,14 @@ fn main() -> Result<()> {
                 requested_width: st.sidebar_width,
                 collapsed: st.sidebar_collapsed && modal.is_none(),
             };
-            Some(ui::build_sidebar(spec, &groups, modal))
+            let mut layout = ui::build_sidebar(spec, &groups, modal);
+            layout.panel = panel;
+            Some(layout)
         })
     };
     let on_ui_action = {
         let app_state = app_state.clone();
-        Arc::new(move |act: ui::UiAction| match act {
+        Arc::new(move |act: ui::UiAction| match act.clone() {
             ui::UiAction::OpenAdd(cat) => {
                 let mut st = app_state.lock().unwrap();
                 let name = "new".to_string();
@@ -450,6 +455,14 @@ fn main() -> Result<()> {
                 st.sidebar_collapsed = false;
             }
             ui::UiAction::ResizeSidebarDone => persist_sidebar(&app_state.lock().unwrap()),
+            ui::UiAction::OpenAppearance
+            | ui::UiAction::PickTheme(_)
+            | ui::UiAction::SetMode(_)
+            | ui::UiAction::EditTheme
+            | ui::UiAction::FocusField(_)
+            | ui::UiAction::SavePanel
+            | ui::UiAction::ClosePanel
+            | ui::UiAction::FontSize(_) => app_state.lock().unwrap().look.action(&act),
             ui::UiAction::ToggleAdvanced | ui::UiAction::None => {}
         })
     };
@@ -458,6 +471,7 @@ fn main() -> Result<()> {
         on_resize,
         fetch_lines: fetch,
         get_colors,
+        get_font: Some(get_font),
         get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
@@ -465,18 +479,11 @@ fn main() -> Result<()> {
             let app_state = app_state.clone();
             Arc::new(move || {
                 let st = app_state.lock().unwrap();
-                (st.mode == Mode::Command).then(|| format!(":{}", st.command_buf))
+                if st.mode == Mode::Command { Some(format!(":{}", st.command_buf)) } else { st.look.status() }
             })
         }),
     };
-    let prefs = mouser_core::storage::load_preferences();
-    let mut r = Renderer::default();
-    let ui_cfg = app_cfg.ui.as_ref();
-    // In-app choices (preferences.toml) win over config.toml.
-    if let Some(fs) = prefs.font_size.or(ui_cfg.and_then(|u| u.font_size)) {
-        r.font_size = fs;
-    }
-    r.font_family = prefs.font_family.clone().or(ui_cfg.and_then(|u| u.font_family.clone()));
+    let r = Renderer { font_size: font_size0, font_family: font_family0, ..Renderer::default() };
     if std::env::var_os("MOUSER_OPEN_SIDEBAR").is_some() {
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = true;
@@ -484,6 +491,14 @@ fn main() -> Result<()> {
     }
     run_renderer(r, hooks)?;
     Ok(())
+}
+
+/// `theme [name]`, `mode m`, `edit-theme`, `font-size n`, `font [family]` (leading ':' optional).
+fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
+    let cmd = cmd.trim_start_matches(':');
+    let (head, arg) = cmd.split_once(' ').unwrap_or((cmd, ""));
+    let name = ["theme", "mode", "edit-theme", "font-size", "font"].into_iter().find(|n| *n == head)?;
+    Some((name, arg))
 }
 
 /// Save sidebar open/collapsed/width to preferences.toml.
@@ -516,6 +531,21 @@ fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppSta
         st.sidebar_open = true;
         st.sidebar_collapsed = false;
         persist_sidebar(&st);
+    } else if let Some(cmd) = appearance_command(trimmed) {
+        let mut st = app_state.lock().unwrap();
+        match cmd {
+            ("theme", arg) => st.look.command_theme(arg),
+            ("mode", arg) => st.look.command_mode(arg),
+            ("edit-theme", _) => {
+                st.look.open_picker();
+                st.look.open_editor();
+            }
+            ("font-size", arg) => match mouser_core::appearance::parse_size(arg) {
+                Some(v) => st.look.set_font_size(v),
+                None => st.look.say("Usage: :font-size 6-48"),
+            },
+            (_, arg) => st.look.set_font_family((!arg.trim().is_empty()).then(|| arg.trim().to_string())),
+        }
     } else if trimmed == "close-sidebar" || trimmed == ":close-sidebar" {
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = false;

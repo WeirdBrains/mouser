@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod compression;
 pub mod connections;
 pub mod grid;

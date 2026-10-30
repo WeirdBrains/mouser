@@ -3,12 +3,120 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 // no path usage
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThemeDef {
     pub name: String,
     pub variant: String,    // "dark" or "light"
     pub foreground: String, // hex "#rrggbb"
     pub background: String, // hex
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    /// 16 ANSI colours (0-7 normal, 8-15 bright); empty = defaults.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub palette: Vec<String>,
+}
+
+/// Default 16-colour ANSI palette used when a theme has none.
+pub const DEFAULT_PALETTE: [&str; 16] = [
+    "#1E2A38", "#F7768E", "#9ECE6A", "#E0AF68", "#7AA2F7", "#BB9AF7", "#2FD8E5", "#C0CAF5", "#41566B", "#FF8FA3", "#B9F27C", "#FFC777", "#94B4FF",
+    "#D5B8FF", "#94F3F2", "#E6FBFA",
+];
+
+/// Resolved colours of the active theme variant (0xRRGGBB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ThemeColors {
+    pub background: u32,
+    pub foreground: u32,
+    pub cursor: Option<u32>,
+    pub accent: Option<u32>,
+}
+
+impl ThemeDef {
+    pub fn colors(&self) -> ThemeColors {
+        ThemeColors {
+            background: parse_hex_rgb(&self.background),
+            foreground: parse_hex_rgb(&self.foreground),
+            cursor: self.cursor.as_deref().and_then(parse_hex),
+            accent: self.accent.as_deref().and_then(parse_hex),
+        }
+    }
+
+    /// The palette, padded with defaults to 16 entries.
+    pub fn full_palette(&self) -> Vec<String> {
+        (0..16).map(|i| self.palette.get(i).cloned().unwrap_or_else(|| DEFAULT_PALETTE[i].to_string())).collect()
+    }
+}
+
+/// `#rrggbb` / `rrggbb` / `#rgb` to 0xRRGGBB.
+pub fn parse_hex(s: &str) -> Option<u32> {
+    let t = s.trim().trim_start_matches('#');
+    if !t.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    match t.len() {
+        6 => u32::from_str_radix(t, 16).ok(),
+        3 => {
+            let v = u32::from_str_radix(t, 16).ok()?;
+            let (r, g, b) = ((v >> 8) & 0xF, (v >> 4) & 0xF, v & 0xF);
+            Some((r * 17) << 16 | (g * 17) << 8 | (b * 17))
+        }
+        _ => None,
+    }
+}
+
+/// "dark" or "light" for the preferences' mode (system resolved now).
+pub fn active_variant(prefs: &Preferences) -> &'static str {
+    let dark = match prefs.mode.clone().unwrap_or_default() {
+        ThemeMode::Dark => true,
+        ThemeMode::Light => false,
+        ThemeMode::System => system_prefers_dark(),
+    };
+    if dark { "dark" } else { "light" }
+}
+
+/// Built-in theme names first, then user themes found under `themes/`.
+pub fn list_themes() -> Vec<String> {
+    let mut names: Vec<String> = builtins().into_iter().map(|(n, _, _)| n).collect();
+    if let Ok(rd) = fs::read_dir(resolve_home().join("themes")) {
+        let mut user: Vec<String> =
+            rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !names.contains(n)).collect();
+        user.sort_by_key(|n| n.to_lowercase());
+        names.extend(user);
+    }
+    names
+}
+
+/// A theme variant from disk, else the built-in, else Red Star renamed.
+pub fn load_theme(name: &str, variant: &str) -> ThemeDef {
+    let path = resolve_home().join("themes").join(name).join(format!("{variant}.toml"));
+    if let Ok(s) = fs::read_to_string(&path)
+        && let Ok(def) = toml::from_str::<ThemeDef>(&s)
+    {
+        return def;
+    }
+    let all = builtins();
+    let pick = |(_, d, l): (String, ThemeDef, ThemeDef)| if variant == "light" { l } else { d };
+    if let Some(b) = all.iter().find(|(n, _, _)| n == name).cloned() {
+        return pick(b);
+    }
+    let mut def = pick(all[0].clone());
+    def.name = name.to_string();
+    def
+}
+
+/// Write `themes/<name>/<variant>.toml`.
+pub fn save_theme(def: &ThemeDef) -> std::io::Result<()> {
+    let dir = resolve_home().join("themes").join(&def.name);
+    fs::create_dir_all(&dir)?;
+    let variant = if def.variant == "light" { "light" } else { "dark" };
+    fs::write(dir.join(format!("{variant}.toml")), toml::to_string_pretty(def).unwrap())
+}
+
+/// The active theme variant for `prefs`.
+pub fn resolve_active_theme(prefs: &Preferences) -> ThemeDef {
+    load_theme(prefs.theme.as_deref().unwrap_or("Red Star"), active_variant(prefs))
 }
 
 pub fn write_builtins_if_absent() -> std::io::Result<()> {
@@ -122,6 +230,15 @@ fn parse_hex_rgb(s: &str) -> u32 {
 }
 
 pub fn builtins() -> Vec<(String, ThemeDef, ThemeDef)> {
+    let mut all = builtin_pairs();
+    // Red Star accents from the wallpaper palette.
+    all[0].1.accent = Some("#2FD8E5".into());
+    all[0].1.cursor = Some("#94F3F2".into());
+    all[0].2.accent = Some("#0B7C88".into());
+    all
+}
+
+fn builtin_pairs() -> Vec<(String, ThemeDef, ThemeDef)> {
     vec![
         // Red Star (Starlight variant) — extracted from owner's wallpaper palette
         theme_pair("Red Star", "#E6FBFA", "#04192A", "#0B2A3F", "#F2FAFB"),
@@ -142,7 +259,23 @@ pub fn builtins() -> Vec<(String, ThemeDef, ThemeDef)> {
 fn theme_pair(name: &str, dark_fg: &str, dark_bg: &str, light_fg: &str, light_bg: &str) -> (String, ThemeDef, ThemeDef) {
     (
         name.to_string(),
-        ThemeDef { name: name.to_string(), variant: "dark".to_string(), foreground: dark_fg.to_string(), background: dark_bg.to_string() },
-        ThemeDef { name: name.to_string(), variant: "light".to_string(), foreground: light_fg.to_string(), background: light_bg.to_string() },
+        ThemeDef {
+            name: name.to_string(),
+            variant: "dark".to_string(),
+            foreground: dark_fg.to_string(),
+            background: dark_bg.to_string(),
+            cursor: None,
+            accent: None,
+            palette: Vec::new(),
+        },
+        ThemeDef {
+            name: name.to_string(),
+            variant: "light".to_string(),
+            foreground: light_fg.to_string(),
+            background: light_bg.to_string(),
+            cursor: None,
+            accent: None,
+            palette: Vec::new(),
+        },
     )
 }

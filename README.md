@@ -66,7 +66,10 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
   `font_family`/`font_size` overrides, and the sidebar's `sidebar_open`, `sidebar_collapsed`,
   `sidebar_width`. Values here win over `config.toml`.
-- `themes/<Theme>/{dark,light}.toml` — theme colours.
+- `themes/<Theme>/{dark,light}.toml` — theme colours (foreground, background, cursor, accent, palette).
+
+Change the theme and font in the app: sidebar → **Appearance** (or `:theme`, `:mode`, `:edit-theme`
+from the F10 command line), and Ctrl+= / Ctrl+- / Ctrl+0 for font size. See `docs/themes.md`.
 
 `config.toml` example:
 

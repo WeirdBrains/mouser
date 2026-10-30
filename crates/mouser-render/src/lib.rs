@@ -33,7 +33,9 @@ pub struct RenderHooks {
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> (Vec<String>, usize) + Send + Sync>,
-    pub get_colors: Arc<dyn Fn() -> (u32, u32) + Send + Sync>, // (bg, fg) as 0xRRGGBB
+    pub get_colors: Arc<dyn Fn() -> Colors + Send + Sync>,
+    /// Current (font size in logical px, font family); changes are applied live.
+    pub get_font: Option<FontHook>,
     /// Live cursor (column, row) on the screen, if visible.
     pub get_cursor: Option<CursorHook>,
     /// Sidebar/modal layout, or `None` when the sidebar is closed.
@@ -41,6 +43,17 @@ pub struct RenderHooks {
     pub on_ui_action: Option<Arc<dyn Fn(ui::UiAction) + Send + Sync>>,
     /// Command line / status text drawn in a bar at the bottom, if any.
     pub get_status: Option<StatusHook>,
+}
+
+pub type FontHook = Arc<dyn Fn() -> (f32, Option<String>) + Send + Sync>;
+
+/// Theme colours as 0xRRGGBB.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Colors {
+    pub bg: u32,
+    pub fg: u32,
+    pub cursor: Option<u32>,
+    pub accent: Option<u32>,
 }
 
 pub type StatusHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
@@ -96,7 +109,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut width = window.inner_size().width.max(1);
     let mut height = window.inner_size().height.max(1);
     let mut scale = window.scale_factor();
-    let mut fonts = FontStack::system(renderer.font_family.as_deref(), renderer.font_size * scale as f32);
+    let font_db = text::system_db();
+    let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
 
     let mut scrolled_back = 0usize;
     let mut cursor_pos: Option<winit::dpi::PhysicalPosition<f64>> = None;
@@ -145,6 +159,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
+                    if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
+                        (on_act)(ui::UiAction::FontSize(delta));
+                        return;
+                    }
                     if let Some(seq) = key_bytes(&key_event, modifiers) {
                         scrolled_back = 0;
                         (hooks.on_key_bytes)(seq);
@@ -152,7 +170,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                     scale = scale_factor;
-                    fonts = FontStack::system(renderer.font_family.as_deref(), renderer.font_size * scale as f32);
+                    fonts = fonts.resized(renderer.font_size * scale as f32);
                 }
                 WindowEvent::Resized(new_size) => {
                     width = new_size.width.max(1);
@@ -170,6 +188,17 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 _ => {}
             },
             Event::AboutToWait => {
+                if let Some(get_font) = &hooks.get_font {
+                    let (size, family) = get_font();
+                    if family != renderer.font_family {
+                        renderer.font_family = family;
+                        renderer.font_size = size;
+                        fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), size * scale as f32);
+                    } else if (size - renderer.font_size).abs() > f32::EPSILON {
+                        renderer.font_size = size;
+                        fonts = fonts.resized(size * scale as f32);
+                    }
+                }
                 let viewport = UiViewport { width: width as i32, height: height as i32, cell_w: fonts.cell_w, cell_h: fonts.cell_h };
                 let layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
                 // The sidebar takes space from the terminal instead of covering it.
@@ -184,13 +213,27 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let (lines, clamped) = (hooks.fetch_lines)(scrolled_back, renderer.rows);
                 scrolled_back = clamped;
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
-                let (bg, fg) = (hooks.get_colors)();
+                let colors = (hooks.get_colors)();
+                let (bg, fg) = (colors.bg, colors.fg);
                 let status = hooks.get_status.as_ref().and_then(|f| f());
                 let Ok(mut buf) = surface.buffer_mut() else { return };
                 let (w, h) = (width as usize, height as usize);
                 if buf.len() >= w * h {
                     let mut canvas = Canvas::new(&mut buf, w, h);
-                    render_frame(&mut canvas, &mut fonts, &Frame { lines: &lines, cursor, bg, fg, ui: layout.as_ref(), status: status.as_deref() });
+                    render_frame(
+                        &mut canvas,
+                        &mut fonts,
+                        &Frame {
+                            lines: &lines,
+                            cursor,
+                            bg,
+                            fg,
+                            ui: layout.as_ref(),
+                            status: status.as_deref(),
+                            accent: colors.accent,
+                            cursor_color: colors.cursor,
+                        },
+                    );
                 }
                 last_ui = layout;
                 let _ = buf.present();
@@ -200,6 +243,27 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     })?;
     #[allow(unreachable_code)]
     Ok(())
+}
+
+/// Ctrl+= / Ctrl++ (+1), Ctrl+- (-1), Ctrl+0 (reset).
+pub fn font_zoom_key(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Option<i8> {
+    if key_event.state != ElementState::Pressed || !mods.control_key() || mods.alt_key() {
+        return None;
+    }
+    match &key_event.logical_key {
+        Key::Character(s) => zoom_for_char(s),
+        _ => None,
+    }
+}
+
+/// Font-size step for a Ctrl+<key> character.
+pub fn zoom_for_char(s: &str) -> Option<i8> {
+    match s {
+        "=" | "+" => Some(1),
+        "-" | "_" => Some(-1),
+        "0" | ")" => Some(0),
+        _ => None,
+    }
 }
 
 /// Bytes to send to the PTY for a key press, xterm style.
