@@ -123,6 +123,88 @@ impl Fuzzball {
         self.gfx.delete(false, |p| p.alt);
     }
 
+    /// Follow a scroll on screen `alt`. `base`: absolute row of screen row 0 when it
+    /// happened; `rows`: screen height. Placements scrolled out of the region go.
+    pub fn scrolled(&mut self, alt: bool, base: i64, ev: crate::grid::ScrollEvent, rows: usize) -> bool {
+        let (top, bottom) = (base + ev.top as i64, base + ev.bottom as i64);
+        let n = ev.delta.unsigned_abs() as i64;
+        let mut changed = false;
+        if ev.to_scrollback {
+            // Region rows keep their absolute row; rows below the region stay on the
+            // same screen row, which is now `n` further down in absolute terms.
+            if ev.bottom + 1 < rows {
+                for p in self.gfx.placements.iter_mut().filter(|p| p.alt == alt && p.row > bottom && p.row < base + rows as i64) {
+                    p.row += n;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+        let before = self.gfx.placements.len();
+        let mut moved = Vec::new();
+        for (i, p) in self.gfx.placements.iter_mut().enumerate() {
+            if p.alt == alt && p.row >= top && p.row <= bottom {
+                p.row += ev.delta as i64;
+                changed = true;
+                if p.row < top || p.row > bottom {
+                    moved.push(i);
+                }
+            }
+        }
+        for i in moved.into_iter().rev() {
+            self.gfx.placements.remove(i);
+        }
+        changed || before != self.gfx.placements.len()
+    }
+
+    /// Drop a partial upload idle for more than [`UPLOAD_TIMEOUT`] at `now`.
+    /// Returns when the pending upload (if any) will expire.
+    pub fn expire_upload(&mut self, now: Instant) -> Option<Instant> {
+        let deadline = self.upload.as_ref()?.last + UPLOAD_TIMEOUT;
+        if now >= deadline {
+            self.upload = None;
+            return None;
+        }
+        Some(deadline)
+    }
+
+    /// Whether a chunked upload is in progress.
+    pub fn upload_pending(&self) -> bool {
+        self.upload.is_some()
+    }
+
+    /// Main-screen placements anchored above absolute row `first` (no longer in the
+    /// scrollback) are removed. Image data stays until deleted or evicted.
+    pub fn evict_scrollback(&mut self, first: i64) -> bool {
+        let before = self.gfx.placements.len();
+        self.gfx.delete(false, |p| !p.alt && p.row < first);
+        before != self.gfx.placements.len()
+    }
+
+    /// Apply a grid resize. `alt`: the active screen; `top`: absolute row of the
+    /// first visible line; `shift`: rows the active alt screen moved up to keep the
+    /// cursor visible; `rows`/`cols`: the new size. Mouser does not rewrap text, so
+    /// placements whose anchor cell was cut off (below the last row, right of the
+    /// last column, or above the alt screen) are removed; the rest keep their cells.
+    /// The inactive main screen is blanked by a resize in the alt screen, so its
+    /// visible placements go too.
+    pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize) -> bool {
+        let before = self.gfx.placements.len();
+        if alt && shift != 0 {
+            for p in self.gfx.placements.iter_mut().filter(|p| p.alt) {
+                p.row -= shift;
+            }
+        }
+        let bottom = top + rows as i64;
+        self.gfx.delete(false, |p| {
+            if p.alt != alt {
+                return !p.alt && p.row >= top;
+            }
+            p.row >= bottom || p.col as usize >= cols || (p.alt && p.row < top)
+        });
+        before != self.gfx.placements.len() || shift != 0
+    }
+
     /// Erase covered rows `from..to` (absolute) on a screen: placements touching them go.
     pub fn erase_rows(&mut self, alt: bool, from: i64, to: i64) {
         self.gfx.delete(false, |p| p.alt == alt && p.row < to && p.row + p.rows as i64 > from);

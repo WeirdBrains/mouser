@@ -86,6 +86,21 @@ pub fn char_width(c: char) -> usize {
     c.width().unwrap_or(0).min(2)
 }
 
+/// A block of rows moved by a scroll, recorded so attached objects (Fuzzball
+/// placements) can follow their text. Rows are screen rows at the time of the scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollEvent {
+    /// Lines already in `scrolled_off` when this scroll happened.
+    pub pushed_before: usize,
+    pub top: usize,
+    pub bottom: usize,
+    /// Rows moved: negative = up.
+    pub delta: isize,
+    /// The scrolled-out rows went to the scrollback (main screen, region at the top):
+    /// rows in the region keep their absolute row, rows below it gain `n`.
+    pub to_scrollback: bool,
+}
+
 #[derive(Debug, Clone)]
 struct SavedScreen {
     cells: Vec<Cell>,
@@ -130,6 +145,7 @@ pub struct Screen {
     tabs: Vec<bool>,
     alt: Option<SavedScreen>,
     scrolled_off: Vec<String>,
+    scroll_events: Vec<ScrollEvent>,
 }
 
 fn default_tabs(cols: usize) -> Vec<bool> {
@@ -158,6 +174,7 @@ impl Screen {
             tabs: default_tabs(size.cols),
             alt: None,
             scrolled_off: Vec::new(),
+            scroll_events: Vec::new(),
         }
     }
 
@@ -188,6 +205,11 @@ impl Screen {
     }
 
     /// Lines that scrolled off the top of the main screen since the last call.
+    /// Scrolls since the last call, oldest first.
+    pub fn take_scroll_events(&mut self) -> Vec<ScrollEvent> {
+        std::mem::take(&mut self.scroll_events)
+    }
+
     pub fn take_scrolled_off(&mut self) -> Vec<String> {
         std::mem::take(&mut self.scrolled_off)
     }
@@ -393,7 +415,9 @@ impl Screen {
         if n == 0 {
             return;
         }
-        if record && top == 0 && self.alt.is_none() {
+        let to_scrollback = record && top == 0 && self.alt.is_none();
+        self.scroll_events.push(ScrollEvent { pushed_before: self.scrolled_off.len(), top, bottom, delta: -(n as isize), to_scrollback });
+        if to_scrollback {
             for y in 0..n {
                 let line = self.row_string(y);
                 self.scrolled_off.push(line);
@@ -412,6 +436,7 @@ impl Screen {
         if n == 0 {
             return;
         }
+        self.scroll_events.push(ScrollEvent { pushed_before: self.scrolled_off.len(), top, bottom, delta: n as isize, to_scrollback: false });
         let blank = self.blank();
         self.cells.copy_within(top * cols..(bottom + 1 - n) * cols, (top + n) * cols);
         self.cells[top * cols..(top + n) * cols].fill(blank);
