@@ -14,6 +14,25 @@ UI
 - Each category has an Add action (command-mode: `:add-ssh`, `:add-waypipe`, `:add-tunnel`, `:add-x11`).
 - Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`).
 
+SSH hosts come from `~/.ssh/config`
+- The SSH category lists every concrete `Host` alias in `~/.ssh/config` and the files it `Include`s
+  (globs and relative paths supported). Wildcard-only patterns such as `Host *` are skipped.
+  The list reloads automatically within ~2 s when the config or an included file changes.
+- Click a host's name to run `ssh <alias>` in the terminal, so ssh applies the config itself.
+- Add, edit (HostName, User, Port, IdentityFile, ProxyJump; alias renames the `Host` line) and
+  delete write to `~/.ssh/config`. A host defined in an included file is edited in that file.
+  Only the affected lines change: comments, blank lines, ordering, indentation and other options are
+  kept exactly. Unchanged saves do not write.
+- Safe writes: temp file + atomic rename in the same directory, original permissions kept (new files
+  0600), and the previous contents saved to `~/.ssh/config.mouser.bak` (0600) before every write.
+  No other files in `~/.ssh` are touched.
+- Read-only: a `Host` line with several patterns (e.g. `Host web1 web2`) shows **info** instead of
+  edit/delete and explains why. `Match` blocks are not listed.
+- Older SSH entries saved in `~/.mouser/connections` are offered for migration ("Move N saved to
+  ~/.ssh/config…"); they move only after you confirm. Waypipe, tunnels and X11 stay in `~/.mouser`.
+- `MOUSER_SSH_CONFIG=/path/to/config` points Mouser at another file (and connects with `ssh -F`);
+  use it with a temp directory for testing.
+
 Security
 - No plaintext secrets. Prefer ssh-agent and key paths. If a secret is ever needed, use the system keyring.
 

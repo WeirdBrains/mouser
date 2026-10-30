@@ -68,6 +68,9 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   `sidebar_width`. Values here win over `config.toml`.
 - `themes/<Theme>/{dark,light}.toml` — theme colours (foreground, background, cursor, accent, palette).
 
+SSH connections live in `~/.ssh/config` (override with `MOUSER_SSH_CONFIG`); Mouser edits it in
+place and keeps a backup at `~/.ssh/config.mouser.bak`. See `docs/connection-manager.md`.
+
 Change the theme and font in the app: sidebar → **Appearance** (or `:theme`, `:mode`, `:edit-theme`
 from the F10 command line), and Ctrl+= / Ctrl+- / Ctrl+0 for font size. See `docs/themes.md`.
 

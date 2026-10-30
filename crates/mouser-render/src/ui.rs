@@ -13,6 +13,10 @@ pub struct UiItem {
     pub name: String,
     pub edit_rect: Rect,
     pub delete_rect: Rect,
+    /// Clickable name (connects).
+    pub name_rect: Rect,
+    /// Shown with an "info" button only; cannot be edited or deleted here.
+    pub read_only: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +56,8 @@ pub struct UiLayout {
     pub appearance_rect: Rect,
     /// Floating panel (theme switcher / editor), drawn above everything.
     pub panel: Option<Panel>,
+    /// Optional notice button under the SSH header (e.g. migration offer).
+    pub notice: Option<(Rect, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,6 +320,13 @@ pub enum UiAction {
     ClosePanel,
     /// Ctrl+= (+1), Ctrl+- (-1), Ctrl+0 (0 = reset).
     FontSize(i8),
+    /// Launch a connection by name.
+    Connect {
+        category: Category,
+        name: String,
+    },
+    /// Click on the sidebar notice button.
+    Notice,
     None,
 }
 
@@ -413,6 +426,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             resize_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             appearance_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             panel: None,
+            notice: None,
         };
     }
     let sidebar_w = match requested_width {
@@ -440,7 +454,8 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
                 let edit_w = button_w(EDIT_LABEL);
                 let delete_rect = Rect { x: inner_right - del_w, y, w: del_w, h: line_h };
                 let edit_rect = Rect { x: delete_rect.x - 6 - edit_w, y, w: edit_w, h: line_h };
-                items.push(UiItem { name: name.clone(), edit_rect, delete_rect });
+                let name_rect = Rect { x: inner_x, y, w: (edit_rect.x - 8 - inner_x).max(0), h: line_h };
+                items.push(UiItem { name: name.clone(), edit_rect, delete_rect, name_rect, read_only: false });
                 y += line_h + 2;
             }
         }
@@ -449,7 +464,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
     }
     let ap_w = button_w(APPEARANCE_LABEL);
     let appearance_rect = Rect { x: inner_x, y: (height_px - SIDEBAR_MARGIN - line_h).max(y), w: ap_w.min(inner_right - inner_x), h: line_h };
-    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect, appearance_rect, panel: None }
+    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect, appearance_rect, panel: None, notice: None }
 }
 
 /// Layout with no sidebar (zero width at the right edge), e.g. to show a panel
@@ -465,7 +480,147 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         resize_rect: empty,
         appearance_rect: empty,
         panel: None,
+        notice: None,
     }
+}
+
+pub const INFO_LABEL: &str = "info";
+
+/// Mark `names` in `category` read-only: their edit button becomes "info" and
+/// delete is removed.
+pub fn mark_read_only(layout: &mut UiLayout, category: &Category, names: &[String]) {
+    for cat in layout.categories.iter_mut().filter(|c| &c.category == category) {
+        for item in cat.items.iter_mut().filter(|i| names.contains(&i.name)) {
+            item.read_only = true;
+            let right = item.delete_rect.x + item.delete_rect.w;
+            let w = INFO_LABEL.len() as i32 * ((item.edit_rect.w - 2 * BUTTON_PAD) / EDIT_LABEL.len() as i32) + 2 * BUTTON_PAD;
+            item.edit_rect = Rect { x: right - w, w, ..item.edit_rect };
+            item.delete_rect = Rect { w: 0, h: 0, ..item.delete_rect };
+            item.name_rect.w = (item.edit_rect.x - 8 - item.name_rect.x).max(0);
+        }
+    }
+}
+
+/// Put a full-width notice button under `category`'s header, pushing later
+/// rows down.
+pub fn add_notice(layout: &mut UiLayout, category: &Category, text: &str, cell_h: i32) {
+    let Some(idx) = layout.categories.iter().position(|c| &c.category == category) else { return };
+    let h = cell_h + 8;
+    let hdr = layout.categories[idx].header_rect;
+    let rect = Rect { x: hdr.x, y: hdr.y + hdr.h + 4, w: layout.categories[idx].add_rect.x + layout.categories[idx].add_rect.w - hdr.x, h };
+    let shift = h + 4;
+    for (i, cat) in layout.categories.iter_mut().enumerate() {
+        if i > idx {
+            cat.header_rect.y += shift;
+            cat.add_rect.y += shift;
+        }
+        for item in cat.items.iter_mut().filter(|_| i >= idx) {
+            item.edit_rect.y += shift;
+            item.delete_rect.y += shift;
+            item.name_rect.y += shift;
+        }
+    }
+    layout.notice = Some((rect, text.to_string()));
+}
+
+/// Simple form panel: a title, labelled text fields, an optional note and error.
+#[allow(clippy::too_many_arguments)]
+pub fn form_panel(
+    vp_w: i32,
+    vp_h: i32,
+    cell_w: i32,
+    cell_h: i32,
+    title: &str,
+    fields: &[EditorFieldView],
+    focus: usize,
+    note: Option<&str>,
+    error: Option<&str>,
+    can_save: bool,
+) -> Panel {
+    let row_h = cell_h + 8;
+    let pad = 14;
+    let label_w = cell_w * 14;
+    let field_w = cell_w * 36;
+    let w = 2 * pad + label_w + field_w;
+    let extra = note.is_some() as i32 + error.is_some() as i32;
+    let h = 2 * pad + row_h * (fields.len() as i32 + 3 + extra);
+    let rect = centered(vp_w, vp_h, w, h);
+    let (x, mut y) = (rect.x + pad, rect.y + pad);
+    let inner_w = rect.w - 2 * pad;
+    let mut items =
+        vec![PanelItem { rect: Rect { x, y, w: inner_w, h: row_h }, text: title.into(), style: PanelStyle::Title, action: UiAction::None }];
+    y += row_h + 4;
+    for (i, f) in fields.iter().enumerate() {
+        items.push(PanelItem {
+            rect: Rect { x, y, w: label_w, h: row_h },
+            text: f.label.clone(),
+            style: PanelStyle::Label,
+            action: UiAction::FocusField(i),
+        });
+        items.push(PanelItem {
+            rect: Rect { x: x + label_w, y, w: (inner_w - label_w).max(0), h: row_h - 4 },
+            text: f.value.clone(),
+            style: PanelStyle::Field { focused: can_save && i == focus, valid: f.valid },
+            action: UiAction::FocusField(i),
+        });
+        y += row_h;
+    }
+    for (text, style) in [(note, PanelStyle::Hint), (error, PanelStyle::Error)] {
+        if let Some(t) = text {
+            items.push(PanelItem { rect: Rect { x, y, w: inner_w, h: row_h }, text: t.into(), style, action: UiAction::None });
+            y += row_h;
+        }
+    }
+    y += 6;
+    let buttons: &[(&str, UiAction, bool)] = if can_save {
+        &[("Save", UiAction::SavePanel, true), ("Cancel", UiAction::ClosePanel, false)]
+    } else {
+        &[("Close", UiAction::ClosePanel, true)]
+    };
+    let mut bx = x;
+    for (label, act, primary) in buttons {
+        let bw = cell_w * label.len() as i32 + 2 * BUTTON_PAD;
+        items.push(PanelItem {
+            rect: Rect { x: bx, y, w: bw, h: row_h },
+            text: (*label).into(),
+            style: PanelStyle::Button { primary: *primary },
+            action: act.clone(),
+        });
+        bx += bw + 8;
+    }
+    Panel { rect, items }
+}
+
+/// Yes/no confirmation panel.
+pub fn confirm_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, message: &str, confirm: &str) -> Panel {
+    let row_h = cell_h + 8;
+    let pad = 14;
+    let w = 2 * pad + cell_w * (message.chars().count() as i32).clamp(30, 70);
+    let h = 2 * pad + row_h * 3;
+    let rect = centered(vp_w, vp_h, w, h);
+    let (x, y) = (rect.x + pad, rect.y + pad);
+    let mut items = vec![PanelItem {
+        rect: Rect { x, y, w: rect.w - 2 * pad, h: row_h },
+        text: message.into(),
+        style: PanelStyle::Title,
+        action: UiAction::None,
+    }];
+    let by = y + 2 * row_h;
+    let cw = cell_w * confirm.chars().count() as i32 + 2 * BUTTON_PAD;
+    items.push(PanelItem {
+        rect: Rect { x, y: by, w: cw, h: row_h },
+        text: confirm.into(),
+        style: PanelStyle::Button { primary: true },
+        action: UiAction::SavePanel,
+    });
+    let kw = cell_w * 6 + 2 * BUTTON_PAD;
+    items.push(PanelItem {
+        rect: Rect { x: x + cw + 8, y: by, w: kw, h: row_h },
+        text: "Cancel".into(),
+        style: PanelStyle::Button { primary: false },
+        action: UiAction::ClosePanel,
+    });
+    Panel { rect, items }
 }
 
 pub fn category_title(c: &Category) -> &'static str {
@@ -507,6 +662,9 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     if layout.appearance_rect.contains(px, py) {
         return UiAction::OpenAppearance;
     }
+    if layout.notice.as_ref().is_some_and(|(r, _)| r.contains(px, py)) {
+        return UiAction::Notice;
+    }
     for cat in &layout.categories {
         if cat.add_rect.contains(px, py) {
             return UiAction::OpenAdd(cat.category.clone());
@@ -517,6 +675,9 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
             }
             if item.delete_rect.contains(px, py) {
                 return UiAction::OpenDeleteConfirm { category: cat.category.clone(), name: item.name.clone() };
+            }
+            if item.name_rect.contains(px, py) {
+                return UiAction::Connect { category: cat.category.clone(), name: item.name.clone() };
             }
         }
     }

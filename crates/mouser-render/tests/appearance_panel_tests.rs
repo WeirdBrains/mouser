@@ -65,3 +65,41 @@ fn ctrl_zoom_keys() {
     assert_eq!(mouser_render::zoom_for_char("0"), Some(0));
     assert_eq!(mouser_render::zoom_for_char("a"), None);
 }
+
+#[test]
+fn read_only_hosts_and_notice() {
+    let mut g = std::collections::BTreeMap::new();
+    g.insert(ui::Category::Ssh, vec!["prod".to_string(), "web1".to_string()]);
+    g.insert(ui::Category::Waypipe, vec!["wp".to_string()]);
+    let mut l = ui::build_sidebar_layout_metrics(1200, 800, 9, 18, &g, None);
+    let wp_before = l.categories[1].header_rect.y;
+    ui::mark_read_only(&mut l, &ui::Category::Ssh, &["web1".to_string()]);
+    ui::add_notice(&mut l, &ui::Category::Ssh, "Move 2 saved to ~/.ssh/config", 18);
+    let ssh = &l.categories[0];
+    let (prod, web1) = (&ssh.items[0], &ssh.items[1]);
+    assert!(!prod.read_only && web1.read_only);
+    assert_eq!(web1.delete_rect.w, 0);
+    assert_eq!(ui::hit_test(&l, web1.edit_rect.x + 1, web1.edit_rect.y + 1), UiAction::OpenEdit { category: ui::Category::Ssh, name: "web1".into() });
+    assert_eq!(ui::hit_test(&l, prod.name_rect.x + 1, prod.name_rect.y + 1), UiAction::Connect { category: ui::Category::Ssh, name: "prod".into() });
+    let (nr, _) = l.notice.clone().unwrap();
+    assert_eq!(ui::hit_test(&l, nr.x + 1, nr.y + 1), UiAction::Notice);
+    assert!(l.categories[1].header_rect.y > wp_before);
+    assert!(prod.name_rect.y >= nr.y + nr.h, "items move below the notice");
+}
+
+#[test]
+fn form_and_confirm_panels() {
+    let fields: Vec<EditorFieldView> = ["Alias", "HostName", "User", "Port", "IdentityFile", "ProxyJump"]
+        .iter()
+        .map(|l| EditorFieldView { label: l.to_string(), value: String::new(), valid: true, swatch: None })
+        .collect();
+    let p = ui::form_panel(1200, 800, 9, 18, "Add SSH host", &fields, 0, Some("note"), Some("err"), true);
+    for it in &p.items {
+        assert!(inside(p.rect, it.rect));
+    }
+    assert!(p.items.iter().any(|i| i.action == UiAction::SavePanel));
+    let ro = ui::form_panel(1200, 800, 9, 18, "SSH web1 (read-only)", &fields, 0, Some("why"), None, false);
+    assert!(!ro.items.iter().any(|i| i.action == UiAction::SavePanel));
+    let c = ui::confirm_panel(1200, 800, 9, 18, "Delete Host prod?", "Delete");
+    assert!(c.items.iter().any(|i| i.action == UiAction::SavePanel && i.text == "Delete"));
+}

@@ -1,4 +1,5 @@
 mod appearance_ui;
+mod ssh_ui;
 
 use anyhow::Result;
 use clap::Parser;
@@ -27,6 +28,7 @@ struct AppState {
     sidebar_collapsed: bool,
     sidebar_width: Option<i32>,
     look: appearance_ui::Appearance,
+    ssh: ssh_ui::SshUi,
     pending_delete: Option<String>,
     pending_edit: Option<Connection>,
 }
@@ -227,6 +229,7 @@ fn main() -> Result<()> {
         sidebar_open: prefs0.sidebar_open.unwrap_or(false),
         sidebar_collapsed: prefs0.sidebar_collapsed.unwrap_or(false),
         sidebar_width: prefs0.sidebar_width,
+        ssh: ssh_ui::SshUi::start(mouser_core::ssh_config::ssh_config_path()),
         look: appearance_ui::Appearance::new(font_size0, font_family0.clone(), config_font_size),
         pending_delete: None,
         pending_edit: None,
@@ -278,7 +281,11 @@ fn main() -> Result<()> {
             let mut state = app_state.lock().unwrap();
             match state.mode {
                 Mode::Shell => {
-                    if state.look.panel.is_some() {
+                    if state.ssh.panel.is_some() {
+                        if let Some(m) = state.ssh.key(&bytes) {
+                            state.look.say(m);
+                        }
+                    } else if state.look.panel.is_some() {
                         state.look.key(&bytes);
                     } else if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
                         state.pending_edit = None;
@@ -375,13 +382,16 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
             let st = app_state.lock().unwrap();
-            let panel = st.look.panel_view(vp);
+            let panel = st.ssh.panel_view(vp).or_else(|| st.look.panel_view(vp));
             if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
                 return panel.map(|p| ui::UiLayout { panel: Some(p), ..ui::without_sidebar(vp.width, vp.height) });
             }
             let mut groups: std::collections::BTreeMap<ui::Category, Vec<String>> = Default::default();
+            // SSH hosts come from the SSH config; the rest from ~/.mouser.
+            let (ssh_names, ssh_read_only) = st.ssh.names();
+            groups.insert(ui::Category::Ssh, ssh_names);
             if let Ok(list) = list_connections() {
-                for c in list {
+                for c in list.into_iter().filter(|c| !matches!(c.kind, ConnectionKind::Ssh(_))) {
                     groups.entry(category_of(&c.kind)).or_default().push(c.name);
                 }
             }
@@ -408,13 +418,31 @@ fn main() -> Result<()> {
                 collapsed: st.sidebar_collapsed && modal.is_none(),
             };
             let mut layout = ui::build_sidebar(spec, &groups, modal);
+            ui::mark_read_only(&mut layout, &ui::Category::Ssh, &ssh_read_only);
+            if st.ssh.legacy > 0 {
+                ui::add_notice(&mut layout, &ui::Category::Ssh, &format!("Move {} saved to ~/.ssh/config…", st.ssh.legacy), vp.cell_h);
+            }
             layout.panel = panel;
             Some(layout)
         })
     };
     let on_ui_action = {
         let app_state = app_state.clone();
+        let connect_writer = shared_writer.clone();
         Arc::new(move |act: ui::UiAction| match act.clone() {
+            ui::UiAction::OpenAdd(ui::Category::Ssh) => app_state.lock().unwrap().ssh.open_add(),
+            ui::UiAction::OpenEdit { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_edit(&name),
+            ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
+            ui::UiAction::Notice => app_state.lock().unwrap().ssh.open_migrate(),
+            ui::UiAction::Connect { category, name } => {
+                let st = app_state.lock().unwrap();
+                let cmd = if category == ui::Category::Ssh { Some(st.ssh.connect_command(&name)) } else { None };
+                drop(st);
+                if let Some(cmd) = cmd {
+                    let mut w = connect_writer.clone();
+                    let _ = w.write_all(cmd.as_bytes());
+                }
+            }
             ui::UiAction::OpenAdd(cat) => {
                 let mut st = app_state.lock().unwrap();
                 let name = "new".to_string();
@@ -462,7 +490,16 @@ fn main() -> Result<()> {
             | ui::UiAction::FocusField(_)
             | ui::UiAction::SavePanel
             | ui::UiAction::ClosePanel
-            | ui::UiAction::FontSize(_) => app_state.lock().unwrap().look.action(&act),
+            | ui::UiAction::FontSize(_) => {
+                let mut st = app_state.lock().unwrap();
+                if st.ssh.panel.is_some() && !matches!(act, ui::UiAction::FontSize(_)) {
+                    if let Some(m) = st.ssh.action(&act) {
+                        st.look.say(m);
+                    }
+                } else {
+                    st.look.action(&act);
+                }
+            }
             ui::UiAction::ToggleAdvanced | ui::UiAction::None => {}
         })
     };

@@ -142,6 +142,10 @@ pub enum FieldKind {
     Text,
     /// Font size in points.
     Size,
+    /// TCP port (empty allowed).
+    Port,
+    /// SSH Host alias: one word, no wildcards.
+    Alias,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,7 +156,7 @@ pub struct Field {
 }
 
 impl Field {
-    fn new(label: &str, value: impl Into<String>, kind: FieldKind) -> Self {
+    pub fn new(label: &str, value: impl Into<String>, kind: FieldKind) -> Self {
         Self { label: label.to_string(), value: value.into(), kind }
     }
 
@@ -162,6 +166,8 @@ impl Field {
             FieldKind::Color { optional } => (optional && self.value.trim().is_empty()) || parse_hex(&self.value).is_some(),
             FieldKind::Text => true,
             FieldKind::Size => parse_size(&self.value).is_some(),
+            FieldKind::Port => self.value.is_empty() || self.value.parse::<u16>().is_ok_and(|p| p > 0),
+            FieldKind::Alias => crate::ssh_config::valid_alias(&self.value),
         }
     }
 
@@ -173,11 +179,13 @@ impl Field {
         }
     }
 
-    fn accepts(&self, c: char) -> bool {
+    pub fn accepts(&self, c: char) -> bool {
         match self.kind {
             FieldKind::Color { .. } => (c == '#' || c.is_ascii_hexdigit()) && self.value.len() < 7,
             FieldKind::Size => (c.is_ascii_digit() || c == '.') && self.value.len() < 5,
-            FieldKind::Text => !c.is_control() && self.value.chars().count() < 64,
+            FieldKind::Text => !c.is_control() && self.value.chars().count() < 256,
+            FieldKind::Port => c.is_ascii_digit() && self.value.len() < 5,
+            FieldKind::Alias => !c.is_whitespace() && !"*?!\"#=".contains(c) && self.value.chars().count() < 64,
         }
     }
 }
