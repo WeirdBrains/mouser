@@ -1,6 +1,6 @@
 # Mouser handover notes
 
-Current release: v0.7.1.
+Current release: v0.7.1. Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
 
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`
@@ -28,7 +28,7 @@ Not yet verified live: Kitty keyboard in a real app, connection click opening a
 tab, vttest menu 5, and the cause of vttest's LNM "Not expected".
 
 ## Known bugs
-- (Fixed in 0.7.1: dashed box-drawing lines, now drawn procedurally in `crates/mouser-render/src/boxdraw.rs`; the "81 wide" vttest report was the window really being 81 columns, covered by a regression test.)
+- (Fixed in 0.7.1: dashed box-drawing lines, now drawn procedurally with one shared integer geometry (light, heavy and double lines) in `crates/mouser-render/src/boxdraw.rs`, identical on CPU and GPU; the "81 wide" vttest report was the window really being 81 columns, covered by a regression test.)
 - Website install code blocks clip long commands (scroll sideways).
 
 ## Known gaps
