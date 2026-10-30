@@ -20,6 +20,38 @@ pub struct Frame<'a> {
     pub accent: Option<u32>,
     /// Cursor colour; derived from `fg` if `None`.
     pub cursor_color: Option<u32>,
+    /// Kitty graphics placements, lowest z first.
+    pub images: &'a [ImageDraw],
+}
+
+/// One image placement to draw, anchored to a grid cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageDraw {
+    /// Unique per image upload (texture cache key).
+    pub key: u64,
+    pub rgba: std::sync::Arc<Vec<u8>>,
+    pub img_w: u32,
+    pub img_h: u32,
+    /// Source rectangle (x, y, w, h) in image pixels.
+    pub src: (u32, u32, u32, u32),
+    /// Top-left cell (may be negative when partly scrolled off) and pixel offset.
+    pub col: i32,
+    pub row: i32,
+    pub x_off: i32,
+    pub y_off: i32,
+    /// Displayed size in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// Negative: under the text; otherwise over it.
+    pub z: i32,
+}
+
+fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool) {
+    for img in images.iter().filter(|i| (i.z < 0) == below) {
+        let x = PADDING + img.col * fonts.cell_w + img.x_off;
+        let y = PADDING + img.row * fonts.cell_h + img.y_off;
+        canvas.draw_image(img, x, y);
+    }
 }
 
 /// Grid size that fits a `width` x `height` pixel area.
@@ -37,10 +69,12 @@ pub fn accent_for(bg: u32) -> u32 {
 pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
+    draw_images(canvas, fonts, frame.images, true);
     for (row, line) in frame.lines.iter().enumerate() {
         let top = PADDING + row as i32 * ch;
         canvas.draw_text(fonts, PADDING, top, line, frame.fg);
     }
+    draw_images(canvas, fonts, frame.images, false);
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = PADDING + cy as i32 * ch;

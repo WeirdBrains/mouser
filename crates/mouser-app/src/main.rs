@@ -278,6 +278,32 @@ fn main() -> Result<()> {
             p.screen.cursor_visible.then_some((p.screen.cursor.x, p.screen.cursor.y))
         })
     };
+    let get_images = {
+        let parser = parser.clone();
+        Arc::new(move |scrolled_back: usize, rows: usize, cell: (u32, u32)| -> Vec<mouser_render::ImageDraw> {
+            let mut p = parser.lock().unwrap();
+            p.cell_px = cell;
+            let top = if p.screen.in_alt_screen() { p.lines_scrolled } else { p.lines_scrolled - scrolled_back as i64 };
+            p.graphics
+                .visible(top, rows, cell.1)
+                .into_iter()
+                .map(|(pl, im)| mouser_render::ImageDraw {
+                    key: im.key,
+                    rgba: im.rgba.clone(),
+                    img_w: im.width,
+                    img_h: im.height,
+                    src: pl.src,
+                    col: pl.col as i32,
+                    row: (pl.row - top) as i32,
+                    x_off: pl.x_off as i32,
+                    y_off: pl.y_off as i32,
+                    width: pl.width,
+                    height: pl.height,
+                    z: pl.z,
+                })
+                .collect()
+        })
+    };
     let on_key = {
         let writer = shared_writer.clone();
         let app_state = app_state.clone();
@@ -523,6 +549,7 @@ fn main() -> Result<()> {
     discover_font_families();
     let hooks = RenderHooks {
         on_key_bytes: on_key.clone(),
+        get_images: Some(get_images),
         on_key_event: Some({
             let (writer, app_state, parser, on_key) = (shared_writer.clone(), app_state.clone(), parser.clone(), on_key.clone());
             Arc::new(move |legacy: Option<Vec<u8>>, input: mouser_core::kitty::KeyInput| {

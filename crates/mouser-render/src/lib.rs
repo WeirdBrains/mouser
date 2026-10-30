@@ -16,7 +16,7 @@ pub mod keys;
 pub mod text;
 pub mod ui;
 
-pub use frame::{Frame, PADDING, grid_size, render_frame};
+pub use frame::{Frame, ImageDraw, PADDING, grid_size, render_frame};
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
@@ -37,6 +37,8 @@ pub struct RenderHooks {
     /// releases) and a kitty-protocol description. When set, it replaces
     /// `on_key_bytes` for keyboard input.
     pub on_key_event: Option<KeyEventHook>,
+    /// Image placements for the view (`scrolled_back`, rows, cell size in px).
+    pub get_images: Option<ImagesHook>,
     pub on_resize: Arc<dyn Fn(u16, u16) + Send + Sync>,
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
@@ -60,6 +62,8 @@ pub struct RenderHooks {
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+pub type ImagesHook = Arc<dyn Fn(usize, usize, (u32, u32)) -> Vec<ImageDraw> + Send + Sync>;
 
 pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput) + Send + Sync>;
 
@@ -391,6 +395,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
                 let status = hooks.get_status.as_ref().and_then(|f| f());
+                let cell = (fonts.cell_w as u32, fonts.cell_h as u32);
+                let images = hooks.get_images.as_ref().map(|f| f(scrolled_back, renderer.rows, cell)).unwrap_or_default();
                 let frame = Frame {
                     lines: &lines,
                     cursor,
@@ -400,6 +406,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     status: status.as_deref(),
                     accent: colors.accent,
                     cursor_color: colors.cursor,
+                    images: &images,
                 };
                 last_ui = layout.clone();
                 if !painter.paint(&mut fonts, &frame, width, height) {
