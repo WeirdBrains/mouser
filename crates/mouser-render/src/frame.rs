@@ -20,7 +20,7 @@ pub struct Frame<'a> {
     pub accent: Option<u32>,
     /// Cursor colour; derived from `fg` if `None`.
     pub cursor_color: Option<u32>,
-    /// Kitty graphics placements, lowest z first.
+    /// Fuzzball graphics placements, lowest z first.
     pub images: &'a [ImageDraw],
     /// Per-cell colours and decorations, parallel to `lines` (missing rows or
     /// cells draw plain in `fg`).
@@ -162,6 +162,28 @@ pub struct ImageDraw {
     pub height: u32,
     /// Negative: under the text; otherwise over it.
     pub z: i32,
+}
+
+/// Fuzzball placements on screen `alt` visible in absolute rows `top .. top + rows`,
+/// as draw commands (row relative to `top`), lowest z first.
+pub fn image_draws(gfx: &mouser_core::graphics::Graphics, alt: bool, top: i64, rows: usize) -> Vec<ImageDraw> {
+    gfx.visible(alt, top, rows)
+        .into_iter()
+        .map(|(pl, im)| ImageDraw {
+            key: im.key,
+            rgba: im.rgba.clone(),
+            img_w: im.width,
+            img_h: im.height,
+            src: pl.src,
+            col: pl.col as i32,
+            row: (pl.row - top) as i32,
+            x_off: 0,
+            y_off: 0,
+            width: pl.width,
+            height: pl.height,
+            z: pl.z,
+        })
+        .collect()
 }
 
 fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool, top: i32) {

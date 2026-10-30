@@ -76,17 +76,11 @@ fn default_shell() -> String {
     if cfg!(windows) { "powershell.exe".to_string() } else { "/bin/sh".to_string() }
 }
 
-/// `xterm-kitty` when its terminfo entry is installed (tools detect Kitty
-/// graphics from it), then Mouser's own `mouser` entry (`extra/mouser.terminfo`,
-/// installed with `tic -x`), otherwise `xterm-256color`.
+/// Mouser's own `mouser` entry when installed (`extra/mouser.terminfo`,
+/// `tic -x`), otherwise `xterm-256color`. Never `xterm-kitty`: Mouser only
+/// implements Kitty's keyboard protocol, not the rest of Kitty.
 pub fn term_name() -> &'static str {
-    if terminfo_exists("xterm-kitty") {
-        "xterm-kitty"
-    } else if terminfo_exists("mouser") {
-        "mouser"
-    } else {
-        "xterm-256color"
-    }
+    if terminfo_exists("mouser") { "mouser" } else { "xterm-256color" }
 }
 
 fn terminfo_exists(name: &str) -> bool {

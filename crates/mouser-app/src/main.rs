@@ -291,24 +291,8 @@ fn main() -> Result<()> {
             let mut p = pa.lock().unwrap();
             p.cell_px = cell;
             let top = if p.screen.in_alt_screen() { p.lines_scrolled } else { p.lines_scrolled - scrolled_back as i64 };
-            p.graphics
-                .visible(top, rows, cell.1)
-                .into_iter()
-                .map(|(pl, im)| mouser_render::ImageDraw {
-                    key: im.key,
-                    rgba: im.rgba.clone(),
-                    img_w: im.width,
-                    img_h: im.height,
-                    src: pl.src,
-                    col: pl.col as i32,
-                    row: (pl.row - top) as i32,
-                    x_off: pl.x_off as i32,
-                    y_off: pl.y_off as i32,
-                    width: pl.width,
-                    height: pl.height,
-                    z: pl.z,
-                })
-                .collect()
+            let alt = p.screen.in_alt_screen();
+            mouser_render::image_draws(&p.fuzzball.gfx, alt, top, rows)
         })
     };
     let on_key = {
@@ -548,7 +532,7 @@ fn main() -> Result<()> {
         on_key_event: Some({
             let (writer, app_state, parser, on_key, tabs_e) =
                 (shared_writer.clone(), app_state.clone(), parser.clone(), on_key.clone(), tabs.clone());
-            Arc::new(move |legacy: Option<Vec<u8>>, input: mouser_core::kitty::KeyInput| {
+            Arc::new(move |legacy: Option<Vec<u8>>, input: mouser_core::kitty::KeyInput, fz: Option<mouser_core::fuzzball::KeyEvent>| {
                 use mouser_core::kitty::{Encoded, encode_key};
                 if exited_tab(&tabs_e).is_some() {
                     if let Some(b) = legacy {
@@ -566,11 +550,20 @@ fn main() -> Result<()> {
                 };
                 // Mouser's own hotkeys (F10, Alt+Esc) keep working in any mode.
                 let hotkey = legacy.as_deref().is_some_and(|b| b == b"\x1b[21~" || b == b"\x1b\x1b");
-                let flags = {
+                // Fuzzball keyboard mode wins over the Kitty keyboard fallback.
+                let (fuzzball_on, flags) = {
                     let pa = parser.get();
                     let p = pa.lock().unwrap();
-                    p.kitty_keyboard.current(p.screen.in_alt_screen())
+                    let alt = p.screen.in_alt_screen();
+                    (p.fuzzball.keyboard(alt), p.kitty_keyboard.current(alt))
                 };
+                if fuzzball_on && !ui_owns && !hotkey {
+                    if let Some(e) = fz {
+                        let mut w = writer.clone();
+                        let _ = w.write_all(mouser_core::fuzzball::encode_key(&e).as_bytes());
+                    }
+                    return;
+                }
                 if ui_owns || hotkey || flags == 0 {
                     if let Some(b) = legacy {
                         on_key(b);
