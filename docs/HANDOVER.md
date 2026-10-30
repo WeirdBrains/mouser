@@ -38,8 +38,10 @@ OSC 133 UI.
 ## Fuzzball
 Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. Kitty graphics, OSC 1337
 and xterm-kitty were removed; Kitty keyboard is the only fallback.
-Not yet done: placement removal when rows leave scrollback, reflow movement, IME events,
-lock-key state, upload timeout only checked on the next chunk.
+Placements follow their text (scroll regions, IL/DL, scrollback, resize) and are removed
+when their anchor row leaves the scrollback; abandoned uploads expire on a timer
+(`Session::watch_upload` in `crates/mouser-app/src/tabs.rs`). Decisions: protocol README §10 #10–14.
+Not yet done: IME events, lock-key state.
 
 ## Website
 - Lives on the `site` branch in `site/` (plain HTML/CSS/JS).
@@ -67,5 +69,5 @@ Releases happen only with the maintainer's explicit approval.
 1. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
 2. Confirm website claims, retake the screenshot, publish the site.
 3. Cut the next release once approved.
-4. Finish the Fuzzball gaps listed above.
+4. Fuzzball: IME events and lock-key state.
 5. Work through the known gaps.

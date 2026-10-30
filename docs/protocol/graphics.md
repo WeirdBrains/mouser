@@ -103,8 +103,19 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
 - Placements occupy cells but do not change their text; text written over a `z=0`
   placement is drawn under it, over a `z=-1` placement on top of it.
 - Erasing any cell of a placement removes the whole placement.
-- On resize, placements stay attached to their anchor cell; if reflow moves the anchor,
-  the placement moves with it.
+- A placement follows its **anchor cell** (top-left) when text moves: scrolling (also
+  inside scroll regions, SU/SD, IL/DL) and lines moving into the scrollback. A placement
+  scrolled out of its scroll region, or out of the top of the alternate screen (which has
+  no scrollback), is removed.
+- When the anchor row is dropped from the scrollback (the scrollback limit, or ED 3
+  "clear scrollback"), the whole placement is removed, even if it spans later rows.
+- On resize the terminal moves placements with their lines. Terminals that rewrap text
+  move the anchor with its cell; terminals that don't (Mouser) keep it in place and
+  remove placements whose anchor cell was cut off (right of the last column or below
+  the last row). A placement wider than the new screen is clipped, not removed.
+- Removing a placement never frees its image: unplaced images stay until deleted
+  (`gd` with `free=1`, re-upload) or evicted for memory (§3).
+- An upload that receives no chunk for 10 s is discarded.
 - On RIS: all images, placements and partial uploads are discarded.
 
 ## 5. Examples

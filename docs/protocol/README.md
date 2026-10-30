@@ -224,7 +224,16 @@ Limits Mouser advertises: `max_chunk=65536`, `g_mem=335544320` (320 MiB, least-r
 unplaced images evicted first), `g_max_dim=10000`, `g_max_place=4096`, `g_fmt=rgba:rgb:png`.
 Uploads abandoned for more than 10 s are discarded when the next chunk arrives.
 
-Not yet implemented in Mouser: removing placements when their rows leave the scrollback,
-moving placements on reflow, IME events, lock-key state (`locks` is always 0).
+Placement lifecycle (graphics.md §4), decided in v0.1:
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 10 | Placement partly evicted from scrollback | Removed when its **anchor row** is evicted. | One rule for every case; the rest of a cut image is not useful. |
+| 11 | Free image data when its last placement goes? | **No.** It becomes an eviction candidate under `g_mem` pressure. | Apps may re-place an image by id without re-uploading. |
+| 12 | Reflow on resize | Placements follow their anchor cell. Mouser does not rewrap, so anchors cut off by a narrower/shorter screen are removed; wider screens change nothing. | Matches what happens to the text. |
+| 13 | Alternate screen | Placements scroll with alt text and are removed when they scroll off the top (no scrollback), on resize if cut off, and when the alt screen is left. A resize while in the alt screen blanks the saved main screen, so its visible placements go. | Same as the text. |
+| 14 | Abandoned uploads | Discarded by a timer 10 s after the last chunk (not only when the next chunk arrives). | Frees the buffer of a crashed uploader. |
+
+Not yet implemented in Mouser: IME events, lock-key state (`locks` is always 0).
 
 A demo client is in `tools/fuzzball-demo.py`.

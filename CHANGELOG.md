@@ -4,6 +4,9 @@ Added:
 - Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
 - Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
 - `tools/fuzzball-demo.py` demo client
+- Fuzzball placements follow their text through scroll regions, SU/SD, IL/DL, the scrollback and resize; they are removed when their anchor row leaves the scrollback, scrolls off the alternate screen, or is cut off by a resize
+- Abandoned Fuzzball uploads are discarded by a timer after 10 s
+- ED 3 (`CSI 3 J`) clears the scrollback (and the placements in it) without touching the screen
 
 Changed:
 - Kitty keyboard protocol is the only Kitty protocol, kept as a fallback behind Fuzzball keyboard mode
