@@ -48,7 +48,17 @@ pub fn cell_paint<W: std::io::Write>(c: &Cell, p: &TerminalParser<W>) -> CellPai
     };
     let mut fg = color(st.fg, 256).unwrap_or(0);
     let mut bg = color(st.bg, 257);
-    let window_bg = rgb(p.color_for(257));
+    let mut window_bg = rgb(p.color_for(257));
+    // DECSCNM: default colours swap for the whole screen.
+    if p.modes.reverse_video {
+        if st.fg == Color::Default {
+            fg = window_bg;
+        }
+        window_bg = rgb(p.color_for(256));
+        if st.bg == Color::Default {
+            bg = Some(window_bg);
+        }
+    }
     if st.attrs & attr::INVERSE != 0 {
         let b = bg.unwrap_or(window_bg);
         bg = Some(fg);
