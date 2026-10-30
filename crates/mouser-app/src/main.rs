@@ -27,6 +27,9 @@ struct AppState {
     sidebar_open: bool,
     sidebar_collapsed: bool,
     sidebar_width: Option<i32>,
+    /// MOUSER_OPEN_SIDEBAR forced it open for this run: don't save that state
+    /// unless the user changes the sidebar.
+    sidebar_forced: bool,
     look: appearance_ui::Appearance,
     ssh: ssh_ui::SshUi,
     pending_delete: Option<String>,
@@ -229,6 +232,7 @@ fn main() -> Result<()> {
         sidebar_open: prefs0.sidebar_open.unwrap_or(false),
         sidebar_collapsed: prefs0.sidebar_collapsed.unwrap_or(false),
         sidebar_width: prefs0.sidebar_width,
+        sidebar_forced: false,
         ssh: ssh_ui::SshUi::start(mouser_core::ssh_config::ssh_config_path()),
         look: appearance_ui::Appearance::new(font_size0, font_family0.clone(), config_font_size),
         pending_delete: None,
@@ -297,7 +301,7 @@ fn main() -> Result<()> {
                     } else if bytes == b"\x1b\x1b" {
                         // Alt+Esc toggles the connections sidebar; plain Esc goes to the shell.
                         state.sidebar_open = !state.sidebar_open;
-                        persist_sidebar(&state);
+                        persist_sidebar(&mut state);
                     } else {
                         let mut w = writer.clone();
                         let _ = w.write_all(&bytes);
@@ -480,14 +484,14 @@ fn main() -> Result<()> {
             ui::UiAction::ToggleCollapse => {
                 let mut st = app_state.lock().unwrap();
                 st.sidebar_collapsed = !st.sidebar_collapsed;
-                persist_sidebar(&st);
+                persist_sidebar(&mut st);
             }
             ui::UiAction::ResizeSidebar(w) => {
                 let mut st = app_state.lock().unwrap();
                 st.sidebar_width = Some(w);
                 st.sidebar_collapsed = false;
             }
-            ui::UiAction::ResizeSidebarDone => persist_sidebar(&app_state.lock().unwrap()),
+            ui::UiAction::ResizeSidebarDone => persist_sidebar(&mut app_state.lock().unwrap()),
             ui::UiAction::OpenAppearance
             | ui::UiAction::PickTheme(_)
             | ui::UiAction::SetMode(_)
@@ -543,12 +547,21 @@ fn main() -> Result<()> {
     };
     let r = Renderer { font_size: font_size0, font_family: font_family0, ..Renderer::default() };
     {
-        // Start collapsed to the strip unless MOUSER_OPEN_SIDEBAR asks for it open;
-        // the saved width is kept for when it is expanded.
+        // Restore the last saved sidebar state (fresh install: collapsed strip);
+        // MOUSER_OPEN_SIDEBAR forces it open for this run only.
         let mut st = app_state.lock().unwrap();
-        (st.sidebar_open, st.sidebar_collapsed) = startup_sidebar(std::env::var("MOUSER_OPEN_SIDEBAR").ok().as_deref());
+        let s = startup_sidebar(&prefs0, std::env::var("MOUSER_OPEN_SIDEBAR").ok().as_deref());
+        (st.sidebar_open, st.sidebar_collapsed, st.sidebar_forced) = (s.open, s.collapsed, s.forced);
     }
-    run_renderer(r, hooks)?;
+    let result = run_renderer(r, hooks);
+    // Window closed (by the user or because the shell exited): remember the sidebar.
+    {
+        let st = app_state.lock().unwrap();
+        if !st.sidebar_forced {
+            persist_sidebar_state(&st);
+        }
+    }
+    result?;
     // Reap the shell if it is still around (window closed by the user).
     if let Some(mut c) = child.lock().unwrap().take()
         && c.try_wait().ok().flatten().is_none()
@@ -559,11 +572,22 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Sidebar (open, collapsed) at startup: expanded only when `MOUSER_OPEN_SIDEBAR`
-/// is set (to anything but empty/0/false), otherwise the collapsed strip.
-fn startup_sidebar(env: Option<&str>) -> (bool, bool) {
-    let open = env.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "no"));
-    (true, !open)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SidebarStart {
+    open: bool,
+    collapsed: bool,
+    /// Forced open by the environment; the saved state is left alone.
+    forced: bool,
+}
+
+/// Sidebar state at startup: `MOUSER_OPEN_SIDEBAR` (anything but empty/0/false/no)
+/// forces it open and expanded; otherwise the last saved state, or the
+/// collapsed strip when nothing was saved.
+fn startup_sidebar(prefs: &mouser_core::storage::Preferences, env: Option<&str>) -> SidebarStart {
+    if env.is_some_and(|v| !matches!(v.trim(), "" | "0" | "false" | "no")) {
+        return SidebarStart { open: true, collapsed: false, forced: true };
+    }
+    SidebarStart { open: prefs.sidebar_open.unwrap_or(true), collapsed: prefs.sidebar_collapsed.unwrap_or(true), forced: false }
 }
 
 static FONT_FAMILIES: std::sync::OnceLock<Arc<Vec<String>>> = std::sync::OnceLock::new();
@@ -628,8 +652,15 @@ fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
     Some((name, arg))
 }
 
+/// The user changed the sidebar: save it (this also ends a forced-open run's
+/// "don't save" grace).
+fn persist_sidebar(st: &mut AppState) {
+    st.sidebar_forced = false;
+    persist_sidebar_state(st);
+}
+
 /// Save sidebar open/collapsed/width to preferences.toml.
-fn persist_sidebar(st: &AppState) {
+fn persist_sidebar_state(st: &AppState) {
     let (open, collapsed, width) = (st.sidebar_open, st.sidebar_collapsed, st.sidebar_width);
     let _ = mouser_core::storage::update_preferences(|p| {
         p.sidebar_open = Some(open);
@@ -657,7 +688,7 @@ fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppSta
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = true;
         st.sidebar_collapsed = false;
-        persist_sidebar(&st);
+        persist_sidebar(&mut st);
     } else if let Some(cmd) = appearance_command(trimmed) {
         let mut st = app_state.lock().unwrap();
         match cmd {
@@ -677,7 +708,7 @@ fn handle_command(cmd: &str, writer: &SharedWriter, app_state: &Arc<Mutex<AppSta
     } else if trimmed == "close-sidebar" || trimmed == ":close-sidebar" {
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = false;
-        persist_sidebar(&st);
+        persist_sidebar(&mut st);
     } else if let Some(name) = trimmed.strip_prefix("del-conn ") {
         let mut st = app_state.lock().unwrap();
         st.pending_delete = Some(name.to_string());
@@ -791,12 +822,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sidebar_starts_collapsed_unless_env_opens_it() {
-        assert_eq!(startup_sidebar(None), (true, true));
-        assert_eq!(startup_sidebar(Some("")), (true, true));
-        assert_eq!(startup_sidebar(Some("0")), (true, true));
-        assert_eq!(startup_sidebar(Some("1")), (true, false));
-        assert_eq!(startup_sidebar(Some("yes")), (true, false));
+    fn sidebar_restores_saved_state_env_forces_open() {
+        use mouser_core::storage::Preferences;
+        let fresh = Preferences::default();
+        let start = |p: &Preferences, e| {
+            let s = startup_sidebar(p, e);
+            (s.open, s.collapsed, s.forced)
+        };
+        // Fresh install: collapsed strip.
+        assert_eq!(start(&fresh, None), (true, true, false));
+        assert_eq!(start(&fresh, Some("0")), (true, true, false));
+        // Last saved state wins.
+        let expanded = Preferences { sidebar_open: Some(true), sidebar_collapsed: Some(false), ..Default::default() };
+        assert_eq!(start(&expanded, None), (true, false, false));
+        let hidden = Preferences { sidebar_open: Some(false), sidebar_collapsed: Some(true), ..Default::default() };
+        assert_eq!(start(&hidden, Some("")), (false, true, false));
+        // The env var forces it open for the run, flagged so it isn't saved.
+        assert_eq!(start(&hidden, Some("1")), (true, false, true));
+        assert_eq!(start(&fresh, Some("yes")), (true, false, true));
     }
 
     #[test]
