@@ -771,7 +771,7 @@ mod tests {
         m.last_click = None;
         assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
         let cd = m.action("item", 1);
-        assert_eq!(cd, Effect::Type(format!("\x15cd -- '{}/sub dir'\r", t.path().display())));
+        assert_eq!(cd, Effect::Type(format!("\x15cd -- '{}'\r", t.path().join("sub dir").display())));
         m.action("switch_view", 0);
         let v = m.view(&ctx(), &k);
         assert!(v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count() == 2);
