@@ -134,6 +134,8 @@ pub struct CommanderMode {
     texts: HashMap<PathBuf, Vec<String>>,
     /// The file view's text.
     full_text: Option<(PathBuf, Vec<String>, Option<String>)>,
+    /// Last click (item, when) for double-click.
+    last_click: Option<(usize, std::time::Instant)>,
 }
 
 impl Default for CommanderMode {
@@ -176,7 +178,7 @@ struct Out {
 
 impl CommanderMode {
     pub fn new() -> Self {
-        Self { c: Commander::new(), per_row: 1, previews: Previews::default(), texts: HashMap::new(), full_text: None }
+        Self { c: Commander::new(), per_row: 1, previews: Previews::default(), texts: HashMap::new(), full_text: None, last_click: None }
     }
 
     pub fn previews(&self) -> &Previews {
@@ -231,17 +233,19 @@ impl CommanderMode {
     fn list(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
         let row_h = ch + 4;
         let rows = ((body.h / row_h) - 1).max(1) as usize;
+        self.c.page = rows;
         self.c.follow(rows);
         let cols = body.w / cw.max(1);
         let name_w = (cols - 10 - 2 - 6 - 2 - 2 - 13 - 2).max(8) as usize;
-        let head = format!("{:<10}  {:>6}  {:<name_w$}  {}", "Attributes", "Size", "Name", "Last Modified");
+        let head = format!(" {:<10} {:>6}  {:<name_w$}  {}", "Attributes", "Size", "Name", "Last Modified");
         o.items.push(item(Rect { x: body.x, y: body.y, w: body.w, h: row_h }, head, PanelStyle::Hint, UiAction::None));
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
         for (n, e) in vis.iter().enumerate().skip(self.c.scroll).take(rows) {
             let y = body.y + row_h * (1 + (n - self.c.scroll) as i32);
             let name = if e.kind == Kind::Dir && e.name != "." && e.name != ".." { format!("{}/", e.name) } else { e.name.clone() };
             let t = e.modified.map(cmdr::format_time).unwrap_or_default();
-            let text = format!("{:<10}  {:>6}  {:<name_w$}  {t}", e.mode, self.size(e), clip_text(&name, name_w as i32));
+            let mark = if self.c.marks.contains(&e.path) { '*' } else { ' ' };
+            let text = format!("{mark}{:<10} {:>6}  {:<name_w$}  {t}", e.mode, self.size(e), clip_text(&name, name_w as i32));
             o.items.push(item(
                 Rect { x: body.x, y, w: body.w, h: row_h },
                 text,
@@ -258,6 +262,7 @@ impl CommanderMode {
         let cell_h = ts + label_h + gap;
         let vis_rows = ((body.h + gap) / cell_h).max(1) as usize;
         self.per_row = per_row;
+        self.c.page = per_row * vis_rows;
         let row = self.c.selected / per_row;
         let mut first = self.c.scroll.min(row);
         if row >= first + vis_rows {
@@ -272,12 +277,14 @@ impl CommanderMode {
             o.items.push(item(tile, "", PanelStyle::Tile { selected: n == self.c.selected }, act("item", n as i32)));
             let inner = Rect { x: tile.x + 4, y: tile.y + 4, w: ts - 8, h: ts - 8 };
             self.content(e, (inner, inner), (ts as u32 * 2).max(256), (cw, ch), o);
-            let label = clip_text(&e.name, ts / cw.max(1));
+            let label = if self.c.marks.contains(&e.path) { format!("* {}", e.name) } else { e.name.clone() };
+            let label = clip_text(&label, ts / cw.max(1));
             o.items.push(item(Rect { x: tile.x, y: tile.y + ts + 2, w: ts, h: label_h }, label, PanelStyle::Label, act("item", n as i32)));
         }
     }
 
     fn carousel(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
+        self.c.page = 5;
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
         let Some(e) = vis.get(self.c.selected).cloned() else { return };
         let label_h = ch + 6;
@@ -304,7 +311,8 @@ impl CommanderMode {
         let inner = Rect { x: center.x + 6, y: center.y + 6, w: w - 12, h: ih - 12 };
         self.content(&e, (inner, inner), 1024, (cw, ch), o);
         let t = e.modified.map(cmdr::format_time).unwrap_or_default();
-        let label = format!("{}   {}   {}   ({}/{})", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
+        let mk = if self.c.marks.contains(&e.path) { "* " } else { "" };
+        let label = format!("{mk}{}   {}   {}   ({}/{})", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
         let lw = (label.chars().count() as i32 * cw).min(body.w);
         o.items.push(item(
             Rect { x: body.x + (body.w - lw) / 2, y: body.y + ih + 6, w: lw, h: label_h },
@@ -440,15 +448,21 @@ impl Mode for CommanderMode {
         if bytes.len() > 1 && bytes[0] == 0x1b {
             return None;
         }
+        if let Some(e) = self.c.pipe_key(bytes) {
+            return Some(self.effect(e));
+        }
         self.c.search_key(bytes).then_some(Effect::None)
     }
 
     fn wants_text(&self) -> bool {
-        self.c.searching
+        self.c.searching || self.c.piping
     }
 
     fn escape(&mut self) -> bool {
-        if self.c.searching {
+        if self.c.piping {
+            self.c.pipe_key(b"\x1b");
+            true
+        } else if self.c.searching {
             self.c.search_key(b"\x1b");
             true
         } else {
@@ -463,11 +477,16 @@ impl Mode for CommanderMode {
         match id {
             "item" => {
                 let i = (arg.max(0) as usize).min(n.saturating_sub(1));
-                if i == self.c.selected {
+                // A second click on the same item within 400 ms opens it.
+                let now = std::time::Instant::now();
+                let double = self.last_click.is_some_and(|(j, t)| j == i && now.duration_since(t) < std::time::Duration::from_millis(400));
+                self.c.selected = i;
+                if double {
+                    self.last_click = None;
                     let e = self.c.open_selected();
                     return self.effect(e);
                 }
-                self.c.selected = i;
+                self.last_click = Some((i, now));
                 return Effect::None;
             }
             "view" => {
@@ -491,8 +510,13 @@ impl Mode for CommanderMode {
             }
             _ => {
                 let Some(a) = Action::from_id(id) else { return Effect::None };
-                if reading && matches!(a, Action::Up | Action::Down) {
-                    let d = if a == Action::Up { -1 } else { 1 };
+                if reading && matches!(a, Action::Up | Action::Down | Action::PageUp | Action::PageDown) {
+                    let d = match a {
+                        Action::Up => -1,
+                        Action::Down => 1,
+                        Action::PageUp => -20,
+                        _ => 20,
+                    };
                     self.c.overlay_scroll = (self.c.overlay_scroll as i64 + d).max(0) as usize;
                     return Effect::None;
                 }
@@ -558,7 +582,10 @@ impl Mode for CommanderMode {
         };
         let title = match (&file, &self.c.cwd) {
             (Some(p), _) => format!("commander · {}", show(p)),
-            (None, Some(d)) => format!("commander · {}   {} items · ls {}", show(d), self.c.visible().len(), self.c.flags.ls()),
+            (None, Some(d)) => {
+                let marks = if self.c.marks.is_empty() { String::new() } else { format!(" · {} marked", self.c.marks.len()) };
+                format!("commander · {}   {} items{marks} · ls {}", show(d), self.c.visible().len(), self.c.flags.ls())
+            }
             (None, None) => "commander".into(),
         };
         o.items.push(item(
@@ -571,22 +598,34 @@ impl Mode for CommanderMode {
         if let Some(p) = file {
             self.file_view(&p, body, cw, ch, &mut o);
         } else {
-            // Search field.
+            // Search field, or the pipe prompt.
             let fw = (cw * 40).min(w);
-            let fr = Rect { x: x0, y: body.y, w: fw, h: row_h };
-            o.items.push(item(
-                fr,
-                self.c.filter.clone(),
-                PanelStyle::Field { focused: self.c.searching, valid: !self.c.visible().is_empty() || self.c.filter.is_empty() },
-                act("search", 0),
-            ));
-            if self.c.filter.is_empty() && !self.c.searching {
+            if self.c.piping {
+                let n = self.c.pipe_paths().len();
+                let fr = Rect { x: x0, y: body.y, w: (cw * 60).min(w), h: row_h };
+                o.items.push(item(fr, format!("| {}", self.c.pipe_cmd), PanelStyle::Field { focused: true, valid: true }, UiAction::None));
                 o.items.push(item(
-                    Rect { x: fr.x + cw, w: fw - 2 * cw, ..fr },
-                    format!("search ({})", keys.label("search")),
+                    Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
+                    format!("pipe {n} path(s) · Enter runs · Esc cancels"),
                     PanelStyle::Hint,
+                    UiAction::None,
+                ));
+            } else {
+                let fr = Rect { x: x0, y: body.y, w: fw, h: row_h };
+                o.items.push(item(
+                    fr,
+                    self.c.filter.clone(),
+                    PanelStyle::Field { focused: self.c.searching, valid: !self.c.visible().is_empty() || self.c.filter.is_empty() },
                     act("search", 0),
                 ));
+                if self.c.filter.is_empty() && !self.c.searching {
+                    o.items.push(item(
+                        Rect { x: fr.x + cw, w: fw - 2 * cw, ..fr },
+                        format!("search ({})", keys.label("search")),
+                        PanelStyle::Hint,
+                        act("search", 0),
+                    ));
+                }
             }
             body.y += row_h + 8;
             body.h -= row_h + 8;
@@ -635,6 +674,7 @@ impl CommanderMode {
             cmdr::Effect::None => Effect::None,
             cmdr::Effect::Cd(p) => Effect::Type(cd_line(&p)),
             cmdr::Effect::External(p) => Effect::Open(p),
+            cmdr::Effect::Run(s) => Effect::Type(s),
         }
     }
 }
@@ -728,6 +768,8 @@ mod tests {
         assert!(v.dock.unwrap().items.iter().any(|i| i.text == "world"));
         assert!(m.escape());
         assert_eq!(m.action("item", 1), Effect::None, "first click selects");
+        m.last_click = None;
+        assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
         let cd = m.action("item", 1);
         assert_eq!(cd, Effect::Type(format!("\x15cd -- '{}/sub dir'\r", t.path().display())));
         m.action("switch_view", 0);
@@ -738,5 +780,47 @@ mod tests {
         assert_eq!(m.text(b"s"), Some(Effect::None));
         assert_eq!(m.c.filter, "s");
         assert!(m.text(b"\x1bt").is_none(), "bound keys still work while searching");
+    }
+
+    #[test]
+    fn pages_marks_and_pipe_in_every_view() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..60 {
+            std::fs::write(t.path().join(format!("f{i:02}.txt")), "x").unwrap();
+        }
+        let k = Keymap::new(cmdr::BINDINGS);
+        for view in 0..3 {
+            let mut m = CommanderMode::new();
+            m.c.flags.all = false;
+            m.cwd_changed(t.path());
+            m.action("view", view);
+            m.view(&ctx(), &k);
+            let page = m.c.page;
+            assert!(page >= 1);
+            m.action("page_down", 0);
+            assert_eq!(m.c.selected, page.min(59), "view {view}");
+            m.action("last", 0);
+            assert_eq!(m.c.selected, 59);
+            let v = m.view(&ctx(), &k);
+            let sel =
+                v.dock.unwrap().items.iter().any(|i| {
+                    i.action == act("item", 59) && matches!(i.style, PanelStyle::Row { selected: true } | PanelStyle::Tile { selected: true })
+                });
+            assert!(sel, "view {view}: the selection scrolled into sight");
+            m.action("first", 0);
+            m.action("mark", 0);
+            let v = m.view(&ctx(), &k);
+            assert!(
+                v.dock.unwrap().items.iter().any(|i| i.text.contains("* f00.txt") || i.text.starts_with('*') || i.text.contains("1 marked")),
+                "view {view}: marks shown"
+            );
+            m.action("pipe", 0);
+            assert!(m.wants_text());
+            for b in [b"c", b"a", b"t"] {
+                m.text(b);
+            }
+            let Some(Effect::Type(line)) = m.text(b"\r") else { panic!() };
+            assert!(line.contains("f00.txt") && line.ends_with("| cat\r"), "{line}");
+        }
     }
 }

@@ -254,6 +254,15 @@ pub enum Action {
     Hidden,
     Options,
     Man,
+    PageUp,
+    PageDown,
+    First,
+    Last,
+    Parent,
+    Close,
+    Mark,
+    MarkAll,
+    Pipe,
 }
 
 /// Default bindings. They avoid readline's alt keys (alt+b, alt+f, alt+.,
@@ -272,6 +281,15 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("hidden", "a", "show / hide dotfiles (ls -a)"),
     b("options", "o", "options window"),
     b("man", "m", "manual for commander mode"),
+    b("page_up", "pageup", "page up"),
+    b("page_down", "pagedown", "page down"),
+    b("first", "home", "first item"),
+    b("last", "end", "last item"),
+    b("parent", "p", "parent folder (cd ..)"),
+    b("close", "q", "close the file view / window"),
+    b("mark", "space", "mark / unmark the item (for pipe)"),
+    b("mark_all", "*", "mark all / clear marks"),
+    b("pipe", "|", "pipe the marked (or selected) paths into a command"),
 ];
 
 const fn b(id: &'static str, key: &'static str, describe: &'static str) -> crate::modes::Binding {
@@ -293,6 +311,15 @@ impl Action {
             "hidden" => Action::Hidden,
             "options" => Action::Options,
             "man" => Action::Man,
+            "page_up" => Action::PageUp,
+            "page_down" => Action::PageDown,
+            "first" => Action::First,
+            "last" => Action::Last,
+            "parent" => Action::Parent,
+            "close" => Action::Close,
+            "mark" => Action::Mark,
+            "mark_all" => Action::MarkAll,
+            "pipe" => Action::Pipe,
             _ => return None,
         })
     }
@@ -315,6 +342,8 @@ pub enum Effect {
     Cd(PathBuf),
     /// Hand a file to the desktop's player/opener (video, audio).
     External(PathBuf),
+    /// Type this command line into the shell (pipe).
+    Run(String),
 }
 
 #[derive(Debug, Default)]
@@ -336,6 +365,13 @@ pub struct Commander {
     pub overlay: Option<Overlay>,
     /// Scroll of the man page / text preview.
     pub overlay_scroll: usize,
+    /// Items per page (set by the view each frame).
+    pub page: usize,
+    /// Marked paths (multi-select for pipe).
+    pub marks: std::collections::BTreeSet<PathBuf>,
+    /// The pipe prompt has focus; its text.
+    pub piping: bool,
+    pub pipe_cmd: String,
 }
 
 impl Commander {
@@ -349,6 +385,8 @@ impl Commander {
         self.filter.clear();
         self.overlay = None;
         self.overlay_scroll = 0;
+        self.piping = false;
+        self.pipe_cmd.clear();
     }
 
     /// Follow the shell to `dir`; re-list when it, its mtime or the flags change.
@@ -363,6 +401,7 @@ impl Commander {
             self.selected = 0;
             self.scroll = 0;
             self.filter.clear();
+            self.marks.clear();
         }
         match list_dir(&dir, &self.flags) {
             Ok(v) => {
@@ -401,6 +440,48 @@ impl Commander {
             self.scroll = self.selected;
         } else if self.selected >= self.scroll + rows {
             self.scroll = self.selected + 1 - rows;
+        }
+    }
+
+    /// Typed text while the pipe prompt has focus: Enter runs, Esc cancels.
+    pub fn pipe_key(&mut self, bytes: &[u8]) -> Option<Effect> {
+        if !self.piping {
+            return None;
+        }
+        match bytes {
+            b"\r" => {
+                self.piping = false;
+                let cmd = std::mem::take(&mut self.pipe_cmd);
+                if cmd.trim().is_empty() {
+                    return Some(Effect::None);
+                }
+                return Some(Effect::Run(pipe_line(&self.pipe_paths(), &cmd)));
+            }
+            b"\x1b" => {
+                self.piping = false;
+                self.pipe_cmd.clear();
+            }
+            b"\x7f" | b"\x08" => {
+                self.pipe_cmd.pop();
+            }
+            _ => {
+                if let Ok(t) = std::str::from_utf8(bytes)
+                    && !t.chars().any(char::is_control)
+                {
+                    self.pipe_cmd.push_str(t);
+                }
+            }
+        }
+        Some(Effect::None)
+    }
+
+    /// Marked paths in listing order, else the selected one.
+    pub fn pipe_paths(&self) -> Vec<PathBuf> {
+        if self.marks.is_empty() {
+            self.selected_entry().map(|e| e.path.clone()).into_iter().collect()
+        } else {
+            let v: Vec<PathBuf> = self.entries.iter().filter(|e| self.marks.contains(&e.path)).map(|e| e.path.clone()).collect();
+            v
         }
     }
 
@@ -453,6 +534,41 @@ impl Commander {
                 self.overlay_scroll = 0;
             }
             Action::Open => return self.open_selected(),
+            Action::PageUp => self.selected = self.selected.saturating_sub(self.page.max(1)),
+            Action::PageDown => self.selected = (self.selected + self.page.max(1)).min(n.saturating_sub(1)),
+            Action::First => self.selected = 0,
+            Action::Last => self.selected = n.saturating_sub(1),
+            Action::Parent => {
+                if let Some(p) = self.cwd.as_ref().and_then(|d| d.parent()) {
+                    return Effect::Cd(p.to_path_buf());
+                }
+            }
+            Action::Close => {
+                self.overlay = None;
+                self.piping = false;
+            }
+            Action::Mark => {
+                if let Some(e) = self.selected_entry().filter(|e| e.name != "." && e.name != "..").map(|e| e.path.clone())
+                    && !self.marks.remove(&e)
+                {
+                    self.marks.insert(e);
+                }
+                if self.view != View::Grid || per_row == 1 {
+                    self.selected = (self.selected + 1).min(n.saturating_sub(1));
+                }
+            }
+            Action::MarkAll => {
+                if self.marks.is_empty() {
+                    let all: Vec<PathBuf> = self.visible().iter().filter(|e| e.name != "." && e.name != "..").map(|e| e.path.clone()).collect();
+                    self.marks.extend(all);
+                } else {
+                    self.marks.clear();
+                }
+            }
+            Action::Pipe => {
+                self.piping = !self.piping;
+                self.searching = false;
+            }
         }
         self.clamp();
         Effect::None
@@ -483,6 +599,17 @@ impl Commander {
         };
         vis[range].iter().filter(|e| e.kind == Kind::Image).map(|e| e.path.clone()).collect()
     }
+}
+
+/// POSIX single-quoting (`'` becomes `'\\''`).
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// `printf '%s\n' 'a' 'b' | cmd`, with Ctrl+U first and Enter last.
+pub fn pipe_line(paths: &[PathBuf], cmd: &str) -> String {
+    let args: Vec<String> = paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect();
+    format!("\x15printf '%s\\n' {} | {}\r", args.join(" "), cmd.trim())
 }
 
 /// The manual shown by the mode's `man` button.
@@ -649,5 +776,70 @@ mod tests {
         }
         let k = crate::modes::Keymap::new(BINDINGS);
         assert!(manual(&k).iter().any(|l| l.contains("alt+t") && l.contains("switch view")));
+    }
+
+    #[test]
+    fn paging_parent_marks_and_pipe() {
+        let t = tree();
+        let mut c = Commander::new();
+        c.set_cwd(Some(t.path().to_path_buf()));
+        c.page = 3;
+        c.apply(Action::PageDown, 1);
+        assert_eq!(c.selected, 3);
+        c.apply(Action::Last, 1);
+        assert_eq!(c.selected, 6);
+        c.apply(Action::PageUp, 1);
+        assert_eq!(c.selected, 3);
+        c.apply(Action::First, 1);
+        assert_eq!(c.selected, 0);
+        assert_eq!(c.apply(Action::Parent, 1), Effect::Cd(t.path().parent().unwrap().to_path_buf()));
+        // No marks: the selection is piped.
+        c.selected = 3;
+        c.apply(Action::Pipe, 1);
+        for b in [&b"w"[..], b"c", b" ", b"-", b"l"] {
+            c.pipe_key(b);
+        }
+        let Some(Effect::Run(line)) = c.pipe_key(b"\r") else { panic!() };
+        assert_eq!(line, format!("\x15printf '%s\\n' '{}' | wc -l\r", t.path().join("a.txt").display()));
+        // Marks: several files, in listing order; . and .. are never marked.
+        c.selected = 0;
+        c.apply(Action::Mark, 1);
+        assert!(c.marks.is_empty());
+        c.selected = 4;
+        c.apply(Action::Mark, 1);
+        c.selected = 3;
+        c.apply(Action::Mark, 1);
+        assert_eq!(c.pipe_paths(), [t.path().join("a.txt"), t.path().join("b.png")]);
+        c.apply(Action::MarkAll, 1);
+        assert!(c.marks.is_empty(), "mark-all with marks clears them");
+        c.apply(Action::MarkAll, 1);
+        assert_eq!(c.marks.len(), 5);
+        assert_eq!(shell_quote("it's"), r"'it'\''s'");
+        c.apply(Action::Pipe, 1);
+        c.pipe_key(b"x");
+        assert_eq!(c.pipe_key(b"\x1b"), Some(Effect::None));
+        assert!(!c.piping && c.pipe_cmd.is_empty());
+        c.set_cwd(Some(t.path().join("sub")));
+        assert!(c.marks.is_empty(), "marks are per folder");
+    }
+
+    #[test]
+    fn grid_moves_in_2d_and_carousel_by_item() {
+        let t = tree();
+        let mut c = Commander::new();
+        c.set_cwd(Some(t.path().to_path_buf()));
+        c.view = View::Grid;
+        c.apply(Action::Right, 3);
+        c.apply(Action::Down, 3);
+        assert_eq!(c.selected, 4);
+        c.apply(Action::Left, 3);
+        c.apply(Action::Up, 3);
+        assert_eq!(c.selected, 0);
+        c.view = View::Carousel;
+        c.apply(Action::Right, 3);
+        c.apply(Action::Right, 3);
+        assert_eq!(c.selected, 2);
+        c.apply(Action::Left, 3);
+        assert_eq!(c.selected, 1);
     }
 }

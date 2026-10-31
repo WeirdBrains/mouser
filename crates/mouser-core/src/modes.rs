@@ -17,7 +17,8 @@ use std::path::PathBuf;
 pub struct Binding {
     /// Action id the mode receives (also the `modes.toml` key).
     pub id: &'static str,
-    /// `t`, `up`, `down`, `left`, `right` or `enter`.
+    /// A character, or `up`, `down`, `left`, `right`, `enter`, `pageup`,
+    /// `pagedown`, `home`, `end`, `space`.
     pub key: &'static str,
     pub describe: &'static str,
 }
@@ -101,6 +102,11 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         "right" => vec![b"\x1b[1;3C".to_vec(), b"\x1b\x1b[C".to_vec()],
         "left" => vec![b"\x1b[1;3D".to_vec(), b"\x1b\x1b[D".to_vec()],
         "enter" => vec![b"\x1b\r".to_vec()],
+        "pageup" => vec![b"\x1b[5;3~".to_vec(), b"\x1b\x1b[5~".to_vec()],
+        "pagedown" => vec![b"\x1b[6;3~".to_vec(), b"\x1b\x1b[6~".to_vec()],
+        "home" => vec![b"\x1b[1;3H".to_vec(), b"\x1b\x1b[H".to_vec(), b"\x1b\x1b[1~".to_vec()],
+        "end" => vec![b"\x1b[1;3F".to_vec(), b"\x1b\x1b[F".to_vec(), b"\x1b\x1b[4~".to_vec()],
+        "space" => vec![b"\x1b ".to_vec()],
         _ => {
             let mut c = k.chars();
             let ch = c.next()?;

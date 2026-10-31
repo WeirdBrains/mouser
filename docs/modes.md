@@ -76,15 +76,29 @@ buttons; a search field filters the folder as you type.
 
 | key | action |
 | --- | --- |
-| alt+t | switch view: list, grid, carousel |
-| alt+s | search this folder (type, Enter keeps the filter, Esc clears it) |
-| alt+↑ / alt+↓ | previous / next row (scrolls the file view) |
-| alt+← / alt+→ | previous / next item |
-| alt+Enter | open: a folder is `cd`'d into (typed into the shell, after Ctrl+U), a video or audio file goes to the desktop opener (`xdg-open`, `open` on macOS), anything else opens the full-width file view (image or text) |
-| alt+z / alt+x | larger / smaller grid tiles |
-| alt+a | show / hide dotfiles (`ls -a`) |
-| alt+o | options window (view, tile size, `-a`, `-h`, sort by name / `-t` / `-S`, `-r`) |
-| alt+m | the manual |
+| key (alt+) | list | grid | carousel |
+| --- | --- | --- | --- |
+| t | switch view: list → grid → carousel | | |
+| ↑ / ↓ | previous / next row | row above / below (follows the wrap) | previous / next item |
+| ← / → | previous / next item | previous / next tile | previous / next item |
+| PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
+| Home / End | first / last | first / last | first / last |
+| p | parent folder (`cd ..`) | same | same |
+| Enter | open: a folder is `cd`'d into, video/audio go to the desktop opener (`xdg-open`, `open` on macOS), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
+| q (or Esc) | close the file view / window | same | same |
+| s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
+| space | mark / unmark the item (then moves on in list and carousel) | same | same |
+| * | mark all / clear marks | same | same |
+| \| | pipe: a prompt in the view; Enter types `printf '%s\n' <paths> \| <cmd>` into the shell (after Ctrl+U), so the output lands in the shell | same | same |
+| z / x | | larger / smaller tiles | |
+| a | dotfiles on/off (`ls -a`) | same | same |
+| o / m | options window / manual | same | same |
+
+Mouse in every view: a click selects, a double-click (400 ms) opens, the wheel moves the
+selection (it scrolls the file view and the manual). The selection is highlighted and
+the view scrolls to keep it on screen. Marks show as `*` and as a count in the header.
+Pipe takes the marked paths in listing order, or the selected path when nothing is
+marked; paths are single-quoted (`'` becomes `'\''`). Marks are per folder.
 
 The defaults avoid readline's alt keys except `alt+t` (transpose-words, from
 MODES.md), which commander takes while it is on. Clicks: a click selects an item, a

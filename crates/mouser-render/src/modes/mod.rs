@@ -269,6 +269,7 @@ impl Host {
             None => lines.push(("no mode".into(), String::new())),
         }
         lines.push((String::new(), String::new()));
+        lines.push(("mouse".into(), "click selects, double-click opens, wheel moves".into()));
         lines.push(("esc : <key> Enter".into(), "switch mode (its own key again: modes off)".into()));
         lines.push(("ctrl+shift+k".into(), "this window".into()));
         lines.push(("ctrl+shift+m".into(), "modes".into()));
