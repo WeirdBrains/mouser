@@ -1,0 +1,8 @@
+# makepkg output
+work/
+*/src/
+*/pkg/
+mouser-git/mouser/
+*.pkg.tar.zst
+*.tar.gz
+*.log

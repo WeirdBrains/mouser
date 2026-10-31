@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 Added:
+- Arch packaging: AUR-ready `mouser-git` (source) and `mouser-bin` (release binary) PKGBUILDs with `.SRCINFO` in `packaging/arch/`; both install the desktop entry, hicolor icons, metainfo and the compiled terminfo, and replace each other and older `mouser-bin` installs; the release workflow updates the `mouser-bin` checksums after publishing
 - Run a command: `mouser -e CMD ARGS...` and `mouser -- CMD ARGS...`, plus `--working-directory`/`--dir`, `--title`/`-T`, `--class`/`--app-id`, `--hold` and `--version`; the desktop entry declares them for xdg-terminal-exec (`X-TerminalArg*`), so Mouser works as the default terminal on Omarchy
 - Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
 - Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
