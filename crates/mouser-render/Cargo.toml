@@ -20,3 +20,8 @@ image.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+# Wayland clipboard and primary selection as the focused client (no wl-copy needed).
+smithay-clipboard = "0.7.3"
+raw-window-handle = "0.6"

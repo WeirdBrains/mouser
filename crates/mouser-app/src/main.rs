@@ -699,6 +699,7 @@ fn main() -> Result<()> {
         on_select: Some({
             let parser = parser.clone();
             Arc::new(move |ev: mouser_render::SelectEvent| {
+                log::debug!("select {ev:?}");
                 let Some(session) = parser.session() else { return };
                 let p = session.parser.lock().unwrap();
                 let text = select::handle(&p, &mut session.selection.lock().unwrap(), ev);
@@ -951,6 +952,9 @@ fn paste_commands(primary: bool) -> Vec<(&'static str, Vec<&'static str>)> {
 
 fn write_clip(text: &str, primary: bool) {
     use std::process::{Command, Stdio};
+    if mouser_render::clipboard::store(text, primary) {
+        return;
+    }
     for (cmd, args) in copy_commands(primary) {
         if let Ok(mut c) = Command::new(cmd).args(&args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
             if let Some(mut stdin) = c.stdin.take() {
@@ -965,6 +969,9 @@ fn write_clip(text: &str, primary: bool) {
 }
 
 fn read_clip(primary: bool) -> Option<String> {
+    if let Some(t) = mouser_render::clipboard::load(primary) {
+        return t;
+    }
     for (cmd, args) in paste_commands(primary) {
         if let Ok(out) = std::process::Command::new(cmd).args(&args).stderr(std::process::Stdio::null()).output() {
             return out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string());
