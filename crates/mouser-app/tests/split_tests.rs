@@ -184,3 +184,17 @@ fn the_server_ends_with_its_last_session() {
         std::thread::sleep(Duration::from_millis(50));
     }
 }
+
+#[test]
+#[serial]
+fn the_ui_closes_when_the_server_dies() {
+    let mut s = start(tempfile::tempdir().unwrap(), &[]);
+    let a = wait_for(&s.dump, "the UI", |d| d.shell_pid.is_some());
+    s.child.kill().unwrap();
+    s.child.wait().unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    while alive(a.ui_pid) {
+        assert!(Instant::now() < end, "UI {} still running without its server", a.ui_pid);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}

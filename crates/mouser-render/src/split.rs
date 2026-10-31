@@ -434,6 +434,12 @@ pub fn serve(renderer: Renderer, hooks: RenderHooks) -> Result<()> {
 
 // ---------------------------------------------------------------- UI
 
+/// The server ended (it was killed, or quit): close the window now.
+fn server_gone() -> ! {
+    mouser_core::engines::clear_own_sentinels();
+    std::process::exit(0)
+}
+
 struct Client {
     io: Mutex<(BufReader<UnixStream>, UnixStream)>,
     images: Mutex<HashMap<u64, Arc<Vec<u8>>>>,
@@ -445,10 +451,7 @@ impl Client {
         let (r, w) = &mut *g;
         match send(w, &c).and_then(|_| recv(r)) {
             Ok(v) => v,
-            Err(_) => {
-                // The server is gone: nothing left to draw.
-                std::process::exit(0);
-            }
+            Err(_) => server_gone(),
         }
     }
 }
@@ -494,6 +497,7 @@ pub fn ui_main() -> Result<()> {
                     break;
                 }
             }
+            server_gone();
         })?;
     }
     if std::env::var("MOUSER_UI").is_ok_and(|v| v == "headless") {
