@@ -305,6 +305,25 @@ impl<W: Write> TerminalParser<W> {
         self.flush_scrollback();
     }
 
+    /// Whether a graphics timer is needed: a pending chunked upload in either
+    /// protocol or a running Kitty animation.
+    pub fn graphics_timers_pending(&self) -> bool {
+        self.fuzzball.upload_pending() || self.kitty_gfx.upload_pending() || self.kitty_gfx.next_tick().is_some()
+    }
+
+    /// Run graphics timers at `now`: expire idle uploads and advance Kitty
+    /// animations (bumping `graphics_generation` when a frame changes).
+    /// Returns when to call again.
+    pub fn graphics_timers(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let a = self.fuzzball.expire_upload(now);
+        let b = self.kitty_gfx.expire_upload(now);
+        let (changed, c) = self.kitty_gfx.tick(now);
+        if changed {
+            self.graphics_generation += 1;
+        }
+        [a, b, c].into_iter().flatten().min()
+    }
+
     /// Whether either graphics protocol has placements.
     fn has_placements(&self) -> bool {
         !self.fuzzball.gfx.placements.is_empty() || !self.kitty_gfx.gfx.placements.is_empty()
