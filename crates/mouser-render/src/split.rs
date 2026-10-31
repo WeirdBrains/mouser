@@ -139,9 +139,9 @@ pub fn set_ui_command(program: PathBuf, args: Vec<String>) {
 }
 
 /// Whether this run splits sessions and UI (Unix with a UI command, unless
-/// `MOUSER_SPLIT=0`).
+/// `MOUSER_PROC_FORK=0`).
 pub fn enabled() -> bool {
-    cfg!(unix) && UI_COMMAND.get().is_some() && std::env::var("MOUSER_SPLIT").map_or(true, |v| v != "0")
+    cfg!(unix) && UI_COMMAND.get().is_some() && std::env::var("MOUSER_PROC_FORK").map_or(true, |v| v != "0")
 }
 
 // ---------------------------------------------------------------- server

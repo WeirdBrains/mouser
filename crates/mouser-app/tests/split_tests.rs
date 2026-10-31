@@ -48,7 +48,7 @@ fn start(home: tempfile::TempDir, env: &[(&str, &str)]) -> Server {
         .env_remove("MOUSER_ENGINE")
         .env_remove("MOUSER_TEST_CRASH_ENGINE")
         .env_remove("MOUSER_RENDERER")
-        .env_remove("MOUSER_SPLIT");
+        .env_remove("MOUSER_PROC_FORK");
     for (k, v) in env {
         cmd.env(k, v);
     }
