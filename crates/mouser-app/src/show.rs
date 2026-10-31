@@ -244,22 +244,32 @@ pub fn encode_kitty(p: &Payload, id: u32, cols: u32, rows: u32, tmux: bool) -> S
 }
 
 /// Kitty through Unicode placeholders: transmit quietly, create a virtual
-/// placement, then print `rows` lines of `cols` placeholder cells with the image
-/// id (below 2^24) in a true-colour foreground.
+/// placement, then print `rows` lines of `cols` placeholder cells. The id's
+/// low byte goes in a 256-colour foreground (tmux turns true colour into 256
+/// colours for terminals it does not know take RGB) and its high byte in the
+/// third diacritic; use [`placeholder_id`] ids.
 pub fn encode_placeholders(p: &Payload, id: u32, cols: u32, rows: u32, tmux: bool) -> String {
     use mouser_core::kitty_graphics::{PLACEHOLDER, diacritic};
     let mut out = kitty_upload(p, &format!("a=t,i={id},q=2"), tmux);
     out += &kitty_apc(&format!("a=p,U=1,i={id},c={cols},r={rows},q=2"), "", tmux);
-    let (r, g, b) = ((id >> 16) & 0xff, (id >> 8) & 0xff, id & 0xff);
+    let (lo, hi) = (id & 0xff, id >> 24);
     for row in 0..rows {
-        out += &format!("\x1b[38;2;{r};{g};{b}m");
+        out += &format!("\x1b[38;5;{lo}m");
         for col in 0..cols {
             out.push(PLACEHOLDER);
-            out.extend(diacritic(row).into_iter().chain(diacritic(col)));
+            out.extend(diacritic(row).into_iter().chain(diacritic(col)).chain(diacritic(hi)));
         }
         out += "\x1b[39m\r\n";
     }
     out
+}
+
+/// An id placeholders can carry through a 256-colour foreground: low byte
+/// 1-255, high byte 0-255, nothing in between.
+pub fn placeholder_id(seed: u32) -> u32 {
+    let lo = 1 + seed % 255;
+    let hi = (seed / 255) % 256;
+    hi << 24 | lo
 }
 
 /// Bytes that upload `p` as image `id` in chunks of at most `max_chunk` base64
@@ -411,7 +421,7 @@ pub fn run(files: &[String], o: &Options) -> Result<()> {
             let bytes = match t.proto {
                 Proto::Fuzzball => encode(&p, id, cols, rows, &t),
                 Proto::Kitty => encode_kitty(&p, id, cols, rows, tmux),
-                Proto::KittyPlaceholders => encode_placeholders(&p, id, cols, rows, tmux),
+                Proto::KittyPlaceholders => encode_placeholders(&p, placeholder_id(id), cols, rows, tmux),
             };
             tty.out.write_all(bytes.as_bytes())?;
             let r = match t.proto {
@@ -550,11 +560,14 @@ mod tests {
         let s = encode_kitty(&big, 3, 4, 4, false);
         assert_eq!(s.matches("\x1b_G").count(), 22_000usize.div_ceil(4096).max(6));
         assert!(s.starts_with("\x1b_Ga=T,i=3,") && s.contains("\x1b_Gm=1;") && s.contains("\x1b_Gm=0;"));
-        let ph = encode_placeholders(&p, 0x010203, 2, 2, false);
-        assert!(ph.contains("\x1b_Ga=t,i=66051,q=2,f=32,s=1,v=1,m=0;"));
-        assert!(ph.contains("\x1b_Ga=p,U=1,i=66051,c=2,r=2,q=2\x1b\\"));
-        assert!(ph.contains("\x1b[38;2;1;2;3m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\u{305}\u{30D}\x1b[39m\r\n"));
-        assert!(ph.ends_with("\u{10EEEE}\u{30D}\u{305}\u{10EEEE}\u{30D}\u{30D}\x1b[39m\r\n"));
+        let id = placeholder_id(255 * 2 + 4);
+        assert_eq!(id, 2 << 24 | 5);
+        let ph = encode_placeholders(&p, id, 2, 2, false);
+        assert!(ph.contains(&format!("\x1b_Ga=t,i={id},q=2,f=32,s=1,v=1,m=0;")));
+        assert!(ph.contains(&format!("\x1b_Ga=p,U=1,i={id},c=2,r=2,q=2\x1b\\")));
+        assert!(ph.contains("\x1b[38;5;5m\u{10EEEE}\u{305}\u{305}\u{30E}\u{10EEEE}\u{305}\u{30D}\u{30E}\x1b[39m\r\n"));
+        assert!(ph.ends_with("\u{10EEEE}\u{30D}\u{305}\u{30E}\u{10EEEE}\u{30D}\u{30D}\u{30E}\x1b[39m\r\n"));
+        assert!((0..100_000).map(placeholder_id).all(|i| i & 0xff != 0 && i & 0x00ff_ff00 == 0));
     }
 
     #[test]

@@ -35,6 +35,8 @@ pub struct Session {
     pub closed: AtomicBool,
     /// A timer is waiting to expire an abandoned Fuzzball upload.
     upload_timer: AtomicBool,
+    /// Wakes the graphics timer early when new timer work arrives.
+    timer_kick: (Mutex<bool>, std::sync::Condvar),
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -66,6 +68,7 @@ impl Session {
             exited: Mutex::new(None),
             closed: AtomicBool::new(false),
             upload_timer: AtomicBool::new(false),
+            timer_kick: (Mutex::new(false), std::sync::Condvar::new()),
         })
     }
 
@@ -124,7 +127,13 @@ impl Session {
     /// `UPLOAD_TIMEOUT` and advances animation frames, waking a redraw when a
     /// frame changes.
     fn watch_graphics(self: &Arc<Self>, wake: fn()) {
-        if !self.parser.lock().unwrap().graphics_timers_pending() || self.upload_timer.swap(true, Ordering::AcqRel) {
+        if !self.parser.lock().unwrap().graphics_timers_pending() {
+            return;
+        }
+        if self.upload_timer.swap(true, Ordering::AcqRel) {
+            // Already running, maybe asleep until a later deadline: recheck now.
+            *self.timer_kick.0.lock().unwrap() = true;
+            self.timer_kick.1.notify_one();
             return;
         }
         let me = self.clone();
@@ -142,10 +151,17 @@ impl Session {
                 if me.closed.load(Ordering::Acquire) {
                     break;
                 }
-                match next {
-                    Some(t) => std::thread::sleep(t.saturating_duration_since(std::time::Instant::now())),
-                    None => break,
+                let Some(t) = next else { break };
+                let (lock, cv) = &me.timer_kick;
+                let mut kicked = lock.lock().unwrap();
+                while !*kicked {
+                    let left = t.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    kicked = cv.wait_timeout(kicked, left).unwrap().0;
                 }
+                *kicked = false;
             }
             me.upload_timer.store(false, Ordering::Release);
             // Work may have started between the last check and clearing the flag.
