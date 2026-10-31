@@ -20,6 +20,9 @@ pub const SURFACE_XLIB: u32 = 2;
 pub const SURFACE_XCB: u32 = 3;
 pub const SURFACE_APPKIT: u32 = 4;
 pub const SURFACE_WIN32: u32 = 5;
+/// Offscreen: `window` points to a [`MouserPixels`]; `draw` fills it and Mouser
+/// presents it. Used when the engine runs in Mouser's engine host process.
+pub const SURFACE_PIXELS: u32 = 6;
 
 pub const OP_RECT: u32 = 0;
 pub const OP_GLYPH: u32 = 1;
@@ -38,6 +41,18 @@ pub struct MouserSurface {
     pub kind: u32,
     pub display: *mut c_void,
     pub window: *mut c_void,
+}
+
+/// The pixel buffer for [`SURFACE_PIXELS`]: `0x00RRGGBB` per pixel, `stride`
+/// pixels per row. Mouser may change `data`/`width`/`height` between calls (it
+/// calls `resize` first); read them in every `draw`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MouserPixels {
+    pub data: *mut u32,
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
 }
 
 /// Solid rectangle; colours are 0xRRGGBB.
@@ -180,6 +195,7 @@ mod tests {
             assert_eq!(std::mem::size_of::<MouserSurface>(), 24);
             assert_eq!(std::mem::size_of::<MouserFrame>(), 96);
             assert_eq!(std::mem::size_of::<MouserEngineV1>(), 48);
+            assert_eq!(std::mem::size_of::<MouserPixels>(), 24);
         }
     }
 
