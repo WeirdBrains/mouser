@@ -112,7 +112,7 @@ fn state_text(name: &str) -> String {
 fn list(out: &mut dyn Write) -> Result<()> {
     let order = engines::priority();
     let pos = |n: &str| order.iter().position(|o| o == n).map(|i| (i + 1).to_string()).unwrap_or_else(|| "-".into());
-    let first = order.first().cloned().unwrap_or_default();
+    let first = mouser_render::engine::first_usable(&order).unwrap_or_default();
     let mark = |n: &str| if n == first { "*" } else { " " };
     writeln!(out, "  {:<4} {:<12} {:<10} {:<8} details", "prio", "engine", "version", "state")?;
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
@@ -138,7 +138,7 @@ fn list(out: &mut dyn Write) -> Result<()> {
         }
     }
     let src = if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) { "MOUSER_ENGINE" } else { "preferences" };
-    writeln!(out, "order ({src}): {}; * = tried first; skipped/failed ones are passed over", order.join(" > "))?;
+    writeln!(out, "order ({src}): {}; * = what new windows use (skipped ones are passed over)", order.join(" > "))?;
     Ok(())
 }
 

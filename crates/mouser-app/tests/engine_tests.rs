@@ -27,6 +27,16 @@ fn example_lib() -> PathBuf {
     .clone()
 }
 
+/// The marker an earlier Mouser process leaves when an engine crashed it.
+fn crashed_before(name: &str) {
+    std::fs::create_dir_all(engines::dir()).unwrap();
+    std::fs::write(
+        engines::dir().join(format!(".starting-{name}")),
+        format!("pid=4000000000\nstarted={}\n", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs()),
+    )
+    .unwrap();
+}
+
 struct Home(tempfile::TempDir);
 
 fn home() -> Home {
@@ -126,7 +136,7 @@ fn load_failures_fall_back() {
     unsafe { std::env::remove_var("MOUSER_FLAT_FAIL") };
 
     // A crash during the last start (sentinel left behind) skips the engine.
-    engines::set_sentinel("flat");
+    crashed_before("flat");
     let e = mouser_render::engine::load_installed("flat").err().unwrap();
     assert!(e.to_string().contains("crashed"), "{e}");
     assert!(cli(Action::List).unwrap().contains("mouser engine unskip flat"));
@@ -155,9 +165,10 @@ fn list_states_unskip_and_restored_engine_is_used() {
     assert!(list.lines().any(|l| l.starts_with("* 1") && l.contains("flat") && l.contains(" ok ")), "{list}");
 
     // Crashed while starting: skipped, with when and the restore command.
-    engines::set_sentinel("flat");
+    crashed_before("flat");
     let list = cli(Action::List).unwrap();
-    assert!(list.lines().any(|l| l.starts_with("* 1") && l.contains("flat") && l.contains("skipped")), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("  1") && l.contains("flat") && l.contains("skipped")), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("* 2") && l.contains("mouser")), "the engine actually used is marked: {list}");
     assert!(list.contains("crashed Mouser while starting") && list.contains("s ago"), "{list}");
     assert!(list.contains("restore: mouser engine unskip flat"), "{list}");
     let e = mouser_render::engine::skip_check("flat").unwrap_err();
@@ -186,7 +197,7 @@ fn list_states_unskip_and_restored_engine_is_used() {
 
     // Unskip does not select; --all clears everything.
     cli(Action::Use("mouser".into())).unwrap();
-    engines::set_sentinel("flat");
+    crashed_before("flat");
     let out = cli(Action::Unskip(None)).unwrap();
     assert!(out.contains("restored: skia, flat"), "{out}");
     assert_eq!(engines::chosen(), "mouser");
@@ -220,7 +231,7 @@ fn cli_priority_and_move_keep_mouser() {
     assert_eq!(mouser_render::engine::after(&order, "skia"), ["flat", "mouser"]);
     assert_eq!(mouser_render::engine::after(&order, "mouser"), ["mouser"]);
     // A skipped engine is passed over by the walk and listed as such.
-    engines::set_sentinel("skia");
+    crashed_before("skia");
     assert!(mouser_render::engine::skip_check("skia").is_err());
     assert!(mouser_render::engine::skip_check("flat").is_ok());
     // What a running window switches to when the order changes.

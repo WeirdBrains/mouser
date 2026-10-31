@@ -67,10 +67,8 @@ size. Custom engines see the same frame through the C ABI below
   message saying why.
 - A draw error at run time switches the window to the next engine after it in the order
   (mouser at the latest), with a status-bar message.
-- **No hot swap in v1**: `mouser engine use NAME` changes the preference; new windows use
-  it, open windows keep their engine until restarted. Swapping a live surface between
-  APIs (wgpu, GL) is possible but needs careful surface teardown on Wayland; it can be
-  added later without changing engines.
+- **Live switching**: running windows switch engine in place when the order (or a
+  skip mark) changes; see §7.
 
 ## 4. Custom engines: C ABI dynamic libraries
 
@@ -280,17 +278,40 @@ The pipe carries one frame of ops (tens of KB) and returns width x height x 4 by
 that surface and is passed over. Windows has no engine host yet (custom engines stay
 in-process there).
 
+### As built
+
+- Host: `mouser-render/src/engine_host.rs` (`serve`, `HostClient`, `HostedEngine`,
+  `EngineCrashed`), started as `mouser __engine-host <library> <name>`. A watchdog kills
+  a host whose frame takes over 5 s (a hang counts as a crash). On Windows/without the
+  `mouser` binary custom engines stay in-process with the crash marker.
+- A crash or panic writes the skip mark with the reason (`engines::mark_skipped`), e.g.
+  `engine flat crashed in its engine host (signal 6)`, shown by `mouser engine list`;
+  the window walks on to the next engine of the order at once.
+- The start marker of an engine that is still starting in this process is not a crash
+  (it holds the pid); a window that switches away before 3 frames removes it.
+- Live test (alien-blue): a shell printing its pid and a tick each second kept the same
+  pid and kept ticking through mouser -> skia -> flat (`mouser engine use`/`priority`
+  from another terminal), an injected crash of flat (`MOUSER_FLAT_CRASH_AT`) -> skia
+  with the status `engine flat crashed in its engine host (signal 6); your shells are
+  untouched; skipped until mouser engine unskip flat`, and `mouser engine unskip flat`
+  -> back to flat. Mouser itself never restarted.
+
+Limits: a native crash in the GPU driver, wgpu or Skia's C++ (built-ins are in-process)
+still ends Mouser (next start skips that engine); an engine host shows its output via
+softbuffer (one copy of each frame); the selection is kept by switching (it is core
+state) but nothing is preserved across a whole-Mouser crash.
+
 ## 8. Status and gaps
 
 
 Measured on alien-blue (RTX 3060, Hyprland, 1100x760, the multi-image screen,
-~240 drag-resize steps): mouser 57 fps (frame p95 8.9 ms), skia 59–60 fps (p95
-12.8–13.1 ms), flat 59 fps (p95 11–12 ms). The sweep issues one resize per ~16 ms, so
+~240 drag-resize steps), after isolation: mouser 62–63 fps (frame p95 7.0 ms), skia
+63 fps (p95 12.4–13.4 ms), flat in the engine host 61.7 fps (p95 15 ms). The sweep issues one resize per ~16 ms, so
 ~60 fps is the ceiling of the test. Skia's output matches the CPU reference to a few
 hundred pixels (cursor/rounding); the wgpu engine differs slightly more (its blending
 was already a little different).
 
-Gaps: no URL install (by decision: download, then install the folder); no per-engine options; damage is always the full
-frame; the frame has no text runs or font data (engines can't do their own shaping or
-subpixel text, by design for v1); a crashing custom engine still takes the window down
-(the sentinel only protects the next start).
+Gaps: no URL install (by decision: download, then install the folder); no per-engine
+options; damage is always the full frame; the frame has no text runs or font data
+(engines can't do their own shaping or subpixel text, by design for v1); native crashes
+in built-in engines (see §7).

@@ -187,6 +187,15 @@ struct Guarded {
     frames: u32,
 }
 
+impl Drop for Guarded {
+    fn drop(&mut self) {
+        // Closed or switched away before it counted as started: not a crash.
+        if self.frames < STARTED_AFTER {
+            engines::clear_sentinel(self.inner.name());
+        }
+    }
+}
+
 impl Engine for Guarded {
     fn name(&self) -> &str {
         self.inner.name()

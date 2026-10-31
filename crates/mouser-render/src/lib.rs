@@ -285,8 +285,6 @@ impl Painter {
 
     /// The current engine broke: mark it, move to the next one in the order.
     fn fall_back(&mut self, name: &str, why: String, width: u32, height: u32) {
-        log::warn!("{why}");
-        eprintln!("mouser: {why}");
         let Painter::Gpu { engine, window, order, .. } = self else { return };
         let window = window.clone();
         let next = if name == "mouser" { Vec::new() } else { engine::after(order, name) };
