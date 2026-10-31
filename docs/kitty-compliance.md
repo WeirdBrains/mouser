@@ -2,7 +2,7 @@
 
 Mouser supports **only** the Kitty keyboard protocol, as a fallback for applications that do
 not use [Fuzzball keyboard mode](protocol/keyboard.md). Fuzzball wins when both are active.
-Kitty graphics, iTerm2 `OSC 1337` images and the `xterm-kitty` TERM fallback are not supported.
+Kitty graphics is supported as a separate fallback (see `docs/protocol/graphics.md` §7). iTerm2 `OSC 1337` images and the `xterm-kitty` TERM fallback are not supported.
 
 Spec: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>. Tests, one per spec section:
 `crates/mouser-core/tests/kitty_keyboard_spec_tests.rs` (plus `kitty_keyboard_tests.rs`).
