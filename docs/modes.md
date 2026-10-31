@@ -96,9 +96,10 @@ buttons; a search field filters the folder as you type.
 
 **Player.** Video and audio open in commander's own player (MODES.md: "a player will
 appear"). Video frames are decoded by `ffmpeg` to RGBA, fitted to the view's width and
-drawn through Mouser's image path; sound plays through `ffplay -nodisp`. Audio files
-get a minimal view: name, progress bar, time, volume and the keys. Keys (remappable,
-they only act while a player is open; otherwise they go to the shell):
+drawn through Mouser's image path; Mouser plays the sound itself (cpal: ALSA/PipeWire on
+Linux, CoreAudio, WASAPI). Audio files get a minimal view: name, progress bar, time,
+volume and the keys. Keys (remappable, they only act while a player is open; otherwise
+they go to the shell):
 
 | key | |
 | --- | --- |
@@ -107,10 +108,23 @@ they only act while a player is open; otherwise they go to the shell):
 | alt+- / alt+= | volume down / up (10 %) |
 | alt+q or Esc | close |
 
-Nothing is started until a file is opened; playback stops (the helpers are killed) when
-the viewer closes, another file is shown or the mode is left. Pause, seek and volume
-restart the helpers at the current position. Without `ffmpeg`, `ffprobe` and `ffplay` on
-PATH, media falls back to the desktop opener (`xdg-open`, `open` on macOS).
+How it stays in sync: two `ffmpeg` readers of the same file start at the same seek point,
+one for video (`-an`, RGBA at the file's frame rate, each frame stamped with its PTS =
+start + n/fps) and one for audio (`-vn`, f32 at the device rate). The audio output
+callback counts the samples it hands to the device; the clock is start + consumed / rate
+minus the device latency the backend reports. Each drawn frame shows the newest video
+frame whose PTS the clock has reached; late frames are dropped, early ones held. Files
+without audio use a wall clock. Pause silences the output and freezes the clock (the
+readers just wait, nothing restarts); volume is applied to the samples in-process. A seek
+flushes both queues and restarts both readers with `-ss` at the target, so audio and
+video start together. Measured (Linux, 25 fps test file, 70 s plus 7 seeks): video shows
+a frame 20 ms after its PTS on average (half a frame period; max 39 ms after the first
+frame), no drift over the run, about 80 ms from a seek key to the first new frame.
+`MOUSER_PLAYER_LOG=<file>` writes `clock pts` per shown frame and the seek gaps.
+
+Nothing is started until a file is opened; playback stops (the readers are killed) when
+the viewer closes, another file is shown or the mode is left. Without `ffmpeg` and
+`ffprobe` on PATH, media falls back to the desktop opener (`xdg-open`, `open` on macOS).
 
 **What you have typed is kept.** `cd` (open a folder, alt+p) and pipe run without
 losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to

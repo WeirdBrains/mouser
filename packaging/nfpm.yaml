@@ -9,6 +9,8 @@ description: |
   Mouser terminal emulator with chunk-compressed scrollback and Kitty protocol.
 homepage: https://github.com/WeirdBrains/mouser
 license: MIT
+depends:
+  - libasound2
 contents:
   - src: ${BINARY_PATH}
     dst: /usr/bin/mouser
