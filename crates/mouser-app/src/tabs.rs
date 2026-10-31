@@ -105,7 +105,7 @@ impl Session {
                     Ok(0) => break,
                     Ok(n) => {
                         me.feed(&buf[..n]);
-                        me.watch_upload();
+                        me.watch_graphics(wake);
                         wake();
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -119,24 +119,39 @@ impl Session {
         });
     }
 
-    /// While a chunked Fuzzball upload is pending, keep one timer thread that drops
-    /// it once it has been idle for `UPLOAD_TIMEOUT` (frees its buffer).
-    fn watch_upload(self: &Arc<Self>) {
-        if !self.parser.lock().unwrap().fuzzball.upload_pending() || self.upload_timer.swap(true, Ordering::AcqRel) {
+    /// While a chunked upload (Fuzzball or Kitty) is pending or a Kitty
+    /// animation runs, keep one timer thread: it drops uploads idle for
+    /// `UPLOAD_TIMEOUT` and advances animation frames, waking a redraw when a
+    /// frame changes.
+    fn watch_graphics(self: &Arc<Self>, wake: fn()) {
+        if !self.parser.lock().unwrap().graphics_timers_pending() || self.upload_timer.swap(true, Ordering::AcqRel) {
             return;
         }
         let me = self.clone();
         std::thread::spawn(move || {
             loop {
-                let next = me.parser.lock().unwrap().fuzzball.expire_upload(std::time::Instant::now());
+                let (next, changed) = {
+                    let mut p = me.parser.lock().unwrap();
+                    let gen0 = p.graphics_generation;
+                    let next = p.graphics_timers(std::time::Instant::now());
+                    (next, p.graphics_generation != gen0)
+                };
+                if changed {
+                    wake();
+                }
+                if me.closed.load(Ordering::Acquire) {
+                    break;
+                }
                 match next {
                     Some(t) => std::thread::sleep(t.saturating_duration_since(std::time::Instant::now())),
                     None => break,
                 }
             }
             me.upload_timer.store(false, Ordering::Release);
-            // An upload may have started between the last check and clearing the flag.
-            me.watch_upload();
+            // Work may have started between the last check and clearing the flag.
+            if !me.closed.load(Ordering::Acquire) {
+                me.watch_graphics(wake);
+            }
         });
     }
 

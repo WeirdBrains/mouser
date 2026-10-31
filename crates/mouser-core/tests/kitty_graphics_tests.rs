@@ -649,3 +649,19 @@ fn compose_frames() {
     t.feed(b"\x1b_Ga=c,i=1,r=5,c=1\x1b\\");
     assert!(take(&o).contains("ENOENT"));
 }
+
+#[test]
+fn parser_graphics_timers_drive_animation() {
+    let (mut t, _o) = term();
+    assert!(!t.graphics_timers_pending());
+    g(&mut t, "a=T,f=32,s=1,v=1,i=1,C=1", &[1, 0, 0, 255]);
+    g(&mut t, "a=f,i=1,f=32,s=1,v=1,z=20", &[2, 0, 0, 255]);
+    t.feed(b"\x1b_Ga=a,i=1,r=1,z=20\x1b\\\x1b_Ga=a,i=1,s=3\x1b\\");
+    assert!(t.graphics_timers_pending());
+    let gen0 = t.graphics_generation;
+    let next = t.graphics_timers(Instant::now() + Duration::from_millis(30));
+    assert!(next.is_some());
+    assert!(t.graphics_generation > gen0, "a frame change bumps the generation");
+    t.feed(b"\x1b_Ga=a,i=1,s=1\x1b\\");
+    assert!(!t.graphics_timers_pending());
+}
