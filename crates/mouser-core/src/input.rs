@@ -3,7 +3,7 @@
 
 use crate::parser::{Modes, MouseMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -14,14 +14,14 @@ pub enum MouseButton {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MouseKind {
     Press,
     Release,
     Motion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MouseEvent {
     pub kind: MouseKind,
     pub button: MouseButton,

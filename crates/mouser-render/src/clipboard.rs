@@ -51,6 +51,20 @@ mod imp {
     }
 }
 
+type StoreFn = Box<dyn Fn(&str, bool) -> bool + Send + Sync>;
+type LoadFn = Box<dyn Fn(bool) -> Option<Option<String>> + Send + Sync>;
+static REMOTE: std::sync::RwLock<Option<(StoreFn, LoadFn)>> = std::sync::RwLock::new(None);
+
+/// In the session server (no window of its own): route clipboard requests to
+/// the UI process, which owns the Wayland connection (docs/engines.md §8).
+pub fn set_remote(store: StoreFn, load: LoadFn) {
+    *REMOTE.write().unwrap() = Some((store, load));
+}
+
+pub fn clear_remote() {
+    *REMOTE.write().unwrap() = None;
+}
+
 /// Called once the window exists.
 pub fn init(window: &winit::window::Window) {
     imp::init(window)
@@ -59,10 +73,16 @@ pub fn init(window: &winit::window::Window) {
 /// Store `text` in the clipboard or the primary selection; false when this
 /// window has no Wayland clipboard (use another way).
 pub fn store(text: &str, primary: bool) -> bool {
+    if let Some((store, _)) = REMOTE.read().unwrap().as_ref() {
+        return store(text, primary);
+    }
     imp::store(text, primary)
 }
 
 /// `None` when there is no Wayland clipboard; `Some(None)` when it is empty.
 pub fn load(primary: bool) -> Option<Option<String>> {
+    if let Some((_, load)) = REMOTE.read().unwrap().as_ref() {
+        return load(primary);
+    }
     imp::load(primary)
 }

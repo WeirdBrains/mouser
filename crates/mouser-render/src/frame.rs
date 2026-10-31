@@ -38,7 +38,7 @@ impl Frame<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorShape {
     #[default]
     Block,
@@ -58,7 +58,7 @@ pub mod paint {
 }
 
 /// Resolved paint for one cell (colours already themed, inverse/dim applied).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CellPaint {
     pub fg: u32,
     /// Background fill, or `None` for the window background.
@@ -151,7 +151,7 @@ fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line:
 }
 
 /// One image placement to draw, anchored to a grid cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImageDraw {
     /// Unique per image upload (texture cache key).
     pub key: u64,
@@ -406,6 +406,34 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
             let max = ((r.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
             let t: String = text.chars().take(max).collect();
             draw_button(canvas, fonts, *r, &t, mix(panel, accent, 0.12), fg);
+        }
+        if !layout.engines.is_empty() {
+            let t = layout.engines_title;
+            canvas.draw_text(fonts, t.x, t.y + (t.h - cell_h) / 2, ui::ENGINES_TITLE, fg);
+            for e in &layout.engines {
+                let r = e.rect;
+                let line_h = cell_h + 8;
+                let active = e.state == ui::EngineState::Active;
+                let bg = if active { mix(panel, accent, 0.18) } else { mix(panel, fg, 0.05) };
+                canvas.fill_rect(r.x, r.y, r.w, r.h, bg);
+                let label = e.state.label();
+                let lw = label.chars().count() as i32 * fonts.cell_w;
+                let max = ((r.w - lw - 3 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+                let name: String = e.name.chars().take(max).collect();
+                let ty = r.y + (line_h - cell_h) / 2;
+                canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty, &name, if active { accent } else { fg });
+                let state_col = match e.state {
+                    ui::EngineState::Active => accent,
+                    ui::EngineState::Ok => muted,
+                    _ => mix(muted, 0xF7768E, 0.6),
+                };
+                canvas.draw_text(fonts, r.x + r.w - ui::BUTTON_PAD - lw, ty, label, state_col);
+                if let Some(n) = &e.note {
+                    let max = ((r.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+                    let t: String = n.chars().take(max).collect();
+                    canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty + line_h - 6, &t, muted);
+                }
+            }
         }
         let a = layout.appearance_rect;
         if a.w > 0 {

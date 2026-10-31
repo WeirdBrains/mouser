@@ -331,10 +331,25 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+    // UI process of a split window (docs/engines.md §8); not a user command.
+    #[cfg(unix)]
+    if args.get(1).map(String::as_str) == Some("__ui") {
+        if let Err(e) = mouser_render::split::ui_main() {
+            eprintln!("mouser UI: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if cfg!(unix)
         && let Ok(exe) = std::env::current_exe()
     {
-        mouser_render::engine_host::set_host_command(exe, vec!["__engine-host".into()]);
+        mouser_render::engine_host::set_host_command(exe.clone(), vec!["__engine-host".into()]);
+        // /proc/self/exe: the very binary running now, even after an upgrade replaced the file.
+        #[cfg(unix)]
+        {
+            let me = if cfg!(target_os = "linux") { std::path::PathBuf::from("/proc/self/exe") } else { exe };
+            mouser_render::split::set_ui_command(me, vec!["__ui".into()]);
+        }
     }
     let cli = Cli::parse();
     if let Some(Command::Show { files, width, height, fit: _, original, id }) = &cli.command {
@@ -567,6 +582,7 @@ fn main() -> Result<()> {
             if st.ssh.legacy > 0 {
                 ui::add_notice(&mut layout, &ui::Category::Ssh, &format!("Move {} saved to ~/.ssh/config…", st.ssh.legacy), vp.cell_h);
             }
+            ui::add_engines(&mut layout, &engine_rows(), vp.cell_h);
             layout.panel = panel;
             Some(layout)
         })
@@ -579,6 +595,7 @@ fn main() -> Result<()> {
             ui::UiAction::OpenEdit { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_edit(&name),
             ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
             ui::UiAction::Notice => app_state.lock().unwrap().ssh.open_migrate(),
+            ui::UiAction::UseEngine(name) => use_engine(&name),
             ui::UiAction::Connect { category, name } => {
                 let argv = {
                     let st = app_state.lock().unwrap();
@@ -809,6 +826,8 @@ fn main() -> Result<()> {
         set_waker: Some(Arc::new(|w| {
             let _ = WAKER.set(w);
         })),
+        on_engine: Some(Arc::new(|e| *ACTIVE_ENGINE.lock().unwrap() = e)),
+        on_window_size: None,
         // The window closes when the last tab's process has exited.
         should_exit: Some({
             let tabs = tabs.clone();
@@ -834,6 +853,9 @@ fn main() -> Result<()> {
         let s = startup_sidebar(&prefs0, std::env::var("MOUSER_OPEN_SIDEBAR").ok().as_deref());
         (st.sidebar_open, st.sidebar_collapsed, st.sidebar_forced) = (s.open, s.collapsed, s.forced);
     }
+    #[cfg(unix)]
+    let result = if mouser_render::split::enabled() { mouser_render::split::serve(r, hooks) } else { run_renderer(r, hooks) };
+    #[cfg(not(unix))]
     let result = run_renderer(r, hooks);
     // Window closed (by the user or because the shell exited): remember the sidebar.
     {
@@ -1100,6 +1122,44 @@ fn discover_font_families() {
     });
 }
 
+/// Sidebar Engines section: available engines in priority order with state.
+fn engine_rows() -> Vec<(String, ui::EngineState, Option<String>)> {
+    use mouser_core::engines;
+    let active = ACTIVE_ENGINE.lock().unwrap().clone();
+    let mut names: Vec<String> = mouser_render::engine::available_builtins().iter().map(|(n, _)| n.to_string()).collect();
+    names.extend(engines::installed().into_iter().flatten().map(|i| i.manifest.name));
+    let order = engines::priority();
+    names.sort_by_key(|n| order.iter().position(|o| o == n).unwrap_or(usize::MAX));
+    names
+        .into_iter()
+        .map(|n| {
+            let (state, note) = match engines::state(&n) {
+                _ if n == active => (ui::EngineState::Active, None),
+                engines::State::Ok => (ui::EngineState::Ok, None),
+                engines::State::Skipped { reason, .. } => {
+                    (ui::EngineState::Skipped, Some(reason.unwrap_or_else(|| "crashed Mouser while starting".into())))
+                }
+                engines::State::Failed { reason, .. } => (ui::EngineState::Failed, Some(reason)),
+            };
+            (n, state, note)
+        })
+        .collect()
+}
+
+/// A click on an engine row: same as `mouser engine use NAME` (unskip, move
+/// first). The window's preferences watcher then switches it live.
+fn use_engine(name: &str) {
+    match mouser_core::engines::select(name) {
+        Ok(()) => log::info!("sidebar: engine {name} is now first"),
+        Err(e) => log::warn!("sidebar: cannot use engine {name}: {e:#}"),
+    }
+    if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) {
+        log::warn!("MOUSER_ENGINE is set: the window keeps its engine order until restarted without it");
+    }
+}
+
+/// The engine the window draws with now (sidebar engines section).
+static ACTIVE_ENGINE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 static WAKER: std::sync::OnceLock<mouser_render::Waker> = std::sync::OnceLock::new();
 
 /// Ask the renderer for a redraw (from any thread). The event loop sleeps until

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Category {
     Ssh,
     Waypipe,
@@ -8,7 +8,7 @@ pub enum Category {
     X11,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiItem {
     pub name: String,
     pub edit_rect: Rect,
@@ -19,7 +19,7 @@ pub struct UiItem {
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiCategory {
     pub category: Category,
     pub header_rect: Rect,
@@ -27,7 +27,7 @@ pub struct UiCategory {
     pub items: Vec<UiItem>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -41,7 +41,7 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiLayout {
     pub sidebar_rect: Rect,
     pub categories: Vec<UiCategory>,
@@ -58,9 +58,82 @@ pub struct UiLayout {
     pub panel: Option<Panel>,
     /// Optional notice button under the SSH header (e.g. migration offer).
     pub notice: Option<(Rect, String)>,
+    /// "Engines" section above the Appearance button ([`add_engines`]).
+    pub engines: Vec<EngineRow>,
+    pub engines_title: Rect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How an engine shows in the sidebar's Engines section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EngineState {
+    /// This window draws with it.
+    Active,
+    Ok,
+    Skipped,
+    Failed,
+}
+
+impl EngineState {
+    pub fn label(self) -> &'static str {
+        match self {
+            EngineState::Active => "active",
+            EngineState::Ok => "ok",
+            EngineState::Skipped => "skipped",
+            EngineState::Failed => "failed",
+        }
+    }
+}
+
+/// One engine row; a click makes it this window's engine (`mouser engine use`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EngineRow {
+    pub name: String,
+    pub state: EngineState,
+    /// Why it is skipped or failed (drawn as a second, muted line).
+    pub note: Option<String>,
+    pub rect: Rect,
+}
+
+pub const ENGINES_TITLE: &str = "Engines";
+
+/// Place the Engines section (in priority order) at the bottom of an expanded
+/// sidebar, just above the Appearance button; if the connections reach that
+/// far it goes below them and the Appearance button moves down.
+pub fn add_engines(layout: &mut UiLayout, engines: &[(String, EngineState, Option<String>)], cell_h: i32) {
+    if layout.collapsed || layout.sidebar_rect.w == 0 || engines.is_empty() {
+        return;
+    }
+    let line_h = cell_h + 8;
+    let row_h = |n: &Option<String>| if n.is_some() { 2 * line_h - 6 } else { line_h };
+    let total = line_h + 4 + engines.iter().map(|(_, _, n)| row_h(n) + 2).sum::<i32>();
+    let mut content_bottom = layout.collapse_rect.y + layout.collapse_rect.h;
+    for c in &layout.categories {
+        content_bottom = content_bottom.max(c.header_rect.y + c.header_rect.h);
+        for i in &c.items {
+            content_bottom = content_bottom.max(i.name_rect.y + i.name_rect.h);
+        }
+    }
+    if let Some((r, _)) = &layout.notice {
+        content_bottom = content_bottom.max(r.y + r.h);
+    }
+    let a = layout.appearance_rect;
+    let top = (a.y - 12 - total).max(content_bottom + 12);
+    let x = a.x;
+    let w = (layout.sidebar_rect.x + layout.sidebar_rect.w - SIDEBAR_MARGIN - x).max(0);
+    layout.engines_title = Rect { x, y: top, w, h: line_h };
+    let mut y = top + line_h + 4;
+    layout.engines = engines
+        .iter()
+        .map(|(name, state, note)| {
+            let r = Rect { x, y, w, h: row_h(note) };
+            y += r.h + 2;
+            EngineRow { name: name.clone(), state: *state, note: note.clone(), rect: r }
+        })
+        .collect();
+    layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PanelStyle {
     Title,
     Label,
@@ -89,7 +162,7 @@ pub enum PanelStyle {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelItem {
     pub rect: Rect,
     pub text: String,
@@ -97,7 +170,7 @@ pub struct PanelItem {
     pub action: UiAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Panel {
     pub rect: Rect,
     pub items: Vec<PanelItem>,
@@ -106,7 +179,7 @@ pub struct Panel {
 pub const APPEARANCE_LABEL: &str = "Appearance";
 
 /// Font dropdown under the font family field.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct FontDropdownView {
     /// Visible rows: (index into the filtered list, name, matched char positions).
     pub rows: Vec<(usize, String, Vec<usize>)>,
@@ -120,7 +193,7 @@ fn highlight_bits(pos: &[usize]) -> u64 {
 }
 
 /// Data for [`editor_panel`]: one entry per field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EditorFieldView {
     pub label: String,
     pub value: String,
@@ -336,21 +409,21 @@ pub fn editor_panel(
     Panel { rect, items }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ModalKind {
     Add(Category),
     Edit { category: Category, name: String },
     ConfirmDelete { category: Category, name: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModalState {
     pub kind: ModalKind,
     pub advanced_open: bool,
     pub rect: Rect,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UiAction {
     OpenAdd(Category),
     OpenEdit {
@@ -398,6 +471,8 @@ pub enum UiAction {
     CloseTab(usize),
     CloseActiveTab,
     CycleTab(i32),
+    /// Engines section: make this engine first and switch to it (`mouser engine use`).
+    UseEngine(String),
     None,
 }
 
@@ -420,7 +495,7 @@ pub fn clamp_sidebar_width(requested: i32, window_w: i32, cell_w: i32) -> i32 {
 }
 
 /// Inputs for [`build_sidebar`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SidebarSpec {
     pub width_px: i32,
     pub height_px: i32,
@@ -498,6 +573,8 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             appearance_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             panel: None,
             notice: None,
+            engines: Vec::new(),
+            engines_title: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
         };
     }
     let sidebar_w = match requested_width {
@@ -535,7 +612,19 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
     }
     let ap_w = button_w(APPEARANCE_LABEL);
     let appearance_rect = Rect { x: inner_x, y: (height_px - SIDEBAR_MARGIN - line_h).max(y), w: ap_w.min(inner_right - inner_x), h: line_h };
-    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect, appearance_rect, panel: None, notice: None }
+    UiLayout {
+        sidebar_rect,
+        categories: cats,
+        modal,
+        collapsed: false,
+        collapse_rect,
+        resize_rect,
+        appearance_rect,
+        panel: None,
+        notice: None,
+        engines: Vec::new(),
+        engines_title: Rect { x: inner_x, y: 0, w: 0, h: 0 },
+    }
 }
 
 /// Layout with no sidebar (zero width at the right edge), e.g. to show a panel
@@ -552,6 +641,8 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         appearance_rect: empty,
         panel: None,
         notice: None,
+        engines: Vec::new(),
+        engines_title: empty,
     }
 }
 
@@ -737,6 +828,9 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     if layout.notice.as_ref().is_some_and(|(r, _)| r.contains(px, py)) {
         return UiAction::Notice;
     }
+    if let Some(e) = layout.engines.iter().find(|e| e.rect.contains(px, py)) {
+        return UiAction::UseEngine(e.name.clone());
+    }
     for cat in &layout.categories {
         if cat.add_rect.contains(px, py) {
             return UiAction::OpenAdd(cat.category.clone());
@@ -757,7 +851,7 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
 }
 
 /// Tab strip state handed to the renderer (only drawn with 2+ tabs).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TabBar {
     pub titles: Vec<String>,
     pub active: usize,
