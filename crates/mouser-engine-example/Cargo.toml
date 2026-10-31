@@ -1,0 +1,17 @@
+[package]
+name = "mouser-engine-example"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+description = "Example custom Mouser rendering engine (\"flat\"): CPU raster presented with softbuffer"
+repository = ""
+publish = false
+
+[lib]
+name = "mouser_engine_flat"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mouser-engine-abi = { path = "../mouser-engine-abi" }
+softbuffer = "0.4.6"
+raw-window-handle = "0.6"
