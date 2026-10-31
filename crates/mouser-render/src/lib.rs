@@ -12,10 +12,13 @@ use winit::window::CursorIcon;
 
 pub mod boxdraw;
 pub mod clipboard;
+pub mod engine;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
 pub mod scale;
+#[cfg(feature = "skia")]
+pub mod skia;
 pub mod text;
 pub mod ui;
 
@@ -199,26 +202,32 @@ impl Default for Renderer {
 
 type CpuSurface = Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>;
 
-/// The active backend: wgpu when available, else softbuffer.
+/// The active backend: a GPU engine (docs/engines.md) when available, else softbuffer.
 enum Painter {
     Cpu(Box<CpuSurface>),
-    Gpu(Box<gpu::GpuPainter>, DisplayList),
+    Gpu { engine: Box<dyn engine::Engine>, list: DisplayList, window: Arc<winit::window::Window> },
 }
 
 impl Painter {
-    /// GPU unless `MOUSER_RENDERER=cpu` or wgpu cannot get an adapter/surface.
+    /// The chosen GPU engine (falling back to `mouser`) unless
+    /// `MOUSER_RENDERER=cpu` or no GPU engine can start.
     fn pick(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self> {
         let want_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
         if !want_cpu {
-            match gpu::GpuPainter::new(window.clone(), width, height) {
-                Ok(g) => {
-                    log::info!("renderer: gpu (wgpu, {})", g.description);
-                    eprintln!("mouser: renderer: gpu (wgpu, {})", g.description);
-                    return Ok(Painter::Gpu(Box::new(g), DisplayList::default()));
+            let choice = mouser_core::engines::chosen();
+            match engine::create(&choice, &window, width, height) {
+                Ok((e, why)) => {
+                    if let Some(why) = why {
+                        log::warn!("{why}");
+                        eprintln!("mouser: {why}");
+                    }
+                    log::info!("renderer: gpu engine {} ({})", e.name(), e.description());
+                    eprintln!("mouser: renderer: gpu engine {} ({})", e.name(), e.description());
+                    return Ok(Painter::Gpu { engine: e, list: DisplayList::default(), window });
                 }
                 Err(e) => {
-                    log::warn!("wgpu unavailable ({e}); falling back to CPU");
-                    eprintln!("mouser: wgpu unavailable ({e}); falling back to CPU renderer");
+                    log::warn!("no GPU engine ({e:#}); falling back to CPU");
+                    eprintln!("mouser: no GPU engine ({e:#}); falling back to CPU renderer");
                 }
             }
         }
@@ -235,7 +244,7 @@ impl Painter {
             Painter::Cpu(s) => {
                 let _ = s.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
             }
-            Painter::Gpu(g, _) => g.resize(width, height),
+            Painter::Gpu { engine, .. } => engine.resize(width, height),
         }
     }
 
@@ -252,11 +261,28 @@ impl Painter {
                 let _ = buf.present();
                 true
             }
-            Painter::Gpu(g, list) => {
+            Painter::Gpu { engine, list, window } => {
                 list.width = w;
                 list.height = h;
                 render_frame(list, fonts, frame);
-                g.draw(list, fonts)
+                match engine.draw(list, fonts) {
+                    Ok(done) => done,
+                    Err(e) if engine.name() != "mouser" => {
+                        let name = engine.name().to_string();
+                        mouser_core::engines::clear_sentinel(&name);
+                        log::warn!("engine {name} failed ({e:#}); switching to mouser");
+                        eprintln!("mouser: engine {name} failed ({e:#}); switching to mouser");
+                        match engine::create_default(window, width, height) {
+                            Ok(m) => *engine = m,
+                            Err(e) => log::error!("mouser engine unavailable: {e:#}"),
+                        }
+                        false
+                    }
+                    Err(e) => {
+                        log::warn!("frame failed: {e:#}");
+                        false
+                    }
+                }
             }
         }
     }

@@ -103,6 +103,23 @@ enum Command {
         #[arg(long)]
         id: Option<u32>,
     },
+    /// Manage GPU rendering engines (mouser, skia, custom); see docs/engines.md.
+    Engine {
+        #[command(subcommand)]
+        action: EngineCommand,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum EngineCommand {
+    /// List built-in and installed engines (* marks the one new windows use).
+    List,
+    /// Install a custom engine from a directory with engine.toml (or the manifest or library in it).
+    Install { path: String },
+    /// Remove an installed custom engine.
+    Uninstall { name: String },
+    /// Use this engine for new windows (MOUSER_ENGINE overrides it).
+    Use { name: String },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -292,6 +309,20 @@ fn main() -> Result<()> {
         let o = mouser_app::show::Options { width: *width, height: *height, original: *original, id: *id };
         if let Err(e) = mouser_app::show::run(files, &o) {
             eprintln!("mouser show: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if let Some(Command::Engine { action }) = &cli.command {
+        use mouser_app::engine_cli::Action;
+        let a = match action {
+            EngineCommand::List => Action::List,
+            EngineCommand::Install { path } => Action::Install(path.clone()),
+            EngineCommand::Uninstall { name } => Action::Uninstall(name.clone()),
+            EngineCommand::Use { name } => Action::Use(name.clone()),
+        };
+        if let Err(e) = mouser_app::engine_cli::run(&a, &mut std::io::stdout()) {
+            eprintln!("mouser engine: {e:#}");
             std::process::exit(1);
         }
         return Ok(());

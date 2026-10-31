@@ -40,6 +40,9 @@ pub struct Preferences {
     /// Whether the open sidebar is collapsed to a thin strip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_collapsed: Option<bool>,
+    /// GPU rendering engine (`mouser engine use`); unset means `mouser`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
 }
 
 /// Load preferences, apply `f`, and save them back (keeps unrelated fields).

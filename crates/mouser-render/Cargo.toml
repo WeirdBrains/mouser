@@ -19,9 +19,19 @@ fontdue = "0.7.3"
 image.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
+mouser-engine-abi = { path = "../mouser-engine-abi" }
+raw-window-handle = "0.6"
+skia-safe = { version = "0.156.0", features = ["gl"], optional = true }
+glutin = { version = "0.32.3", optional = true }
+libloading = "0.9.0"
 
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 # Wayland clipboard and primary selection as the focused client (no wl-copy needed).
 smithay-clipboard = "0.7.3"
-raw-window-handle = "0.6"
+
+[features]
+skia = ["dep:skia-safe", "dep:glutin"]
+
+[dev-dependencies]
+mouser-engine-example = { path = "../mouser-engine-example" }
