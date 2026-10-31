@@ -33,6 +33,7 @@ fn show(fmt: image::ImageFormat, w: u32, h: u32, cols: usize) -> TerminalParser<
     // As `mouser show` does: fitting the width starts on a new line.
     t.feed(b"\r\n");
     info.cursor_col = 0;
+    assert!(info.fit_w, "Mouser advertises g_fit=w");
     let mut data = Vec::new();
     image::RgbImage::from_fn(w, h, |x, _| image::Rgb([(x * 255 / w) as u8, 0, 255])).write_to(&mut std::io::Cursor::new(&mut data), fmt).unwrap();
     let p = prepare(&data, &info).unwrap();

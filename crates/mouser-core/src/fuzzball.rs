@@ -20,7 +20,7 @@ pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capability reply body (after `id=N,`).
 pub fn capabilities() -> String {
     format!(
-        "v={VERSION},sub=gk,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},k=1,k_ime=0,k_release=1",
+        "v={VERSION},sub=gk,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1",
         graphics::MAX_BYTES,
         graphics::MAX_DIM,
         graphics::MAX_PLACEMENTS

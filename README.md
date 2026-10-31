@@ -99,6 +99,7 @@ An ssh tab that exits with an error stays open showing
 - **Ctrl+Shift+V** pastes the clipboard (bracketed when the app asks for it); **middle-click** / **Shift+Insert** paste the selection (PRIMARY). On macOS use Cmd+C / Cmd+V.
 - **Ctrl+click** opens an OSC 8 hyperlink.
 - **Shift+mouse** bypasses an app's mouse capture.
+- Resizing re-wraps long lines (screen and scrollback); images move with their text.
 - Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (otherwise `xterm-256color`).
 
 Run a program instead of the shell with `mouser -e btop` or `mouser -- nvim file`;
@@ -211,7 +212,7 @@ See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). Tests live in `crate
 
 - Rich text shaping and ligatures
 - Tabs and multiple terminals
-- Fuzzball: IME events, placements on reflow and scrollback eviction
+- Fuzzball: IME events
 - Cross-platform validation (Windows/macOS)
 
 ## License

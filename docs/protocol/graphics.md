@@ -57,7 +57,11 @@ ESC P = F z g p ; id=<image>,pid=<n>[,cols=<n>,rows=<n>][,sx=,sy=,sw=,sh=][,fit=
   (`cols` is ignored, `rows` follows the aspect ratio) and is refitted on every resize,
   scaled up or down, so it always fills the width; it moves to column 0 if the anchor
   column is cut off. Any other `fit` value is `EINVAL`. Terminals that do not know `fit`
-  use `cols`/`rows`, so send them too.
+  use `cols`/`rows`, so send them too. `cols` is ignored, and `rows` too: the height
+  always follows the aspect ratio. If the filled size would exceed the 1000-cell limit the
+  place fails with `EINVAL`; clients should then place a fixed size instead (`mouser show`
+  shrinks to 1000 rows and drops `fit=w`). Support is advertised as `g_fit=w` in the
+  capability reply (§3); without it, send `cols`/`rows` for the current width only.
 - `sx,sy,sw,sh`: source rectangle in image pixels (default: whole image).
 - `z`: `-1` behind text (above cell backgrounds), `0` (default) above text, `1` above
   text and cursor.
@@ -99,6 +103,8 @@ Also answers with the current cell pixel size so applications can pick image siz
 | `g_max_dim` | max width/height in pixels | 10000 |
 | `g_fmt` | supported formats | `rgba:rgb:png` |
 | `g_max_place` | max placements per screen | 4096 |
+| `g_fit` | `fit` modes accepted on place, `:`-separated (`w` = fill the width, §2.2) | `w` |
+| `g_reflow` | `1` if the terminal re-wraps text on resize and placements follow it (§4) | `1` |
 
 When `g_mem` would be exceeded the terminal evicts the least recently placed images that
 have no visible placements; if that is not enough the upload fails with `ENOMEM`.
@@ -123,6 +129,23 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
   restores the requested anchor and size, never beyond; `fit=w` placements instead
   always fill the width. Images are not
   scaled to the screen height: tall placements scroll like text.
+- **Re-wrapping on resize** (`g_reflow=1`). When the width changes the terminal re-wraps
+  the main screen and the scrollback: rows joined by soft wraps (autowrap) form one logical
+  line, which is split again at the new width; hard line breaks stay, and a double-width
+  character is never split (the row ends one cell early). The cursor stays on the same
+  character. Each placement stays anchored to its logical line and its column offset in
+  it (an anchor past the end of the line's text keeps its requested column and is then
+  fitted as above), so images move with the text. After fitting, a placement whose height
+  changed (a `fit=w` placement, or one scaled for overhang) takes or gives back the empty
+  lines directly below its anchor line, so the text after it moves down or up instead of
+  being covered; only empty lines are removed. Placements are moved before the width fit
+  is applied. The old screen's first row stays at the top unless the cursor would fall
+  below the last row; rows above then go to the scrollback. The **alternate screen is not
+  re-wrapped** (applications redraw it): its rows are cut or padded and its placements
+  are fitted only. The saved main screen behind it is re-wrapped and keeps its
+  placements. Kitty placements with explicit `c`/`r` move with their text the same way
+  and keep their size whenever it fits. Text in placeholder cells (Kitty `U=1`) is
+  re-wrapped like any text.
 - On a shorter screen, lines pushed into the scrollback keep their placements; a
   placement whose anchor line is cut off below the last row is removed with that line
   (its text is gone too).

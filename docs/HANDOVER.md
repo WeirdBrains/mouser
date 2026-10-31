@@ -110,10 +110,22 @@ stays unless the maintainer decides otherwise.
   PRIMARY/clipboard are set through Mouser's own Wayland connection; auto-scroll keeps
   going when the compositor stops sending motion after the pointer leaves). Live-verified
   on Hyprland (word, line, drag+copy, block, auto-scroll into scrollback, Ctrl+Shift+V and
-  middle-click paste into `cat`, clear on typing). Gaps: no Windows clipboard; resize does
-  not reflow so wraps follow the old width; X11 PRIMARY needs xclip/xsel.
+  middle-click paste into `cat`, clear on typing). Gaps: no Windows clipboard; X11 PRIMARY
+  needs xclip/xsel.
 - Images always fit the width (t132u): `fit=w` Fuzzball key, `mouser show` fills the
   width and follows resizes; overhanging placements move to column 0 (no more 1-column pin).
+- Re-wrap on resize (t133u): `mouser-core/src/reflow.rs` (Layout: join soft-wrapped rows,
+  track points, split), `TerminalParser::reflow` (scrollback + main screen, placements,
+  empty-row adjustment for images whose height changes), `Screen::finish_reflow`,
+  `Scrollback::replace_all`. `attr::WRAP_PAD` marks the blank left when a wide char wraps
+  early. Tests: `mouser-core/tests/reflow_tests.rs` (perf: `--release -- --ignored`).
+  Fuzzball spec: `g_fit=w`, `g_reflow=1` in the capability reply; graphics.md §2.2/§3/§4,
+  README §10 #12/#13/#20/#21.
+  Edge cases left: scrollback keeps plain text only (attributes/links lost there, as before);
+  a line longer than the scrollback limit after narrowing drops oldest lines; an anchor
+  in the blanks before the cursor moves with the cursor's padding; Kitty placeholder text
+  is re-wrapped as text (an image wider than the new width breaks into rows); rows-only
+  resizes do not re-wrap (nothing to do) or pull lines back from the scrollback.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
