@@ -109,11 +109,15 @@ pub struct Renderer {
     pub rows: usize,
     pub font_size: f32,
     pub font_family: Option<String>,
+    /// Initial window title (default "Mouser").
+    pub title: Option<String>,
+    /// Wayland app_id / X11 WM_CLASS (default "Mouser").
+    pub app_id: Option<String>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None }
+        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, title: None, app_id: None }
     }
 }
 
@@ -228,7 +232,16 @@ fn set_icon(window: &winit::window::Window) {
 
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-    let attrs = winit::window::WindowAttributes::default().with_title("Mouser").with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    let mut attrs = winit::window::WindowAttributes::default()
+        .with_title(renderer.title.clone().unwrap_or_else(|| "Mouser".into()))
+        .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(id) = &renderer.app_id {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        attrs = WindowAttributesExtWayland::with_name(attrs, id.clone(), id.clone());
+        use winit::platform::x11::WindowAttributesExtX11;
+        attrs = WindowAttributesExtX11::with_name(attrs, id.clone(), id.clone());
+    }
     let window = Arc::new(event_loop.create_window(attrs)?);
     set_icon(&window);
     let proxy = event_loop.create_proxy();
@@ -265,6 +278,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut text_w = width as i32;
     let mut held_since: Option<Instant> = None;
     let mut title = String::new();
+    let default_title = renderer.title.clone().unwrap_or_else(|| "Mouser".into());
     let mut grid_top = PADDING;
     let mut tab_bar = ui::TabBar::default();
 
@@ -520,7 +534,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 if let Some(t) = hooks.get_title.as_ref().and_then(|f| f())
                     && t != title
                 {
-                    window.set_title(if t.is_empty() { "Mouser" } else { &t });
+                    window.set_title(if t.is_empty() { &default_title } else { &t });
                     title = t;
                 }
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };

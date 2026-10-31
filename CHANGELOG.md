@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 Added:
+- Run a command: `mouser -e CMD ARGS...` and `mouser -- CMD ARGS...`, plus `--working-directory`/`--dir`, `--title`/`-T`, `--class`/`--app-id`, `--hold` and `--version`; the desktop entry declares them for xdg-terminal-exec (`X-TerminalArg*`), so Mouser works as the default terminal on Omarchy
 - Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
 - Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
 - `tools/fuzzball-demo.py` demo client

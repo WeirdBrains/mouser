@@ -44,8 +44,27 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Parser, Debug)]
 #[command(name = "mouser")]
-#[command(about = "Mouser terminal emulator", long_about = None)]
+#[command(version, about = "Mouser terminal emulator", long_about = None)]
+#[command(after_help = "Examples:\n  mouser -e btop\n  mouser --working-directory ~/src -- nvim .\n  mouser --hold -e make test")]
 struct Cli {
+    /// Run a command instead of the login shell; everything after it is its arguments.
+    #[arg(short = 'e', long = "command", value_name = "CMD", num_args = 1.., allow_hyphen_values = true, conflicts_with = "trailing")]
+    exec: Vec<String>,
+    /// Command to run, after `--` (same as -e).
+    #[arg(last = true, value_name = "CMD")]
+    trailing: Vec<String>,
+    /// Start in this directory instead of $HOME.
+    #[arg(long = "working-directory", visible_alias = "dir", value_name = "DIR")]
+    working_directory: Option<PathBuf>,
+    /// Window title (until the program sets its own).
+    #[arg(long, short = 'T')]
+    title: Option<String>,
+    /// Wayland app_id / X11 WM_CLASS (default "Mouser").
+    #[arg(long = "class", visible_alias = "app-id", value_name = "CLASS")]
+    class: Option<String>,
+    /// Keep the window open after the command exits.
+    #[arg(long)]
+    hold: bool,
     /// Path to TOML config
     #[arg(long)]
     config: Option<PathBuf>,
@@ -61,9 +80,8 @@ enum Command {
     /// Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow-passthrough).
     ///
     /// Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not
-    /// supported. Works in Mouser and other Fuzzball terminals. Not yet inside tmux:
-    /// messages are wrapped for passthrough, but tmux does not forward the
-    /// terminal's replies, so detection fails.
+    /// supported. Works in Mouser, other Fuzzball terminals and Kitty-graphics
+    /// terminals; inside tmux it uses Kitty Unicode placeholders.
     Show {
         /// Image files; `-` reads stdin. Shown one after another.
         #[arg(required = true)]
@@ -231,6 +249,31 @@ impl Write for SharedWriter {
     }
 }
 
+/// What the first tab runs, from `-e` / `--` / `--working-directory` / `--title` / `--hold`.
+struct FirstTab {
+    name: String,
+    launch: tabs::Launch,
+    cwd: Option<PathBuf>,
+}
+
+fn first_tab(cli: &Cli) -> FirstTab {
+    let argv = if cli.exec.is_empty() { cli.trailing.clone() } else { cli.exec.clone() };
+    let cwd = cli.working_directory.clone().filter(|d| {
+        let ok = d.is_dir();
+        if !ok {
+            eprintln!("mouser: working directory {} does not exist; using $HOME", d.display());
+        }
+        ok
+    });
+    let (default_name, launch) = if argv.is_empty() {
+        ("shell".to_string(), tabs::Launch::Shell)
+    } else {
+        let prog = std::path::Path::new(&argv[0]).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| argv[0].clone());
+        (prog, tabs::Launch::Exec { argv, hold: cli.hold })
+    };
+    FirstTab { name: cli.title.clone().unwrap_or(default_name), launch, cwd }
+}
+
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
@@ -251,7 +294,8 @@ fn main() -> Result<()> {
     // size is known, so its first prompt is drawn for the right width.
     let size = Size { cols: 100, rows: 30 };
     let tabs = Arc::new(Mutex::new(tabs::Tabs::default()));
-    tabs.lock().unwrap().open(tabs::Session::new("shell", tabs::Launch::Shell, size, sb_cfg.clone()), wake);
+    let first = first_tab(&cli);
+    tabs.lock().unwrap().open(tabs::Session::new_in(first.name, first.launch, first.cwd, size, sb_cfg.clone()), wake);
     let parser = ActiveParser { tabs: tabs.clone(), dummy: tabs.lock().unwrap().list[0].parser.clone() };
     let shared_writer = tabs::ActiveWriter(tabs.clone());
 
@@ -708,7 +752,7 @@ fn main() -> Result<()> {
             })
         }),
     };
-    let r = Renderer { font_size: font_size0, font_family: font_family0, ..Renderer::default() };
+    let r = Renderer { font_size: font_size0, font_family: font_family0, title: cli.title.clone(), app_id: cli.class.clone(), ..Renderer::default() };
     {
         // Restore the last saved sidebar state (fresh install: collapsed strip);
         // MOUSER_OPEN_SIDEBAR forces it open for this run only.
@@ -1106,8 +1150,71 @@ mod tests {
         }
     }
 
+    fn cli(args: &[&str]) -> Cli {
+        Cli::try_parse_from(std::iter::once("mouser").chain(args.iter().copied())).unwrap()
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn cli_exec_forms() {
+        let c = cli(&["-e", "btop"]);
+        assert_eq!(c.exec, ["btop"]);
+        let c = cli(&["-e", "nvim", "-u", "NONE", "--clean"]);
+        assert_eq!(c.exec, ["nvim", "-u", "NONE", "--clean"]);
+        let c = cli(&["--working-directory", "/tmp", "--title", "T", "--", "ls", "-la"]);
+        assert_eq!(c.trailing, ["ls", "-la"]);
+        assert_eq!(c.working_directory.as_deref(), Some(std::path::Path::new("/tmp")));
+        assert_eq!(c.title.as_deref(), Some("T"));
+        let c = cli(&["--dir", "/tmp", "--app-id", "btop", "--hold", "-e", "true"]);
+        assert!(c.hold);
+        assert_eq!(c.class.as_deref(), Some("btop"));
+        assert!(cli(&["show", "x.png"]).command.is_some());
+        assert!(Cli::try_parse_from(["mouser", "--version"]).is_err_and(|e| e.kind() == clap::error::ErrorKind::DisplayVersion));
+    }
+
+    #[test]
+    fn first_tab_from_cli() {
+        let f = first_tab(&cli(&[]));
+        assert_eq!((f.name.as_str(), &f.launch, f.cwd), ("shell", &tabs::Launch::Shell, None));
+        let f = first_tab(&cli(&["--dir", "/tmp", "-e", "/usr/bin/btop", "-x"]));
+        assert_eq!(f.name, "btop");
+        assert_eq!(f.launch, tabs::Launch::Exec { argv: vec!["/usr/bin/btop".into(), "-x".into()], hold: false });
+        assert_eq!(f.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
+        let f = first_tab(&cli(&["--title", "Mon", "--hold", "--dir", "/nonexistent-dir-xyz", "--", "htop"]));
+        assert_eq!(f.name, "Mon");
+        assert_eq!(f.launch, tabs::Launch::Exec { argv: vec!["htop".into()], hold: true });
+        assert_eq!(f.cwd, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_tab_runs_in_working_directory() {
+        let d = std::env::temp_dir().join(format!("mouser-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let argv = vec!["sh".into(), "-c".into(), "pwd; sleep 0.3".into()];
+        let s = tabs::Session::new_in(
+            "t",
+            tabs::Launch::Exec { argv, hold: false },
+            Some(d.clone()),
+            Size { cols: 80, rows: 5 },
+            ScrollbackConfig::default(),
+        );
+        s.start(80, 5, 0, 0, noop);
+        let want = d.canonicalize().unwrap().display().to_string();
+        wait_until(|| s.parser.lock().unwrap().screen.visible_lines().iter().any(|l| l.trim_end() == want));
+        wait_until(|| s.closed.load(std::sync::atomic::Ordering::SeqCst));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn exit_policy() {
+        assert!(tabs::closes_on_exit(&tabs::Launch::Exec { argv: vec![], hold: false }, 1));
+        assert!(!tabs::closes_on_exit(&tabs::Launch::Exec { argv: vec![], hold: true }, 0));
         assert!(tabs::closes_on_exit(&tabs::Launch::Shell, 1));
         assert!(tabs::closes_on_exit(&tabs::Launch::Command(vec![]), 0));
         assert!(!tabs::closes_on_exit(&tabs::Launch::Command(vec![]), 255));
