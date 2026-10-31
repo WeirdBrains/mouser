@@ -42,6 +42,8 @@ pub struct Session {
     upload_timer: AtomicBool,
     /// Wakes the graphics timer early when new timer work arrives.
     timer_kick: (Mutex<bool>, std::sync::Condvar),
+    /// Mouse selection (lock after `parser`).
+    pub selection: Mutex<Option<crate::select::SelState>>,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -83,6 +85,7 @@ impl Session {
             closed: AtomicBool::new(false),
             upload_timer: AtomicBool::new(false),
             timer_kick: (Mutex::new(false), std::sync::Condvar::new()),
+            selection: Mutex::new(None),
         })
     }
 
@@ -189,6 +192,7 @@ impl Session {
         let events = {
             let mut p = self.parser.lock().unwrap();
             p.feed(bytes);
+            crate::select::refresh(&p, &mut self.selection.lock().unwrap());
             std::mem::take(&mut p.events)
         };
         self.scrollback.maybe_compress_idle();

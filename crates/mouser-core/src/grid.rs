@@ -39,6 +39,8 @@ pub mod attr {
     pub const WIDE: u16 = 256;
     /// Right half of a double-width character (no glyph of its own).
     pub const WIDE_CONT: u16 = 512;
+    /// On a row's last cell: the row continues on the next one (soft wrap).
+    pub const WRAPLINE: u16 = 1024;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -146,6 +148,8 @@ pub struct Screen {
     tabs: Vec<bool>,
     alt: Option<SavedScreen>,
     scrolled_off: Vec<String>,
+    /// Soft-wrap flag of each `scrolled_off` line.
+    scrolled_off_wrapped: Vec<bool>,
     scroll_events: Vec<ScrollEvent>,
 }
 
@@ -175,6 +179,7 @@ impl Screen {
             tabs: default_tabs(size.cols),
             alt: None,
             scrolled_off: Vec::new(),
+            scrolled_off_wrapped: Vec::new(),
             scroll_events: Vec::new(),
         }
     }
@@ -187,7 +192,20 @@ impl Screen {
         Cell::blank(self.erase_bg)
     }
 
+    fn mark_wrapped(&mut self, y: usize) {
+        if self.size.cols > 0 {
+            let i = self.idx(self.size.cols - 1, y);
+            self.cells[i].style.attrs |= attr::WRAPLINE;
+        }
+    }
+
+    /// The row continues on the next one (it was filled by autowrap).
+    pub fn row_wrapped(&self, y: usize) -> bool {
+        self.size.cols > 0 && y < self.size.rows && self.cells[self.idx(self.size.cols - 1, y)].style.attrs & attr::WRAPLINE != 0
+    }
+
     /// Text of one row: wide characters once, combining marks attached.
+    /// Trailing blanks are kept on wrapped rows (they are part of the line).
     pub fn row_string(&self, y: usize) -> String {
         let mut s = String::new();
         for c in self.row(y) {
@@ -197,7 +215,7 @@ impl Screen {
             s.push(c.ch);
             s.extend(c.comb.iter().filter(|&&m| m != '\0'));
         }
-        s.trim_end().to_string()
+        if self.row_wrapped(y) { s } else { s.trim_end().to_string() }
     }
 
     pub fn row(&self, y: usize) -> &[Cell] {
@@ -212,7 +230,14 @@ impl Screen {
     }
 
     pub fn take_scrolled_off(&mut self) -> Vec<String> {
+        self.scrolled_off_wrapped.clear();
         std::mem::take(&mut self.scrolled_off)
+    }
+
+    /// Like `take_scrolled_off`, with each line's soft-wrap flag.
+    pub fn take_scrolled_off_wrapped(&mut self) -> Vec<(String, bool)> {
+        let w = std::mem::take(&mut self.scrolled_off_wrapped);
+        std::mem::take(&mut self.scrolled_off).into_iter().zip(w.into_iter().chain(std::iter::repeat(false))).collect()
     }
 
     pub fn clear(&mut self) {
@@ -260,6 +285,7 @@ impl Screen {
         if self.pending_wrap {
             self.pending_wrap = false;
             if self.autowrap {
+                self.mark_wrapped(self.cursor.y);
                 self.cursor.x = 0;
                 self.linefeed();
             }
@@ -272,6 +298,7 @@ impl Screen {
             if self.autowrap {
                 let i = self.idx(self.cursor.x, self.cursor.y);
                 self.cells[i] = self.blank();
+                self.mark_wrapped(self.cursor.y);
                 self.cursor.x = 0;
                 self.linefeed();
             } else {
@@ -284,7 +311,9 @@ impl Screen {
         self.clear_wide_at(self.cursor.x);
         let i = self.idx(self.cursor.x, self.cursor.y);
         let mut st = style;
-        st.attrs &= !(attr::WIDE | attr::WIDE_CONT);
+        st.attrs &= !(attr::WIDE | attr::WIDE_CONT | attr::WRAPLINE);
+        // Rewriting a wrapped row's last cell keeps the row wrapped.
+        let keep_wrap = self.cells[self.idx(cols - 1, self.cursor.y)].style.attrs & attr::WRAPLINE;
         if w == 2 {
             self.clear_wide_at(self.cursor.x + 1);
             self.cells[i] = Cell { ch, comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
@@ -292,6 +321,8 @@ impl Screen {
         } else {
             self.cells[i] = Cell { ch, comb: ['\0'; 3], style: st };
         }
+        let last = self.idx(cols - 1, self.cursor.y);
+        self.cells[last].style.attrs |= keep_wrap;
         if self.cursor.x + w < cols {
             self.cursor.x += w;
         } else {
@@ -422,6 +453,8 @@ impl Screen {
             for y in 0..n {
                 let line = self.row_string(y);
                 self.scrolled_off.push(line);
+                let w = self.row_wrapped(y);
+                self.scrolled_off_wrapped.push(w);
             }
         }
         let blank = self.blank();

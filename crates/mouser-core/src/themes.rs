@@ -16,6 +16,11 @@ pub struct ThemeDef {
     /// 16 ANSI colours (0-7 normal, 8-15 bright); empty = defaults.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palette: Vec<String>,
+    /// Selected text colours; without them the selection is drawn inverted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_foreground: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_background: Option<String>,
 }
 
 /// Default 16-colour ANSI palette used when a theme has none.
@@ -33,6 +38,8 @@ pub struct ThemeColors {
     pub accent: Option<u32>,
     /// ANSI 0-15.
     pub palette: [u32; 16],
+    pub selection_fg: Option<u32>,
+    pub selection_bg: Option<u32>,
 }
 
 impl ThemeDef {
@@ -46,6 +53,8 @@ impl ThemeDef {
                 let full = self.full_palette();
                 std::array::from_fn(|i| parse_hex_rgb(&full[i]))
             },
+            selection_fg: self.selection_foreground.as_deref().and_then(parse_hex),
+            selection_bg: self.selection_background.as_deref().and_then(parse_hex),
         }
     }
 
@@ -273,6 +282,8 @@ fn theme_pair(name: &str, dark_fg: &str, dark_bg: &str, light_fg: &str, light_bg
             cursor: None,
             accent: None,
             palette: Vec::new(),
+            selection_foreground: None,
+            selection_background: None,
         },
         ThemeDef {
             name: name.to_string(),
@@ -282,6 +293,8 @@ fn theme_pair(name: &str, dark_fg: &str, dark_bg: &str, light_fg: &str, light_bg
             cursor: None,
             accent: None,
             palette: Vec::new(),
+            selection_foreground: None,
+            selection_background: None,
         },
     )
 }

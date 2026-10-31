@@ -421,8 +421,8 @@ impl<W: Write> TerminalParser<W> {
             }
         }
         let mut pushed = false;
-        for line in self.screen.take_scrolled_off() {
-            self.scrollback.push_line(line);
+        for (line, wrapped) in self.screen.take_scrolled_off_wrapped() {
+            self.scrollback.push_line_wrapped(line, wrapped);
             self.lines_scrolled += 1;
             pushed = true;
         }
