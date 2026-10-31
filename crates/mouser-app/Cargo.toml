@@ -17,6 +17,8 @@ clap.workspace = true
 serde.workspace = true
 toml.workspace = true
 crossbeam-channel.workspace = true
+# `mouser show`: decoders for the formats it accepts (pure Rust).
+image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 
 mouser-core = { path = "../mouser-core" }
 mouser-pty = { path = "../mouser-pty" }
