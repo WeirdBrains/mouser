@@ -129,7 +129,7 @@ fn load_failures_fall_back() {
     engines::set_sentinel("flat");
     let e = mouser_render::engine::load_installed("flat").err().unwrap();
     assert!(e.to_string().contains("crashed"), "{e}");
-    assert!(cli(Action::List).unwrap().contains("crashed last start"));
+    assert!(cli(Action::List).unwrap().contains("mouser engine unskip flat"));
     cli(Action::Use("flat".into())).unwrap();
     assert!(mouser_render::engine::load_installed("flat").is_ok());
 
@@ -142,4 +142,55 @@ fn load_failures_fall_back() {
     assert!(mouser_render::engine::load_installed("flat").is_err());
     // An unknown engine name too.
     assert!(mouser_render::engine::load_installed("nope").is_err());
+}
+
+#[test]
+#[serial]
+fn list_states_unskip_and_restored_engine_is_used() {
+    let h = home();
+    let src = source_dir(&h);
+    cli(Action::Install(src.display().to_string())).unwrap();
+    cli(Action::Use("flat".into())).unwrap();
+    let list = cli(Action::List).unwrap();
+    assert!(list.lines().any(|l| l.starts_with("* flat") && l.contains(" ok ")), "{list}");
+
+    // Crashed while starting: skipped, with when and the restore command.
+    engines::set_sentinel("flat");
+    let list = cli(Action::List).unwrap();
+    assert!(list.lines().any(|l| l.starts_with("* flat") && l.contains("skipped")), "{list}");
+    assert!(list.contains("crashed Mouser while starting") && list.contains("s ago"), "{list}");
+    assert!(list.contains("restore: mouser engine unskip flat"), "{list}");
+    let e = mouser_render::engine::skip_check("flat").unwrap_err();
+    assert!(e.contains("`mouser engine unskip flat`"), "{e}");
+    assert!(mouser_render::engine::load_installed("flat").is_err());
+
+    // A failure while starting/drawing is recorded and shown, and still tried.
+    let msg = mouser_render::engine::fallback_message("skia", "no GL display", "failed to start");
+    assert!(msg.contains("using mouser") && msg.contains("mouser engine unskip skia"), "{msg}");
+    let list = cli(Action::List).unwrap();
+    assert!(list.lines().any(|l| l.contains("skia") && l.contains("failed")), "{list}");
+    assert!(list.contains("failed to start: no GL display"), "{list}");
+    assert!(mouser_render::engine::skip_check("skia").is_ok());
+
+    // Unskip one: cleared, still selected (it was), used on the next start.
+    let out = cli(Action::Unskip(Some("flat".into()))).unwrap();
+    assert!(out.contains("no longer skipped"), "{out}");
+    assert_eq!(engines::state("flat"), engines::State::Ok);
+    assert_eq!(engines::chosen(), "flat");
+    assert!(mouser_render::engine::skip_check("flat").is_ok());
+    assert_eq!(mouser_render::engine::load_installed("flat").unwrap().name(), "flat");
+
+    // Not skipped / unknown.
+    assert!(cli(Action::Unskip(Some("flat".into()))).unwrap().contains("nothing to do"));
+    assert!(cli(Action::Unskip(Some("nope".into()))).is_err());
+
+    // Unskip does not select; --all clears everything.
+    cli(Action::Use("mouser".into())).unwrap();
+    engines::set_sentinel("flat");
+    let out = cli(Action::Unskip(None)).unwrap();
+    assert!(out.contains("restored: skia, flat"), "{out}");
+    assert_eq!(engines::chosen(), "mouser");
+    assert!(cli(Action::Unskip(None)).unwrap().contains("nothing to do"));
+    let list = cli(Action::List).unwrap();
+    assert!(!list.contains("skipped") && !list.contains("failed"), "{list}");
 }

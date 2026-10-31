@@ -118,8 +118,17 @@ enum EngineCommand {
     Install { path: String },
     /// Remove an installed custom engine.
     Uninstall { name: String },
-    /// Use this engine for new windows (MOUSER_ENGINE overrides it).
+    /// Use this engine for new windows (MOUSER_ENGINE overrides it); also unskips it.
     Use { name: String },
+    /// Stop skipping an engine that crashed Mouser (and clear its recorded failure) without selecting it.
+    #[command(visible_alias = "restore")]
+    Unskip {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        name: Option<String>,
+        /// Every engine.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -320,6 +329,7 @@ fn main() -> Result<()> {
             EngineCommand::Install { path } => Action::Install(path.clone()),
             EngineCommand::Uninstall { name } => Action::Uninstall(name.clone()),
             EngineCommand::Use { name } => Action::Use(name.clone()),
+            EngineCommand::Unskip { name, .. } => Action::Unskip(name.clone()),
         };
         if let Err(e) = mouser_app::engine_cli::run(&a, &mut std::io::stdout()) {
             eprintln!("mouser engine: {e:#}");
@@ -1321,6 +1331,15 @@ mod tests {
         assert!(c.hold);
         assert_eq!(c.class.as_deref(), Some("btop"));
         assert!(cli(&["show", "x.png"]).command.is_some());
+        assert!(matches!(
+            cli(&["engine", "unskip", "--all"]).command,
+            Some(Command::Engine { action: EngineCommand::Unskip { name: None, all: true } })
+        ));
+        assert!(matches!(
+            cli(&["engine", "restore", "skia"]).command,
+            Some(Command::Engine { action: EngineCommand::Unskip { name: Some(_), all: false } })
+        ));
+        assert!(Cli::try_parse_from(["mouser", "engine", "unskip"]).is_err());
         assert!(Cli::try_parse_from(["mouser", "--version"]).is_err_and(|e| e.kind() == clap::error::ErrorKind::DisplayVersion));
     }
 

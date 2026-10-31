@@ -12,6 +12,8 @@ pub enum Action {
     Install(String),
     Uninstall(String),
     Use(String),
+    /// Clear the crash skip / failure record (`None`: all engines).
+    Unskip(Option<String>),
 }
 
 pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
@@ -39,6 +41,26 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             }
             Ok(())
         }
+        Action::Unskip(Some(n)) => {
+            if engines::unskip(n)? {
+                writeln!(out, "{n} is no longer skipped; Mouser will try it again on the next start")?;
+                if engines::chosen() != *n {
+                    writeln!(out, "(not selected; `mouser engine use {n}` to use it)")?;
+                }
+            } else {
+                writeln!(out, "{n} was not skipped and has no recorded failure; nothing to do")?;
+            }
+            Ok(())
+        }
+        Action::Unskip(None) => {
+            let done = engines::unskip_all();
+            if done.is_empty() {
+                writeln!(out, "no engine was skipped or failed; nothing to do")?;
+            } else {
+                writeln!(out, "restored: {}", done.join(", "))?;
+            }
+            Ok(())
+        }
         Action::Use(n) => {
             if n == "skia" && !mouser_render::engine::available_builtins().iter().any(|(b, _)| *b == "skia") {
                 bail!("this build has no Skia engine");
@@ -50,21 +72,53 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
     }
 }
 
+fn state_text(name: &str) -> String {
+    match engines::state(name) {
+        engines::State::Ok => "ok".into(),
+        engines::State::Skipped { since } => format!(
+            "SKIPPED: crashed Mouser while starting{}; restore: mouser engine unskip {name}",
+            since.map(|t| format!(" {}", engines::ago(t))).unwrap_or_default()
+        ),
+        engines::State::Failed { at, reason } => {
+            format!("FAILED {}: {reason}; tried again each start; clear: mouser engine unskip {name}", engines::ago(at))
+        }
+    }
+}
+
 fn list(out: &mut dyn Write) -> Result<()> {
     let chosen = engines::chosen();
-    let mark = |n: &str| if n == chosen { "*" } else { " " };
+    let selected = |n: &str| if n == chosen { "*" } else { " " };
+    writeln!(out, "  {:<12} {:<10} {:<8} details", "engine", "version", "state")?;
     for (n, d) in mouser_render::engine::available_builtins() {
-        writeln!(out, "{} {n:<12} built-in   {d}", mark(n))?;
+        let st = state_text(n);
+        let (short, rest) = split_state(&st);
+        writeln!(out, "{} {n:<12} {:<10} {short:<8} {d}{rest}", selected(n), "built-in")?;
     }
     for e in engines::installed() {
         match e {
             Ok(i) => {
                 let m = &i.manifest;
-                let status = if engines::crashed_last_time(&m.name) { " [crashed last start; `mouser engine use` to retry]" } else { "" };
-                writeln!(out, "{} {:<12} {:<10} {}{status}", mark(&m.name), m.name, m.version, m.description)?;
+                let st = state_text(&m.name);
+                let (short, rest) = split_state(&st);
+                writeln!(out, "{} {:<12} {:<10} {short:<8} {}{rest}", selected(&m.name), m.name, m.version, m.description)?;
             }
-            Err((dir, why)) => writeln!(out, "  {dir:<12} broken     {why}")?,
+            Err((dir, why)) => writeln!(out, "  {dir:<12} {:<10} {:<8} {why}", "?", "broken")?,
         }
     }
+    if chosen != "mouser" && !engines::is_builtin(&chosen) && engines::find(&chosen).is_none() {
+        writeln!(out, "  (selected engine {chosen} is not installed; new windows use mouser)")?;
+    }
+    writeln!(out, "* = used by new windows (MOUSER_ENGINE or `mouser engine use`)")?;
     Ok(())
+}
+
+/// ("skipped", " — reason...") for the list columns.
+fn split_state(st: &str) -> (&'static str, String) {
+    if st == "ok" {
+        ("ok", String::new())
+    } else if let Some(r) = st.strip_prefix("SKIPPED: ") {
+        ("skipped", format!("\n      -> {r}"))
+    } else {
+        ("failed", format!("\n      -> {}", st.strip_prefix("FAILED ").unwrap_or(st)))
+    }
 }

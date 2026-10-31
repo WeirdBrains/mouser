@@ -145,6 +145,9 @@ stays unless the maintainer decides otherwise.
   `mouser-render/tests/engine_frame_tests.rs`, unit tests in engines.rs and the ABI crate.
   Live (alien-blue, 1100x760 multi-image screen, drag-resize sweep): mouser 57 fps,
   skia 59–60, flat 59. Gaps: no hot swap, no URL install, full-frame damage only.
+- Engine skip state (t140u): `engines::State`, `unskip`/`unskip_all`, `.failed-<name>`
+  records, `engine::skip_check`/`fallback_message`/`Guarded` (crash marker for skia and
+  custom), status-bar notice `NOTICE` in mouser-render/src/lib.rs; CLI `unskip`/`restore`.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.

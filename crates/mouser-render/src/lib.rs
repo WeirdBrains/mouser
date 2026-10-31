@@ -220,6 +220,7 @@ impl Painter {
                     if let Some(why) = why {
                         log::warn!("{why}");
                         eprintln!("mouser: {why}");
+                        set_notice(why);
                     }
                     log::info!("renderer: gpu engine {} ({})", e.name(), e.description());
                     eprintln!("mouser: renderer: gpu engine {} ({})", e.name(), e.description());
@@ -270,8 +271,10 @@ impl Painter {
                     Err(e) if engine.name() != "mouser" => {
                         let name = engine.name().to_string();
                         mouser_core::engines::clear_sentinel(&name);
-                        log::warn!("engine {name} failed ({e:#}); switching to mouser");
-                        eprintln!("mouser: engine {name} failed ({e:#}); switching to mouser");
+                        let why = engine::fallback_message(&name, &format!("{e:#}"), "failed while drawing");
+                        log::warn!("{why}");
+                        eprintln!("mouser: {why}");
+                        set_notice(why);
                         match engine::create_default(window, width, height) {
                             Ok(m) => *engine = m,
                             Err(e) => log::error!("mouser engine unavailable: {e:#}"),
@@ -286,6 +289,20 @@ impl Painter {
             }
         }
     }
+}
+
+/// How long an engine fallback notice stays in the status bar.
+const NOTICE_TTL: Duration = Duration::from_secs(15);
+
+static NOTICE: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
+
+fn set_notice(msg: String) {
+    *NOTICE.lock().unwrap() = Some((msg, Instant::now()));
+}
+
+/// The current engine fallback notice, if still fresh.
+fn notice() -> Option<String> {
+    NOTICE.lock().unwrap().as_ref().filter(|(_, at)| at.elapsed() < NOTICE_TTL).map(|(m, _)| m.clone())
 }
 
 /// Events delivered to the render loop from other threads.
@@ -754,7 +771,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
-                let status = hooks.get_status.as_ref().and_then(|f| f());
+                let status = hooks.get_status.as_ref().and_then(|f| f()).or_else(notice);
                 let cell = (fonts.cell_w as u32, fonts.cell_h as u32);
                 let images = hooks.get_images.as_ref().map(|f| f(scrolled_back, renderer.rows, cell)).unwrap_or_default();
                 let frame = Frame {

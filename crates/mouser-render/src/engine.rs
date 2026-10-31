@@ -53,32 +53,54 @@ pub fn available_builtins() -> Vec<(&'static str, &'static str)> {
 }
 
 fn create_named(name: &str, window: &Arc<Window>, width: u32, height: u32) -> Result<Box<dyn Engine>> {
-    match name {
-        "mouser" => Ok(Box::new(MouserEngine(crate::gpu::GpuPainter::new(window.clone(), width, height)?))),
+    if name == "mouser" {
+        return Ok(Box::new(MouserEngine(crate::gpu::GpuPainter::new(window.clone(), width, height)?)));
+    }
+    if let Err(why) = skip_check(name) {
+        bail!("{why}");
+    }
+    let lib = if engines::is_builtin(name) { None } else { Some(load_installed(name)?) };
+    #[cfg(not(feature = "skia"))]
+    if lib.is_none() {
+        bail!("this build has no Skia engine (built without the `skia` feature)");
+    }
+    engines::set_sentinel(name);
+    let made: Result<Box<dyn Engine>> = match lib {
+        Some(lib) => CustomEngine::create(lib, window, width, height).map(|e| Box::new(e) as Box<dyn Engine>),
         #[cfg(feature = "skia")]
-        "skia" => Ok(Box::new(crate::skia::SkiaEngine::new(window.clone(), width, height)?)),
+        None => crate::skia::SkiaEngine::new(window.clone(), width, height).map(|e| Box::new(e) as Box<dyn Engine>),
         #[cfg(not(feature = "skia"))]
-        "skia" => bail!("this build has no Skia engine (built without the `skia` feature)"),
-        other => {
-            let lib = load_installed(other)?;
-            engines::set_sentinel(other);
-            match CustomEngine::create(lib, window, width, height) {
-                Ok(e) => Ok(Box::new(e)),
-                Err(e) => {
-                    engines::clear_sentinel(other);
-                    Err(e)
-                }
-            }
+        None => unreachable!(),
+    };
+    match made {
+        Ok(inner) => Ok(Box::new(Guarded { inner, frames: 0 })),
+        Err(e) => {
+            engines::clear_sentinel(name);
+            Err(e)
         }
     }
+}
+
+/// The command that restores a skipped or failed engine.
+pub fn unskip_command(name: &str) -> String {
+    format!("mouser engine unskip {name}")
+}
+
+/// Err(message) if `name` is skipped because it crashed Mouser while starting.
+pub fn skip_check(name: &str) -> std::result::Result<(), String> {
+    if !engines::crashed_last_time(name) {
+        return Ok(());
+    }
+    let when = engines::skipped_since(name).map(|t| format!(" ({})", engines::ago(t))).unwrap_or_default();
+    Err(format!("engine {name} is skipped: it crashed Mouser while starting{when}. Restore it with `{}`", unskip_command(name)))
 }
 
 /// Load an installed custom engine's library, refusing one that crashed
 /// Mouser on its last start or whose library does not match its manifest.
 pub fn load_installed(name: &str) -> Result<CustomLibrary> {
     let inst = engines::find(name).ok_or_else(|| anyhow!("no engine named {name} (see `mouser engine list`)"))?;
-    if engines::crashed_last_time(name) {
-        bail!("engine {name} crashed Mouser last time; run `mouser engine use {name}` to try it again");
+    if let Err(why) = skip_check(name) {
+        bail!("{why}");
     }
     let lib = CustomLibrary::load(&inst.library())?;
     if lib.name() != inst.manifest.name {
@@ -88,17 +110,58 @@ pub fn load_installed(name: &str) -> Result<CustomLibrary> {
 }
 
 /// Create the chosen engine, falling back to `mouser`. Returns the engine and,
-/// if the choice failed, why.
+/// if the choice was not used, a message saying why and how to restore it.
 pub fn create(choice: &str, window: &Arc<Window>, width: u32, height: u32) -> Result<(Box<dyn Engine>, Option<String>)> {
     if choice == "mouser" {
         return create_named("mouser", window, width, height).map(|e| (e, None));
     }
     match create_named(choice, window, width, height) {
-        Ok(e) => Ok((e, None)),
+        Ok(e) => {
+            engines::clear_failure(choice);
+            Ok((e, None))
+        }
         Err(e) => {
-            let why = format!("engine {choice} failed: {e:#}; using mouser");
+            let why = fallback_message(choice, &format!("{e:#}"), "failed to start");
             Ok((create_named("mouser", window, width, height)?, Some(why)))
         }
+    }
+}
+
+/// Record a failure (unless the engine is skipped, which says it already) and
+/// build the "using mouser; restore with ..." message.
+pub fn fallback_message(name: &str, err: &str, what: &str) -> String {
+    if engines::crashed_last_time(name) && err.contains("is skipped") {
+        return format!("{err}; using mouser");
+    }
+    engines::record_failure(name, &format!("{what}: {err}"));
+    format!("engine {name} {what}: {err}; using mouser. Details: `mouser engine list`; clear with `{}`", unskip_command(name))
+}
+
+/// Clears the crash marker once an engine has presented a few frames.
+struct Guarded {
+    inner: Box<dyn Engine>,
+    frames: u32,
+}
+
+impl Engine for Guarded {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+    fn description(&self) -> String {
+        self.inner.description()
+    }
+    fn resize(&mut self, width: u32, height: u32) {
+        self.inner.resize(width, height)
+    }
+    fn draw(&mut self, list: &DisplayList, fonts: &mut FontStack) -> Result<bool> {
+        let r = self.inner.draw(list, fonts);
+        if matches!(r, Ok(true)) && self.frames < STARTED_AFTER {
+            self.frames += 1;
+            if self.frames == STARTED_AFTER {
+                engines::clear_sentinel(self.inner.name());
+            }
+        }
+        r
     }
 }
 
@@ -200,7 +263,6 @@ const STARTED_AFTER: u32 = 3;
 /// A custom engine instance.
 pub struct CustomEngine {
     handle: *mut std::ffi::c_void,
-    frames: u32,
     buf: FrameBuf,
     // Dropped after `handle` is destroyed (see Drop); keeps the window alive.
     _window: Arc<Window>,
@@ -211,7 +273,7 @@ impl CustomEngine {
     pub fn create(lib: CustomLibrary, window: &Arc<Window>, width: u32, height: u32) -> Result<Self> {
         let surface = surface_of(window)?;
         let handle = lib.create_raw(&surface, width, height)?;
-        Ok(Self { handle, frames: 0, buf: FrameBuf::default(), _window: window.clone(), lib })
+        Ok(Self { handle, buf: FrameBuf::default(), _window: window.clone(), lib })
     }
 }
 
@@ -239,12 +301,6 @@ impl Engine for CustomEngine {
         let r = unsafe { (self.lib.table.draw)(self.handle, &frame) };
         if r < 0 {
             bail!("engine {} draw returned {r}", self.lib.name());
-        }
-        if r == abi::DRAW_OK && self.frames < STARTED_AFTER {
-            self.frames += 1;
-            if self.frames == STARTED_AFTER {
-                engines::clear_sentinel(self.lib.name());
-            }
         }
         Ok(r == abi::DRAW_OK)
     }
