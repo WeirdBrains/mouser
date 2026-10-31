@@ -1181,10 +1181,11 @@ mod tests {
     fn first_tab_from_cli() {
         let f = first_tab(&cli(&[]));
         assert_eq!((f.name.as_str(), &f.launch, f.cwd), ("shell", &tabs::Launch::Shell, None));
-        let f = first_tab(&cli(&["--dir", "/tmp", "-e", "/usr/bin/btop", "-x"]));
+        let tmp = std::env::temp_dir();
+        let f = first_tab(&cli(&["--dir", tmp.to_str().unwrap(), "-e", "/usr/bin/btop", "-x"]));
         assert_eq!(f.name, "btop");
         assert_eq!(f.launch, tabs::Launch::Exec { argv: vec!["/usr/bin/btop".into(), "-x".into()], hold: false });
-        assert_eq!(f.cwd.as_deref(), Some(std::path::Path::new("/tmp")));
+        assert_eq!(f.cwd.as_deref(), Some(tmp.as_path()));
         let f = first_tab(&cli(&["--title", "Mon", "--hold", "--dir", "/nonexistent-dir-xyz", "--", "htop"]));
         assert_eq!(f.name, "Mon");
         assert_eq!(f.launch, tabs::Launch::Exec { argv: vec!["htop".into()], hold: true });
