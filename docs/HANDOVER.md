@@ -43,6 +43,7 @@ when their anchor row leaves the scrollback; abandoned uploads expire on a timer
 (`Session::watch_upload` in `crates/mouser-app/src/tabs.rs`). Resize scales placements to the screen width, shrinking in place (`Placement::fit`, requested
 col/cols/rows kept) and `ImageScaler` caches area-averaged downscales for both renderers.
 Decisions: protocol README §10 #10–15.
+`mouser show` (crates/mouser-app/src/show.rs, tested in crates/mouser-app/tests/show_tests.rs) displays images; tmux detection does not work yet (tmux drops the outer terminal's replies).
 Not yet done: IME events, lock-key state.
 
 ## Website

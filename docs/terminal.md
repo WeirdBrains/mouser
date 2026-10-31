@@ -35,3 +35,16 @@ To install Mouser's own entry for your user (styled underlines, truecolor, synch
 ```sh
 tic -x -o ~/.terminfo extra/mouser.terminfo
 ```
+
+## Commands
+
+`mouser show [--width N] [--height N] [--fit|--original] [--id N] <file|->...` shows
+images in a Fuzzball terminal. It sends `DCS = F z c q`, `CSI 16 t`, `CSI 18 t`,
+`CSI 6 n` and DA1, waits up to 1.5 s for the replies (DA1 ends the wait), then uploads
+each image in base64 chunks of at most `max_chunk`, places it at the cursor fitted to
+the columns right of it (aspect kept) and moves the cursor below it. PNG within the
+published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
+RGBA and scaled down to `g_max_dim` / `g_mem` if needed. Video and audio are out of
+scope. Inside tmux the messages are wrapped for passthrough, but tmux does not return
+the terminal's replies, so detection fails and the command exits with an error.
+Code: `crates/mouser-app/src/show.rs`.

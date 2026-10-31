@@ -4,6 +4,7 @@ Added:
 - Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
 - Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
 - `tools/fuzzball-demo.py` demo client
+- `mouser show <file|->...`: show PNG, JPEG, GIF (first frame), WebP and BMP images in a Fuzzball terminal, fitted to the width (`--width`, `--height`, `--original`, `--id`); no video or audio; not yet through tmux
 - Fuzzball placements follow their text through scroll regions, SU/SD, IL/DL, the scrollback and resize; they are removed when their anchor row leaves the scrollback, scrolls off the alternate screen
 - Fuzzball images scale to fit the screen width on resize (and when placed), shrink in place at their anchor column (pinned to the last column, one column wide, once the anchor is cut off), and grow back on a wider screen; downscaled images are area-averaged and cached for both renderers; cell-size changes rescale their pixels
 - Abandoned Fuzzball uploads are discarded by a timer after 10 s
