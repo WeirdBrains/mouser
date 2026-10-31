@@ -185,7 +185,7 @@ stays unless the maintainer decides otherwise.
 
 ## Modes Phase 1: commander (Oct 31, t153u–t164u)
 
-State: Phase 1 implemented and committed (see git log "feat(modes)"); fmt, clippy -D warnings and the full test suite passed locally. NOT yet done: CI confirmation, package build, live key-driving (wtype exists but focus left the test window; only the list view was checked live, grid/carousel via CPU-render test PNGs in ~/.cache/mouser-shots/commander-*.png and cmdr list.png).
+State: Phase 1 complete (see "Phase 1 finished" below).
 
 Decisions:
 - Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. `mouser_render::modes::{Mode trait, Host}`; core has no commander branching.
@@ -199,3 +199,9 @@ Decisions:
 Files: crates/mouser-core/src/{modes.rs,commander.rs,lib.rs}; crates/mouser-render/src/modes/{mod.rs,commander.rs}, src/{lib.rs,ui.rs,frame.rs}, tests/commander_render_tests.rs, Cargo.toml; crates/mouser-app/src/{main.rs,tabs.rs}; Cargo.toml (image jpeg/gif/webp/bmp); docs/modes.md; CHANGELOG.md.
 
 Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arrows/enter, esc :c, ctrl+shift+k/m); build package (not installed) and give `sudo pacman -U` path; third-party mode loading (future, see docs/modes.md).
+
+### Phase 1 finished (t167u/t168u) — STOP here, no later phase
+- 8ee6963 navigation in every view (alt+arrows, PgUp/PgDn, Home/End, alt+p parent, alt+q/Esc close file view, click select / double-click open (400 ms) / wheel), multi-select (alt+space mark, alt+* all/clear, `*` + "N marked" shown), alt+| pipe prompt -> types `^U printf '%s\n' '<paths>' | <cmd>` (single-quoted, marked paths in listing order, else the selection); 1d683a5 Windows path fix in a test. Full table in docs/modes.md.
+- Full suite, fmt, clippy green locally. Live (Hyprland focuswindow + verified activewindow, wtype): grid/carousel/pipe/file view/esc :c off-on all OK; screenshots ~/.cache/mouser-shots/live-*.png, mark.png. Note: wtype `-M alt space` types the word "space" — use `-k space`.
+- Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r68.g1d683a5-1-x86_64.pkg.tar.zst (not installed).
+- Open: in-app media player (uses xdg-open), third-party mode loading, modifiers other than alt.
