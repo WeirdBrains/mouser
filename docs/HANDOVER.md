@@ -126,6 +126,14 @@ stays unless the maintainer decides otherwise.
   in the blanks before the cursor moves with the cursor's padding; Kitty placeholder text
   is re-wrapped as text (an image wider than the new width breaks into rows); rows-only
   resizes do not re-wrap (nothing to do) or pull lines back from the scrollback.
+- Multi-image invariant tests: `mouser-core/tests/multi_image_tests.rs` (t135u). Lazy
+  scrollback re-wrap (t136u): `TerminalParser::reflow_step`, `reflow_sync_rows`
+  (`REFLOW_SYNC_ROWS` 2000, `REFLOW_STEP_ROWS` 8192), worker in `Session::settle_reflow`,
+  `Scrollback::splice`/`line_start`/`lines_wrapped`. Bench: `cargo test --release -p
+  mouser-core --test reflow_tests perf -- --ignored --nocapture` (`SYNC=1000000` = old
+  full re-wrap). Live sweep harness /tmp/mx/img/sweep.sh. Known: an occasional 0.3–1 s
+  frame at the start/end of a Hyprland resize is spent blocked in present (compositor
+  frame pacing), not in Mouser's code.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
