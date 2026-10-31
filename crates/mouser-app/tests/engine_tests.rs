@@ -78,6 +78,7 @@ fn install_list_use_uninstall() {
     assert!(cli(Action::List).unwrap().contains("* flat"));
     let lib = mouser_render::engine::load_installed("flat").unwrap();
     assert_eq!(lib.name(), "flat");
+    drop(lib); // Windows cannot delete a loaded DLL.
     let out = cli(Action::Uninstall("flat".into())).unwrap();
     assert!(out.contains("mouser engine"), "{out}");
     assert_eq!(engines::chosen(), "mouser");
@@ -96,9 +97,12 @@ fn install_rejects_urls_wrong_abi_and_bad_libraries() {
     let e = cli(Action::Install(src.display().to_string())).unwrap_err();
     assert!(format!("{e:#}").contains("ABI 7"), "{e:#}");
     unsafe { std::env::remove_var("MOUSER_FLAT_ABI") };
-    // Not a library at all.
-    let lib = std::fs::read_dir(&src).unwrap().flatten().find(|e| e.path().extension().is_some_and(|x| x != "toml")).unwrap().path();
-    std::fs::write(&lib, b"garbage").unwrap();
+    // Not a library at all (a new file name: loaders cache libraries by path).
+    let junk = format!("{}junk{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX);
+    std::fs::write(src.join(&junk), b"garbage").unwrap();
+    let toml = std::fs::read_to_string(src.join("engine.toml")).unwrap();
+    let real = toml.lines().find(|l| l.starts_with("library")).unwrap().to_string();
+    std::fs::write(src.join("engine.toml"), toml.replace(&real, &format!("library = \"{junk}\""))).unwrap();
     assert!(cli(Action::Install(src.display().to_string())).is_err());
     assert!(engines::installed().is_empty());
 }
