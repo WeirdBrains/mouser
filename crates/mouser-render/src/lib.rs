@@ -11,6 +11,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
 pub mod boxdraw;
+pub mod clipboard;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
@@ -312,6 +313,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     }
     let window = Arc::new(event_loop.create_window(attrs)?);
     set_icon(&window);
+    clipboard::init(&window);
     let proxy = event_loop.create_proxy();
     // Coalesce wakeups: at most one Wake event is queued at a time.
     let wake_pending = Arc::new(AtomicBool::new(false));
@@ -367,6 +369,14 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
+                // Some compositors stop sending motion once the pointer leaves
+                // the surface mid-drag; park it past the nearer edge so the
+                // selection keeps auto-scrolling.
+                WindowEvent::CursorLeft { .. } if selecting => {
+                    if let Some(pos) = cursor_pos.as_mut() {
+                        pos.y = if pos.y < height as f64 / 2.0 { -1.0 } else { height as f64 + 1.0 };
+                    }
+                }
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
                     let (px, py) = (position.x.round() as i32, position.y.round() as i32);
