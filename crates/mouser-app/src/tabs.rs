@@ -134,6 +134,22 @@ impl Session {
         osc7.and_then(|u| osc7_path(&u)).or_else(|| self.cwd.clone()).or_else(|| std::env::var_os("HOME").map(Into::into))
     }
 
+    /// Whether the shell (not a program it started) is the terminal's
+    /// foreground process; `None` where that cannot be told.
+    pub fn shell_in_foreground(&self) -> Option<bool> {
+        let pid = self.pid.load(Ordering::Relaxed);
+        #[cfg(unix)]
+        {
+            let pg = self.master.lock().unwrap().as_ref()?.process_group_leader()?;
+            (pid != 0).then_some(pg as u32 == pid)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+            None
+        }
+    }
+
     pub fn started(&self) -> bool {
         self.master.lock().unwrap().is_some()
     }

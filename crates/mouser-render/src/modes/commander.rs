@@ -144,9 +144,9 @@ impl Default for CommanderMode {
     }
 }
 
-/// `cd` typed into the shell: Ctrl+U clears the line first.
+/// `cd -- '<path>'` (run with [`Effect::Run`], keeping the typed line).
 pub fn cd_line(p: &Path) -> String {
-    format!("\x15cd -- '{}'\r", p.display().to_string().replace('\'', "'\\''"))
+    format!("cd -- {}", cmdr::shell_quote(&p.to_string_lossy()))
 }
 
 fn item(rect: Rect, text: impl Into<String>, style: PanelStyle, action: UiAction) -> PanelItem {
@@ -672,9 +672,9 @@ impl CommanderMode {
     fn effect(&self, e: cmdr::Effect) -> Effect {
         match e {
             cmdr::Effect::None => Effect::None,
-            cmdr::Effect::Cd(p) => Effect::Type(cd_line(&p)),
+            cmdr::Effect::Cd(p) => Effect::Run(cd_line(&p)),
             cmdr::Effect::External(p) => Effect::Open(p),
-            cmdr::Effect::Run(s) => Effect::Type(s),
+            cmdr::Effect::Run(s) => Effect::Run(s),
         }
     }
 }
@@ -771,7 +771,7 @@ mod tests {
         m.last_click = None;
         assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
         let cd = m.action("item", 1);
-        assert_eq!(cd, Effect::Type(format!("\x15cd -- '{}'\r", t.path().join("sub dir").display())));
+        assert_eq!(cd, Effect::Run(format!("cd -- '{}'", t.path().join("sub dir").display())));
         m.action("switch_view", 0);
         let v = m.view(&ctx(), &k);
         assert!(v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count() == 2);
@@ -818,8 +818,8 @@ mod tests {
             for b in [b"c", b"a", b"t"] {
                 m.text(b);
             }
-            let Some(Effect::Type(line)) = m.text(b"\r") else { panic!() };
-            assert!(line.contains("f00.txt") && line.ends_with("| cat\r"), "{line}");
+            let Some(Effect::Run(line)) = m.text(b"\r") else { panic!() };
+            assert!(line.contains("f00.txt") && line.ends_with("| cat"), "{line}");
         }
     }
 }

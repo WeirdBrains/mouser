@@ -93,6 +93,21 @@ impl Keymap {
     }
 }
 
+/// Run `cmd` in an emacs-keymap line editor (bash/readline, zsh/zle, fish)
+/// without losing what is typed: Ctrl+E, a space, Ctrl+U cuts the whole line
+/// (plus the space, so the kill is never empty and an old kill is never
+/// yanked) into the kill ring, then the command and Enter. Send
+/// [`RESTORE_LINE`] once the shell has its prompt back.
+pub fn keep_line(cmd: &str) -> Vec<u8> {
+    let mut v = b"\x05 \x15".to_vec();
+    v.extend(cmd.replace(['\r', '\n'], " ").as_bytes());
+    v.push(b'\r');
+    v
+}
+
+/// Ctrl+Y yanks the line back, Backspace drops the added space.
+pub const RESTORE_LINE: &[u8] = b"\x19\x7f";
+
 /// What alt+`key` sends (some keys have more than one encoding).
 pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
     let k = key.to_lowercase();

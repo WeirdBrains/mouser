@@ -342,7 +342,7 @@ pub enum Effect {
     Cd(PathBuf),
     /// Hand a file to the desktop's player/opener (video, audio).
     External(PathBuf),
-    /// Type this command line into the shell (pipe).
+    /// Run this command line in the shell, keeping what is typed (pipe).
     Run(String),
 }
 
@@ -606,10 +606,10 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// `printf '%s\n' 'a' 'b' | cmd`, with Ctrl+U first and Enter last.
+/// `printf '%s\n' 'a' 'b' | cmd` (run with [`crate::modes::keep_line`]).
 pub fn pipe_line(paths: &[PathBuf], cmd: &str) -> String {
     let args: Vec<String> = paths.iter().map(|p| shell_quote(&p.to_string_lossy())).collect();
-    format!("\x15printf '%s\\n' {} | {}\r", args.join(" "), cmd.trim())
+    format!("printf '%s\\n' {} | {}", args.join(" "), cmd.trim())
 }
 
 /// The manual shown by the mode's `man` button.
@@ -800,7 +800,7 @@ mod tests {
             c.pipe_key(b);
         }
         let Some(Effect::Run(line)) = c.pipe_key(b"\r") else { panic!() };
-        assert_eq!(line, format!("\x15printf '%s\\n' '{}' | wc -l\r", t.path().join("a.txt").display()));
+        assert_eq!(line, format!("printf '%s\\n' '{}' | wc -l", t.path().join("a.txt").display()));
         // Marks: several files, in listing order; . and .. are never marked.
         c.selected = 0;
         c.apply(Action::Mark, 1);

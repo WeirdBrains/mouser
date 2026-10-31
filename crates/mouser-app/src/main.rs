@@ -1520,6 +1520,31 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
             let mut w = writer.clone();
             let _ = w.write_all(s.as_bytes());
         }
+        Effect::Run(cmd) => {
+            let mut w = writer.clone();
+            let _ = w.write_all(&mouser_core::modes::keep_line(&cmd));
+            drop(w);
+            let session = writer.0.lock().unwrap().active();
+            std::thread::spawn(move || {
+                // Yank the line back once the shell owns the terminal again
+                // (the command finished); a builtin like cd is done at once.
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+                let mut idle = 0;
+                while idle < 3 && std::time::Instant::now() < deadline {
+                    match session.as_ref().and_then(|s| s.shell_in_foreground()) {
+                        Some(false) => idle = 0,
+                        _ => idle += 1,
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                // To the same session, even if another tab is active now.
+                if let Some(s) = session {
+                    let mut sw = s.writer.clone();
+                    let _ = sw.write_all(mouser_core::modes::RESTORE_LINE);
+                }
+            });
+        }
         Effect::Open(p) => {
             let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
             match std::process::Command::new(opener)
