@@ -317,7 +317,7 @@ Mouser already has a narrow, data-only boundary between the terminal and the win
 behind the hooks (sessions, PTYs, parser, scrollback, graphics, selection, sidebar
 model, preferences) is the **server**; the winit loop + engine is the **UI**. The split
 turns the hooks into calls over a socket. No terminal code moves, so behaviour stays the
-same and the single-process mode (Windows, `MOUSER_SPLIT=0`) keeps working unchanged.
+same and the single-process mode (Windows, `MOUSER_PROC_FORK=0`) keeps working unchanged.
 
 ### Processes and lifecycle
 
@@ -401,7 +401,7 @@ sidebar state and preferences are in the server and survive.
   `Event`/`Answer` on the second socket (wake, clipboard). bincode 1 framing (u32
   length + body). `RenderHooks` gained `on_engine` and `on_window_size`; `Renderer`
   gained `size`.
-- Default on Unix; `MOUSER_SPLIT=0` runs single-process as before. Windows: always
+- Default on Unix; `MOUSER_PROC_FORK=0` runs single-process as before. Windows: always
   single-process.
 - Exit handling: exit 0 = window closed (server ends); exit 3 = protocol mismatch
   (server draws in-process); SIGKILL/SIGTERM/SIGINT/SIGHUP = killed from outside, the
@@ -439,8 +439,20 @@ The bottom of the expanded right sidebar, above Appearance, lists the available 
 (built-ins and installed ones) in priority order with their state: `active` (this
 window), `ok`, `skipped` or `failed`, with the reason on a second line. A click does
 `mouser engine use <name>` (unskip, move first); the window's preferences watcher then
-switches it live, like the CLI. Under a `MOUSER_ENGINE` override the click still saves
-the order but the window keeps its override until restarted. The sidebar has no keyboard
+switches it live, like the CLI.
+
+Drag to reorder: press on a row and move more than 5 px (`ui::DRAG_THRESHOLD`; less is
+a click). The row is outlined in place, a ghost follows the pointer and an accent
+insertion line shows where it will land (before the first row whose middle is below the
+pointer). Dropping saves the order with `engines::set_priority`, the same path as
+`mouser engine priority`; every running window applies it live and switches if a
+different usable engine is now first. Escape, a drop outside the section (half a row of
+slack above and below) or a drop in the same place cancels. `mouser` can be dragged
+anywhere and is never removed. The sidebar does not scroll, so there is no auto-scroll.
+Under a `MOUSER_ENGINE` override a click or drop still saves the order and the status
+bar notes that this window keeps its override until restarted. Logic:
+`ui::{EngineDrag, EngineDrop, drop_index, drop_zone, reordered}`; the window keeps the
+drag state and draws it via `UiLayout::engine_drag`. The sidebar has no keyboard
 focus navigation, so the section is mouse-only like the rest of the bar. Hit-testing:
 `ui::add_engines`, `ui::hit_test` -> `UiAction::UseEngine`
 (`mouser-render/tests/sidebar_engines_tests.rs`).

@@ -596,6 +596,7 @@ fn main() -> Result<()> {
             ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
             ui::UiAction::Notice => app_state.lock().unwrap().ssh.open_migrate(),
             ui::UiAction::UseEngine(name) => use_engine(&name),
+            ui::UiAction::ReorderEngines(order) => reorder_engines(&order),
             ui::UiAction::Connect { category, name } => {
                 let argv = {
                     let st = app_state.lock().unwrap();
@@ -841,7 +842,7 @@ fn main() -> Result<()> {
             let app_state = app_state.clone();
             Arc::new(move || {
                 let st = app_state.lock().unwrap();
-                if st.mode == Mode::Command { Some(format!(":{}", st.command_buf)) } else { st.look.status() }
+                if st.mode == Mode::Command { Some(format!(":{}", st.command_buf)) } else { st.look.status().or_else(engine_note) }
             })
         }),
     };
@@ -1146,6 +1147,43 @@ fn engine_rows() -> Vec<(String, ui::EngineState, Option<String>)> {
         .collect()
 }
 
+/// Engines dragged into a new order: same as `mouser engine priority ...`.
+/// Running windows apply it through their preferences watcher.
+fn reorder_engines(order: &[String]) {
+    match mouser_core::engines::set_priority(order) {
+        Ok(l) => {
+            log::info!("sidebar: engine priority {}", l.join(" > "));
+            if override_set() {
+                set_engine_note(format!(
+                    "engine order saved ({}); MOUSER_ENGINE is set, so this window keeps its order until restarted without it",
+                    l.join(" > ")
+                ));
+            }
+        }
+        Err(e) => set_engine_note(format!("cannot save the engine order: {e:#}")),
+    }
+}
+
+fn override_set() -> bool {
+    std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty())
+}
+
+/// Short status-bar note from the Engines section (shown for 8 s).
+static ENGINE_NOTE: std::sync::Mutex<Option<(std::time::Instant, String)>> = std::sync::Mutex::new(None);
+
+fn set_engine_note(msg: String) {
+    log::warn!("{msg}");
+    *ENGINE_NOTE.lock().unwrap() = Some((std::time::Instant::now(), msg));
+    if let Some(w) = WAKER.get() {
+        w();
+    }
+}
+
+fn engine_note() -> Option<String> {
+    let g = ENGINE_NOTE.lock().unwrap();
+    g.as_ref().filter(|(t, _)| t.elapsed() < std::time::Duration::from_secs(8)).map(|(_, m)| m.clone())
+}
+
 /// A click on an engine row: same as `mouser engine use NAME` (unskip, move
 /// first). The window's preferences watcher then switches it live.
 fn use_engine(name: &str) {
@@ -1153,8 +1191,8 @@ fn use_engine(name: &str) {
         Ok(()) => log::info!("sidebar: engine {name} is now first"),
         Err(e) => log::warn!("sidebar: cannot use engine {name}: {e:#}"),
     }
-    if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) {
-        log::warn!("MOUSER_ENGINE is set: the window keeps its engine order until restarted without it");
+    if override_set() {
+        set_engine_note(format!("{name} is now first; MOUSER_ENGINE is set, so this window keeps its order until restarted without it"));
     }
 }
 

@@ -244,3 +244,16 @@ fn cli_priority_and_move_keep_mouser() {
     assert!(cli(Action::List).unwrap().contains("order (MOUSER_ENGINE): flat > mouser"));
     unsafe { std::env::remove_var("MOUSER_ENGINE") };
 }
+
+/// The sidebar's drop saves through `engines::set_priority`, like
+/// `mouser engine priority`; mouser may go first but never disappears.
+#[test]
+#[serial_test::serial]
+fn sidebar_drop_order_is_saved_like_engine_priority() {
+    let _h = home();
+    let rows = ["skia", "mouser"].map(String::from);
+    let dropped = mouser_render::ui::reordered(&rows, 1, 0);
+    assert_eq!(engines::set_priority(&dropped).unwrap(), ["mouser", "skia"]);
+    assert_eq!(engines::saved_priority(), ["mouser", "skia"]);
+    assert_eq!(engines::set_priority(&["skia".to_string()]).unwrap().last().map(String::as_str), Some("mouser"), "mouser is kept");
+}

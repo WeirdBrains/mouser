@@ -61,6 +61,107 @@ pub struct UiLayout {
     /// "Engines" section above the Appearance button ([`add_engines`]).
     pub engines: Vec<EngineRow>,
     pub engines_title: Rect,
+    /// Engine row being dragged (set by the window, not the model).
+    #[serde(default)]
+    pub engine_drag: Option<EngineDrag>,
+}
+
+/// Pixels the pointer must move before a press on an engine row becomes a
+/// drag; less is a click (switch to it).
+pub const DRAG_THRESHOLD: i32 = 5;
+
+/// Press-and-drag of an engine row in the sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EngineDrag {
+    /// Index of the pressed row.
+    pub from: usize,
+    pub start: (i32, i32),
+    pub pos: (i32, i32),
+    /// Moved past [`DRAG_THRESHOLD`]: a drag, not a click.
+    pub active: bool,
+}
+
+/// What releasing the pointer does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineDrop {
+    /// Didn't move: a click on the row.
+    Click(String),
+    /// New priority order.
+    Reorder(Vec<String>),
+    /// Dropped outside the section, or in the same place.
+    Cancel,
+}
+
+impl EngineDrag {
+    /// Start a drag if (`px`, `py`) is on an engine row.
+    pub fn press(layout: &UiLayout, px: i32, py: i32) -> Option<Self> {
+        if layout.panel.is_some() || layout.modal.is_some() {
+            return None;
+        }
+        let from = engine_row_at(layout, px, py)?;
+        Some(Self { from, start: (px, py), pos: (px, py), active: false })
+    }
+
+    pub fn moved(&mut self, px: i32, py: i32) {
+        self.pos = (px, py);
+        if (px - self.start.0).abs().max((py - self.start.1).abs()) >= DRAG_THRESHOLD {
+            self.active = true;
+        }
+    }
+
+    /// Insertion index (0..=rows) for the current pointer, or None outside
+    /// the section (a drop there cancels).
+    pub fn target(&self, layout: &UiLayout) -> Option<usize> {
+        if !self.active || !drop_zone(layout).contains(self.pos.0, self.pos.1) {
+            return None;
+        }
+        Some(drop_index(layout, self.pos.1))
+    }
+
+    pub fn release(&self, layout: &UiLayout) -> EngineDrop {
+        let Some(row) = layout.engines.get(self.from) else { return EngineDrop::Cancel };
+        if !self.active {
+            return EngineDrop::Click(row.name.clone());
+        }
+        let Some(at) = self.target(layout) else { return EngineDrop::Cancel };
+        let names: Vec<String> = layout.engines.iter().map(|e| e.name.clone()).collect();
+        let new = reordered(&names, self.from, at);
+        if new == names { EngineDrop::Cancel } else { EngineDrop::Reorder(new) }
+    }
+}
+
+/// Index of the engine row at (`px`, `py`).
+pub fn engine_row_at(layout: &UiLayout, px: i32, py: i32) -> Option<usize> {
+    layout.engines.iter().position(|e| e.rect.contains(px, py))
+}
+
+/// Where a dragged row can be dropped: the section (title to last row) plus
+/// half a row of slack above and below.
+pub fn drop_zone(layout: &UiLayout) -> Rect {
+    let (Some(first), Some(last)) = (layout.engines.first(), layout.engines.last()) else { return Rect { x: 0, y: 0, w: 0, h: 0 } };
+    let slack = first.rect.h / 2;
+    let top = layout.engines_title.y.min(first.rect.y) - slack;
+    let bottom = last.rect.y + last.rect.h + slack;
+    Rect { x: first.rect.x, y: top, w: first.rect.w, h: bottom - top }
+}
+
+/// Insertion index for pointer height `py`: before the first row whose middle
+/// is below it.
+pub fn drop_index(layout: &UiLayout, py: i32) -> usize {
+    layout.engines.iter().position(|e| py < e.rect.y + e.rect.h / 2).unwrap_or(layout.engines.len())
+}
+
+/// `names` with the item at `from` moved to insertion index `at` (an index
+/// into the list before the move, 0..=len).
+pub fn reordered(names: &[String], from: usize, at: usize) -> Vec<String> {
+    let mut v = names.to_vec();
+    if from >= v.len() {
+        return v;
+    }
+    let item = v.remove(from);
+    let at = if at > from { at - 1 } else { at }.min(v.len());
+    v.insert(at, item);
+    v
 }
 
 /// How an engine shows in the sidebar's Engines section.
@@ -473,6 +574,8 @@ pub enum UiAction {
     CycleTab(i32),
     /// Engines section: make this engine first and switch to it (`mouser engine use`).
     UseEngine(String),
+    /// Engines section drag-and-drop: save this priority order (`mouser engine priority`).
+    ReorderEngines(Vec<String>),
     None,
 }
 
@@ -575,6 +678,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             notice: None,
             engines: Vec::new(),
             engines_title: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
+            engine_drag: None,
         };
     }
     let sidebar_w = match requested_width {
@@ -624,6 +728,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
         notice: None,
         engines: Vec::new(),
         engines_title: Rect { x: inner_x, y: 0, w: 0, h: 0 },
+        engine_drag: None,
     }
 }
 
@@ -643,6 +748,7 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         notice: None,
         engines: Vec::new(),
         engines_title: empty,
+        engine_drag: None,
     }
 }
 
