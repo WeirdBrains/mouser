@@ -215,7 +215,73 @@ mkdir flat && cp target/release/libmouser_engine_flat.so crates/mouser-engine-ex
 mouser engine install flat && mouser engine use flat
 ```
 
-## 7. Status and gaps
+## 7. Switching live and surviving engine crashes (design, t141u)
+
+### Requirements
+
+Switching engines must keep everything the user has (tabs, running programs and
+their PTYs, scrollback, cursor, selection, images). An engine that crashes must not
+take the user's shells with it: the window carries on with the next engine in the
+order and the crashed one is marked skipped (restorable with `unskip`).
+
+### Options considered
+
+1. **In-process engines + signal handler.** Catching SIGSEGV and continuing is UB;
+   rejected.
+2. **Holder process.** A small process owns the PTYs; the UI (parser, scrollback,
+   images, window, engine) is a separate process that reattaches after a crash. It
+   protects against every crash, including the wgpu/Skia drivers, but the UI holds all
+   terminal state, so after a crash it would have to rebuild that state by replaying a
+   byte log of every PTY (bounded, slow for big scrollbacks, images re-decoded), or the
+   holder would have to own the parser and stream screens to the UI (a tmux-style
+   client/server split of the whole terminal). Too big and too risky for this phase;
+   kept as the long-term option.
+3. **Out-of-process custom engines (chosen).** A custom engine runs in an **engine
+   host** child process (`mouser __engine-host`). Mouser sends it each frame (ops,
+   rects, glyph bitmaps and images, each bitmap/image sent once and cached by key) over
+   a pipe; the engine draws into a pixel buffer (`MOUSER_SURFACE_PIXELS`, a new
+   surface kind: `window` points to a `MouserPixels { data, width, height, stride }`);
+   the host returns the pixels and Mouser presents them. If the host dies (segfault,
+   abort, panic, `exit`), Mouser sees EOF on the pipe: the engine is marked skipped
+   (with the reason), and the window switches to the next engine in the order on the
+   same frame. All state lives in the main process, so nothing is lost.
+
+### Built-in engines
+
+`mouser` (wgpu) and `skia` stay in-process for direct GPU presentation (the reason
+they are built in). They are covered as far as is sound:
+
+- every `create`/`draw` call runs under `catch_unwind`, so a Rust panic (ours, wgpu's,
+  skia-safe's) becomes an error: the engine is marked skipped and the window moves on;
+- wgpu device/surface loss and Skia/GL errors are errors, not crashes: same path;
+- a native crash inside the GPU driver or Skia's C++ still ends the process. The
+  crash marker (§4) then makes the next start skip that engine. This is the
+  remaining limit; the holder-process design above is what would remove it.
+
+### Switching
+
+Engines are swapped **on the same window**: the old engine is dropped (its surface is
+released), the new one is created on the window, the window is redrawn. Sessions,
+PTYs and all terminal state are untouched because they never belonged to the engine;
+the window keeps its size and position (nothing for the compositor to redo). If the
+new engine cannot start on the existing window, the next one in the order is tried
+(mouser last, then the CPU renderer).
+
+Running windows learn about a change by watching `preferences.toml` (checked twice a
+second): when the effective first engine of the priority order changes (`mouser engine
+use`, `priority`, `move`, `unskip`), each window switches. No socket is needed; an
+`MOUSER_ENGINE` override pins a window's order for its lifetime.
+
+### Pixel-buffer engines: costs
+
+The pipe carries one frame of ops (tens of KB) and returns width x height x 4 bytes
+(3.3 MB at 1100x760); measured below. GPU custom engines must read back their image
+(the price of isolation). An engine that cannot draw into pixels fails `create` with
+that surface and is passed over. Windows has no engine host yet (custom engines stay
+in-process there).
+
+## 8. Status and gaps
+
 
 Measured on alien-blue (RTX 3060, Hyprland, 1100x760, the multi-image screen,
 ~240 drag-resize steps): mouser 57 fps (frame p95 8.9 ms), skia 59–60 fps (p95
@@ -224,7 +290,7 @@ Measured on alien-blue (RTX 3060, Hyprland, 1100x760, the multi-image screen,
 hundred pixels (cursor/rounding); the wgpu engine differs slightly more (its blending
 was already a little different).
 
-Gaps: no hot swap; no URL install; no per-engine options; damage is always the full
+Gaps: no URL install (by decision: download, then install the folder); no per-engine options; damage is always the full
 frame; the frame has no text runs or font data (engines can't do their own shaping or
 subpixel text, by design for v1); a crashing custom engine still takes the window down
 (the sentinel only protects the next start).
