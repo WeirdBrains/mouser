@@ -1,6 +1,6 @@
 # Mouser handover notes
 
-Current release: v0.7.2. Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
+Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31; some packaging files still name the old URL). Current release: v0.7.2; main has unreleased work (see CHANGELOG Unreleased). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
 
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`
@@ -21,6 +21,7 @@ at the repo root (gitignored; ask the maintainer if you don't have it).
 | Fuzzball | v0.1: graphics (upload/place/delete/query) + keyboard mode, `crates/mouser-core/src/fuzzball.rs` | `tools/fuzzball-demo.py` inside Mouser |
 | xterm / ECMA-48 | SGR (truecolour, curly/coloured underline), wide chars, tab stops, modes, DA/DSR, mouse, focus, bracketed paste, OSC titles, OSC 8 links (Ctrl+click), OSC 52, window reports 11/13/20/21t | `cargo test --workspace` + manual |
 | vttest fixes | DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1 | Run `vttest` inside Mouser |
+| Run a command | `mouser -e cmd args`, `mouser -- cmd args`, `--working-directory`/`--dir`, `--title`, `--class`, `--hold`, `--version`; desktop entry has xdg-terminal-exec keys so it can be a default terminal (e.g. on Omarchy) | `mouser -e btop`, `xdg-terminal-exec btop` |
 | terminfo | `tic -x -o ~/.terminfo extra/mouser.terminfo`, then `TERM=mouser` | `infocmp mouser` |
 
 Verified live (wtype, 2026-10-30): Fuzzball key events, Kitty keyboard flags 1/9/27/31 and `CSI ? u`, vttest menu 5 cursor keys (normal + application) and function keys F1–F12 (F10 is Mouser's command line, so it never reaches the app; F13+ send nothing in legacy mode). Clicking a sidebar connection opens it in a new tab (ydotool click; a failed ssh shows "[process exited 255] press any key to close" and a key closes the tab). wtype uses a virtual keymap, so `code=` reads `Escape` and Shift does not change the character; physical codes need a real keyboard.
@@ -77,9 +78,31 @@ Releases happen only with the maintainer's explicit approval.
 - Never touch the real `~/.mouser`; never force-push; ask before adding dependencies.
 - Tests use `MOUSER_SSH_CONFIG` and a temp `HOME`, never the real `~/.ssh`.
 
+## Ideas in progress
+`MODES.md` (repo root) is the maintainer's early draft of interaction modes:
+commander, dj, director, debugger, artist. Switch with `esc :` plus the mode's key
+(e.g. `esc :c`), `ctrl-shift-k` shows mappings, `ctrl-shift-m` lists modes.
+Commander shows a scrollable file list above the prompt after `cd`; `t` cycles views.
+Only commander is described so far; wait for the maintainer before building it.
+
+## Packaging
+CI may only use GitHub-owned or verified actions (WeirdBrains org policy).
+Arch: `packaging/arch/PKGBUILD.tmpl` exists. Planned: AUR-ready `mouser-git` and
+`mouser-bin` PKGBUILDs with `.SRCINFO`, a `.pkg.tar.zst` attached to releases, and
+`makepkg -si` install docs. AUR registration is currently closed, so publishing waits;
+AUR packages need a personal maintainer account.
+Remaining `m3talsmith/mouser` URLs: release workflow, Formula, Casks, PKGBUILD,
+nfpm.yaml, AGENTS.md, docs/release.md, metainfo. Keep the app ID
+`io.github.m3talsmith.mouser` unless the maintainer decides otherwise.
+
+## Open decisions
+- Inside tmux, `mouser show` prefers Kitty placeholders over Fuzzball (one-line flip).
+- Narrowed images pin to the last column at 1 column wide; alternative is a minimum width that moves them left.
+
 ## Suggested next steps
-1. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
-2. Confirm website claims, retake the screenshot, publish the site.
-3. Cut the next release once approved.
-4. Fuzzball: IME events and lock-key state.
-5. Work through the known gaps.
+1. Arch packaging and the URL updates above.
+2. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
+3. Confirm website claims, retake the screenshot, publish the site.
+4. Cut the next release once approved.
+5. Fuzzball: IME events and lock-key state.
+6. Work through the known gaps.
