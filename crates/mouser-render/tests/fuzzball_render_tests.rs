@@ -143,7 +143,7 @@ fn downscaled_image_is_area_averaged_on_cpu_and_gpu_paths() {
     }
     let p = b64(&px);
     t.feed(format!("\x1bP=Fzgu;id=1,fmt=rgba,w={iw},h={ih},size={},len={}:{p}\x1b\\", px.len(), p.len()).as_bytes());
-    t.feed(b"\x1b[1;9H\x1bP=Fzgp;id=1,pid=1,cols=4,rows=1,move=0\x1b\\");
+    t.feed(b"\x1b[1;9H\x1bP=Fzgp;id=1,pid=1,cols=4,rows=1,move=0\x1b\\\x1b[4;1H");
     // A 2-column screen: the box moves to column 0 and is halved.
     t.resize(Size { cols: 2, rows: 4 });
     let mut scaler = ImageScaler::default();

@@ -326,11 +326,11 @@ impl Graphics {
 
     /// Apply a grid resize. `alt`: the active screen; `top`: absolute row of the
     /// first visible line; `shift`: rows the active alt screen moved up to keep the
-    /// cursor visible; `rows`/`cols`: the new size. Mouser does not rewrap text, so
-    /// placements whose anchor cell was cut off (below the last row, right of the
-    /// last column, or above the alt screen) are removed; the rest keep their cells.
-    /// The inactive main screen is blanked by a resize in the alt screen, so its
-    /// visible placements go too.
+    /// cursor visible; `rows`/`cols`: the new size. Main-screen placements were
+    /// already moved with their re-wrapped text; placements whose anchor row is
+    /// cut off (below the last row, or above the alt screen) are removed, and every
+    /// placement is refitted to the width. The inactive main screen is kept (and
+    /// re-wrapped) during a resize in the alt screen.
     pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize) -> bool {
         let before = self.placements.len();
         if alt && shift != 0 {
@@ -344,7 +344,7 @@ impl Graphics {
                 return false;
             }
             if p.alt != alt {
-                return !p.alt && p.row >= top;
+                return !p.alt && p.row >= bottom;
             }
             p.row >= bottom || (p.alt && p.row < top)
         });

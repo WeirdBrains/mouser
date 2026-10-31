@@ -254,11 +254,12 @@ fn alt_screen_resize_and_leave() {
     place(&mut t, 2, 6, 1, 2, 1);
     t.feed(b"\x1b[6;1H");
     t.resize(Size { cols: 20, rows: 4 });
-    // Alt content moved up by 2 to keep the cursor row; main screen was blanked.
-    assert_eq!(pids(&t), vec![2]);
+    // Alt content moved up by 2 to keep the cursor row; the main screen is kept.
+    assert_eq!(pids(&t), vec![1, 2]);
     assert_eq!(screen_row(&t, 2), 3);
     t.feed(b"\x1b[?1049l");
-    assert!(pids(&t).is_empty());
+    assert_eq!(pids(&t), vec![1], "main screen image back with its text");
+    assert_eq!(screen_row(&t, 1), 1);
 }
 
 #[test]

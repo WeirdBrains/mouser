@@ -41,6 +41,9 @@ pub mod attr {
     pub const WIDE_CONT: u16 = 512;
     /// On a row's last cell: the row continues on the next one (soft wrap).
     pub const WRAPLINE: u16 = 1024;
+    /// Blank left at the end of a row when a wide character wrapped early; not
+    /// part of the text (dropped when the line is re-wrapped or copied).
+    pub const WRAP_PAD: u16 = 2048;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -207,15 +210,7 @@ impl Screen {
     /// Text of one row: wide characters once, combining marks attached.
     /// Trailing blanks are kept on wrapped rows (they are part of the line).
     pub fn row_string(&self, y: usize) -> String {
-        let mut s = String::new();
-        for c in self.row(y) {
-            if c.style.attrs & attr::WIDE_CONT != 0 {
-                continue;
-            }
-            s.push(c.ch);
-            s.extend(c.comb.iter().filter(|&&m| m != '\0'));
-        }
-        if self.row_wrapped(y) { s } else { s.trim_end().to_string() }
+        crate::reflow::cells_string(self.row(y), self.row_wrapped(y))
     }
 
     pub fn row(&self, y: usize) -> &[Cell] {
@@ -298,6 +293,7 @@ impl Screen {
             if self.autowrap {
                 let i = self.idx(self.cursor.x, self.cursor.y);
                 self.cells[i] = self.blank();
+                self.cells[i].style.attrs |= attr::WRAP_PAD;
                 self.mark_wrapped(self.cursor.y);
                 self.cursor.x = 0;
                 self.linefeed();
@@ -639,18 +635,56 @@ impl Screen {
         self.alt.is_some()
     }
 
+    /// The main screen's cells, cursor and pending-wrap flag (the saved copy while
+    /// the alternate screen is active).
+    pub fn main_state(&self) -> (&[Cell], Point, bool) {
+        match &self.alt {
+            Some(s) => (&s.cells, s.cursor, false),
+            None => (&self.cells, self.cursor, self.pending_wrap),
+        }
+    }
+
+    /// Finish a re-wrapping resize: the main screen gets `cells` (`size.cols *
+    /// size.rows`) and `cursor`; an active alternate screen is resized without
+    /// re-wrapping.
+    pub fn finish_reflow(&mut self, size: Size, cells: Vec<Cell>, cursor: Point, pending: bool) {
+        debug_assert_eq!(cells.len(), size.cols * size.rows);
+        if let Some(mut saved) = self.alt.take() {
+            self.resize_grid(size, false);
+            saved.cells = cells;
+            saved.cursor = cursor;
+            self.alt = Some(saved);
+        } else {
+            self.resize_grid(size, false);
+            self.cells = cells;
+            self.cursor = cursor;
+            self.pending_wrap = pending;
+        }
+    }
+
+    /// Resize without re-wrapping (rows are cut or padded).
     pub fn resize(&mut self, size: Size) {
         if size == self.size {
             return;
         }
+        let saved = self.alt.is_some();
+        self.resize_grid(size, !saved);
+        if let Some(alt) = &mut self.alt {
+            alt.cells = vec![Cell::default(); size.cols * size.rows];
+        }
+    }
+
+    fn resize_grid(&mut self, size: Size, to_scrollback: bool) {
         // Keep the cursor row on screen: push rows above it into scrollback.
         let mut first = 0;
         if self.cursor.y >= size.rows && size.rows > 0 {
             first = self.cursor.y + 1 - size.rows;
-            if self.alt.is_none() {
+            if to_scrollback {
                 for y in 0..first {
                     let line = self.row_string(y);
                     self.scrolled_off.push(line);
+                    let w = self.row_wrapped(y);
+                    self.scrolled_off_wrapped.push(w);
                 }
             }
         }
@@ -674,9 +708,6 @@ impl Screen {
             }
         }
         self.cells = new_cells;
-        if let Some(alt) = &mut self.alt {
-            alt.cells = vec![Cell::default(); size.cols * size.rows];
-        }
         let mut tabs = default_tabs(size.cols);
         for (x, t) in self.tabs.iter().enumerate().take(size.cols) {
             tabs[x] = *t;

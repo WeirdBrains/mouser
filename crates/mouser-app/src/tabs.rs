@@ -215,7 +215,15 @@ impl Session {
     }
 
     pub fn resize(&self, cols: u16, rows: u16, pw: u16, ph: u16) {
-        self.parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+        let size = Size { cols: cols as usize, rows: rows as usize };
+        {
+            let mut p = self.parser.lock().unwrap();
+            if p.screen.size != size {
+                p.resize(size);
+                // Re-wrapping moves text; a selection would point at other cells.
+                *self.selection.lock().unwrap() = None;
+            }
+        }
         if let Some(m) = self.master.lock().unwrap().as_mut() {
             let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows, pw, ph);
         }

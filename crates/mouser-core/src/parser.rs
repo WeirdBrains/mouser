@@ -390,7 +390,12 @@ impl<W: Write> TerminalParser<W> {
         }
         let alt = self.screen.in_alt_screen();
         let shift = if size.rows > 0 && self.screen.cursor.y >= size.rows { self.screen.cursor.y + 1 - size.rows } else { 0 };
-        self.screen.resize(size);
+        self.flush_scrollback();
+        if size.cols > 0 && size.rows > 0 && (size.cols != self.screen.size.cols || alt) {
+            self.reflow(size);
+        } else {
+            self.screen.resize(size);
+        }
         self.flush_scrollback();
         let shift = if alt { shift as i64 } else { 0 };
         let mut changed = false;
@@ -402,6 +407,94 @@ impl<W: Write> TerminalParser<W> {
         if changed {
             self.graphics_generation += 1;
         }
+    }
+
+    /// Re-wrap the main screen and the scrollback for `size` (the alternate screen
+    /// is only cut or padded). Placements on the main screen and in the scrollback
+    /// follow their logical line; ones that change height (`fit=w`, overhang) get
+    /// or give back the empty rows below them.
+    fn reflow(&mut self, size: Size) {
+        use crate::reflow::{Layout, Phys};
+        let old = self.screen.size;
+        let sb = self.scrollback.all_lines_wrapped();
+        let sb_len = sb.len();
+        let base = self.lines_scrolled - sb_len as i64;
+        let (cells, cursor, pending) = self.screen.main_state();
+        let is_main = |p: &crate::graphics::Placement| !p.alt && !p.virt;
+        // Screen rows up to the cursor, the last text and the last anchor.
+        let last_anchor = [&self.fuzzball.gfx, &self.kitty_gfx.gfx]
+            .iter()
+            .flat_map(|g| g.placements.iter().filter(|p| is_main(p)).map(|p| p.row - self.lines_scrolled))
+            .filter(|&r| r >= 0 && (r as usize) < old.rows)
+            .max()
+            .map(|r| r as usize);
+        let last_text =
+            (0..old.rows).rev().find(|&y| cells[y * old.cols..(y + 1) * old.cols].iter().any(|c| c.ch != ' ' || c.style != Default::default()));
+        let keep = [Some(cursor.y), last_text, last_anchor].into_iter().flatten().max().unwrap_or(0).min(old.rows.saturating_sub(1));
+        let mut rows: Vec<Phys> = sb.into_iter().map(|(s, w)| Phys::Str(s, w)).collect();
+        rows.extend((0..=keep).map(|y| Phys::Cells(cells[y * old.cols..(y + 1) * old.cols].to_vec())));
+        let mut lay = Layout::build(rows);
+        let cur = lay.add_point(sb_len + cursor.y, cursor.x + pending as usize, true).expect("cursor row kept");
+        let screen_top = lay.add_point(sb_len, 0, false).expect("first screen row");
+        // (gfx index, placement index, point id)
+        let mut anchors = Vec::new();
+        for (gi, g) in [&self.fuzzball.gfx, &self.kitty_gfx.gfx].into_iter().enumerate() {
+            for (pi, p) in g.placements.iter().enumerate() {
+                if !is_main(p) || p.row < base {
+                    continue;
+                }
+                if let Some(id) = lay.add_point((p.row - base) as usize, p.req_col as usize, false) {
+                    anchors.push((gi, pi, id));
+                }
+            }
+        }
+        // Height changes, bottom line first so earlier lines keep their index.
+        let mut grow: Vec<(usize, i64)> = anchors
+            .iter()
+            .map(|&(gi, pi, id)| {
+                let g = if gi == 0 { &self.fuzzball.gfx } else { &self.kitty_gfx.gfx };
+                let mut p = g.placements[pi].clone();
+                let (line, off) = lay.point(id);
+                if !p.fixed {
+                    p.req_col = (off % size.cols) as u32;
+                    p.fit(size.cols);
+                }
+                (line, p.rows as i64 - g.placements[pi].rows as i64)
+            })
+            .filter(|g| g.1 != 0)
+            .collect();
+        grow.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.abs().cmp(&a.1.abs())));
+        grow.dedup_by_key(|g| g.0);
+        for (line, delta) in grow {
+            lay.adjust_after(line, delta);
+        }
+        let (mut out, landed) = lay.split(size.cols);
+        let mut c = landed[cur];
+        c.col = c.col.min(size.cols - 1);
+        // The old screen's first row stays at the top unless the cursor would fall
+        // off the bottom; then the rows above go to the scrollback.
+        let top = landed[screen_top].row.min(c.row).max((c.row + 1).saturating_sub(size.rows));
+        let screen_rows: Vec<Phys> = out.drain(top.min(out.len())..).collect();
+        let mut new_cells = Vec::with_capacity(size.cols * size.rows);
+        for r in screen_rows.into_iter().take(size.rows) {
+            new_cells.extend(r.into_cells(size.cols));
+        }
+        new_cells.resize(size.cols * size.rows, crate::grid::Cell::default());
+        let scrolled: Vec<(String, bool)> = out.into_iter().map(Phys::into_string).collect();
+        let n_sb = scrolled.len();
+        self.scrollback.replace_all(scrolled);
+        self.lines_scrolled = base + n_sb as i64;
+        for (gi, pi, id) in anchors {
+            let g = if gi == 0 { &mut self.fuzzball.gfx } else { &mut self.kitty_gfx.gfx };
+            let p = &mut g.placements[pi];
+            let l = landed[id];
+            p.row = base + l.row as i64;
+            if !p.fixed {
+                p.req_col = l.col as u32;
+            }
+        }
+        self.graphics_generation += 1;
+        self.screen.finish_reflow(size, new_cells, crate::types::Point { x: c.col, y: c.row - top }, c.past_end);
     }
 
     fn flush_scrollback(&mut self) {
