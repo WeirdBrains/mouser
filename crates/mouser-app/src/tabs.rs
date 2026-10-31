@@ -17,6 +17,9 @@ pub enum Launch {
     Shell,
     /// A connection: argv run directly as the tab's process.
     Command(Vec<String>),
+    /// A program from the command line (`mouser -e ...`): closes when it
+    /// exits unless `hold` is set.
+    Exec { argv: Vec<String>, hold: bool },
 }
 
 pub struct Session {
@@ -27,6 +30,8 @@ pub struct Session {
     /// Title when the program sets none (connection name or "shell").
     pub name: String,
     pub launch: Launch,
+    /// Working directory for the process (default: `$HOME`).
+    pub cwd: Option<std::path::PathBuf>,
     master: Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn mouser_pty::Child + Send>>>,
     /// Exit code once the process ended and the tab is kept open to show it.
@@ -44,7 +49,11 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Whether a finished tab closes by itself: shells always, connections only
 /// when they exit cleanly (so an ssh error stays readable).
 pub fn closes_on_exit(launch: &Launch, code: u32) -> bool {
-    matches!(launch, Launch::Shell) || code == 0
+    match launch {
+        Launch::Shell => true,
+        Launch::Exec { hold, .. } => !hold,
+        Launch::Command(_) => code == 0,
+    }
 }
 
 pub fn exit_banner(code: u32) -> String {
@@ -53,6 +62,10 @@ pub fn exit_banner(code: u32) -> String {
 
 impl Session {
     pub fn new(name: impl Into<String>, launch: Launch, size: Size, sb: ScrollbackConfig) -> Arc<Self> {
+        Self::new_in(name, launch, None, size, sb)
+    }
+
+    pub fn new_in(name: impl Into<String>, launch: Launch, cwd: Option<std::path::PathBuf>, size: Size, sb: ScrollbackConfig) -> Arc<Self> {
         let scrollback = Arc::new(Scrollback::new(sb));
         let writer = SharedWriter(Arc::new(Mutex::new(None)));
         let parser = TerminalParser::new(size, scrollback.clone(), writer.clone());
@@ -63,6 +76,7 @@ impl Session {
             writer,
             name: name.into(),
             launch,
+            cwd,
             master: Mutex::new(None),
             child: Mutex::new(None),
             exited: Mutex::new(None),
@@ -84,8 +98,8 @@ impl Session {
     /// Spawn the process at the given size; output is fed on a reader thread.
     pub fn start(self: &Arc<Self>, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
         let spawned = match &self.launch {
-            Launch::Shell => mouser_pty::spawn_shell(cols, rows, pw, ph),
-            Launch::Command(argv) => mouser_pty::spawn_argv(argv, cols, rows, pw, ph),
+            Launch::Shell => mouser_pty::spawn_shell_in(self.cwd.as_deref(), cols, rows, pw, ph),
+            Launch::Command(argv) | Launch::Exec { argv, .. } => mouser_pty::spawn_argv_in(argv, self.cwd.as_deref(), cols, rows, pw, ph),
         };
         let handles = match spawned {
             Ok(h) => h,

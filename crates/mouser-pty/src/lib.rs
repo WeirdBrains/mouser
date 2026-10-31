@@ -4,6 +4,7 @@ pub use portable_pty::{Child, MasterPty};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::env;
 use std::io::{Read, Write};
+use std::path::Path;
 
 pub struct PtyHandles {
     pub child: Box<dyn Child + Send>,
@@ -13,17 +14,34 @@ pub struct PtyHandles {
 }
 
 pub fn spawn_shell(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
-    spawn_in_pty(shell_command(), cols, rows, pixel_width, pixel_height)
+    spawn_shell_in(None, cols, rows, pixel_width, pixel_height)
+}
+
+/// The login shell, started in `cwd` (default: `$HOME`).
+pub fn spawn_shell_in(cwd: Option<&Path>, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
+    let mut cmd = shell_command();
+    if let Some(d) = cwd {
+        cmd.cwd(d);
+    }
+    spawn_in_pty(cmd, cols, rows, pixel_width, pixel_height)
 }
 
 /// Run `argv` directly as the PTY's process (no shell in between), with the
 /// same terminal environment as the login shell.
 pub fn spawn_argv(argv: &[String], cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
+    spawn_argv_in(argv, None, cols, rows, pixel_width, pixel_height)
+}
+
+/// `spawn_argv` in `cwd` (default: `$HOME`).
+pub fn spawn_argv_in(argv: &[String], cwd: Option<&Path>, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
     let (prog, args) = argv.split_first().ok_or_else(|| anyhow::anyhow!("empty command"))?;
     let mut cmd = CommandBuilder::new(prog);
     cmd.args(args);
     if let Some(home) = env::var_os("HOME") {
         cmd.cwd(home);
+    }
+    if let Some(d) = cwd {
+        cmd.cwd(d);
     }
     term_env(&mut cmd);
     spawn_in_pty(cmd, cols, rows, pixel_width, pixel_height)

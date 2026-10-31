@@ -100,7 +100,13 @@ An ssh tab that exits with an error stays open showing
 - **Shift+mouse** bypasses an app's mouse capture.
 - Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (otherwise `xterm-256color`).
 
-See [docs/terminal.md](docs/terminal.md) for the supported sequences.
+Run a program instead of the shell with `mouser -e btop` or `mouser -- nvim file`;
+`--working-directory DIR` (`--dir`), `--title`, `--class` (`--app-id`), `--hold` and
+`--version` work like in other terminals. The desktop entry is
+xdg-terminal-exec compliant, so Mouser can be the default terminal on Omarchy and other
+desktops (`mouser.desktop` first in `~/.config/xdg-terminals.list`).
+
+See [docs/terminal.md](docs/terminal.md) for the supported sequences and options.
 
 ## Configuration
 

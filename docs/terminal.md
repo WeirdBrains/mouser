@@ -38,6 +38,26 @@ tic -x -o ~/.terminfo extra/mouser.terminfo
 
 ## Commands
 
+`mouser [OPTIONS] [-e CMD ARGS... | -- CMD ARGS...]` opens a window. Options:
+
+- `-e, --command CMD ARGS...` runs `CMD` (no shell in between) instead of the login
+  shell; everything after `-e` is passed to it. `mouser -- CMD ARGS...` is the same.
+  The window closes when the command exits.
+- `--hold` keeps it open with `[process exited N]` instead.
+- `--working-directory DIR` (alias `--dir`) starts the first tab in `DIR` instead of
+  `$HOME`; a missing directory is reported on stderr and `$HOME` used.
+- `-T, --title TITLE` sets the window title until the program sets one.
+- `--class CLASS` (alias `--app-id`) sets the Wayland app_id / X11 WM_CLASS
+  (default `Mouser`), for window rules.
+- `-V, --version` prints the version.
+
+The desktop entry declares these for
+[xdg-terminal-exec](https://github.com/Vladimir-csp/xdg-terminal-exec)
+(`X-TerminalArgExec=-e`, `X-TerminalArgDir=--working-directory`,
+`X-TerminalArgTitle=--title`, `X-TerminalArgAppId=--class`, `X-TerminalArgHold=--hold`),
+so with `mouser.desktop` first in `~/.config/xdg-terminals.list` launchers such as
+Omarchy's run `xdg-terminal-exec btop` as `mouser -e btop`.
+
 `mouser show [--width N] [--height N] [--fit|--original] [--id N] <file|->...` shows
 images. It sends `DCS = F z c q`, the Kitty query `ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`,
 `CSI 16 t`, `CSI 18 t`, `CSI 6 n` and DA1, and waits up to 1.5 s for the replies (DA1
