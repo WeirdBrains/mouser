@@ -275,8 +275,14 @@ pub fn clear_sentinel(name: &str) {
 }
 
 /// True if the engine crashed Mouser last time it started (it is skipped).
+///
+/// A marker written by this very process (an engine still starting here) does
+/// not count; one from an earlier process that never cleared it does.
 pub fn crashed_last_time(name: &str) -> bool {
-    sentinel(name).exists()
+    match fs::read_to_string(sentinel(name)) {
+        Ok(s) => !s.lines().any(|l| l.strip_prefix("pid=").and_then(|p| p.trim().parse::<u32>().ok()) == Some(std::process::id())),
+        Err(_) => sentinel(name).exists(),
+    }
 }
 
 /// Unix time the skipped engine was last started (the start that crashed).
@@ -441,6 +447,8 @@ mod tests {
         let _t = home();
         assert!(!crashed_last_time("glow"));
         set_sentinel("glow");
+        assert!(!crashed_last_time("glow"), "our own start is not a crash");
+        fs::write(sentinel("glow"), "pid=4000000000\nstarted=1\n").unwrap();
         assert!(crashed_last_time("glow"));
         clear_sentinel("glow");
         assert!(!crashed_last_time("glow"));
@@ -488,7 +496,7 @@ mod tests {
         assert_eq!(state("glow"), State::Ok);
         assert!(!unskip("glow").unwrap(), "nothing to clear");
         assert!(unskip("nope").is_err());
-        set_sentinel("glow");
+        fs::write(sentinel("glow"), format!("pid=4000000000\nstarted={}\n", now_secs())).unwrap();
         let State::Skipped { since: Some(at), .. } = state("glow") else { panic!("{:?}", state("glow")) };
         assert!(ago(at).ends_with("s ago"));
         assert!(unskip("glow").unwrap());
@@ -499,7 +507,7 @@ mod tests {
         unskip("glow").unwrap();
         record_failure("glow", "create failed:\nno GL");
         assert_eq!(state("glow"), State::Failed { at: last_failure("glow").unwrap().0, reason: "create failed: no GL".into() });
-        set_sentinel("skia");
+        mark_skipped("skia", "test");
         assert_eq!(unskip_all(), vec!["skia".to_string(), "glow".to_string()]);
         assert_eq!(state("glow"), State::Ok);
         record_failure("glow", "x");

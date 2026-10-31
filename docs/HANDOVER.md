@@ -151,6 +151,12 @@ stays unless the maintainer decides otherwise.
 - Engine priority (t142u/t144u): `engines::{priority, saved_priority, normalize,
   set_priority, move_to, move_by}`, `Preferences::engines`; `engine::create(order)` walks
   it, `engine::after(order, failed)` for runtime fallback. mouser never skipped/removable.
+- Engine switching + isolation (t141u): design docs/engines.md §7 (82675c5), host
+  `mouser-render/src/engine_host.rs`, `Painter::{switch, fall_back}` and the
+  `engine-prefs` watcher thread (UserEvent::Engines) in mouser-render/src/lib.rs,
+  `engine::first_usable`, `engines::mark_skipped`. Tests
+  `mouser-app/tests/engine_host_tests.rs` (pixels match, start failure, crash -> PTY shell
+  alive, skipped, unskip). Switching itself is only live-tested (needs a window).
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
