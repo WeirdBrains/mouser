@@ -52,6 +52,9 @@ pub enum Effect {
     None,
     /// Type this into the shell.
     Type(String),
+    /// Run a command line in the shell; what the user has typed is kept
+    /// (cut to the kill ring and yanked back when the prompt returns).
+    Run(String),
     /// Hand a file to the desktop's opener (players etc.).
     Open(PathBuf),
     /// Show the key mappings window.

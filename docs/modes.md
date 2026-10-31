@@ -89,10 +89,28 @@ buttons; a search field filters the folder as you type.
 | s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
 | space | mark / unmark the item (then moves on in list and carousel) | same | same |
 | * | mark all / clear marks | same | same |
-| \| | pipe: a prompt in the view; Enter types `printf '%s\n' <paths> \| <cmd>` into the shell (after Ctrl+U), so the output lands in the shell | same | same |
+| \| | pipe: a prompt in the view; Enter types `printf '%s\n' <paths> \| <cmd>` into the shell, so the output lands in the shell | same | same |
 | z / x | | larger / smaller tiles | |
 | a | dotfiles on/off (`ls -a`) | same | same |
 | o / m | options window / manual | same | same |
+
+**What you have typed is kept.** `cd` (open a folder, alt+p) and pipe run without
+losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to
+the shell's kill ring), the command and Enter, then, once the shell is the terminal's
+foreground process again (the command finished), Ctrl+Y and Backspace to put the line
+back (the cursor ends at its end). The added space makes sure an empty line stays empty
+instead of yanking an older kill.
+
+| shell | |
+| --- | --- |
+| bash (readline, emacs mode) | kept (tested) |
+| zsh (zle, emacs keymap) | kept (tested) |
+| fish | kept (Ctrl+U/Ctrl+Y use its kill ring; tested when installed) |
+| vi keymaps (`set -o vi`, `bindkey -v`) | not supported: in insert mode Ctrl+E/Ctrl+Y differ; leave the line empty before opening |
+| a program reading the terminal (`less`) after pipe | the yank waits until it exits |
+
+On Windows the shell's foreground state cannot be read, so the line is put back after
+a short pause.
 
 Mouse in every view: a click selects, a double-click (400 ms) opens, the wheel moves the
 selection (it scrolls the file view and the manual). The selection is highlighted and
