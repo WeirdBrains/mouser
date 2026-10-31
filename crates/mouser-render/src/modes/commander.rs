@@ -809,11 +809,10 @@ mod tests {
             assert!(sel, "view {view}: the selection scrolled into sight");
             m.action("first", 0);
             m.action("mark", 0);
+            // Mark moves on in list and carousel; go back so f00 is on screen.
+            m.action("first", 0);
             let v = m.view(&ctx(), &k);
-            assert!(
-                v.dock.unwrap().items.iter().any(|i| i.text.contains("* f00.txt") || i.text.starts_with('*') || i.text.contains("1 marked")),
-                "view {view}: marks shown"
-            );
+            assert!(v.dock.unwrap().items.iter().any(|i| i.text.contains("* f00.txt") || i.text.starts_with("*-")), "view {view}: marks shown");
             m.action("pipe", 0);
             assert!(m.wants_text());
             for b in [b"c", b"a", b"t"] {
