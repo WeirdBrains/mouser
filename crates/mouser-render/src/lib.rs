@@ -17,6 +17,7 @@ pub mod engine_host;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
+pub mod modes;
 pub mod scale;
 #[cfg(feature = "skia")]
 pub mod skia;
@@ -830,6 +831,16 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         MouseScrollDelta::PixelDelta(p) => (p.y / fonts.cell_h as f64) as isize,
                     };
                     dirty = true;
+                    // Over a mode's view the wheel goes to the mode ("scroll").
+                    if let (Some(on_act), Some(pos), Some(d)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref().and_then(|l| l.dock.as_ref()))
+                        && last_ui.as_ref().is_some_and(|l| l.panel.is_none())
+                        && d.panel.rect.contains(pos.x as i32, pos.y as i32)
+                    {
+                        if lines != 0 {
+                            (on_act)(ui::UiAction::Mode { action: "scroll".into(), arg: -lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32 });
+                        }
+                        return;
+                    }
                     // Over a panel (e.g. the font list) the wheel scrolls the panel.
                     if let (Some(on_act), Some(true)) = (&hooks.on_ui_action, last_ui.as_ref().map(|l| l.panel.is_some())) {
                         if lines != 0 {
@@ -937,8 +948,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     tab_bar = f();
                 }
                 let tab_h = if tab_bar.titles.len() > 1 { ui::tab_bar_height(fonts.cell_h) } else { 0 };
-                grid_top = PADDING + tab_h;
-                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h);
+                // A mode's view docked above the prompt pushes the grid down.
+                let inset = layout.as_ref().and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset);
+                grid_top = PADDING + tab_h + inset;
+                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h - inset);
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;
@@ -1064,6 +1077,8 @@ pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiA
         Key::Named(NamedKey::Tab) if ctrl && !alt => Some(ui::UiAction::CycleTab(if shift { -1 } else { 1 })),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("t") => Some(ui::UiAction::NewTab),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("w") => Some(ui::UiAction::CloseActiveTab),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("k") => Some(ui::UiAction::ShowKeymap),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("m") => Some(ui::UiAction::ShowModes),
         _ if alt && !ctrl && !shift => {
             // Use the physical digit row so layouts with shifted digits work.
             use winit::keyboard::{KeyCode, PhysicalKey};

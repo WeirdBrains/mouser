@@ -1,6 +1,11 @@
 # Modes
 
-Mouser supports vim-style modes:
+Mouser has two kinds of modes: **mode plugins** (commander, below), which change how
+you work with the files under the shell, and the **input modes** of the command line.
+
+## Input modes
+
+Mouser supports vim-style input modes:
 
 - Shell (default): input goes to the PTY.
 - Command: `:` command line for actions (e.g., `:open-sidebar`, `:connect <name>`, `:theme <name>`).
@@ -28,3 +33,100 @@ Keybindings
 
 Menus, keybindings and the command line dispatch the same named actions.
 
+
+## Mode plugins
+
+Exactly one mode plugin is active at a time (or none). Mouser starts in the default
+mode, **commander**. Switching replaces the current mode; there is no stacking.
+
+- `esc :` then the mode's hotkey and Enter switches to it (`esc :c` = commander).
+  Typing the hotkey of the mode that is already on turns modes off (plain terminal);
+  `esc :c` again turns commander back on. `:c` / `:commander` work from F10 too.
+- A lone Esc waits 500 ms for the `:`; without it the Esc goes to the shell
+  unchanged (so `esc` keeps working in readline/vi-mode shells, just 500 ms later).
+  `alt+:` opens the command line at once. Esc first closes an open mode window or
+  search.
+- Full-screen programs (the alternate screen: vim, less, htop ...) get the whole
+  window: the mode's view is hidden and no key is taken, Esc included.
+- `ctrl+shift+k`: the key mappings of the current mode. `ctrl+shift+m`: all modes
+  (click one to switch).
+- Every mode key is `<modifier>+<key>` (modifier `alt`). Only the keys a mode binds
+  are taken; every other key, other alt keys too, goes to the shell.
+
+### Remapping
+
+`~/.mouser/modes.toml` (the Mouser home), one section per mode:
+
+```toml
+[commander]
+modifier = "alt"        # only alt for now
+[commander.keys]
+switch_view = "v"       # a character, or up / down / left / right / enter
+```
+
+An unknown action or key is reported in the status bar and the defaults are kept.
+
+### Commander
+
+A view docked above the prompt (the terminal grid moves down; about half the
+window) that follows the shell's working directory (`/proc/<pid>/cwd` on Linux,
+OSC 7 elsewhere) and re-lists when the directory changes. Header: the directory,
+item count and the equivalent `ls` flags, then the view, `options`, `man` and `help`
+buttons; a search field filters the folder as you type.
+
+| key | action |
+| --- | --- |
+| alt+t | switch view: list, grid, carousel |
+| alt+s | search this folder (type, Enter keeps the filter, Esc clears it) |
+| alt+↑ / alt+↓ | previous / next row (scrolls the file view) |
+| alt+← / alt+→ | previous / next item |
+| alt+Enter | open: a folder is `cd`'d into (typed into the shell, after Ctrl+U), a video or audio file goes to the desktop opener (`xdg-open`, `open` on macOS), anything else opens the full-width file view (image or text) |
+| alt+z / alt+x | larger / smaller grid tiles |
+| alt+a | show / hide dotfiles (`ls -a`) |
+| alt+o | options window (view, tile size, `-a`, `-h`, sort by name / `-t` / `-S`, `-r`) |
+| alt+m | the manual |
+
+The defaults avoid readline's alt keys except `alt+t` (transpose-words, from
+MODES.md), which commander takes while it is on. Clicks: a click selects an item, a
+second click opens it; the wheel over the view moves the selection.
+
+- **List**: `ls -lah` columns (attributes, size, name, last modified).
+- **Grid**: tiles with a preview by type (images scaled, the first lines of text
+  files, a label for folders, video and audio) and the name below.
+- **Carousel**: the focused item large in the middle and its two neighbours cut
+  off at the edges.
+
+Previews load lazily on a worker thread: only what is on screen is requested
+(grid: the visible tiles; carousel: the focused item and its two neighbours) and
+the queue is replaced as you move, so off-screen items are skipped. Formats: PNG,
+JPEG, GIF, WebP, BMP.
+
+### Plugin API (`mouser_render::modes`)
+
+A mode implements the `Mode` trait and is registered with `Host::new` (the first
+mode is the default). Built-in modes are listed in `Host::builtin`.
+
+| item | what the mode provides |
+| --- | --- |
+| `name()`, `hotkey()` | name and the letter typed after `esc :` |
+| `bindings()` | default bindings `Binding { id, key, describe }`; the host loads `modes.toml` overrides, shows them in `ctrl+shift+k` and routes a bound key to `action(id, 0)` |
+| `activate()`, `deactivate()` | lifecycle; `deactivate` drops transient state |
+| `cwd_changed(dir)` | the shell's directory (called every frame; cheap when unchanged) |
+| `action(id, arg)` | a bound key, or a click on an item with `UiAction::Mode { action, arg }`; the wheel over the view sends `"scroll"` with ±steps |
+| `wants_text()`, `text(bytes)` | a focused input (search) takes plain typing |
+| `escape()` | close the mode's window or input |
+| `view(ctx, keymap)` | the render contribution: `View { dock, panel, images }` — a panel docked above the prompt inside `ctx.area`, an optional floating window and images (window pixels plus source rect) |
+| `set_waker(w)` | redraw from another thread (e.g. when a preview finished) |
+
+Actions return an `Effect` for Mouser to carry out: `Type` text into the shell,
+`Open` a file with the desktop opener, `ShowKeys`, `Say` (status bar). The core
+has no commander-specific code: key routing, `esc :`, the key and mode windows and
+remapping are generic.
+
+The interface passes plain data only (ids, paths, panels, pixels), so it can be
+served across a C ABI or a socket later.
+
+**Future work:** third-party modes, loaded like engines (a shared library with a
+versioned ABI or a helper process speaking the same calls), installed under
+`~/.mouser/modes/`; more modifiers than `alt`; DJ, Director, Debugger and Artist
+from MODES.md.

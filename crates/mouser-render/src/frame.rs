@@ -34,7 +34,9 @@ pub struct Frame<'a> {
 impl Frame<'_> {
     /// Pixels above the first grid row.
     pub fn top(&self, cell_h: i32) -> i32 {
-        PADDING + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
+        PADDING
+            + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
+            + self.ui.and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset)
     }
 }
 
@@ -244,6 +246,14 @@ pub fn accent_for(bg: u32) -> u32 {
 
 pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
+    // The commander view goes first: its previews are images, drawn with the rest.
+    if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()) {
+        let accent = frame.accent.unwrap_or(accent_for(frame.bg));
+        let (bg, fg) = (frame.bg, frame.fg);
+        let dark = luminance(bg) < 128.0;
+        let panel = if dark { mix(bg, 0xFFFFFF, 0.05) } else { mix(bg, 0x000000, 0.04) };
+        draw_panel(canvas, fonts, &d.panel, bg, fg, panel, mix(bg, fg, 0.25), mix(panel, fg, 0.65), accent);
+    }
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let top0 = frame.top(ch);
     let (lo, below_bg) = (i64::MIN, KITTY_BELOW_BG as i64);
@@ -381,6 +391,11 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
             ui::PanelStyle::Swatch(c) => {
                 canvas.fill_rect(b.x, b.y, b.w, b.h, border);
                 canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, c);
+            }
+            ui::PanelStyle::Tile { selected } => {
+                let (edge, t) = if selected { (accent, 2) } else { (border, 1) };
+                canvas.fill_rect(b.x, b.y, b.w, b.h, edge);
+                canvas.fill_rect(b.x + t, b.y + t, b.w - 2 * t, b.h - 2 * t, mix(bg, panel, 0.5));
             }
         }
     }

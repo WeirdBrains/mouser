@@ -1,4 +1,5 @@
 pub mod appearance;
+pub mod commander;
 pub mod compression;
 pub mod connections;
 pub mod engines;
@@ -9,6 +10,7 @@ pub mod grid;
 pub mod input;
 pub mod kitty;
 pub mod kitty_graphics;
+pub mod modes;
 pub mod parser;
 pub mod reflow;
 pub mod scrollback;
