@@ -248,7 +248,9 @@ impl Session {
         {
             let mut p = self.parser.lock().unwrap();
             if p.screen.size != size {
+                let t = std::time::Instant::now();
                 p.resize(size);
+                log::debug!(target: "mouser_frame", "resize {}x{} {:.2} ms", size.cols, size.rows, t.elapsed().as_secs_f64() * 1e3);
                 // Re-wrapping moves text; a selection would point at other cells.
                 *self.selection.lock().unwrap() = None;
                 if p.reflow_pending() {

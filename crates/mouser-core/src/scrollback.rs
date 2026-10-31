@@ -259,6 +259,7 @@ impl Scrollback {
         }
     }
 
+    /// Compress at most one idle chunk (called often, e.g. on every PTY read).
     pub fn maybe_compress_idle(&self) {
         let idle = Duration::from_millis(self.cfg.idle_compress_ms);
         let mut chunks = self.chunks.write();
@@ -275,6 +276,9 @@ impl Scrollback {
                             line_count: count,
                             algo: self.cfg.compression.algorithm,
                         };
+                        // One chunk per call: the lock is shared with drawing and
+                        // re-wrapping, so never hold it for the whole scrollback.
+                        return;
                     }
                 }
                 ScrollbackChunk::Compressed { .. } => { /* already compressed */ }

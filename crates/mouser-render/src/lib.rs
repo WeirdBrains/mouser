@@ -746,7 +746,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     cursor_shape: hooks.get_cursor_shape.as_ref().map(|f| f()).unwrap_or_default(),
                 };
                 last_ui = layout.clone();
-                if !painter.paint(&mut fonts, &frame, width, height) {
+                let paint_start = Instant::now();
+                let painted = painter.paint(&mut fonts, &frame, width, height);
+                log::debug!(target: "mouser_frame", "prepare {:.2} ms paint {:.2} ms", (paint_start - _frame_timer.0).as_secs_f64() * 1e3, paint_start.elapsed().as_secs_f64() * 1e3);
+                if !painted {
                     dirty = true;
                 }
             }

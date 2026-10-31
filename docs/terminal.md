@@ -24,8 +24,11 @@ kept, and the cursor stays on the same character. The old screen's first row sta
 top unless the cursor would fall off the bottom. Images move with their text, and a
 fitted image that grows or shrinks takes or gives back the empty lines under it. The
 alternate screen (full-screen apps) is only cut or padded; the app redraws it. A resize
-clears the selection. Re-wrapping 200 000 scrollback lines takes about 30–75 ms (release
-build).
+clears the selection. A resize re-wraps the screen and the newest 2000 scrollback rows at
+once (about 1 ms); older scrollback lines are re-wrapped right after on a worker in
+8192-row steps (about 3 ms each, 200 000 lines in about 60 ms), so dragging the window
+edge stays smooth with any scrollback size. Until then, very old lines may still show at
+the previous width. `RUST_LOG=mouser_frame=debug` logs frame and resize timings.
 
 Copied text joins soft-wrapped lines, ends hard lines with a newline and trims trailing blanks. The selection clears when its text changes or a typed key is sent to the app. It is drawn with the theme's `selection_foreground`/`selection_background`, or inverse colours. Clipboard access uses the Wayland connection, then `wl-copy`/`wl-paste`, `xclip`/`xsel` on X11, `pbcopy`/`pbpaste` on macOS.
 

@@ -145,7 +145,9 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
   are fitted only. The saved main screen behind it is re-wrapped and keeps its
   placements. Kitty placements with explicit `c`/`r` move with their text the same way
   and keep their size whenever it fits. Text in placeholder cells (Kitty `U=1`) is
-  re-wrapped like any text.
+  re-wrapped like any text. A terminal may re-wrap older scrollback lines shortly after
+  the resize instead of at once (Mouser: the newest 2000 rows with the screen, the rest
+  in steps); placements in those lines are moved and refitted when their lines are.
 - On a shorter screen, lines pushed into the scrollback keep their placements; a
   placement whose anchor line is cut off below the last row is removed with that line
   (its text is gone too).
