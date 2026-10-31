@@ -17,6 +17,16 @@ Mouser emulates a modern xterm (VT220+ with xterm and ECMA-48 extensions).
 | Shift+mouse | Bypass mouse reporting when an app (vim, tmux…) has grabbed the mouse. |
 | Mouse wheel | Scrollback; reported to the app in mouse modes; arrow keys on the alternate screen. |
 
+Resizing the window re-wraps the main screen and the scrollback: lines that wrapped
+because they were too long are joined and split again at the new width, hard line breaks
+stay, double-width characters are never split, attributes, links and combining marks are
+kept, and the cursor stays on the same character. The old screen's first row stays at the
+top unless the cursor would fall off the bottom. Images move with their text, and a
+fitted image that grows or shrinks takes or gives back the empty lines under it. The
+alternate screen (full-screen apps) is only cut or padded; the app redraws it. A resize
+clears the selection. Re-wrapping 200 000 scrollback lines takes about 30–75 ms (release
+build).
+
 Copied text joins soft-wrapped lines, ends hard lines with a newline and trims trailing blanks. The selection clears when its text changes or a typed key is sent to the app. It is drawn with the theme's `selection_foreground`/`selection_background`, or inverse colours. Clipboard access uses the Wayland connection, then `wl-copy`/`wl-paste`, `xclip`/`xsel` on X11, `pbcopy`/`pbpaste` on macOS.
 
 OSC 52 clipboard *writes* are passed to `wl-copy`; clipboard *reads* are never answered.
@@ -77,7 +87,8 @@ cursor below it. `--width`/`--height` give a fixed size and `--original` the nat
 pixel size instead. An image too tall to fill the width within 1000 rows is shrunk to
 fit 1000 rows. With only a Kitty reply it sends `a=T` in 4096-byte chunks with `q=1`
 (errors only) and `c`/`r` for the full width (Kitty has no fill mode, so it does not
-follow later resizes). PNG within the
+follow later resizes; it still moves with its text). `fit=w` is sent only when the
+terminal advertises `g_fit=w`. PNG within the
 published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
 RGBA and scaled down to `g_max_dim` / `g_mem` if needed. Video and audio are out of
 scope. Inside tmux every message is wrapped for passthrough. tmux answers DA1 itself and

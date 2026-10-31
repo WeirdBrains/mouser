@@ -45,6 +45,8 @@ pub struct TermInfo {
     pub cursor_col: u32,
     /// Wrap messages for tmux passthrough.
     pub tmux: bool,
+    /// Fuzzball `g_fit` lists `w`: placements can fill the width (`fit=w`).
+    pub fit_w: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -116,6 +118,7 @@ pub fn parse_replies(r: &str, tmux: bool) -> Option<TermInfo> {
         cols: cols.max(1),
         cursor_col,
         tmux,
+        fit_w: fz && get("g_fit").is_some_and(|f| f.split(':').any(|x| x == "w")),
     })
 }
 
@@ -432,7 +435,7 @@ pub fn run(files: &[String], o: &Options) -> Result<()> {
         let res = prepare(&data, &t).and_then(|p| {
             let (cols, rows) = fit_cells(p.w, p.h, &t, o);
             // Too tall to fill the width (over the row cap): fixed size instead.
-            let fill = fill && cols == t.cols;
+            let fill = fill && cols == t.cols && t.fit_w;
             let id = base.wrapping_add(i as u32).max(1);
             let bytes = match t.proto {
                 Proto::Fuzzball => encode(&p, id, cols, rows, fill, &t),
@@ -483,6 +486,7 @@ mod tests {
             cols: 80,
             cursor_col: 0,
             tmux: false,
+            fit_w: true,
         }
     }
 
@@ -501,10 +505,13 @@ mod tests {
                 cell: (10, 19),
                 cols: 87,
                 cursor_col: 4,
-                tmux: false
+                tmux: false,
+                fit_w: false,
             }
         );
         assert!(parse_replies("\x1b[?62;22c", false).is_none());
+        let fit = r.replace("g_fmt=rgba:rgb:png", "g_fmt=rgba:rgb:png,g_fit=w,g_reflow=1");
+        assert!(parse_replies(&fit, false).unwrap().fit_w, "g_fit=w advertised");
         // Both answered: Fuzzball wins; inside tmux, Kitty placeholders.
         let both = format!("{r}\x1b_Gi=31;OK\x1b\\");
         assert_eq!(parse_replies(&both, false).unwrap().proto, Proto::Fuzzball);

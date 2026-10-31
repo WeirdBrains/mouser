@@ -112,7 +112,7 @@ ESC P = F z c q ; id=1 ESC \
 Reply:
 
 ```
-ESC P = F z c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,k=1 ESC \
+ESC P = F z c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,g_max_place=4096,g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1 ESC \
 ```
 
 | key | meaning |
@@ -230,8 +230,10 @@ Placement lifecycle (graphics.md §4), decided in v0.1:
 |---|----------|----------|-----------|
 | 10 | Placement partly evicted from scrollback | Removed when its **anchor row** is evicted. | One rule for every case; the rest of a cut image is not useful. |
 | 11 | Free image data when its last placement goes? | **No.** It becomes an eviction candidate under `g_mem` pressure. | Apps may re-place an image by id without re-uploading. |
-| 12 | Resize | Placements are **scaled to fit the screen width** (aspect kept), shrinking in place at their anchor column; an anchor past the edge is pinned to the last column at one column wide (continuous, never dropped; Michael chose this over moving the image left at full size), and grown back toward the requested size (never beyond) on a wider screen; the request is kept so this is reversible. Anchor lines cut off below a shorter screen are removed with their text. No height fitting. | Images stay whole and readable instead of being clipped or dropped (Michael, 2026-10-30). |
-| 13 | Alternate screen | Placements scroll with alt text and are removed when they scroll off the top (no scrollback), on resize if cut off, and when the alt screen is left. A resize while in the alt screen blanks the saved main screen, so its visible placements go. | Same as the text. |
+| 12 | Resize | Placements are **fitted to the screen width** (aspect kept): one that would overhang the right edge moves to **column 0** at its requested size, scaled down only when wider than the screen (no more pinning to the last column at one column wide). A wider screen restores the requested anchor and size, never beyond; the request is kept so this is reversible. Anchor lines cut off below a shorter screen are removed with their text. No height fitting. | Images always fit the width (Michael, t132u, 2026-10-31; replaces the 2026-10-30 shrink-in-place/pin rule). |
+| 13 | Alternate screen | Placements scroll with alt text and are removed when they scroll off the top (no scrollback), on resize if cut off, and when the alt screen is left. The alt screen is not re-wrapped; the saved main screen is re-wrapped and its placements kept. | Same as the text; apps redraw the alt screen. |
+| 20 | Fill the width | `fit=w` on place (graphics.md §2.2): from the anchor column to the right edge, aspect kept, refitted on every resize in both directions. Advertised as `g_fit=w`. `mouser show` uses it by default. | Michael: "I need the images to always fit the width of the terminal" (t132u). |
+| 21 | Re-wrap on resize | The terminal re-wraps soft-wrapped lines of the main screen and the scrollback; placements stay anchored to their logical line and character, and a placement whose height changes gets or gives back the empty rows below it, so text after it moves instead of being covered. Advertised as `g_reflow=1`. | Michael: "Build the rewrap" (t133u), so fitted images no longer overlap the text below after widening. |
 | 15 | Downscale quality | Renderers draw downscaled images from a cached area-averaged copy at the displayed size (Mouser: `mouser-render/src/scale.rs`), so CPU and GPU sample 1:1 with no nearest-neighbour stripes. | Quality without rescaling every frame. |
 | 14 | Abandoned uploads | Discarded by a timer 10 s after the last chunk (not only when the next chunk arrives). | Frees the buffer of a crashed uploader. |
 

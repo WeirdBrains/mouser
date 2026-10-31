@@ -1,6 +1,8 @@
 ## [Unreleased]
 
 Added:
+- Re-wrap on resize: soft-wrapped lines on the main screen and in the scrollback are joined and split at the new width (hard breaks kept, wide characters never split, attributes, links and combining marks kept); the cursor stays on its character; images stay anchored to their line, and fitted images take or give back the empty rows below them so text after them moves instead of being covered; the alternate screen is cut, not re-wrapped, and the main screen behind it is now kept (and re-wrapped) instead of blanked; a resize clears the selection
+- Fuzzball capability reply advertises `g_fit=w` and `g_reflow=1`; `mouser show` sends `fit=w` only when `g_fit` lists `w`
 - Mouse selection: drag selects characters, double-click a word (`[selection] word_chars` in config.toml), triple-click a line, Shift+click extends, Alt+drag selects a block; works over the scrollback, auto-scrolls past the window edges, handles wide and combining characters, joins soft-wrapped lines and trims trailing blanks; Shift bypasses an app's mouse reporting; cleared when its text changes or a typed key is sent
 - Copy with Ctrl+Shift+C (Cmd+C on macOS); selecting sets PRIMARY on Linux (through the Wayland connection, so it works on Hyprland)
 - Paste: Ctrl+Shift+V (Cmd+V on macOS) pastes the clipboard, middle-click and Shift+Insert paste PRIMARY on Linux; pasted control characters (except tab, newline, CR) are dropped and a pasted `ESC[201~` cannot end a bracketed paste early
