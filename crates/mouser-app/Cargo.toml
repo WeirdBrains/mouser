@@ -24,3 +24,13 @@ mouser-core = { path = "../mouser-core" }
 mouser-pty = { path = "../mouser-pty" }
 mouser-render = { path = "../mouser-render" }
 
+[dev-dependencies]
+tempfile = "3.10.1"
+serial_test = "3.0.0"
+mouser-engine-abi = { path = "../mouser-engine-abi" }
+
+[features]
+# The Skia GPU engine (skia-safe downloads prebuilt Skia at build time).
+default = ["skia"]
+skia = ["mouser-render/skia"]
+
