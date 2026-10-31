@@ -9,7 +9,10 @@
 //!
 //! Test hooks: `MOUSER_FLAT_FAIL=create` makes `create` fail,
 //! `MOUSER_FLAT_FAIL=draw` makes `draw` return an error, and
-//! `MOUSER_FLAT_ABI=<n>` reports another ABI version.
+//! `MOUSER_FLAT_ABI=<n>` reports another ABI version, and
+//! `MOUSER_FLAT_CRASH_AT=<n>` aborts the process in the n-th `draw` (to test
+//! crash isolation). Supports window surfaces (Wayland, Xlib) and
+//! `SURFACE_PIXELS` (Mouser's engine host).
 
 use mouser_engine_abi::*;
 use raw_window_handle as rwh;
@@ -123,11 +126,16 @@ pub fn rasterize(buf: &mut [u32], width: usize, height: usize, frame: &MouserFra
     }
 }
 
+enum Target {
+    Window { _context: softbuffer::Context<Handles>, surface: softbuffer::Surface<Handles, Handles> },
+    Pixels(*const MouserPixels),
+}
+
 struct Flat {
-    _context: softbuffer::Context<Handles>,
-    surface: softbuffer::Surface<Handles, Handles>,
+    target: Target,
     width: u32,
     height: u32,
+    frames: u64,
 }
 
 fn fail(what: &str) -> bool {
@@ -141,11 +149,17 @@ unsafe extern "C" fn create(surface: *const MouserSurface, w: u32, h: u32, err: 
         }
         // SAFETY: Mouser passes a valid surface or null.
         let s = unsafe { surface.as_ref() }.ok_or("null surface")?;
+        if s.kind == SURFACE_PIXELS {
+            if s.window.is_null() {
+                return Err("null pixel buffer".into());
+            }
+            return Ok(Flat { target: Target::Pixels(s.window as *const MouserPixels), width: w.max(1), height: h.max(1), frames: 0 });
+        }
         let h_ = handles(s)?;
         let context = softbuffer::Context::new(h_).map_err(|e| e.to_string())?;
         let mut sf = softbuffer::Surface::new(&context, h_).map_err(|e| e.to_string())?;
         sf.resize(NonZeroU32::new(w.max(1)).unwrap(), NonZeroU32::new(h.max(1)).unwrap()).map_err(|e| e.to_string())?;
-        Ok(Flat { _context: context, surface: sf, width: w.max(1), height: h.max(1) })
+        Ok(Flat { target: Target::Window { _context: context, surface: sf }, width: w.max(1), height: h.max(1), frames: 0 })
     })();
     match made {
         Ok(f) => Box::into_raw(Box::new(f)) as *mut c_void,
@@ -162,7 +176,9 @@ unsafe extern "C" fn resize(engine: *mut c_void, w: u32, h: u32) {
     let Some(f) = (unsafe { (engine as *mut Flat).as_mut() }) else { return };
     f.width = w.max(1);
     f.height = h.max(1);
-    let _ = f.surface.resize(NonZeroU32::new(f.width).unwrap(), NonZeroU32::new(f.height).unwrap());
+    if let Target::Window { surface, .. } = &mut f.target {
+        let _ = surface.resize(NonZeroU32::new(f.width).unwrap(), NonZeroU32::new(f.height).unwrap());
+    }
 }
 
 unsafe extern "C" fn draw(engine: *mut c_void, frame: *const MouserFrame) -> c_int {
@@ -171,16 +187,35 @@ unsafe extern "C" fn draw(engine: *mut c_void, frame: *const MouserFrame) -> c_i
     }
     // SAFETY: pointers come from Mouser and are valid for this call.
     let (Some(f), Some(frame)) = (unsafe { (engine as *mut Flat).as_mut() }, unsafe { frame.as_ref() }) else { return -2 };
+    f.frames += 1;
+    if std::env::var("MOUSER_FLAT_CRASH_AT").ok().and_then(|v| v.parse::<u64>().ok()) == Some(f.frames) {
+        std::process::abort();
+    }
     if frame.width != f.width || frame.height != f.height {
         unsafe { resize(engine, frame.width, frame.height) };
     }
-    let (w, h) = (f.width as usize, f.height as usize);
-    let Ok(mut buf) = f.surface.buffer_mut() else { return DRAW_AGAIN };
-    if buf.len() < w * h {
-        return DRAW_AGAIN;
+    match &mut f.target {
+        Target::Pixels(p) => {
+            // SAFETY: Mouser's host keeps the buffer valid during draw.
+            let Some(px) = (unsafe { p.as_ref() }) else { return -3 };
+            let (w, h) = (px.width as usize, px.height as usize);
+            if px.data.is_null() || px.stride as usize != w {
+                return -4;
+            }
+            let buf = unsafe { std::slice::from_raw_parts_mut(px.data, w * h) };
+            rasterize(buf, w, h, frame);
+            DRAW_OK
+        }
+        Target::Window { surface, .. } => {
+            let (w, h) = (f.width as usize, f.height as usize);
+            let Ok(mut buf) = surface.buffer_mut() else { return DRAW_AGAIN };
+            if buf.len() < w * h {
+                return DRAW_AGAIN;
+            }
+            rasterize(&mut buf[..w * h], w, h, frame);
+            if buf.present().is_err() { DRAW_AGAIN } else { DRAW_OK }
+        }
     }
-    rasterize(&mut buf[..w * h], w, h, frame);
-    if buf.present().is_err() { DRAW_AGAIN } else { DRAW_OK }
 }
 
 unsafe extern "C" fn destroy(engine: *mut c_void) {

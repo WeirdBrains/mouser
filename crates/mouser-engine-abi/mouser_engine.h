@@ -6,11 +6,13 @@
 
 #define MOUSER_ENGINE_ABI 1
 enum { MOUSER_SURFACE_WAYLAND = 1, MOUSER_SURFACE_XLIB = 2, MOUSER_SURFACE_XCB = 3,
-       MOUSER_SURFACE_APPKIT = 4, MOUSER_SURFACE_WIN32 = 5 };
+       MOUSER_SURFACE_APPKIT = 4, MOUSER_SURFACE_WIN32 = 5,
+       MOUSER_SURFACE_PIXELS = 6 /* window -> MouserPixels; used in the engine host */ };
 enum { MOUSER_OP_RECT = 0, MOUSER_OP_GLYPH = 1, MOUSER_OP_IMAGE = 2 };
 enum { MOUSER_DRAW_OK = 0, MOUSER_DRAW_AGAIN = 1 };
 
 typedef struct { uint32_t kind; void *display; void *window; } MouserSurface;
+typedef struct { uint32_t *data; uint32_t width, height, stride; } MouserPixels; /* 0x00RRGGBB */
 typedef struct { int32_t x, y, w, h; uint32_t color; } MouserRect;
 typedef struct { int32_t x, y; uint32_t w, h, stride, color; const uint8_t *coverage; uint64_t key; } MouserGlyph;
 typedef struct { int32_t x, y; uint32_t w, h, img_w, img_h, src_x, src_y, src_w, src_h;
