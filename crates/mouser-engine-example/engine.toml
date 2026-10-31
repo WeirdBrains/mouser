@@ -1,0 +1,5 @@
+name = "flat"
+version = "0.1.0"
+abi = 1
+library = "libmouser_engine_flat.so"
+description = "Example engine: CPU raster presented with softbuffer"
