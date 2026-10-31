@@ -42,6 +42,8 @@ pub struct Session {
     upload_timer: AtomicBool,
     /// Wakes the graphics timer early when new timer work arrives.
     timer_kick: (Mutex<bool>, std::sync::Condvar),
+    /// A worker is re-wrapping older scrollback lines after a resize.
+    reflowing: Arc<AtomicBool>,
     /// Mouse selection (lock after `parser`).
     pub selection: Mutex<Option<crate::select::SelState>>,
 }
@@ -86,7 +88,34 @@ impl Session {
             upload_timer: AtomicBool::new(false),
             timer_kick: (Mutex::new(false), std::sync::Condvar::new()),
             selection: Mutex::new(None),
+            reflowing: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Re-wrap the older scrollback lines in small steps on a worker so resize
+    /// frames never wait for the whole scrollback (one worker per tab).
+    fn settle_reflow(&self) {
+        if self.reflowing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (parser, flag) = (self.parser.clone(), self.reflowing.clone());
+        std::thread::spawn(move || {
+            loop {
+                let more = parser.lock().unwrap().reflow_step(mouser_core::parser::REFLOW_STEP_ROWS);
+                crate::wake();
+                if more {
+                    // Let the renderer and the PTY reader take the lock between steps.
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+                flag.store(false, Ordering::Release);
+                // A resize may have queued more work after the last step.
+                let pending = parser.lock().unwrap().reflow_pending();
+                if !pending || flag.swap(true, Ordering::AcqRel) {
+                    break;
+                }
+            }
+        });
     }
 
     pub fn started(&self) -> bool {
@@ -222,6 +251,9 @@ impl Session {
                 p.resize(size);
                 // Re-wrapping moves text; a selection would point at other cells.
                 *self.selection.lock().unwrap() = None;
+                if p.reflow_pending() {
+                    self.settle_reflow();
+                }
             }
         }
         if let Some(m) = self.master.lock().unwrap().as_mut() {

@@ -150,6 +150,15 @@ pub fn select_cell(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), top
     if row >= rows { (col, rows - 1, 1) } else { (col, row, 0) }
 }
 
+/// Logs how long a frame took (`RUST_LOG=mouser_frame=debug`).
+struct FrameTimer(Instant);
+
+impl Drop for FrameTimer {
+    fn drop(&mut self) {
+        log::debug!(target: "mouser_frame", "frame {:.2} ms", self.0.elapsed().as_secs_f64() * 1e3);
+    }
+}
+
 const AUTOSCROLL_EVERY: Duration = Duration::from_millis(50);
 
 pub type ImagesHook = Arc<dyn Fn(usize, usize, (u32, u32)) -> Vec<ImageDraw> + Send + Sync>;
@@ -662,6 +671,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 dirty = false;
                 last_frame = Some(Instant::now());
+                let _frame_timer = FrameTimer(Instant::now());
                 elwt.set_control_flow(match autoscroll_next {
                     Some(_) => ControlFlow::WaitUntil(last_autoscroll + AUTOSCROLL_EVERY),
                     None => ControlFlow::Wait,

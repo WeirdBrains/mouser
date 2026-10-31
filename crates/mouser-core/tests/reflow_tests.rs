@@ -285,6 +285,44 @@ fn rows_only_resize_keeps_old_behaviour() {
     assert_eq!(logical(&t), l0);
 }
 
+/// With only a few scrollback rows re-wrapped on resize, the rest follows in steps;
+/// resizing again in between and finishing gives the same text and images.
+#[test]
+fn lazy_scrollback_reflow_converges() {
+    for sync in [0, 1, 3, 7] {
+        let mut t = term(20, 4);
+        t.reflow_sync_rows = sync;
+        for i in 0..12 {
+            t.feed(format!("{i}:{LONG}\r\n").as_bytes());
+            if i == 5 {
+                fit_image(&mut t);
+            }
+        }
+        t.feed(b"$ ");
+        let l0 = logical(&t);
+        let first = t.lines_scrolled - t.scrollback.total_lines() as i64;
+        let abs_img = |t: &TerminalParser<std::io::Sink>| {
+            let p = &t.fuzzball.gfx.placements[0];
+            (p.row - (t.lines_scrolled - t.scrollback.total_lines() as i64), p.cols, p.rows)
+        };
+        let img0 = abs_img(&t);
+        let _ = first;
+        for (c, steps) in [(33, 1), (9, 0), (50, 2), (20, 100)] {
+            resize(&mut t, c, 4);
+            for _ in 0..steps {
+                t.reflow_step(5);
+            }
+            assert_eq!(logical(&t), l0, "sync {sync}, {c} cols");
+        }
+        while t.reflow_step(5) {}
+        assert!(!t.reflow_pending());
+        assert_eq!(logical(&t), l0, "sync {sync} settled");
+        assert_eq!(abs_img(&t), img0, "sync {sync}: image back at its line and size");
+        let rows: Vec<bool> = (0..t.scrollback.total_lines()).map(|i| t.scrollback.get_lines(i, 1)[0].chars().count() <= 20).collect();
+        assert!(rows.iter().all(|&b| b), "sync {sync}: every row fits 20 columns");
+    }
+}
+
 /// `cargo test --release -p mouser-core --test reflow_tests -- --ignored --nocapture`
 #[test]
 #[ignore]
@@ -301,9 +339,43 @@ fn perf_large_scrollback() {
     }
     t.feed(&buf);
     let n = t.scrollback.total_lines();
-    for cols in [80, 200, 120] {
-        let s = std::time::Instant::now();
-        resize(&mut t, cols, 50);
-        eprintln!("reflow {n} scrollback lines -> {cols} cols: {:?} ({} lines now)", s.elapsed(), t.scrollback.total_lines());
+    // SYNC=1000000 re-wraps everything on every resize (the old behaviour).
+    if let Some(v) = std::env::var("SYNC").ok().and_then(|v| v.parse().ok()) {
+        t.reflow_sync_rows = v;
     }
+    // A drag: one resize per frame, then one background step of the lazy part.
+    let budget: usize = std::env::var("BUDGET").ok().and_then(|v| v.parse().ok()).unwrap_or(mouser_core::parser::REFLOW_STEP_ROWS);
+    let widths: Vec<usize> = (60..=120).rev().chain(60..=200).chain((120..=200).rev()).collect();
+    let (mut resize_ms, mut step_ms) = (Vec::new(), Vec::new());
+    for &c in &widths {
+        let s = std::time::Instant::now();
+        resize(&mut t, c, 50);
+        resize_ms.push(s.elapsed().as_secs_f64() * 1e3);
+        let s = std::time::Instant::now();
+        t.reflow_step(budget);
+        step_ms.push(s.elapsed().as_secs_f64() * 1e3);
+    }
+    let s = std::time::Instant::now();
+    let mut steps = 0;
+    while t.reflow_step(budget) {
+        steps += 1;
+    }
+    let settle = s.elapsed();
+    let stat = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        (v[v.len() * 95 / 100], v[v.len() - 1])
+    };
+    let (rp, rm) = stat(&mut resize_ms);
+    let (sp, sm) = stat(&mut step_ms);
+    eprintln!(
+        "{n} scrollback lines, {} resizes: resize p95 {rp:.2} ms max {rm:.2} ms; step({budget}) p95 {sp:.2} ms max {sm:.2} ms; settle {steps} more steps in {settle:?}",
+        widths.len()
+    );
+    let lines = logical(&t);
+    assert!(lines.last().unwrap().starts_with("199999: short"), "newest text kept");
+    let w = t.screen.size.cols;
+    assert!(
+        (0..t.scrollback.total_lines()).step_by(997).all(|i| mouser_core::reflow::str_width(&t.scrollback.get_lines(i, 1)[0]) <= w),
+        "settled at the final width"
+    );
 }

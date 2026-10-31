@@ -13,6 +13,8 @@ fn term(cols: usize, rows: usize) -> T {
     let cfg = ScrollbackConfig { chunk_lines: 8, ..Default::default() };
     let mut t = TerminalParser::new(Size { cols, rows }, Arc::new(Scrollback::new(cfg)), std::io::sink());
     t.cell_px = (10, 20);
+    // Re-wrap only a few scrollback rows on resize; the rest goes through `reflow_step`.
+    t.reflow_sync_rows = std::env::var("SYNC").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     // Fuzzball images 1: 2x2 px, 2: 8x2 (wide), 3: 2x8 (tall), all RGBA.
     for (id, w, h) in [(1, 2, 2), (2, 8, 2), (3, 2, 8)] {
         let px = vec![200u8; w * h * 4];
@@ -112,6 +114,11 @@ fn check(t: &T, step: &str) {
 const STEPS: &[(usize, usize)] = &[(40, 30), (80, 30), (13, 30), (57, 12), (7, 30), (120, 50), (25, 8), (40, 30), (90, 30), (40, 30)];
 
 fn run(t: &mut T, name: &str) {
+    // Again with the lazy scrollback path (a copy of the input replayed).
+    run_with(t, name);
+}
+
+fn run_with(t: &mut T, name: &str) {
     let n = placements(t).len();
     assert!(n >= 3, "{name}: placements were made");
     check(t, &format!("{name} initial"));
@@ -119,6 +126,11 @@ fn run(t: &mut T, name: &str) {
         t.resize(Size { cols: c, rows: r });
         check(t, &format!("{name} {c}x{r}"));
         assert_eq!(placements(t).len(), n, "{name} {c}x{r}: no placement dropped");
+        // Settle the lazy part in small steps, checking as it goes.
+        while t.reflow_step(7) {
+            check(t, &format!("{name} {c}x{r} step"));
+        }
+        check(t, &format!("{name} {c}x{r} settled"));
     }
 }
 
