@@ -510,12 +510,16 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut selecting = false;
     let mut clicks = ClickCounter::default();
     let mut last_autoscroll = Instant::now();
+    // Keystroke -> first frame after the PTY answered (debug timing).
+    let mut key_at: Option<Instant> = None;
+    let mut echo_pending = false;
 
     event_loop.run(|event, elwt| {
         match event {
             Event::UserEvent(UserEvent::Wake) => {
                 wake_pending.store(false, Ordering::Release);
                 dirty = true;
+                echo_pending |= key_at.is_some();
             }
             Event::UserEvent(UserEvent::Engines) => {
                 // Switch when the engine this window would now pick differs.
@@ -665,6 +669,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
+                    if key_event.state == ElementState::Pressed && key_at.is_none() {
+                        key_at = Some(Instant::now());
+                    }
                     dirty = true;
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
@@ -914,6 +921,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 log::debug!(target: "mouser_frame", "prepare {:.2} ms paint {:.2} ms", (paint_start - _frame_timer.0).as_secs_f64() * 1e3, paint_start.elapsed().as_secs_f64() * 1e3);
                 if !painted {
                     dirty = true;
+                }
+                if echo_pending && let Some(t) = key_at.take() {
+                    echo_pending = false;
+                    log::debug!(target: "mouser_frame", "key-to-frame {:.2} ms", t.elapsed().as_secs_f64() * 1e3);
                 }
             }
             _ => {}

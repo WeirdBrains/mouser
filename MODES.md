@@ -21,3 +21,21 @@ When you switch to a mode, several hot key mappings become available (depending 
 In command mode, any time we cd into a directory, we see a list of files above the prompt in a scrollable view. Several hot key combinations show up that allow you to change the view which changes how the listing looks.
 
 For example: `t` would toggle through the kinds of views that you have.
+
+Some views have additional options. Here are the view layouts:
+
+- list
+- grid
+- carousel
+
+### List
+
+```
++----------------------------------------------+
+| | Attributes | Name        | Last Modified | |
+| +------------+-------------+---------------+ |
+| | drwxr-xr-x | .           | Oct 31 02:02  | |
+| | drwxr-xr-x | ..          | Oct 31 02:02  | |
+| | drwxr-xr-x | example.txt | Oct 31 02:02  | |
++----------------------------------------------+
+```
