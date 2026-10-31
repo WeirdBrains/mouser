@@ -45,14 +45,26 @@ pub struct Scrollback {
     cfg: ScrollbackConfig,
     chunks: RwLock<Vec<ScrollbackChunk>>,
     tail: RwLock<Vec<String>>, // recent, always uncompressed
+    /// Soft-wrap flag per stored line (same order and length as the lines).
+    wrapped: RwLock<std::collections::VecDeque<bool>>,
 }
 
 impl Scrollback {
     pub fn new(cfg: ScrollbackConfig) -> Self {
-        Self { cfg, chunks: RwLock::new(Vec::new()), tail: RwLock::new(Vec::new()) }
+        Self { cfg, chunks: RwLock::new(Vec::new()), tail: RwLock::new(Vec::new()), wrapped: RwLock::new(Default::default()) }
     }
 
     pub fn push_line(&self, line: String) {
+        self.push_line_wrapped(line, false);
+    }
+
+    /// Whether stored line `i` continues on line `i + 1` (soft wrap).
+    pub fn is_wrapped(&self, i: usize) -> bool {
+        self.wrapped.read().get(i).copied().unwrap_or(false)
+    }
+
+    pub fn push_line_wrapped(&self, line: String, wrapped: bool) {
+        self.wrapped.write().push_back(wrapped);
         // First, append to tail
         let maybe_full_chunk = {
             let mut tail = self.tail.write();
@@ -71,6 +83,7 @@ impl Scrollback {
     pub fn clear(&self) {
         self.chunks.write().clear();
         self.tail.write().clear();
+        self.wrapped.write().clear();
     }
 
     pub fn total_lines(&self) -> usize {
@@ -85,6 +98,9 @@ impl Scrollback {
         while total > self.cfg.max_scrollback_lines && !chunks.is_empty() {
             let dropped = chunks.remove(0).line_count();
             total = total.saturating_sub(dropped);
+            let mut w = self.wrapped.write();
+            let n = dropped.min(w.len());
+            w.drain(..n);
         }
     }
 

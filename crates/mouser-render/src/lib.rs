@@ -54,8 +54,14 @@ pub struct RenderHooks {
     pub get_cursor_shape: Option<Arc<dyn Fn() -> CursorShape + Send + Sync>>,
     pub on_mouse: Option<MouseHook>,
     pub on_focus: Option<Arc<dyn Fn(bool) + Send + Sync>>,
-    /// Ctrl+Shift+V.
+    /// Ctrl+Shift+V (Cmd+V on macOS).
     pub on_paste: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Mouse selection on the grid (not reported to the app).
+    pub on_select: Option<Arc<dyn Fn(SelectEvent) + Send + Sync>>,
+    /// Ctrl+Shift+C (Cmd+C on macOS): copy the selection.
+    pub on_copy: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Middle click not taken by the app: paste the primary selection.
+    pub on_paste_primary: Option<Arc<dyn Fn() + Send + Sync>>,
     /// True while the app holds output (synchronized update, mode 2026).
     pub hold_frame: Option<ExitHook>,
     /// Window title (OSC 0/2).
@@ -84,6 +90,66 @@ pub struct RenderHooks {
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
+
+/// Selection input in view coordinates: `row` is a row of the view, which
+/// shows the live screen `scrolled_back` lines up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectEvent {
+    /// Left press: `clicks` 1 = characters, 2 = words, 3 = lines; `extend`
+    /// (Shift) moves the end of the current selection; `block` (Alt) selects a rectangle.
+    Press {
+        col: usize,
+        row: usize,
+        scrolled_back: usize,
+        clicks: u8,
+        extend: bool,
+        block: bool,
+    },
+    Drag {
+        col: usize,
+        row: usize,
+        scrolled_back: usize,
+    },
+    Release,
+    /// Input was typed: drop the selection.
+    Clear,
+}
+
+/// Counts consecutive clicks on the same cell (double/triple click).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClickCounter {
+    last: Option<(Instant, usize, usize, u8)>,
+}
+
+pub const MULTI_CLICK: Duration = Duration::from_millis(400);
+
+impl ClickCounter {
+    /// Register a press at (`col`, `row`) and return the click count (1..=3, then back to 1).
+    pub fn press(&mut self, now: Instant, col: usize, row: usize) -> u8 {
+        let n = match self.last {
+            Some((t, c, r, n)) if now.duration_since(t) <= MULTI_CLICK && c == col && r == row => n % 3 + 1,
+            _ => 1,
+        };
+        self.last = Some((now, col, row, n));
+        n
+    }
+}
+
+/// View cell under a window position for selection, clamped to the grid, and
+/// whether the pointer is above (-1) or below (1) it.
+pub fn select_cell(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), top: i32) -> (usize, usize, i8) {
+    let (x, y) = (px as i32 - PADDING, py as i32 - top);
+    let cols = grid.0.max(1);
+    let rows = grid.1.max(1);
+    let col = if x < 0 { 0 } else { ((x / cell.0.max(1)) as usize).min(cols - 1) };
+    if y < 0 {
+        return (col, 0, -1);
+    }
+    let row = (y / cell.1.max(1)) as usize;
+    if row >= rows { (col, rows - 1, 1) } else { (col, row, 0) }
+}
+
+const AUTOSCROLL_EVERY: Duration = Duration::from_millis(50);
 
 pub type ImagesHook = Arc<dyn Fn(usize, usize, (u32, u32)) -> Vec<ImageDraw> + Send + Sync>;
 
@@ -283,6 +349,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let default_title = renderer.title.clone().unwrap_or_else(|| "Mouser".into());
     let mut grid_top = PADDING;
     let mut tab_bar = ui::TabBar::default();
+    let mut selecting = false;
+    let mut clicks = ClickCounter::default();
+    let mut last_autoscroll = Instant::now();
 
     event_loop.run(|event, elwt| {
         match event {
@@ -306,7 +375,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         (on_act)(ui::UiAction::ResizeSidebar(w));
                         dirty = true;
                     }
+                    if selecting && let Some(on_select) = &hooks.on_select {
+                        let (col, row, _) = select_cell(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                        on_select(SelectEvent::Drag { col, row, scrolled_back });
+                        dirty = true;
+                    }
                     if !dragging
+                        && !selecting
                         && let (Some(on_mouse), Some(hit)) =
                             (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top))
                     {
@@ -321,6 +396,15 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if selecting && button == winit::event::MouseButton::Left {
+                        selecting = false;
+                        mouse_down = None;
+                        if let Some(on_select) = &hooks.on_select {
+                            on_select(SelectEvent::Release);
+                        }
+                        dirty = true;
+                        return;
+                    }
                     if !dragging
                         && let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
                         && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
@@ -363,6 +447,30 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             dirty = true;
                             return;
                         }
+                        if b == mouser_core::input::MouseButton::Left
+                            && let Some(on_select) = &hooks.on_select
+                        {
+                            let n = clicks.press(Instant::now(), hit.0, hit.1);
+                            on_select(SelectEvent::Press {
+                                col: hit.0,
+                                row: hit.1,
+                                scrolled_back,
+                                clicks: n,
+                                extend: modifiers.shift_key() && n == 1,
+                                block: modifiers.alt_key(),
+                            });
+                            selecting = true;
+                            dirty = true;
+                        }
+                        if b == mouser_core::input::MouseButton::Middle
+                            && let Some(paste) = &hooks.on_paste_primary
+                        {
+                            mouse_down = None;
+                            scrolled_back = 0;
+                            paste();
+                            dirty = true;
+                            return;
+                        }
                     }
                     if let (Some(on_act), Some(layout), Some(pos)) = (&hooks.on_ui_action, &last_ui, cursor_pos) {
                         if ui::on_resize_edge(layout, pos.x.round() as i32, pos.y.round() as i32) {
@@ -385,29 +493,52 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         on_act(act);
                         return;
                     }
+                    // Ctrl+Shift+C/V, and Cmd+C/V on macOS.
+                    let clip_mods = (modifiers.control_key() && modifiers.shift_key())
+                        || (cfg!(target_os = "macos") && modifiers.super_key() && !modifiers.control_key());
                     if key_event.state == ElementState::Pressed
-                        && modifiers.control_key()
-                        && modifiers.shift_key()
-                        && let (Key::Character(c), Some(paste)) = (&key_event.logical_key, &hooks.on_paste)
-                        && c.eq_ignore_ascii_case("v")
+                        && clip_mods
+                        && let Key::Character(c) = &key_event.logical_key
                     {
-                        scrolled_back = 0;
-                        paste();
-                        return;
+                        if c.eq_ignore_ascii_case("v")
+                            && let Some(paste) = &hooks.on_paste
+                        {
+                            scrolled_back = 0;
+                            paste();
+                            return;
+                        }
+                        if c.eq_ignore_ascii_case("c")
+                            && let Some(copy) = &hooks.on_copy
+                        {
+                            copy();
+                            return;
+                        }
                     }
+                    let clear_selection = || {
+                        if key_event.state == ElementState::Pressed
+                            && let Some(on_select) = &hooks.on_select
+                        {
+                            on_select(SelectEvent::Clear);
+                        }
+                    };
                     if let Some(on_event) = &hooks.on_key_event {
                         let legacy = key_bytes(&key_event, modifiers);
                         if let Some(input) = keys::kitty_input(&key_event, modifiers) {
                             if key_event.state == ElementState::Pressed {
                                 scrolled_back = 0;
                             }
+                            if legacy.is_some() {
+                                clear_selection();
+                            }
                             on_event(legacy, input, keys::fuzzball_event(&key_event, modifiers));
                         } else if let Some(seq) = legacy {
                             scrolled_back = 0;
+                            clear_selection();
                             (hooks.on_key_bytes)(seq);
                         }
                     } else if let Some(seq) = key_bytes(&key_event, modifiers) {
                         scrolled_back = 0;
+                        clear_selection();
                         (hooks.on_key_bytes)(seq);
                     }
                 }
@@ -466,6 +597,24 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     elwt.exit();
                     return;
                 }
+                // Dragging a selection past the top or bottom edge scrolls the view.
+                let mut autoscroll_next = None;
+                if selecting && let (Some(on_select), Some(pos)) = (&hooks.on_select, cursor_pos) {
+                    let (col, row, edge) = select_cell(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                    if edge != 0 {
+                        autoscroll_next = Some(last_autoscroll + AUTOSCROLL_EVERY);
+                        if last_autoscroll.elapsed() >= AUTOSCROLL_EVERY {
+                            last_autoscroll = Instant::now();
+                            scrolled_back = if edge < 0 { scrolled_back.saturating_add(1) } else { scrolled_back.saturating_sub(1) };
+                            on_select(SelectEvent::Drag { col, row, scrolled_back });
+                            dirty = true;
+                        }
+                        if !dirty {
+                            elwt.set_control_flow(ControlFlow::WaitUntil(last_autoscroll + AUTOSCROLL_EVERY));
+                            return;
+                        }
+                    }
+                }
                 if !dirty {
                     // Nothing to do: sleep until an input event or a wake-up.
                     elwt.set_control_flow(ControlFlow::Wait);
@@ -489,7 +638,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 dirty = false;
                 last_frame = Some(Instant::now());
-                elwt.set_control_flow(ControlFlow::Wait);
+                elwt.set_control_flow(match autoscroll_next {
+                    Some(_) => ControlFlow::WaitUntil(last_autoscroll + AUTOSCROLL_EVERY),
+                    None => ControlFlow::Wait,
+                });
                 if let Some(get_font) = &hooks.get_font {
                     let (size, family) = get_font();
                     if family != renderer.font_family {
@@ -771,5 +923,31 @@ pub fn modified_csi(seq: &[u8], mods: ModifiersState) -> Option<Vec<u8>> {
             Some(format!("\x1b[{num};{m}~").into_bytes())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod select_tests {
+    use super::*;
+
+    #[test]
+    fn click_counter_counts_quick_clicks_on_one_cell() {
+        let t = Instant::now();
+        let mut c = ClickCounter::default();
+        assert_eq!(c.press(t, 1, 1), 1);
+        assert_eq!(c.press(t + Duration::from_millis(100), 1, 1), 2);
+        assert_eq!(c.press(t + Duration::from_millis(200), 1, 1), 3);
+        assert_eq!(c.press(t + Duration::from_millis(300), 1, 1), 1);
+        assert_eq!(c.press(t + Duration::from_millis(350), 2, 1), 1, "another cell");
+        assert_eq!(c.press(t + Duration::from_secs(2), 2, 1), 1, "too slow");
+    }
+
+    #[test]
+    fn select_cell_clamps_and_reports_edges() {
+        let cell = (10, 20);
+        let grid = (80, 24);
+        assert_eq!(select_cell(PADDING as f64 + 15.0, PADDING as f64 + 45.0, cell, grid, PADDING), (1, 2, 0));
+        assert_eq!(select_cell(5000.0, 0.0, cell, grid, PADDING + 30), (79, 0, -1));
+        assert_eq!(select_cell(0.0, 9000.0, cell, grid, PADDING), (0, 23, 1));
     }
 }

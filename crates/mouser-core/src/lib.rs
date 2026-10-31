@@ -11,6 +11,7 @@ pub mod kitty_graphics;
 pub mod parser;
 pub mod scrollback;
 pub mod search;
+pub mod selection;
 pub mod ssh_config;
 pub mod storage;
 pub mod themes;

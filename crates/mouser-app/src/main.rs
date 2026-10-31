@@ -1,4 +1,5 @@
 mod appearance_ui;
+mod select;
 mod ssh_ui;
 mod tabs;
 mod term_view;
@@ -10,7 +11,7 @@ use mouser_core::connections::{
     Connection, ConnectionKind, SshConnection, TunnelConnection, TunnelSpec, TunnelType, WaypipeConnection, X11Connection, delete_connection,
     list_connections, load_connection, save_connection,
 };
-use mouser_core::scrollback::{Scrollback, ScrollbackConfig};
+use mouser_core::scrollback::ScrollbackConfig;
 use mouser_core::types::Size;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -111,6 +112,13 @@ struct UiConfig {
     theme: Option<String>,
 }
 
+/// `[selection]` in config.toml.
+#[derive(Debug, Deserialize, Clone, Default)]
+struct SelectionConfig {
+    /// Characters besides letters and digits that a double-click keeps in a word.
+    word_chars: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[allow(dead_code)]
 struct ColorsConfig {
@@ -138,6 +146,8 @@ struct CompressionToml {
 #[derive(Debug, Deserialize, Clone)]
 struct AppConfig {
     ui: Option<UiConfig>,
+    #[serde(default)]
+    selection: Option<SelectionConfig>,
     colors: Option<ColorsConfig>,
     scrollback: Option<ScrollbackToml>,
     compression: Option<CompressionToml>,
@@ -147,6 +157,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             ui: Some(UiConfig { font_family: None, font_size: Some(16.0), theme: Some("dark".into()) }),
+            selection: None,
             colors: Some(ColorsConfig { foreground: None, background: None, cursor: None, palette: None }),
             scrollback: Some(ScrollbackToml {
                 max_scrollback_lines: Some(200_000),
@@ -286,6 +297,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let app_cfg = load_config(&cli)?;
+    select::set_word_chars(app_cfg.selection.as_ref().and_then(|s| s.word_chars.clone()));
     // Ensure built-in themes exist on disk
     let _ = mouser_core::themes::write_builtins_if_absent();
     let sb_cfg = make_scrollback_config(&app_cfg);
@@ -324,39 +336,14 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, Vec<Vec<mouser_render::CellPaint>>, usize) {
             let theme = app_state.lock().unwrap().look.theme_colors();
-            let sb = parser.scrollback();
-            let (screen_lines, screen_paint) = {
-                let pa = parser.get();
-                let mut p = pa.lock().unwrap();
-                term_view::sync_theme(&mut p, &theme);
-                let lines = p.screen.visible_lines();
-                let paint = term_view::screen_paint(&p);
-                if p.screen.in_alt_screen() {
-                    return (lines, paint, 0);
-                }
-                (lines, paint)
-            };
-            let sb_total = sb.total_lines();
-            let back = scrolled_back.min(sb_total);
-            if back == 0 {
-                return (screen_lines, screen_paint, 0);
+            let session = parser.session();
+            let pa = parser.get();
+            let mut p = pa.lock().unwrap();
+            term_view::sync_theme(&mut p, &theme);
+            let (mut out, mut paint, back) = view_rows(&p, scrolled_back, rows, theme.foreground);
+            if let Some(s) = session {
+                select::decorate(&p, &s.selection.lock().unwrap(), back, &mut out, &mut paint, &theme);
             }
-            // Window of `rows` lines ending `back` lines above the live screen.
-            let total = sb_total + screen_lines.len();
-            let end = total - back;
-            let start = end.saturating_sub(rows);
-            let mut out = Vec::with_capacity(rows);
-            let mut paint = Vec::with_capacity(rows);
-            if start < sb_total {
-                let lines = sb.get_lines(start, end.min(sb_total) - start);
-                paint.extend(lines.iter().map(|_| Vec::new()));
-                out.extend(lines);
-            }
-            if end > sb_total {
-                out.extend(screen_lines.into_iter().take(end - sb_total));
-                paint.extend(screen_paint.into_iter().take(end - sb_total));
-            }
-            sb.prefetch_around(start, end);
             (out, paint, back)
         })
     };
@@ -719,6 +706,37 @@ fn main() -> Result<()> {
                 let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
             })
         }),
+        on_select: Some({
+            let parser = parser.clone();
+            Arc::new(move |ev: mouser_render::SelectEvent| {
+                let Some(session) = parser.session() else { return };
+                let p = session.parser.lock().unwrap();
+                let text = select::handle(&p, &mut session.selection.lock().unwrap(), ev);
+                drop(p);
+                if let Some(t) = text {
+                    set_primary(&t);
+                }
+            })
+        }),
+        on_copy: Some({
+            let parser = parser.clone();
+            Arc::new(move || {
+                let Some(session) = parser.session() else { return };
+                let text = select::text(&session.selection.lock().unwrap());
+                if let Some(t) = text {
+                    set_clipboard(&t);
+                }
+            })
+        }),
+        on_paste_primary: Some({
+            let (parser, writer) = (parser.clone(), shared_writer.clone());
+            Arc::new(move || {
+                let Some(text) = get_primary() else { return };
+                let modes = parser.get().lock().unwrap().modes;
+                let mut w = writer.clone();
+                let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
+            })
+        }),
         hold_frame: Some({
             let parser = parser.clone();
             Arc::new(move || parser.get().lock().unwrap().modes.synchronized)
@@ -791,12 +809,44 @@ impl ActiveParser {
     fn get(&self) -> Arc<Mutex<tabs::Parser>> {
         self.session().map(|s| s.parser.clone()).unwrap_or_else(|| self.dummy.clone())
     }
-    fn scrollback(&self) -> Arc<Scrollback> {
-        self.session().map(|s| s.scrollback.clone()).unwrap_or_else(|| self.dummy.lock().unwrap().scrollback.clone())
-    }
     fn title(&self) -> String {
         self.session().map(|s| s.title()).unwrap_or_default()
     }
+}
+
+/// Rows of the view `scrolled_back` lines above the live screen, with paint.
+/// Scrollback lines are laid out in cells like the screen.
+fn view_rows(p: &tabs::Parser, scrolled_back: usize, rows: usize, fg: u32) -> (Vec<String>, Vec<Vec<mouser_render::CellPaint>>, usize) {
+    let screen_lines = p.screen.visible_lines();
+    let screen_paint = term_view::screen_paint(p);
+    if p.screen.in_alt_screen() {
+        return (screen_lines, screen_paint, 0);
+    }
+    let sb = &p.scrollback;
+    let sb_total = sb.total_lines();
+    let back = scrolled_back.min(sb_total);
+    if back == 0 {
+        return (screen_lines, screen_paint, 0);
+    }
+    // Window of `rows` lines ending `back` lines above the live screen.
+    let total = sb_total + screen_lines.len();
+    let end = total - back;
+    let start = end.saturating_sub(rows);
+    let mut out = Vec::with_capacity(rows);
+    let mut paint = Vec::with_capacity(rows);
+    if start < sb_total {
+        for l in sb.get_lines(start, end.min(sb_total) - start) {
+            let (text, pt) = select::scrollback_view(&l, fg);
+            out.push(text);
+            paint.push(pt);
+        }
+    }
+    if end > sb_total {
+        out.extend(screen_lines.into_iter().take(end - sb_total));
+        paint.extend(screen_paint.into_iter().take(end - sb_total));
+    }
+    sb.prefetch_around(start, end);
+    (out, paint, back)
 }
 
 /// Index of the active tab if its process already exited (waiting for a key).
@@ -864,22 +914,75 @@ fn open_link(uri: &str) {
     let _ = std::process::Command::new("xdg-open").arg(uri).stdin(std::process::Stdio::null()).spawn();
 }
 
-/// OSC 52 write: hand the text to wl-copy (Wayland) if it is installed.
-pub(crate) fn set_clipboard(text: &str) {
+/// Clipboard writers to try, in order: Wayland, X11, macOS.
+fn copy_commands(primary: bool) -> Vec<(&'static str, Vec<&'static str>)> {
+    if cfg!(target_os = "macos") {
+        return if primary { Vec::new() } else { vec![("pbcopy", vec![])] };
+    }
+    let sel = if primary { "primary" } else { "clipboard" };
+    let mut v = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        v.push(("wl-copy", if primary { vec!["--primary"] } else { vec![] }));
+    }
+    v.push(("xclip", vec!["-selection", sel]));
+    v.push(("xsel", vec![if primary { "--primary" } else { "--clipboard" }, "--input"]));
+    v
+}
+
+fn paste_commands(primary: bool) -> Vec<(&'static str, Vec<&'static str>)> {
+    if cfg!(target_os = "macos") {
+        return if primary { Vec::new() } else { vec![("pbpaste", vec![])] };
+    }
+    let sel = if primary { "primary" } else { "clipboard" };
+    let mut v = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        v.push(("wl-paste", if primary { vec!["--primary", "--no-newline"] } else { vec!["--no-newline"] }));
+    }
+    v.push(("xclip", vec!["-selection", sel, "-o"]));
+    v.push(("xsel", vec![if primary { "--primary" } else { "--clipboard" }, "--output"]));
+    v
+}
+
+fn write_clip(text: &str, primary: bool) {
     use std::process::{Command, Stdio};
-    if let Ok(mut c) = Command::new("wl-copy").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        if let Some(mut stdin) = c.stdin.take() {
-            let _ = stdin.write_all(text.as_bytes());
+    for (cmd, args) in copy_commands(primary) {
+        if let Ok(mut c) = Command::new(cmd).args(&args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            if let Some(mut stdin) = c.stdin.take() {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            std::thread::spawn(move || {
+                let _ = c.wait();
+            });
+            return;
         }
-        std::thread::spawn(move || {
-            let _ = c.wait();
-        });
     }
 }
 
+fn read_clip(primary: bool) -> Option<String> {
+    for (cmd, args) in paste_commands(primary) {
+        if let Ok(out) = std::process::Command::new(cmd).args(&args).stderr(std::process::Stdio::null()).output() {
+            return out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string());
+        }
+    }
+    None
+}
+
+/// Copy to the clipboard (Ctrl+Shift+C, OSC 52): wl-copy, xclip or xsel; pbcopy on macOS.
+pub(crate) fn set_clipboard(text: &str) {
+    write_clip(text, false);
+}
+
 fn get_clipboard() -> Option<String> {
-    let out = std::process::Command::new("wl-paste").arg("--no-newline").output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
+    read_clip(false)
+}
+
+/// Selecting sets the primary selection (Linux), which a middle click pastes.
+fn set_primary(text: &str) {
+    write_clip(text, true);
+}
+
+fn get_primary() -> Option<String> {
+    read_clip(true)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
