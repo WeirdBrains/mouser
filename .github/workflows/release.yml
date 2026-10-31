@@ -108,26 +108,24 @@ jobs:
           sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${VERSION}|'$VER'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
           nfpm package --packager deb --config packaging/nfpm.gen.yaml --target "dist/mouser_${VER}_amd64.deb"
           nfpm package --packager rpm --config packaging/nfpm.gen.yaml --target "dist/mouser-${VER}-1.x86_64.rpm"
-          # Arch package via container
+          # Arch package via container, from packaging/arch/mouser-bin/PKGBUILD with
+          # this build's binary and source tree (the release does not exist yet).
           TARBALL="mouser-x86_64-unknown-linux-gnu.tar.gz"
-          SHA=$(shasum -a 256 "$TARBALL" | awk '{print $1}')
-          mkdir -p packaging/arch/work
-          sed "s/@VERSION@/${VER}/g; s/@SHA256@/${SHA}/g" packaging/arch/PKGBUILD.tmpl > packaging/arch/work/PKGBUILD
-          cp "$TARBALL" packaging/arch/work/
-          cp -r resources packaging/arch/work/
-          mkdir -p packaging/arch/work/build/icons/hicolor
-          cp -r resources/icons/hicolor/* packaging/arch/work/build/icons/hicolor/
-          cat > packaging/arch/work/buildpkg.sh <<'EOS'
+          W=packaging/arch/work
+          mkdir -p "$W"
+          sed -e "s/^pkgver=.*/pkgver=${VER}/" -e "s/^sha256sums=.*/sha256sums=('SKIP')/" \
+            -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('SKIP')/" packaging/arch/mouser-bin/PKGBUILD > "$W/PKGBUILD"
+          cp "$TARBALL" "$W/mouser-${VER}-x86_64-unknown-linux-gnu.tar.gz"
+          git archive --prefix="mouser-${VER}/" -o "$W/mouser-src-${VER}.tar.gz" HEAD
+          cat > "$W/buildpkg.sh" <<'EOS'
           set -eux
-          pacman -Syu --noconfirm base-devel hicolor-icon-theme
+          pacman -Syu --noconfirm base-devel hicolor-icon-theme libxkbcommon wayland
           useradd -m builder
           chown -R builder:builder /work
-          # Build without attempting to resolve deps (installed above as root)
           su - builder -c 'cd /work && makepkg -f --noconfirm --nodeps'
           EOS
-          docker run --rm -v "$PWD/packaging/arch/work:/work" archlinux:base-devel bash /work/buildpkg.sh
-          # Move built package
-          find packaging/arch/work -maxdepth 1 -name "*.pkg.tar.zst" -exec sudo mv {} dist/ \;
+          docker run --rm -v "$PWD/$W:/work" archlinux:base-devel bash /work/buildpkg.sh
+          find "$W" -maxdepth 1 -name "mouser-bin-[0-9]*.pkg.tar.zst" -exec sudo mv {} dist/ \;
           # Checksums for packages
           (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
           # Upload extra artifacts
@@ -271,15 +269,15 @@ jobs:
           cat > Formula/mouser.rb <<'RUBY'
           class Mouser < Formula
             desc "Mouser terminal emulator"
-            homepage "https://github.com/m3talsmith/mouser"
+            homepage "https://github.com/WeirdBrains/mouser"
             version "@VER@"
             on_macos do
               on_arm do
-                url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/mouser-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/WeirdBrains/mouser/releases/download/v@VER@/mouser-aarch64-apple-darwin.tar.gz"
                 sha256 "@SHA_ARM@"
               end
               on_intel do
-                url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/mouser-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/WeirdBrains/mouser/releases/download/v@VER@/mouser-x86_64-apple-darwin.tar.gz"
                 sha256 "@SHA_AMD@"
               end
             end
@@ -294,15 +292,15 @@ jobs:
             version "@VER@"
             on_arm do
               sha256 "@CSK_ARM@"
-              url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/Mouser-aarch64-apple-darwin.dmg"
+              url "https://github.com/WeirdBrains/mouser/releases/download/v@VER@/Mouser-aarch64-apple-darwin.dmg"
             end
             on_intel do
               sha256 "@CSK_AMD@"
-              url "https://github.com/m3talsmith/mouser/releases/download/v@VER@/Mouser-x86_64-apple-darwin.dmg"
+              url "https://github.com/WeirdBrains/mouser/releases/download/v@VER@/Mouser-x86_64-apple-darwin.dmg"
             end
             name "Mouser"
             desc "Mouser terminal emulator"
-            homepage "https://github.com/m3talsmith/mouser"
+            homepage "https://github.com/WeirdBrains/mouser"
             auto_updates false
             app "Mouser.app"
           end
@@ -310,7 +308,9 @@ jobs:
           sed -i.bak -e "s/@VER@/${VER}/g" -e "s/@CSK_ARM@/${CSK_ARM}/g" -e "s/@CSK_AMD@/${CSK_AMD}/g" Casks/mouser.rb
           git config user.email "cursoragent@cursor.com"
           git config user.name "Cursor Agent"
-          git add Formula/mouser.rb Casks/mouser.rb
-          git commit -m "brew: update formula and cask for v${VER}" || true
+          # AUR-ready mouser-bin PKGBUILD + .SRCINFO with the published checksums.
+          packaging/arch/update-bin.sh "${VER}"
+          git add Formula/mouser.rb Casks/mouser.rb packaging/arch/mouser-bin/PKGBUILD packaging/arch/mouser-bin/.SRCINFO
+          git commit -m "packaging: update brew formula, cask and mouser-bin PKGBUILD for v${VER}" || true
           git push origin HEAD:main
 

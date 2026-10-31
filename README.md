@@ -183,6 +183,18 @@ Prebuilt install packages are attached to each GitHub Release:
 - macOS: CLI Homebrew formula (`Formula/mouser.rb`) and a `Mouser.app` `.dmg` with a Cask (`Casks/mouser.rb`)
 - Windows: portable `.zip` and an installer `.exe`
 
+### Arch Linux
+
+```bash
+# Latest release (prebuilt):
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/latest/download/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+# Or build main from source:
+git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si
+```
+
+`yay -S mouser-git` / `yay -S mouser-bin` once the packages are on the AUR (planned).
+Both replace each other and an older `mouser-bin` install (pacman asks to remove it).
+
 See `docs/release.md` for details and per-platform install commands.
 Tests (with a safety timeout):
 

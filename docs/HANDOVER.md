@@ -1,6 +1,6 @@
 # Mouser handover notes
 
-Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31; some packaging files still name the old URL). Current release: v0.7.2; main has unreleased work (see CHANGELOG Unreleased). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
+Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31). Current release: v0.7.2; main has unreleased work (see CHANGELOG Unreleased). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
 
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`
@@ -90,18 +90,20 @@ CI may only use GitHub-owned or verified actions (WeirdBrains org policy); any o
 action fails the run at startup with no jobs. The workflows install Rust with `rustup`,
 cache with `actions/cache` and publish with `gh release create` (2737875); the release
 path is untested until the next tag.
-Arch: `packaging/arch/PKGBUILD.tmpl` exists. Planned: AUR-ready `mouser-git` and
-`mouser-bin` PKGBUILDs with `.SRCINFO`, a `.pkg.tar.zst` attached to releases, and
-`makepkg -si` install docs. AUR registration is currently closed, so publishing waits;
-AUR packages need a personal maintainer account.
-Remaining `m3talsmith/mouser` URLs: release workflow, Formula, Casks, PKGBUILD,
-nfpm.yaml, AGENTS.md, docs/release.md, metainfo. Keep the app ID
-`io.github.m3talsmith.mouser` unless the maintainer decides otherwise.
+Arch: `packaging/arch/mouser-git` (source) and `packaging/arch/mouser-bin` (release
+binary) PKGBUILDs with `.SRCINFO`; details and AUR steps in `docs/release.md`. Both
+conflict with each other and replace older `mouser-bin` installs. The release workflow
+builds the `mouser-bin` `.pkg.tar.zst` and then commits real checksums via
+`packaging/arch/update-bin.sh`. AUR publishing waits: registration is closed and it needs
+the maintainer's account; the repo also needs a `LICENSE` file first (namcap error).
+All URLs now point at WeirdBrains/mouser; the app ID `io.github.m3talsmith.mouser`
+stays unless the maintainer decides otherwise.
 
 ## Recent work on main (since v0.7.2)
 - Kitty graphics fallback: 8332289, 5628141, 529c968, 75e5bcf, docs f9212d7.
 - Command-line launching and xdg-terminal-exec desktop entry: 88e50c1; CI fixes
   2737875 (actions policy), 5da1891 (non-Linux warning), 4b70ea7 (Windows test).
+- Arch packaging (mouser-git, mouser-bin) and URL move to WeirdBrains: see Packaging.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
@@ -111,7 +113,7 @@ nfpm.yaml, AGENTS.md, docs/release.md, metainfo. Keep the app ID
 - Narrowed images pin to the last column at 1 column wide; alternative is a minimum width that moves them left.
 
 ## Suggested next steps
-1. Arch packaging and the URL updates above.
+1. Add a LICENSE file and publish the AUR packages (maintainer).
 2. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
 3. Confirm website claims, retake the screenshot, publish the site.
 4. Cut the next release once approved.

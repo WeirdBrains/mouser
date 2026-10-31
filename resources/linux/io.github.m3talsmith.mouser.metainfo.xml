@@ -16,6 +16,6 @@
       Mouser is a fast terminal emulator with chunk-compressed scrollback, on-demand decompression and Kitty protocol support.
     </p>
   </description>
-  <url type="homepage">https://github.com/m3talsmith/mouser</url>
+  <url type="homepage">https://github.com/WeirdBrains/mouser</url>
 </component>
 
