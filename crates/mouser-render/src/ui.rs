@@ -64,6 +64,18 @@ pub struct UiLayout {
     /// Engine row being dragged (set by the window, not the model).
     #[serde(default)]
     pub engine_drag: Option<EngineDrag>,
+    /// The current mode's view above the prompt (docs/modes.md); the
+    /// terminal grid starts below it.
+    #[serde(default)]
+    pub dock: Option<Dock>,
+}
+
+/// A view docked above the terminal grid.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Dock {
+    pub panel: Panel,
+    /// Pixels the grid moves down (the panel's height plus a gap).
+    pub inset: i32,
 }
 
 /// Pixels the pointer must move before a press on an engine row becomes a
@@ -254,6 +266,10 @@ pub enum PanelStyle {
     },
     /// Colour sample.
     Swatch(u32),
+    /// Framed tile (commander grid / carousel item).
+    Tile {
+        selected: bool,
+    },
     /// Background of a dropdown drawn over the panel.
     Popup,
     /// Dropdown row; bit `i` of `highlight` marks char `i` as matched.
@@ -576,6 +592,18 @@ pub enum UiAction {
     UseEngine(String),
     /// Engines section drag-and-drop: save this priority order (`mouser engine priority`).
     ReorderEngines(Vec<String>),
+    /// An action of the current mode (from a click in its view or windows):
+    /// the mode's own action id and an argument (e.g. an item index).
+    Mode {
+        action: String,
+        arg: i32,
+    },
+    /// Ctrl+Shift+K: the key mappings of the current mode.
+    ShowKeymap,
+    /// Ctrl+Shift+M: all modes.
+    ShowModes,
+    /// Switch to the mode with this hotkey (click in the modes window).
+    SwitchMode(char),
     None,
 }
 
@@ -679,6 +707,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             engines: Vec::new(),
             engines_title: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             engine_drag: None,
+            dock: None,
         };
     }
     let sidebar_w = match requested_width {
@@ -729,6 +758,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
         engines: Vec::new(),
         engines_title: Rect { x: inner_x, y: 0, w: 0, h: 0 },
         engine_drag: None,
+        dock: None,
     }
 }
 
@@ -749,6 +779,7 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         engines: Vec::new(),
         engines_title: empty,
         engine_drag: None,
+        dock: None,
     }
 }
 
@@ -913,6 +944,19 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
             return UiAction::ClosePanel;
         }
         return UiAction::None;
+    }
+    if layout.modal.is_none()
+        && let Some(d) = &layout.dock
+        && d.panel.rect.contains(px, py)
+    {
+        // Last item first: labels and previews sit on top of their tiles.
+        return d
+            .panel
+            .items
+            .iter()
+            .rev()
+            .find(|i| i.rect.contains(px, py) && i.action != UiAction::None)
+            .map_or(UiAction::None, |i| i.action.clone());
     }
     if let Some(modal) = &layout.modal {
         // Modal consumes clicks

@@ -182,3 +182,20 @@ stays unless the maintainer decides otherwise.
 4. Cut the next release once approved.
 5. Fuzzball: IME events and lock-key state.
 6. Work through the known gaps.
+
+## Modes Phase 1: commander (Oct 31, t153u–t164u)
+
+State: Phase 1 implemented and committed (see git log "feat(modes)"); fmt, clippy -D warnings and the full test suite passed locally. NOT yet done: CI confirmation, package build, live key-driving (wtype exists but focus left the test window; only the list view was checked live, grid/carousel via CPU-render test PNGs in ~/.cache/mouser-shots/commander-*.png and cmdr list.png).
+
+Decisions:
+- Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. `mouser_render::modes::{Mode trait, Host}`; core has no commander branching.
+- Commander is the only plugin and the default, active at startup.
+- `esc :` + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); `esc :c` again turns it on. Lone Esc waits 500 ms then goes to the shell; `alt+:` opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).
+- View switch is in commander's own keymap: alt+t default (shadows readline transpose-words). All keys `<alt>+<key>`, remappable in `~/.mouser/modes.toml` `[commander.keys]`; unbound alt keys pass to the shell. ctrl+shift+k keymap window, ctrl+shift+m modes window.
+- Previews lazy on a worker thread, only what is on screen; queue replaced as you move. Carousel: 1 full (focused) + 2 partial neighbours (cropped via src rect).
+- Open: dir -> types `^U cd -- '<path>'`; video/audio -> xdg-open/open (not an in-app player, deviation); else full-width image/text view.
+- cwd: /proc/<pid>/cwd, fallback OSC 7.
+
+Files: crates/mouser-core/src/{modes.rs,commander.rs,lib.rs}; crates/mouser-render/src/modes/{mod.rs,commander.rs}, src/{lib.rs,ui.rs,frame.rs}, tests/commander_render_tests.rs, Cargo.toml; crates/mouser-app/src/{main.rs,tabs.rs}; Cargo.toml (image jpeg/gif/webp/bmp); docs/modes.md; CHANGELOG.md.
+
+Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arrows/enter, esc :c, ctrl+shift+k/m); build package (not installed) and give `sudo pacman -U` path; third-party mode loading (future, see docs/modes.md).

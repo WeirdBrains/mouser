@@ -34,6 +34,13 @@ struct AppState {
     ssh: ssh_ui::SshUi,
     pending_delete: Option<String>,
     pending_edit: Option<Connection>,
+    /// Mode plugins (docs/modes.md); commander is on at start.
+    modes: mouser_render::modes::Host,
+    /// The mode's images from the last layout and the grid top they are relative to.
+    mode_images: (Vec<mouser_render::modes::ModeImage>, i32),
+    /// A lone Esc waiting to see whether `:` follows (generation).
+    esc_pending: Option<u64>,
+    esc_gen: u64,
 }
 use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
@@ -409,7 +416,18 @@ fn main() -> Result<()> {
         look: appearance_ui::Appearance::new(font_size0, font_family0.clone(), config_font_size),
         pending_delete: None,
         pending_edit: None,
+        modes: mouser_render::modes::Host::builtin(),
+        mode_images: (Vec::new(), 0),
+        esc_pending: None,
+        esc_gen: 0,
     }));
+    {
+        let mut st = app_state.lock().unwrap();
+        let notes = std::mem::take(&mut st.modes.notes);
+        if let Some(n) = notes.into_iter().next() {
+            st.look.say(n);
+        }
+    }
 
     // Hooks for renderer
     let fetch = {
@@ -438,6 +456,7 @@ fn main() -> Result<()> {
     };
     let get_images = {
         let parser = parser.clone();
+        let app_state = app_state.clone();
         let scaler = Mutex::new(mouser_render::ImageScaler::default());
         Arc::new(move |scrolled_back: usize, rows: usize, cell: (u32, u32)| -> Vec<mouser_render::ImageDraw> {
             let pa = parser.get();
@@ -454,7 +473,11 @@ fn main() -> Result<()> {
             let mut kitty = p.kitty_gfx.gfx.draws(alt, top, rows, cell);
             kitty.extend(p.kitty_gfx.placeholder_draws(rows, &row, cell));
             let fuzz = p.fuzzball.gfx.draws(alt, top, rows, cell);
-            mouser_render::layered_image_draws(&[(&p.kitty_gfx.gfx, kitty), (&p.fuzzball.gfx, fuzz)], &mut scaler.lock().unwrap())
+            let mut v = mouser_render::layered_image_draws(&[(&p.kitty_gfx.gfx, kitty), (&p.fuzzball.gfx, fuzz)], &mut scaler.lock().unwrap());
+            drop(p);
+            let (imgs, top) = app_state.lock().unwrap().mode_images.clone();
+            v.extend(imgs.iter().map(|m| mode_image_draw(m, top)));
+            v
         })
     };
     let on_key = {
@@ -475,6 +498,8 @@ fn main() -> Result<()> {
                     } else if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
                         state.pending_edit = None;
                         state.pending_delete = None;
+                    } else if mode_key(&mut state, &bytes, &parser, &writer, &app_state) {
+                        // Taken by the mode system (esc :, the mode's keys).
                     } else if bytes == b"\x1b[21~" {
                         // F10: Mouser command line
                         state.mode = Mode::Command;
@@ -538,9 +563,21 @@ fn main() -> Result<()> {
         Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| tabs.lock().unwrap().resize(cols, rows, pw, ph, wake))
     };
     let get_ui_model = {
-        let app_state = app_state.clone();
+        let (app_state, tabs) = (app_state.clone(), tabs.clone());
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
+            let (session, tab_h) = {
+                let t = tabs.lock().unwrap();
+                (t.active(), if t.bar().titles.len() > 1 { ui::tab_bar_height(vp.cell_h) } else { 0 })
+            };
+            let alt = session.as_ref().is_some_and(|s| s.parser.lock().unwrap().screen.in_alt_screen());
+            let cwd = session.as_ref().and_then(|s| s.cwd_now());
             let mut st = app_state.lock().unwrap();
+            let layout = ui_layout(&mut st, vp);
+            attach_mode_view(&mut st, layout, vp, tab_h, alt, cwd)
+        })
+    };
+    fn ui_layout(st: &mut AppState, vp: mouser_render::UiViewport) -> Option<ui::UiLayout> {
+        {
             let panel = st.ssh.panel_view(vp);
             let panel = panel.or_else(|| st.look.panel_view(vp));
             if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
@@ -585,11 +622,11 @@ fn main() -> Result<()> {
             ui::add_engines(&mut layout, &engine_rows(), vp.cell_h);
             layout.panel = panel;
             Some(layout)
-        })
-    };
+        }
+    }
     let on_ui_action = {
         let app_state = app_state.clone();
-        let (tabs_ui, sb_cfg) = (tabs.clone(), sb_cfg.clone());
+        let (tabs_ui, sb_cfg, writer_ui) = (tabs.clone(), sb_cfg.clone(), shared_writer.clone());
         Arc::new(move |act: ui::UiAction| match act.clone() {
             ui::UiAction::OpenAdd(ui::Category::Ssh) => app_state.lock().unwrap().ssh.open_add(),
             ui::UiAction::OpenEdit { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_edit(&name),
@@ -673,7 +710,13 @@ fn main() -> Result<()> {
             | ui::UiAction::ClosePanel
             | ui::UiAction::FontSize(_) => {
                 let mut st = app_state.lock().unwrap();
-                if st.ssh.panel.is_some() && !matches!(act, ui::UiAction::FontSize(_)) {
+                let own_panel = st.ssh.panel.is_some() || st.look.panel.is_some();
+                if !own_panel && matches!(act, ui::UiAction::ClosePanel) && (st.modes.close_window() || st.modes.escape()) {
+                    // Closed the mode's window.
+                } else if let (false, ui::UiAction::ScrollPanel(n)) = (own_panel, &act) {
+                    let e = st.modes.action("scroll", *n);
+                    apply_mode_effect(&mut st, e, &writer_ui);
+                } else if st.ssh.panel.is_some() && !matches!(act, ui::UiAction::FontSize(_)) {
                     if let Some(m) = st.ssh.action(&act) {
                         st.look.say(m);
                     }
@@ -688,6 +731,19 @@ fn main() -> Result<()> {
                 }
             }
             ui::UiAction::ToggleAdvanced => {}
+            ui::UiAction::Mode { action, arg } => {
+                let mut st = app_state.lock().unwrap();
+                let e = st.modes.action(&action, arg);
+                apply_mode_effect(&mut st, e, &writer_ui);
+            }
+            ui::UiAction::ShowKeymap => app_state.lock().unwrap().modes.show_keys(),
+            ui::UiAction::ShowModes => app_state.lock().unwrap().modes.show_modes(),
+            ui::UiAction::SwitchMode(c) => {
+                let mut st = app_state.lock().unwrap();
+                st.modes.close_window();
+                let m = st.modes.switch(&c.to_string()).unwrap_or_else(|e| e);
+                st.look.say(m);
+            }
         })
     };
     discover_font_families();
@@ -707,7 +763,12 @@ fn main() -> Result<()> {
                 }
                 let ui_owns = {
                     let st = app_state.lock().unwrap();
-                    st.mode == Mode::Command
+                    let alt = parser.get().lock().unwrap().screen.in_alt_screen();
+                    // Keys for the current mode (and esc :) take the legacy path.
+                    let mode_key =
+                        !alt && legacy.as_deref().is_some_and(|b| st.esc_pending.is_some() || b == b"\x1b" || b == b"\x1b:" || st.modes.takes(b));
+                    mode_key
+                        || st.mode == Mode::Command
                         || st.ssh.panel.is_some()
                         || st.look.panel.is_some()
                         || st.pending_edit.is_some()
@@ -824,9 +885,13 @@ fn main() -> Result<()> {
         get_cursor: Some(get_cursor),
         get_ui_model: Some(get_ui_model),
         on_ui_action: Some(on_ui_action),
-        set_waker: Some(Arc::new(|w| {
-            let _ = WAKER.set(w);
-        })),
+        set_waker: Some({
+            let app_state = app_state.clone();
+            Arc::new(move |w: mouser_render::Waker| {
+                app_state.lock().unwrap().modes.set_waker(w.clone());
+                let _ = WAKER.set(w);
+            })
+        }),
         on_engine: Some(Arc::new(|e| *ACTIVE_ENGINE.lock().unwrap() = e)),
         on_window_size: None,
         // The window closes when the last tab's process has exited.
@@ -1256,7 +1321,12 @@ fn category_of(kind: &ConnectionKind) -> ui::Category {
 
 fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) {
     let trimmed = cmd.trim();
-    if trimmed == "open-sidebar" || trimmed == ":open-sidebar" {
+    if app_state.lock().unwrap().modes.has(trimmed) {
+        // `esc :c` / `:commander`: switch modes.
+        let mut st = app_state.lock().unwrap();
+        let m = st.modes.switch(trimmed).unwrap_or_else(|e| e);
+        st.look.say(m);
+    } else if trimmed == "open-sidebar" || trimmed == ":open-sidebar" {
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = true;
         st.sidebar_collapsed = false;
@@ -1386,6 +1456,140 @@ fn set_x11(x: &mut X11Connection, k: &str, v: &str) {
         _ => {
             x.extra_options.insert(k.to_string(), v.to_string());
         }
+    }
+}
+
+/// Mode keys in the shell (not in full-screen apps): `esc :` opens the
+/// command line (a lone Esc goes to the shell after 500 ms), Esc closes the
+/// mode's windows, and the current mode's bound keys go to it. True if taken.
+fn mode_key(st: &mut AppState, bytes: &[u8], parser: &ActiveParser, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) -> bool {
+    if st.esc_pending.take().is_some() {
+        if bytes == b":" {
+            st.mode = Mode::Command;
+            st.command_buf.clear();
+            return true;
+        }
+        let mut w = writer.clone();
+        let _ = w.write_all(b"\x1b");
+    }
+    if parser.get().lock().unwrap().screen.in_alt_screen() {
+        return false;
+    }
+    if bytes == b"\x1b:" {
+        st.mode = Mode::Command;
+        st.command_buf.clear();
+        return true;
+    }
+    if bytes == b"\x1b" {
+        if st.modes.escape() {
+            return true;
+        }
+        st.esc_gen += 1;
+        let g = st.esc_gen;
+        st.esc_pending = Some(g);
+        let (app_state, writer) = (app_state.clone(), writer.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(ESC_WAIT);
+            let mut st = app_state.lock().unwrap();
+            if st.esc_pending == Some(g) {
+                st.esc_pending = None;
+                drop(st);
+                let mut w = writer;
+                let _ = w.write_all(b"\x1b");
+            }
+        });
+        return true;
+    }
+    match st.modes.key(bytes) {
+        Some(e) => {
+            apply_mode_effect(st, e, writer);
+            true
+        }
+        None => false,
+    }
+}
+
+/// How long a lone Esc waits for `:` before going to the shell.
+const ESC_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
+fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer: &tabs::ActiveWriter) {
+    use mouser_render::modes::Effect;
+    match e {
+        Effect::None => {}
+        Effect::Type(s) => {
+            let mut w = writer.clone();
+            let _ = w.write_all(s.as_bytes());
+        }
+        Effect::Open(p) => {
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            match std::process::Command::new(opener)
+                .arg(&p)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+            {
+                Ok(mut c) => {
+                    std::thread::spawn(move || c.wait());
+                    st.look.say(format!("Opening {}", p.display()));
+                }
+                Err(e) => st.look.say(format!("{opener}: {e}")),
+            }
+        }
+        Effect::ShowKeys => st.modes.show_keys(),
+        Effect::Say(m) => st.look.say(m),
+    }
+}
+
+/// Put the current mode's view (docked above the prompt) into the layout.
+/// Full-screen apps (alternate screen) get the whole window.
+fn attach_mode_view(
+    st: &mut AppState,
+    layout: Option<ui::UiLayout>,
+    vp: mouser_render::UiViewport,
+    tab_h: i32,
+    alt: bool,
+    cwd: Option<PathBuf>,
+) -> Option<ui::UiLayout> {
+    use mouser_render::frame::PADDING;
+    st.modes.set_cwd(cwd);
+    if alt {
+        st.mode_images.0.clear();
+        return layout;
+    }
+    let text_w = layout.as_ref().map_or(vp.width, |l| l.sidebar_rect.x);
+    let area = ui::Rect { x: 0, y: PADDING + tab_h, w: text_w, h: vp.height - PADDING - tab_h };
+    let view = st.modes.view(&mouser_render::modes::Context { viewport: vp, area });
+    if view.dock.is_none() && view.panel.is_none() {
+        st.mode_images.0.clear();
+        return layout;
+    }
+    let mut l = layout.unwrap_or_else(|| ui::without_sidebar(vp.width, vp.height));
+    let inset = view.dock.as_ref().map_or(0, |d| d.rect.h + 8);
+    l.dock = view.dock.map(|panel| ui::Dock { panel, inset });
+    if l.panel.is_none() {
+        l.panel = view.panel;
+    }
+    st.mode_images = (view.images, PADDING + tab_h + inset);
+    Some(l)
+}
+
+/// A mode image (window pixels) as a draw relative to the grid at `top`.
+fn mode_image_draw(m: &mouser_render::modes::ModeImage, top: i32) -> mouser_render::ImageDraw {
+    use mouser_render::frame::PADDING;
+    mouser_render::ImageDraw {
+        key: m.key,
+        rgba: m.rgba.clone(),
+        img_w: m.width,
+        img_h: m.height,
+        src: m.src,
+        col: 0,
+        row: 0,
+        x_off: m.rect.x - PADDING,
+        y_off: m.rect.y - top,
+        width: m.rect.w.max(1) as u32,
+        height: m.rect.h.max(1) as u32,
+        z: 1,
     }
 }
 
