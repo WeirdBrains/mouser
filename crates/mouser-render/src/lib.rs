@@ -514,6 +514,20 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             return;
                         }
                     }
+                    // Shift+Insert: the primary selection on Linux (like xterm, foot,
+                    // alacritty), the clipboard elsewhere.
+                    if key_event.state == ElementState::Pressed
+                        && modifiers.shift_key()
+                        && !modifiers.control_key()
+                        && key_event.logical_key == Key::Named(NamedKey::Insert)
+                    {
+                        let hook = if cfg!(target_os = "linux") { hooks.on_paste_primary.as_ref() } else { hooks.on_paste.as_ref() };
+                        if let Some(paste) = hook {
+                            scrolled_back = 0;
+                            paste();
+                            return;
+                        }
+                    }
                     let clear_selection = || {
                         if key_event.state == ElementState::Pressed
                             && let Some(on_select) = &hooks.on_select
