@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev pkg-config patchelf desktop-file-utils appstream libxml2-utils
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config patchelf desktop-file-utils appstream libxml2-utils
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
