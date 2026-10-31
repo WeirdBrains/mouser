@@ -136,6 +136,13 @@ pub struct CommanderMode {
     full_text: Option<(PathBuf, Vec<String>, Option<String>)>,
     /// Last click (item, when) for double-click.
     last_click: Option<(usize, std::time::Instant)>,
+    /// The media player while a video or audio file is open.
+    pub player: Option<super::player::Player>,
+    waker: Option<Waker>,
+    /// Width of the view's body (the player decodes to it).
+    body_w: i32,
+    /// The player's key hints, from the current keymap.
+    player_keys: String,
 }
 
 impl Default for CommanderMode {
@@ -171,6 +178,8 @@ fn clip_text(s: &str, cols: i32) -> String {
 /// Builder state for one frame.
 struct Out {
     items: Vec<PanelItem>,
+    /// Player frames, ready to draw.
+    frames: Vec<ModeImage>,
     /// (what, full rect, visible part)
     slots: Vec<(Want, Rect, Rect)>,
     texts: Vec<PathBuf>,
@@ -178,7 +187,18 @@ struct Out {
 
 impl CommanderMode {
     pub fn new() -> Self {
-        Self { c: Commander::new(), per_row: 1, previews: Previews::default(), texts: HashMap::new(), full_text: None, last_click: None }
+        Self {
+            c: Commander::new(),
+            per_row: 1,
+            previews: Previews::default(),
+            texts: HashMap::new(),
+            full_text: None,
+            last_click: None,
+            player: None,
+            waker: None,
+            body_w: 0,
+            player_keys: String::new(),
+        }
     }
 
     pub fn previews(&self) -> &Previews {
@@ -324,6 +344,9 @@ impl CommanderMode {
 
     /// The full-width view of a file.
     fn file_view(&mut self, p: &Path, body: Rect, cw: i32, ch: i32, o: &mut Out) {
+        if self.player.as_ref().is_some_and(|pl| pl.path == p) {
+            return self.player_view(body, cw, ch, o);
+        }
         if cmdr::kind_of(&p.to_string_lossy()) == Kind::Image {
             o.slots.push(((p.to_path_buf(), 2048), body, body));
             return;
@@ -347,6 +370,45 @@ impl CommanderMode {
                 PanelStyle::Label,
                 UiAction::None,
             ));
+        }
+    }
+
+    /// Video fitted to the width with the controls below; audio: name,
+    /// progress and controls.
+    fn player_view(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
+        let controls = self.player_keys.clone();
+        let Some(pl) = self.player.as_mut() else { return };
+        pl.tick();
+        let row_h = ch + 6;
+        let pos = pl.position();
+        let dur = pl.info.duration;
+        let state = if pl.playing() { "playing" } else { "paused" };
+        let status = format!("{state}  {} / {}  vol {}%", super::player::clock(pos), super::player::clock(dur), pl.volume);
+        let bar_cols = (body.w / cw.max(1) - 2).max(10);
+        let done = if dur > 0.0 { ((pos / dur) * bar_cols as f64) as i32 } else { 0 };
+        let bar = format!("[{}{}]", "=".repeat(done.clamp(0, bar_cols) as usize), "-".repeat((bar_cols - done).clamp(0, bar_cols) as usize));
+        let mut y = body.y;
+        let name = pl.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if pl.info.video {
+            let r = Rect { x: body.x, y, w: body.w, h: (body.h - 3 * row_h).max(ch) };
+            match pl.frame() {
+                Some(f) => {
+                    o.frames.push(ModeImage { key: f.key, rgba: f.rgba, width: f.w, height: f.h, src: (0, 0, f.w, f.h), rect: fit(r, f.w, f.h) })
+                }
+                None => o.items.push(item(Rect { x: r.x, y: r.y, w: r.w, h: ch }, "loading…", PanelStyle::Hint, UiAction::None)),
+            }
+            y = r.y + r.h;
+        } else {
+            o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, format!("♪ {name}"), PanelStyle::Title, UiAction::None));
+            y += row_h * 2;
+        }
+        if let Some(e) = &pl.error {
+            o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, e.clone(), PanelStyle::Error, UiAction::None));
+            y += row_h;
+        }
+        for (t, st) in [(bar, PanelStyle::Label), (status, PanelStyle::Label), (controls, PanelStyle::Hint)] {
+            o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, clip_text(&t, body.w / cw.max(1)), st, UiAction::None));
+            y += row_h;
         }
     }
 
@@ -440,6 +502,7 @@ impl Mode for CommanderMode {
     }
 
     fn set_waker(&mut self, w: Waker) {
+        self.waker = Some(w.clone());
         self.previews.set_waker(w);
     }
 
@@ -471,6 +534,18 @@ impl Mode for CommanderMode {
     }
 
     fn action(&mut self, id: &str, arg: i32) -> Effect {
+        // Player keys belong to the player; without one they go to the shell.
+        if matches!(id, "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up") {
+            let Some(p) = self.player.as_mut() else { return Effect::Pass };
+            match id {
+                "play_pause" => p.toggle(),
+                "seek_back" => p.seek(-10.0),
+                "seek_forward" => p.seek(10.0),
+                "volume_down" => p.change_volume(-10),
+                _ => p.change_volume(10),
+            }
+            return Effect::None;
+        }
         let n = self.c.visible().len();
         let previewing = matches!(self.c.overlay, Some(Overlay::Preview(_)));
         let reading = previewing || self.c.overlay == Some(Overlay::Man);
@@ -549,7 +624,11 @@ impl Mode for CommanderMode {
         let max_h = (a.h - ch * 8).max(ch * 4);
         let h = (a.h / 2).max(ch * 10).min(max_h);
         let rect = Rect { x: a.x + PADDING, y: a.y, w: a.w - 2 * PADDING, h };
-        let mut o = Out { items: Vec::new(), slots: Vec::new(), texts: Vec::new() };
+        // Playback stops when the viewer closes or shows another file.
+        if self.player.as_ref().is_some_and(|pl| !matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == pl.path)) {
+            self.player = None;
+        }
+        let mut o = Out { items: Vec::new(), frames: Vec::new(), slots: Vec::new(), texts: Vec::new() };
         let row_h = ch + 8;
         let (x0, y0, w) = (rect.x + 10, rect.y + 6, rect.w - 20);
         // Header: where we are, then the buttons.
@@ -595,6 +674,16 @@ impl Mode for CommanderMode {
             UiAction::None,
         ));
         let mut body = Rect { x: x0, y: y0 + row_h + 6, w, h: rect.y + h - (y0 + row_h + 6) - 8 };
+        self.body_w = body.w;
+        self.player_keys = format!(
+            "{} play/pause · {} / {} seek 10s · {} / {} volume · {} close",
+            keys.label("play_pause"),
+            keys.label("seek_back"),
+            keys.label("seek_forward"),
+            keys.label("volume_down"),
+            keys.label("volume_up"),
+            keys.label("close")
+        );
         if let Some(p) = file {
             self.file_view(&p, body, cw, ch, &mut o);
         } else {
@@ -664,15 +753,26 @@ impl Mode for CommanderMode {
             Some(Overlay::Man) => Some(self.man_panel(ctx, keys)),
             _ => None,
         };
-        View { dock: Some(Panel { rect, items: o.items }), panel, images: images.into_iter().filter_map(|(i, clip)| crop(i, clip)).collect() }
+        View {
+            dock: Some(Panel { rect, items: o.items }),
+            panel,
+            images: images.into_iter().filter_map(|(i, clip)| crop(i, clip)).chain(o.frames).collect(),
+        }
     }
 }
 
 impl CommanderMode {
-    fn effect(&self, e: cmdr::Effect) -> Effect {
+    fn effect(&mut self, e: cmdr::Effect) -> Effect {
         match e {
             cmdr::Effect::None => Effect::None,
             cmdr::Effect::Cd(p) => Effect::Run(cd_line(&p)),
+            // The in-app player; the desktop opener only without ffmpeg.
+            cmdr::Effect::External(p) if super::player::available() => {
+                self.player = Some(super::player::Player::open(&p, self.body_w.max(320) as u32, self.waker.clone()));
+                self.c.overlay = Some(Overlay::Preview(p));
+                self.c.overlay_scroll = 0;
+                Effect::None
+            }
             cmdr::Effect::External(p) => Effect::Open(p),
             cmdr::Effect::Run(s) => Effect::Run(s),
         }
@@ -821,5 +921,46 @@ mod tests {
             let Some(Effect::Run(line)) = m.text(b"\r") else { panic!() };
             assert!(line.contains("f00.txt") && line.ends_with("| cat"), "{line}");
         }
+    }
+
+    #[test]
+    fn media_opens_the_player_and_closing_stops_it() {
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        assert_eq!(m.action("play_pause", 0), Effect::Pass, "no player: alt+k goes to the shell");
+        if !super::super::player::available() {
+            eprintln!("ffmpeg not installed, skipped");
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=4", "-pix_fmt", "yuv420p"])
+            .arg(t.path().join("v.mp4"))
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok {
+            return;
+        }
+        m.c.flags.all = false;
+        m.cwd_changed(t.path());
+        m.view(&ctx(), &k);
+        m.action("open", 0);
+        assert!(m.player.is_some(), "the in-app player, not the desktop opener");
+        let mut got = false;
+        for _ in 0..150 {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let v = m.view(&ctx(), &k);
+            if !v.images.is_empty() {
+                assert!(v.dock.unwrap().items.iter().any(|i| i.text.contains("alt+k play/pause")));
+                got = true;
+                break;
+            }
+        }
+        assert!(got, "a frame is shown");
+        assert_eq!(m.action("play_pause", 0), Effect::None);
+        assert!(!m.player.as_ref().unwrap().playing());
+        assert!(m.escape());
+        m.view(&ctx(), &k);
+        assert!(m.player.is_none(), "closing the viewer stops playback");
     }
 }

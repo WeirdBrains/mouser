@@ -1563,6 +1563,7 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
         }
         Effect::ShowKeys => st.modes.show_keys(),
         Effect::Say(m) => st.look.say(m),
+        Effect::Pass => {}
     }
 }
 
