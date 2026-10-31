@@ -79,6 +79,38 @@ impl Scrollback {
         }
     }
 
+    /// Every saved line with its soft-wrap flag, oldest first.
+    pub fn all_lines_wrapped(&self) -> Vec<(String, bool)> {
+        let lines = self.get_lines(0, self.total_lines());
+        let w = self.wrapped.read();
+        lines.into_iter().enumerate().map(|(i, l)| (l, w.get(i).copied().unwrap_or(false))).collect()
+    }
+
+    /// Replace every saved line (re-wrapping). Returns how many lines were dropped
+    /// from the front to stay within the limit.
+    pub fn replace_all(&self, lines: Vec<(String, bool)>) -> usize {
+        let max = self.cfg.max_scrollback_lines;
+        let drop = lines.len().saturating_sub(max);
+        let step = self.cfg.chunk_lines.max(1);
+        let mut chunks = Vec::new();
+        let mut cur = Vec::with_capacity(step);
+        let mut wrapped = std::collections::VecDeque::with_capacity(lines.len() - drop);
+        for (l, w) in lines.into_iter().skip(drop) {
+            wrapped.push_back(w);
+            cur.push(l);
+            if cur.len() == step {
+                chunks.push(ScrollbackChunk::Uncompressed {
+                    lines: std::mem::replace(&mut cur, Vec::with_capacity(step)),
+                    last_access: Instant::now(),
+                });
+            }
+        }
+        *self.chunks.write() = chunks;
+        *self.tail.write() = cur;
+        *self.wrapped.write() = wrapped;
+        drop
+    }
+
     /// Drop every saved line (ED 3).
     pub fn clear(&self) {
         self.chunks.write().clear();

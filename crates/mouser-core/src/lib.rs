@@ -9,6 +9,7 @@ pub mod input;
 pub mod kitty;
 pub mod kitty_graphics;
 pub mod parser;
+pub mod reflow;
 pub mod scrollback;
 pub mod search;
 pub mod selection;
