@@ -8,6 +8,7 @@
 //! from libraries or helper processes can implement it later, like engines.
 
 pub mod commander;
+pub mod player;
 
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use crate::{UiViewport, Waker};
@@ -61,6 +62,8 @@ pub enum Effect {
     ShowKeys,
     /// Status-bar message.
     Say(String),
+    /// Not handled now: the key goes to the shell.
+    Pass,
 }
 
 /// A mode plugin.
@@ -179,7 +182,7 @@ impl Host {
             return Some(e);
         }
         let id = k.lookup(bytes)?.to_string();
-        Some(m.action(&id, 0))
+        Some(m.action(&id, 0)).filter(|e| *e != Effect::Pass)
     }
 
     /// Whether `key` (a hotkey or name) is a registered mode.

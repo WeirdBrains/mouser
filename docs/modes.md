@@ -84,7 +84,7 @@ buttons; a search field filters the folder as you type.
 | PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
 | Home / End | first / last | first / last | first / last |
 | p | parent folder (`cd ..`) | same | same |
-| Enter | open: a folder is `cd`'d into, video/audio go to the desktop opener (`xdg-open`, `open` on macOS), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
+| Enter | open: a folder is `cd`'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
 | q (or Esc) | close the file view / window | same | same |
 | s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
 | space | mark / unmark the item (then moves on in list and carousel) | same | same |
@@ -93,6 +93,24 @@ buttons; a search field filters the folder as you type.
 | z / x | | larger / smaller tiles | |
 | a | dotfiles on/off (`ls -a`) | same | same |
 | o / m | options window / manual | same | same |
+
+**Player.** Video and audio open in commander's own player (MODES.md: "a player will
+appear"). Video frames are decoded by `ffmpeg` to RGBA, fitted to the view's width and
+drawn through Mouser's image path; sound plays through `ffplay -nodisp`. Audio files
+get a minimal view: name, progress bar, time, volume and the keys. Keys (remappable,
+they only act while a player is open; otherwise they go to the shell):
+
+| key | |
+| --- | --- |
+| alt+k | play / pause |
+| alt+j / alt+l | back / forward 10 s |
+| alt+- / alt+= | volume down / up (10 %) |
+| alt+q or Esc | close |
+
+Nothing is started until a file is opened; playback stops (the helpers are killed) when
+the viewer closes, another file is shown or the mode is left. Pause, seek and volume
+restart the helpers at the current position. Without `ffmpeg`, `ffprobe` and `ffplay` on
+PATH, media falls back to the desktop opener (`xdg-open`, `open` on macOS).
 
 **What you have typed is kept.** `cd` (open a folder, alt+p) and pipe run without
 losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to

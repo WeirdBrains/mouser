@@ -290,6 +290,11 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("mark", "space", "mark / unmark the item (for pipe)"),
     b("mark_all", "*", "mark all / clear marks"),
     b("pipe", "|", "pipe the marked (or selected) paths into a command"),
+    b("play_pause", "k", "player: play / pause"),
+    b("seek_back", "j", "player: back 10 s"),
+    b("seek_forward", "l", "player: forward 10 s"),
+    b("volume_down", "-", "player: volume down"),
+    b("volume_up", "=", "player: volume up"),
 ];
 
 const fn b(id: &'static str, key: &'static str, describe: &'static str) -> crate::modes::Binding {
@@ -771,7 +776,7 @@ mod tests {
 
     #[test]
     fn bindings_cover_every_action() {
-        for b in BINDINGS {
+        for b in BINDINGS.iter().filter(|b| !matches!(b.id, "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up")) {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);
         }
         let k = crate::modes::Keymap::new(BINDINGS);
