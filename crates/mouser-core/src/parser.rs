@@ -5,6 +5,13 @@ use crate::kitty::KeyboardProtocolState;
 use crate::kitty_graphics::{self, KittyGraphics};
 use crate::scrollback::Scrollback;
 use crate::types::Size;
+
+/// Newest scrollback rows re-wrapped together with the screen on a resize; older
+/// ones are re-wrapped in steps afterwards ([`TerminalParser::reflow_step`]).
+pub const REFLOW_SYNC_ROWS: usize = 2000;
+
+/// Rows per [`TerminalParser::reflow_step`] call that fit easily in a frame.
+pub const REFLOW_STEP_ROWS: usize = 8192;
 use log::trace;
 use std::collections::HashMap;
 use std::io::Write;
@@ -26,6 +33,11 @@ pub struct TerminalParser<W: Write> {
     pub kitty_gfx: KittyGraphics,
     /// Lines scrolled off the top so far (monotonic; anchors image rows).
     pub lines_scrolled: i64,
+    /// Scrollback lines (from the oldest) not yet re-wrapped for the current width.
+    reflow_stale: usize,
+    /// Newest scrollback rows re-wrapped with the screen on resize (default
+    /// [`REFLOW_SYNC_ROWS`]).
+    pub reflow_sync_rows: usize,
     /// Cell size in pixels (for image placement), set by the front end.
     pub cell_px: (u32, u32),
     /// Bumped when images change so the front end can redraw.
@@ -238,6 +250,8 @@ impl<W: Write> TerminalParser<W> {
             fuzzball: Fuzzball::default(),
             kitty_gfx: KittyGraphics::default(),
             lines_scrolled: 0,
+            reflow_stale: 0,
+            reflow_sync_rows: REFLOW_SYNC_ROWS,
             cell_px: (9, 18),
             graphics_generation: 0,
             modes: Modes { grapheme: true, ..Modes::default() },
@@ -399,9 +413,10 @@ impl<W: Write> TerminalParser<W> {
         self.flush_scrollback();
         let shift = if alt { shift as i64 } else { 0 };
         let mut changed = false;
+        let stale_below = self.lines_scrolled - (self.scrollback.total_lines() - self.reflow_stale.min(self.scrollback.total_lines())) as i64;
         for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
             if !g.placements.is_empty() {
-                changed |= g.resize(alt, self.lines_scrolled, shift, size.rows, size.cols);
+                changed |= g.resize(alt, self.lines_scrolled, shift, size.rows, size.cols, stale_below);
             }
         }
         if changed {
@@ -409,38 +424,121 @@ impl<W: Write> TerminalParser<W> {
         }
     }
 
-    /// Re-wrap the main screen and the scrollback for `size` (the alternate screen
-    /// is only cut or padded). Placements on the main screen and in the scrollback
-    /// follow their logical line; ones that change height (`fit=w`, overhang) get
-    /// or give back the empty rows below them.
+    /// Re-wrap the main screen and the newest scrollback lines for `size` (the
+    /// alternate screen is only cut or padded). Older scrollback lines are left
+    /// for [`Self::reflow_step`], so a resize costs the same with any scrollback
+    /// size. Placements follow their logical line; ones that change height
+    /// (`fit=w`, overhang) get or give back the empty rows below them.
     fn reflow(&mut self, size: Size) {
-        use crate::reflow::{Layout, Phys};
+        use crate::reflow::Phys;
         let old = self.screen.size;
-        let sb = self.scrollback.all_lines_wrapped();
-        let sb_len = sb.len();
-        let base = self.lines_scrolled - sb_len as i64;
+        let total = self.scrollback.total_lines();
+        let first = self.lines_scrolled - total as i64;
+        let s = self.scrollback.line_start(total.saturating_sub(self.reflow_sync_rows));
+        let base = first + s as i64;
         let (cells, cursor, pending) = self.screen.main_state();
-        let is_main = |p: &crate::graphics::Placement| !p.alt && !p.virt;
         // Screen rows up to the cursor, the last text and the last anchor.
         let last_anchor = [&self.fuzzball.gfx, &self.kitty_gfx.gfx]
             .iter()
-            .flat_map(|g| g.placements.iter().filter(|p| is_main(p)).map(|p| p.row - self.lines_scrolled))
+            .flat_map(|g| g.placements.iter().filter(|p| !p.alt && !p.virt).map(|p| p.row - self.lines_scrolled))
             .filter(|&r| r >= 0 && (r as usize) < old.rows)
             .max()
             .map(|r| r as usize);
         let last_text =
             (0..old.rows).rev().find(|&y| cells[y * old.cols..(y + 1) * old.cols].iter().any(|c| c.ch != ' ' || c.style != Default::default()));
         let keep = [Some(cursor.y), last_text, last_anchor].into_iter().flatten().max().unwrap_or(0).min(old.rows.saturating_sub(1));
-        let mut rows: Vec<Phys> = sb.into_iter().map(|(s, w)| Phys::Str(s, w)).collect();
+        let sb_rows = total - s;
+        let mut rows: Vec<Phys> = self.scrollback.lines_wrapped(s, total).into_iter().map(|(l, w)| Phys::Str(l, w)).collect();
         rows.extend((0..=keep).map(|y| Phys::Cells(cells[y * old.cols..(y + 1) * old.cols].to_vec())));
+        let points = [(sb_rows + cursor.y, cursor.x + pending as usize, true), (sb_rows, 0, false)];
+        let (mut out, landed, moved) = self.rewrap_block(rows, base, &points, size.cols);
+        let mut c = landed[0];
+        c.col = c.col.min(size.cols - 1);
+        // The old screen's first row stays at the top unless the cursor would fall
+        // off the bottom; then the rows above go to the scrollback.
+        let top = landed[1].row.min(c.row).max((c.row + 1).saturating_sub(size.rows));
+        let screen_rows: Vec<Phys> = out.drain(top.min(out.len())..).collect();
+        let mut new_cells = Vec::with_capacity(size.cols * size.rows);
+        for r in screen_rows.into_iter().take(size.rows) {
+            new_cells.extend(r.into_cells(size.cols));
+        }
+        new_cells.resize(size.cols * size.rows, crate::grid::Cell::default());
+        let scrolled: Vec<(String, bool)> = out.into_iter().map(Phys::into_string).collect();
+        let n_sb = scrolled.len();
+        let dropped = self.scrollback.splice(s, total, scrolled);
+        // Older lines keep their absolute rows; the newest are re-laid from `base`.
+        self.lines_scrolled = base + n_sb as i64;
+        self.place_moved(moved, base, size.cols);
+        self.reflow_stale = s.saturating_sub(dropped);
+        self.graphics_generation += 1;
+        self.screen.finish_reflow(size, new_cells, crate::types::Point { x: c.col, y: c.row - top }, c.past_end);
+        if dropped > 0 {
+            self.evict_scrolled_placements();
+        }
+    }
+
+    /// Whether older scrollback lines still wait to be re-wrapped for the current width.
+    pub fn reflow_pending(&self) -> bool {
+        self.reflow_stale > 0
+    }
+
+    /// Re-wrap up to about `max_rows` of the not yet re-wrapped scrollback lines,
+    /// newest first. The screen and everything below them keep their absolute
+    /// rows (older lines shift). Returns whether more is left.
+    pub fn reflow_step(&mut self, max_rows: usize) -> bool {
+        use crate::reflow::Phys;
+        if self.reflow_stale == 0 {
+            return false;
+        }
+        let total = self.scrollback.total_lines();
+        let b = self.reflow_stale.min(total);
+        let a = self.scrollback.line_start(b.saturating_sub(max_rows.max(1)));
+        let first = self.lines_scrolled - total as i64;
+        let base = first + a as i64;
+        let rows: Vec<Phys> = self.scrollback.lines_wrapped(a, b).into_iter().map(|(l, w)| Phys::Str(l, w)).collect();
+        let n_old = rows.len();
+        let cols = self.screen.size.cols;
+        let (out, _, moved) = self.rewrap_block(rows, base, &[], cols);
+        let n_new = out.len();
+        let dropped = self.scrollback.splice(a, b, out.into_iter().map(Phys::into_string).collect());
+        // `lines_scrolled` is fixed: rows before `a` move by the change in length.
+        let _ = (n_new, n_old);
+        let new_first = self.lines_scrolled - self.scrollback.total_lines() as i64;
+        let new_base = new_first + a as i64 - dropped as i64;
+        for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+            for p in g.placements.iter_mut().filter(|p| !p.alt && !p.virt && p.row < base) {
+                p.row = new_first + (p.row - first) - dropped as i64;
+            }
+        }
+        self.place_moved(moved, new_base, cols);
+        self.reflow_stale = a.saturating_sub(dropped);
+        self.graphics_generation += 1;
+        if dropped > 0 {
+            self.evict_scrolled_placements();
+        }
+        self.reflow_stale > 0
+    }
+
+    /// Re-wrap `rows` (absolute row of the first: `base`) at `cols`. `points` are
+    /// tracked `(row, col, extend)`; main-screen placements anchored in the block
+    /// are moved (returned as `(gfx, index, new row, new col)`), and their height
+    /// changes make room below them.
+    #[allow(clippy::type_complexity)]
+    fn rewrap_block(
+        &self,
+        rows: Vec<crate::reflow::Phys>,
+        base: i64,
+        points: &[(usize, usize, bool)],
+        cols: usize,
+    ) -> (Vec<crate::reflow::Phys>, Vec<crate::reflow::Landed>, Vec<(usize, usize, usize, usize)>) {
+        use crate::reflow::Layout;
+        let n = rows.len() as i64;
         let mut lay = Layout::build(rows);
-        let cur = lay.add_point(sb_len + cursor.y, cursor.x + pending as usize, true).expect("cursor row kept");
-        let screen_top = lay.add_point(sb_len, 0, false).expect("first screen row");
-        // (gfx index, placement index, point id)
+        let ids: Vec<usize> = points.iter().map(|&(r, c, e)| lay.add_point(r, c, e).expect("point row in block")).collect();
         let mut anchors = Vec::new();
         for (gi, g) in [&self.fuzzball.gfx, &self.kitty_gfx.gfx].into_iter().enumerate() {
             for (pi, p) in g.placements.iter().enumerate() {
-                if !is_main(p) || p.row < base {
+                if p.alt || p.virt || p.row < base || p.row >= base + n {
                     continue;
                 }
                 if let Some(id) = lay.add_point((p.row - base) as usize, p.req_col as usize, false) {
@@ -456,8 +554,8 @@ impl<W: Write> TerminalParser<W> {
                 let mut p = g.placements[pi].clone();
                 let (line, off) = lay.point(id);
                 if !p.fixed {
-                    p.req_col = (off % size.cols) as u32;
-                    p.fit(size.cols);
+                    p.req_col = (off % cols) as u32;
+                    p.fit(cols);
                 }
                 (line, p.rows as i64 - g.placements[pi].rows as i64)
             })
@@ -468,33 +566,23 @@ impl<W: Write> TerminalParser<W> {
         for (line, delta) in grow {
             lay.adjust_after(line, delta);
         }
-        let (mut out, landed) = lay.split(size.cols);
-        let mut c = landed[cur];
-        c.col = c.col.min(size.cols - 1);
-        // The old screen's first row stays at the top unless the cursor would fall
-        // off the bottom; then the rows above go to the scrollback.
-        let top = landed[screen_top].row.min(c.row).max((c.row + 1).saturating_sub(size.rows));
-        let screen_rows: Vec<Phys> = out.drain(top.min(out.len())..).collect();
-        let mut new_cells = Vec::with_capacity(size.cols * size.rows);
-        for r in screen_rows.into_iter().take(size.rows) {
-            new_cells.extend(r.into_cells(size.cols));
-        }
-        new_cells.resize(size.cols * size.rows, crate::grid::Cell::default());
-        let scrolled: Vec<(String, bool)> = out.into_iter().map(Phys::into_string).collect();
-        let n_sb = scrolled.len();
-        self.scrollback.replace_all(scrolled);
-        self.lines_scrolled = base + n_sb as i64;
-        for (gi, pi, id) in anchors {
+        let (out, landed) = lay.split(cols);
+        let pts = ids.iter().map(|&i| landed[i]).collect();
+        let moved = anchors.into_iter().map(|(gi, pi, id)| (gi, pi, landed[id].row, landed[id].col)).collect();
+        (out, pts, moved)
+    }
+
+    fn place_moved(&mut self, moved: Vec<(usize, usize, usize, usize)>, base: i64, cols: usize) {
+        let cols = cols.max(1);
+        for (gi, pi, row, col) in moved {
             let g = if gi == 0 { &mut self.fuzzball.gfx } else { &mut self.kitty_gfx.gfx };
             let p = &mut g.placements[pi];
-            let l = landed[id];
-            p.row = base + l.row as i64;
+            p.row = base + row as i64;
             if !p.fixed {
-                p.req_col = l.col as u32;
+                p.req_col = col as u32;
+                p.fit(cols);
             }
         }
-        self.graphics_generation += 1;
-        self.screen.finish_reflow(size, new_cells, crate::types::Point { x: c.col, y: c.row - top }, c.past_end);
     }
 
     fn flush_scrollback(&mut self) {

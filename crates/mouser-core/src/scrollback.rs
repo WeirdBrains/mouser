@@ -86,6 +86,81 @@ impl Scrollback {
         lines.into_iter().enumerate().map(|(i, l)| (l, w.get(i).copied().unwrap_or(false))).collect()
     }
 
+    /// Start of the logical line holding line `i` (the first of its soft-wrapped rows).
+    pub fn line_start(&self, i: usize) -> usize {
+        let w = self.wrapped.read();
+        let mut i = i.min(w.len());
+        while i > 0 && w.get(i - 1).copied().unwrap_or(false) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// Lines `a..b` with their soft-wrap flags.
+    pub fn lines_wrapped(&self, a: usize, b: usize) -> Vec<(String, bool)> {
+        let lines = self.get_lines(a, b.saturating_sub(a));
+        let w = self.wrapped.read();
+        lines.into_iter().enumerate().map(|(i, l)| (l, w.get(a + i).copied().unwrap_or(false))).collect()
+    }
+
+    /// Replace lines `a..b` with `new`. Only the chunks touching the range are
+    /// rebuilt. Returns how many of the oldest lines were dropped to stay within
+    /// the limit.
+    pub fn splice(&self, a: usize, b: usize, new: Vec<(String, bool)>) -> usize {
+        let mut chunks = self.chunks.write();
+        let mut tail = self.tail.write();
+        let total = chunks.iter().map(|c| c.line_count()).sum::<usize>() + tail.len();
+        let (a, b) = (a.min(total), b.min(total).max(a.min(total)));
+        // First chunk touching `a`.
+        let (mut ci, mut idx) = (0, 0);
+        while ci < chunks.len() && idx + chunks[ci].line_count() <= a {
+            idx += chunks[ci].line_count();
+            ci += 1;
+        }
+        let start = idx;
+        let mut gathered: Vec<String> = Vec::new();
+        let mut cj = ci;
+        while cj < chunks.len() && idx < b.max(a + 1) {
+            gathered.extend(Self::materialize_chunk(&mut chunks[cj], &self.cfg.compression).iter().cloned());
+            idx += chunks[cj].line_count();
+            cj += 1;
+        }
+        let with_tail = cj == chunks.len();
+        if with_tail {
+            gathered.append(&mut tail);
+        }
+        let (nw, new_lines): (Vec<bool>, Vec<String>) = new.into_iter().map(|(l, w)| (w, l)).unzip();
+        let after = gathered.split_off((b - start).min(gathered.len()));
+        gathered.truncate(a - start);
+        gathered.extend(new_lines);
+        gathered.extend(after);
+        let step = self.cfg.chunk_lines.max(1);
+        let mut rebuilt = Vec::new();
+        let mut it = gathered.into_iter().peekable();
+        while it.peek().is_some() {
+            let part: Vec<String> = it.by_ref().take(step).collect();
+            if with_tail && it.peek().is_none() && part.len() < step {
+                *tail = part;
+                break;
+            }
+            rebuilt.push(ScrollbackChunk::Uncompressed { lines: part, last_access: Instant::now() });
+        }
+        chunks.splice(ci..cj, rebuilt);
+        {
+            let mut w = self.wrapped.write();
+            let len = w.len();
+            let rest = w.split_off(b.min(len));
+            w.truncate(a);
+            w.extend(nw);
+            w.extend(rest);
+        }
+        drop(tail);
+        let before = chunks.iter().map(|c| c.line_count()).sum::<usize>() + self.tail.read().len();
+        self.enforce_max_locked(&mut chunks);
+        let after_n = chunks.iter().map(|c| c.line_count()).sum::<usize>() + self.tail.read().len();
+        before - after_n
+    }
+
     /// Replace every saved line (re-wrapping). Returns how many lines were dropped
     /// from the front to stay within the limit.
     pub fn replace_all(&self, lines: Vec<(String, bool)>) -> usize {

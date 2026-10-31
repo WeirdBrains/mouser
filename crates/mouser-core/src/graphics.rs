@@ -331,7 +331,10 @@ impl Graphics {
     /// cut off (below the last row, or above the alt screen) are removed, and every
     /// placement is refitted to the width. The inactive main screen is kept (and
     /// re-wrapped) during a resize in the alt screen.
-    pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize) -> bool {
+    /// Main-screen placements anchored above `stale_below` sit in scrollback lines
+    /// not re-wrapped yet; they are refitted when those lines are.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize, stale_below: i64) -> bool {
         let before = self.placements.len();
         if alt && shift != 0 {
             for p in self.placements.iter_mut().filter(|p| p.alt && !p.virt) {
@@ -349,7 +352,7 @@ impl Graphics {
             p.row >= bottom || (p.alt && p.row < top)
         });
         let mut changed = before != self.placements.len() || shift != 0;
-        for p in self.placements.iter_mut().filter(|p| !p.virt && !p.fixed) {
+        for p in self.placements.iter_mut().filter(|p| !p.virt && !p.fixed && (p.alt || p.row >= stale_below)) {
             let old = (p.col, p.cols, p.rows);
             p.fit(cols);
             changed |= old != (p.col, p.cols, p.rows);
