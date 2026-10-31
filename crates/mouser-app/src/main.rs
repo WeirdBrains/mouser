@@ -58,7 +58,7 @@ struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
-    /// Show images in this terminal (Fuzzball graphics).
+    /// Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow-passthrough).
     ///
     /// Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not
     /// supported. Works in Mouser and other Fuzzball terminals. Not yet inside tmux:
