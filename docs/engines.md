@@ -128,6 +128,26 @@ Mouser finds the sentinel at the next start (the engine crashed the process), it
 that engine, uses the Mouser engine and says so (`mouser engine list` shows it too);
 `mouser engine use <name>` or reinstalling clears it.
 
+### Skipped and failed engines
+
+`mouser engine list` shows a state per engine:
+
+| state | meaning | recorded in | what Mouser does |
+|---|---|---|---|
+| `ok` | nothing recorded | | uses it when selected |
+| `skipped` | crashed Mouser while starting (sentinel left behind), with when | `engines/.starting-<name>` | skips it at every start until restored |
+| `failed` | the last load/start/draw attempt failed, with when and why | `engines/.failed-<name>` | still tries it on each start (shown so you know why you got `mouser`) |
+
+`mouser engine unskip <name>` (alias `restore`; `--all` for every engine) clears both
+records **without selecting** the engine; `mouser engine use <name>` clears them and
+selects it; reinstalling clears them too. A successful start clears `failed`. Built-in
+`skia` is guarded the same way as custom engines (`mouser` never is: it is the fallback).
+
+When Mouser falls back it prints and logs the reason and the restore command, and shows
+it in the window's status bar for 15 s, e.g.
+`engine flat is skipped: it crashed Mouser while starting (2m ago). Restore it with
+`mouser engine unskip flat`; using mouser`.
+
 Why not XDG (`$XDG_DATA_HOME/mouser/engines`)? Mouser keeps all of its state under
 one directory, `~/.mouser` or `$MOUSER_HOME` (docs/storage.md), so engines follow
 that rule; tests point `MOUSER_HOME` (and `HOME`) at a temporary directory.

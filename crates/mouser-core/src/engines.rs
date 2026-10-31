@@ -121,6 +121,7 @@ pub fn install(m: &Manifest, lib: &Path) -> Result<Installed> {
     let _ = fs::remove_dir_all(&dest);
     fs::rename(&tmp, &dest)?;
     clear_sentinel(&m.name);
+    clear_failure(&m.name);
     Ok(Installed { manifest: m.clone(), dir: dest })
 }
 
@@ -133,6 +134,7 @@ pub fn uninstall(name: &str) -> Result<bool> {
     let inst = find(name).with_context(|| format!("no installed engine named {name}"))?;
     fs::remove_dir_all(&inst.dir)?;
     clear_sentinel(name);
+    clear_failure(name);
     let was = storage::load_preferences().engine.as_deref() == Some(name);
     if was {
         storage::update_preferences(|p| p.engine = None)?;
@@ -146,6 +148,7 @@ pub fn select(name: &str) -> Result<()> {
         bail!("no engine named {name} (see `mouser engine list`)");
     }
     clear_sentinel(name);
+    clear_failure(name);
     storage::update_preferences(|p| p.engine = if name == DEFAULT { None } else { Some(name.to_string()) })?;
     Ok(())
 }
@@ -164,20 +167,113 @@ fn sentinel(name: &str) -> PathBuf {
     dir().join(format!(".starting-{name}"))
 }
 
+fn failure_path(name: &str) -> PathBuf {
+    dir().join(format!(".failed-{name}"))
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 /// Mark an engine as starting; if Mouser dies before [`clear_sentinel`], the
 /// next start skips it.
 pub fn set_sentinel(name: &str) {
     let _ = fs::create_dir_all(dir());
-    let _ = fs::write(sentinel(name), std::process::id().to_string());
+    let _ = fs::write(sentinel(name), format!("pid={}\nstarted={}\n", std::process::id(), now_secs()));
 }
 
 pub fn clear_sentinel(name: &str) {
     let _ = fs::remove_file(sentinel(name));
 }
 
-/// True if the engine crashed Mouser last time it started.
+/// True if the engine crashed Mouser last time it started (it is skipped).
 pub fn crashed_last_time(name: &str) -> bool {
     sentinel(name).exists()
+}
+
+/// Unix time the skipped engine was last started (the start that crashed).
+pub fn skipped_since(name: &str) -> Option<u64> {
+    let s = fs::read_to_string(sentinel(name)).ok()?;
+    s.lines()
+        .find_map(|l| l.strip_prefix("started="))
+        .and_then(|v| v.trim().parse().ok())
+        .or_else(|| fs::metadata(sentinel(name)).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs()))
+}
+
+/// Remember why an engine could not be used (load, start or draw error). It
+/// is only shown (`mouser engine list`); Mouser still tries the engine on the
+/// next start.
+pub fn record_failure(name: &str, reason: &str) {
+    let _ = fs::create_dir_all(dir());
+    let one_line = reason.replace('\n', " ");
+    let _ = fs::write(failure_path(name), format!("at={}\nreason={one_line}\n", now_secs()));
+}
+
+/// The last recorded failure: (unix time, reason).
+pub fn last_failure(name: &str) -> Option<(u64, String)> {
+    let s = fs::read_to_string(failure_path(name)).ok()?;
+    let at = s.lines().find_map(|l| l.strip_prefix("at=")).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    let reason = s.lines().find_map(|l| l.strip_prefix("reason=")).unwrap_or("").to_string();
+    Some((at, reason))
+}
+
+pub fn clear_failure(name: &str) {
+    let _ = fs::remove_file(failure_path(name));
+}
+
+/// An engine's state for `mouser engine list`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum State {
+    Ok,
+    /// Crashed Mouser while starting at this unix time; skipped until unskipped.
+    Skipped {
+        since: Option<u64>,
+    },
+    /// Last attempt failed (unix time, reason); still tried on each start.
+    Failed {
+        at: u64,
+        reason: String,
+    },
+}
+
+pub fn state(name: &str) -> State {
+    if crashed_last_time(name) {
+        State::Skipped { since: skipped_since(name) }
+    } else if let Some((at, reason)) = last_failure(name) {
+        State::Failed { at, reason }
+    } else {
+        State::Ok
+    }
+}
+
+/// Clear an engine's skip marker and failure record without selecting it.
+/// Returns whether there was anything to clear.
+pub fn unskip(name: &str) -> Result<bool> {
+    if !is_builtin(name) && find(name).is_none() {
+        bail!("no engine named {name} (see `mouser engine list`)");
+    }
+    let had = state(name) != State::Ok;
+    clear_sentinel(name);
+    clear_failure(name);
+    Ok(had)
+}
+
+/// Unskip every engine; returns the names that were restored.
+pub fn unskip_all() -> Vec<String> {
+    let mut names: Vec<String> = BUILTINS.iter().map(|s| s.to_string()).collect();
+    names.extend(installed().into_iter().flatten().map(|i| i.manifest.name));
+    names.into_iter().filter(|n| unskip(n).unwrap_or(false)).collect()
+}
+
+/// "5m ago" style age of a unix time.
+pub fn ago(t: u64) -> String {
+    let d = now_secs().saturating_sub(t);
+    match d {
+        0..60 => format!("{d}s ago"),
+        60..3600 => format!("{}m ago", d / 60),
+        3600..86400 => format!("{}h {}m ago", d / 3600, d % 3600 / 60),
+        _ => format!("{}d ago", d / 86400),
+    }
 }
 
 #[cfg(test)]
@@ -257,5 +353,31 @@ mod tests {
         assert!(crashed_last_time("glow"));
         clear_sentinel("glow");
         assert!(!crashed_last_time("glow"));
+    }
+
+    #[test]
+    #[serial]
+    fn states_and_unskip() {
+        let t = home();
+        let src = fake_engine(t.path(), "glow", 1);
+        let (m, lib) = source(&src).unwrap();
+        install(&m, &lib).unwrap();
+        assert_eq!(state("glow"), State::Ok);
+        assert!(!unskip("glow").unwrap(), "nothing to clear");
+        assert!(unskip("nope").is_err());
+        set_sentinel("glow");
+        let State::Skipped { since: Some(at) } = state("glow") else { panic!("{:?}", state("glow")) };
+        assert!(ago(at).ends_with("s ago"));
+        assert!(unskip("glow").unwrap());
+        assert_eq!(state("glow"), State::Ok);
+        assert_eq!(chosen(), "mouser", "unskip does not select");
+        record_failure("glow", "create failed:\nno GL");
+        assert_eq!(state("glow"), State::Failed { at: last_failure("glow").unwrap().0, reason: "create failed: no GL".into() });
+        set_sentinel("skia");
+        assert_eq!(unskip_all(), vec!["skia".to_string(), "glow".to_string()]);
+        assert_eq!(state("glow"), State::Ok);
+        record_failure("glow", "x");
+        select("glow").unwrap();
+        assert_eq!(state("glow"), State::Ok, "use clears it too");
     }
 }

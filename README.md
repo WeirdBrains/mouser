@@ -131,6 +131,7 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   mouser engine use skia             # or: MOUSER_ENGINE=skia mouser
   mouser engine install ./my-engine  # directory with engine.toml + library
   mouser engine uninstall my-engine
+  mouser engine unskip my-engine     # stop skipping an engine that crashed (--all: every engine)
   ```
 
   An engine that fails to load or crashes falls back to `mouser`. See `docs/engines.md`
