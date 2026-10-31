@@ -112,8 +112,10 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
 - **Scaling to the screen width.** The terminal keeps the requested anchor column and
   `cols`/`rows`, and shows each placement fitted to the current width (also when it is
   first placed): unchanged if it fits; scaled down, aspect kept, if it overhangs the
-  right edge; moved left to the column where it fits (and scaled if wider than the
-  screen) if its anchor column is cut off. The rows it covers scale by the same factor.
+  right edge, keeping its anchor column (it **shrinks in place** to the columns left of
+  the edge); once the anchor column itself is cut off it is pinned to the last column,
+  one column wide, and never dropped. Its width changes by at most one column per
+  column of resize, so it never jumps in size. The rows it covers scale by the same factor.
   A wider screen grows it back toward the request, never beyond. Images are not
   scaled to the screen height: tall placements scroll like text.
 - On a shorter screen, lines pushed into the scrollback keep their placements; a

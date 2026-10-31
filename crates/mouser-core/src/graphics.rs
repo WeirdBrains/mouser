@@ -49,18 +49,18 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// Fit the requested box into a screen `screen_cols` wide: unchanged when it
-    /// fits; scaled down (aspect kept) when it overhangs the right edge; moved left
-    /// (and scaled if wider than the screen) when its anchor column is cut off.
+    /// Fit the requested box into a screen `screen_cols` wide, shrinking in place:
+    /// unchanged when it fits; otherwise it keeps its anchor column and shrinks
+    /// (aspect kept) to the columns left of the right edge. Once the anchor column
+    /// itself is cut off it is pinned to the last column at one column wide, so the
+    /// size changes by at most one column per column of resize and nothing is dropped.
     pub fn fit(&mut self, screen_cols: usize) {
         let w = (screen_cols.max(1) as u64).min(u32::MAX as u64) as u32;
         let (col, cols) = if self.req_col + self.req_cols <= w {
             (self.req_col, self.req_cols)
-        } else if self.req_col < w {
-            (self.req_col, w - self.req_col)
         } else {
-            let c = self.req_cols.min(w);
-            (w - c, c)
+            let c = w.saturating_sub(self.req_col).max(1);
+            (self.req_col.min(w - c), c)
         };
         self.col = col;
         self.cols = cols.max(1);

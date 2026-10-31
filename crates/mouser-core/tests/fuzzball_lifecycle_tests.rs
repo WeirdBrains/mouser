@@ -115,14 +115,42 @@ fn narrower_resize_scales_overhanging_placements() {
 }
 
 #[test]
-fn anchor_beyond_the_edge_moves_left_instead_of_dropping() {
+fn anchor_beyond_the_edge_is_pinned_and_shrunk_not_moved_or_dropped() {
     let mut t = term();
     place(&mut t, 1, 3, 16, 4, 2);
+    // Anchor col 15 still on screen at 17 columns: shrinks in place to 2 columns.
+    t.resize(Size { cols: 17, rows: 6 });
+    assert_eq!(boxed(&t, 1), (15, 2, 1));
+    // Anchor cut off: pinned to the last column, one column wide.
     t.resize(Size { cols: 10, rows: 6 });
-    assert_eq!(boxed(&t, 1), (6, 4, 2), "moved to the last column where it fits");
-    // Narrower than the image itself: anchored at 0 and scaled.
-    t.resize(Size { cols: 2, rows: 6 });
-    assert_eq!(boxed(&t, 1), (0, 2, 1));
+    assert_eq!(boxed(&t, 1), (9, 1, 1));
+    t.resize(Size { cols: 1, rows: 6 });
+    assert_eq!(boxed(&t, 1), (0, 1, 1));
+    t.resize(Size { cols: 20, rows: 6 });
+    assert_eq!(boxed(&t, 1), (15, 4, 2), "requested anchor and size restored");
+}
+
+#[test]
+fn narrowing_is_continuous() {
+    let mut t = term();
+    t.resize(Size { cols: 120, rows: 6 });
+    place(&mut t, 1, 2, 41, 60, 12);
+    let mut prev = boxed(&t, 1);
+    for w in (1..120).rev() {
+        t.resize(Size { cols: w, rows: 6 });
+        let b = boxed(&t, 1);
+        assert!(prev.1 - b.1 <= 1 && b.1 <= prev.1, "width {w}: {prev:?} -> {b:?}");
+        assert!(b.0 <= prev.0 && prev.0 - b.0 <= 1, "anchor moves one column at a time at most");
+        assert!(b.0 + b.1 <= w as u32, "fits");
+        if w > 40 {
+            assert_eq!(b.0, 40, "anchor kept while on screen");
+        }
+        prev = b;
+    }
+    for w in 2..=120 {
+        t.resize(Size { cols: w, rows: 6 });
+    }
+    assert_eq!(boxed(&t, 1), (40, 60, 12));
 }
 
 #[test]
@@ -165,9 +193,9 @@ fn alt_screen_placements_scale_too() {
     place(&mut t, 1, 1, 13, 8, 2);
     t.feed(b"\x1b[1;1H");
     t.resize(Size { cols: 10, rows: 6 });
-    assert_eq!(boxed(&t, 1), (2, 8, 2));
+    assert_eq!(boxed(&t, 1), (9, 1, 1));
     t.resize(Size { cols: 4, rows: 6 });
-    assert_eq!(boxed(&t, 1), (0, 4, 1));
+    assert_eq!(boxed(&t, 1), (3, 1, 1));
     t.resize(Size { cols: 30, rows: 6 });
     assert_eq!(boxed(&t, 1), (12, 8, 2));
 }
