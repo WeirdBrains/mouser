@@ -1,4 +1,10 @@
-//! `mouser show`: display images in a Fuzzball terminal (docs/protocol/graphics.md).
+//! `mouser show`: display images in the terminal (docs/protocol/graphics.md).
+//!
+//! Fuzzball graphics come first; terminals that only answer the Kitty graphics
+//! query get Kitty graphics instead. Inside tmux (with `allow-passthrough on`)
+//! images go through passthrough as Kitty Unicode placeholders when the outer
+//! terminal speaks Kitty graphics, since placeholders are text that tmux
+//! moves and redraws itself; otherwise Fuzzball is passed through.
 //!
 //! The pure parts (capability parsing, size fitting, message encoding) are
 //! separate from terminal I/O so they can be tested against Mouser's parser.
@@ -9,9 +15,25 @@ use anyhow::{Context, Result, bail};
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
+/// Which graphics protocol to speak.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Proto {
+    Fuzzball,
+    /// Kitty graphics placed at the cursor.
+    Kitty,
+    /// Kitty graphics shown through Unicode placeholders (tmux).
+    KittyPlaceholders,
+}
+
+/// Image id of the Kitty support query.
+pub const KITTY_QUERY_ID: u32 = 31;
+/// Largest placeholder grid (the diacritic table has 297 entries).
+pub const MAX_PLACEHOLDER_CELLS: u32 = 297;
+
 /// What the terminal told us.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TermInfo {
+    pub proto: Proto,
     pub max_chunk: usize,
     pub g_mem: usize,
     pub g_max_dim: u32,
@@ -36,14 +58,39 @@ pub struct Options {
     pub id: Option<u32>,
 }
 
-/// Parse terminal replies: the Fuzzball `cq` reply, `CSI 6;h;w t` (cell size),
-/// `CSI 8;rows;cols t` and the cursor report `CSI row;col R`. `None` without `cq`.
+/// Whether the replies hold an OK to the Kitty graphics query.
+pub fn kitty_answered(r: &str) -> bool {
+    r.contains(&format!("\x1b_Gi={KITTY_QUERY_ID};OK"))
+}
+
+/// Whether the replies hold a Fuzzball capability reply with graphics.
+pub fn fuzzball_answered(r: &str) -> bool {
+    r.split("Fzcr;")
+        .nth(1)
+        .and_then(|c| c.split('\x1b').next())
+        .is_some_and(|c| c.split(',').any(|kv| kv.strip_prefix("sub=").is_some_and(|s| s.contains('g'))))
+}
+
+/// The queries `mouser show` sends: Fuzzball capabilities, Kitty graphics
+/// support, cell size, screen size, cursor position, then DA1.
+pub fn query(tmux: bool) -> String {
+    message("cq;id=1", tmux) + &kitty_apc(&format!("i={KITTY_QUERY_ID},s=1,v=1,a=q,t=d,f=24"), "AAAA", tmux) + "\x1b[16t\x1b[18t\x1b[6n\x1b[c"
+}
+
+/// Parse terminal replies: the Fuzzball `cq` reply (preferred), the Kitty
+/// query reply, `CSI 6;h;w t` (cell size), `CSI 8;rows;cols t` and the cursor
+/// report `CSI row;col R`. `None` when neither protocol answered. Inside tmux
+/// a Kitty-capable terminal gets placeholders.
 pub fn parse_replies(r: &str, tmux: bool) -> Option<TermInfo> {
-    let caps = r.split("Fzcr;").nth(1)?.split('\x1b').next()?;
+    let proto = match (fuzzball_answered(r), kitty_answered(r)) {
+        (_, true) if tmux => Proto::KittyPlaceholders,
+        (true, _) => Proto::Fuzzball,
+        (false, true) => Proto::Kitty,
+        (false, false) => return None,
+    };
+    let caps = r.split("Fzcr;").nth(1).and_then(|c| c.split('\x1b').next()).unwrap_or("");
     let get = |k: &str| caps.split(',').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('=')));
-    if !get("sub").is_some_and(|s| s.contains('g')) {
-        return None;
-    }
+    let fz = proto == Proto::Fuzzball;
     let csi = |end: char, lead: Option<&str>| -> Option<Vec<u32>> {
         r.split("\x1b[").skip(1).find_map(|s| {
             let body = &s[..s.find(end)?];
@@ -57,11 +104,14 @@ pub fn parse_replies(r: &str, tmux: bool) -> Option<TermInfo> {
     let cell = csi('t', Some("6")).filter(|v| v.len() == 3).map(|v| (v[2], v[1])).unwrap_or((10, 20));
     let cols = csi('t', Some("8")).filter(|v| v.len() == 3).map(|v| v[2]).unwrap_or(80);
     let cursor_col = csi('R', None).filter(|v| v.len() == 2).map(|v| v[1].saturating_sub(1)).unwrap_or(0);
+    // Kitty has no capability report: its chunk size is fixed at 4096 and
+    // Mouser's (and kitty's) limits are used.
     Some(TermInfo {
-        max_chunk: get("max_chunk").and_then(|v| v.parse().ok()).unwrap_or(4096),
-        g_mem: get("g_mem").and_then(|v| v.parse().ok()).unwrap_or(64 << 20),
-        g_max_dim: get("g_max_dim").and_then(|v| v.parse().ok()).unwrap_or(4096),
-        png: get("g_fmt").is_some_and(|f| f.split(':').any(|x| x == "png")),
+        proto,
+        max_chunk: if fz { get("max_chunk").and_then(|v| v.parse().ok()).unwrap_or(4096) } else { 4096 },
+        g_mem: if fz { get("g_mem").and_then(|v| v.parse().ok()).unwrap_or(64 << 20) } else { 320 << 20 },
+        g_max_dim: if fz { get("g_max_dim").and_then(|v| v.parse().ok()).unwrap_or(4096) } else { 10_000 },
+        png: !fz || get("g_fmt").is_some_and(|f| f.split(':').any(|x| x == "png")),
         cell,
         cols: cols.max(1),
         cursor_col,
@@ -92,7 +142,13 @@ pub fn fit_cells(w: u32, h: u32, t: &TermInfo, o: &Options) -> (u32, u32) {
             (c, rows_for(c))
         }
     };
-    ((c.min(1000.0)) as u32, (r.min(1000.0)) as u32)
+    let max = if t.proto == Proto::KittyPlaceholders { MAX_PLACEHOLDER_CELLS as f64 } else { 1000.0 };
+    if c > max || r > max {
+        // Shrink both, keeping the aspect.
+        let k = (max / c).min(max / r);
+        return (((c * k).floor().max(1.0)) as u32, ((r * k).floor().max(1.0)) as u32);
+    }
+    (c as u32, r as u32)
 }
 
 /// An image ready to upload.
@@ -160,6 +216,52 @@ pub fn message(body: &str, tmux: bool) -> String {
     if tmux { format!("\x1bPtmux;{}\x1b\\", m.replace('\x1b', "\x1b\x1b")) } else { m }
 }
 
+/// One Kitty graphics command, wrapped for tmux passthrough if needed.
+pub fn kitty_apc(keys: &str, payload: &str, tmux: bool) -> String {
+    let m = if payload.is_empty() { format!("\x1b_G{keys}\x1b\\") } else { format!("\x1b_G{keys};{payload}\x1b\\") };
+    if tmux { format!("\x1bPtmux;{}\x1b\\", m.replace('\x1b', "\x1b\x1b")) } else { m }
+}
+
+/// Kitty: upload `p` as image `id` in 4096-character chunks with `first`'s keys
+/// on the first chunk.
+fn kitty_upload(p: &Payload, first: &str, tmux: bool) -> String {
+    let data = b64(&p.bytes);
+    let parts: Vec<&str> = if data.is_empty() { vec![""] } else { data.as_bytes().chunks(4096).map(|c| std::str::from_utf8(c).unwrap()).collect() };
+    let f = if p.fmt == "png" { 100 } else { 32 };
+    let mut out = String::new();
+    for (i, part) in parts.iter().enumerate() {
+        let m = u8::from(i + 1 < parts.len());
+        let keys = if i == 0 { format!("{first},f={f},s={},v={},m={m}", p.w, p.h) } else { format!("m={m}") };
+        out += &kitty_apc(&keys, part, tmux);
+    }
+    out
+}
+
+/// Kitty: transmit and place at the cursor in `cols` x `rows` cells (errors
+/// only are reported), then continue below the image.
+pub fn encode_kitty(p: &Payload, id: u32, cols: u32, rows: u32, tmux: bool) -> String {
+    kitty_upload(p, &format!("a=T,i={id},c={cols},r={rows},q=1"), tmux) + "\r\n"
+}
+
+/// Kitty through Unicode placeholders: transmit quietly, create a virtual
+/// placement, then print `rows` lines of `cols` placeholder cells with the image
+/// id (below 2^24) in a true-colour foreground.
+pub fn encode_placeholders(p: &Payload, id: u32, cols: u32, rows: u32, tmux: bool) -> String {
+    use mouser_core::kitty_graphics::{PLACEHOLDER, diacritic};
+    let mut out = kitty_upload(p, &format!("a=t,i={id},q=2"), tmux);
+    out += &kitty_apc(&format!("a=p,U=1,i={id},c={cols},r={rows},q=2"), "", tmux);
+    let (r, g, b) = ((id >> 16) & 0xff, (id >> 8) & 0xff, id & 0xff);
+    for row in 0..rows {
+        out += &format!("\x1b[38;2;{r};{g};{b}m");
+        for col in 0..cols {
+            out.push(PLACEHOLDER);
+            out.extend(diacritic(row).into_iter().chain(diacritic(col)));
+        }
+        out += "\x1b[39m\r\n";
+    }
+    out
+}
+
 /// Bytes that upload `p` as image `id` in chunks of at most `max_chunk` base64
 /// characters, place it at the cursor in `cols` x `rows` cells and move the
 /// cursor to the start of the line below it. Only the last chunk asks for a
@@ -181,9 +283,17 @@ pub fn encode(p: &Payload, id: u32, cols: u32, rows: u32, t: &TermInfo) -> Strin
     out
 }
 
-/// Errors in Fuzzball replies (`ok=0`), as `ERR: msg`.
+/// Errors in Fuzzball (`ok=0`) and Kitty (`ECODE:msg`) replies, as `ERR: msg`.
 pub fn reply_errors(r: &str) -> Vec<String> {
-    r.split("Fzgr;")
+    let kitty = r.split("\x1b_G").skip(1).filter_map(|s| {
+        let msg = s.split('\x1b').next()?.split_once(';')?.1;
+        (msg != "OK").then(|| match msg.split_once(':') {
+            Some((code, m)) => format!("{code}: {m}"),
+            None => msg.to_string(),
+        })
+    });
+    let fuzz: Vec<String> = r
+        .split("Fzgr;")
         .skip(1)
         .filter_map(|s| {
             let body = s.split('\x1b').next()?;
@@ -192,7 +302,8 @@ pub fn reply_errors(r: &str) -> Vec<String> {
                 format!("{}: {}", f("err="), f("msg="))
             })
         })
-        .collect()
+        .collect();
+    fuzz.into_iter().chain(kitty).collect()
 }
 
 #[cfg(unix)]
@@ -265,16 +376,26 @@ fn has_da1(s: &str) -> bool {
 pub fn run(files: &[String], o: &Options) -> Result<()> {
     let tmux = std::env::var_os("TMUX").is_some();
     let mut tty = tty::Tty::open()?;
-    let q = message("cq;id=1", tmux) + "\x1b[16t\x1b[18t\x1b[6n\x1b[c";
-    tty.out.write_all(q.as_bytes())?;
-    let replies = tty.read_until(Duration::from_millis(1500), has_da1);
+    tty.out.write_all(query(tmux).as_bytes())?;
+    // A terminal answers in order, so DA1 ends the exchange. tmux answers DA1
+    // itself and forwards the outer terminal's replies later: wait for both.
+    let replies = if tmux {
+        tty.read_until(Duration::from_millis(1500), |s| fuzzball_answered(s) && kitty_answered(s))
+    } else {
+        tty.read_until(Duration::from_millis(1500), has_da1)
+    };
     let Some(mut t) = parse_replies(&replies, tmux) else {
         if tmux {
-            bail!("no Fuzzball reply through tmux (tmux does not forward the terminal's replies); run it outside tmux");
+            bail!(
+                "no graphics reply through tmux; enable passthrough with `tmux set -g allow-passthrough on` \
+                 (the outer terminal must support Fuzzball or Kitty graphics)"
+            );
         }
-        bail!("this terminal does not support Fuzzball graphics (no reply to the capability query)");
+        bail!("this terminal supports neither Fuzzball nor Kitty graphics (no reply to either query)");
     };
-    let base = o.id.unwrap_or(0x1000_0000 | (std::process::id() & 0x0fff_ffff) << 4);
+    // Placeholder ids travel in a 24-bit colour; keep every id below 2^24 so
+    // one scheme fits all protocols.
+    let base = o.id.unwrap_or(0x10_0000 | (std::process::id() & 0xffff) << 4) & 0xff_ffff;
     let mut failed = false;
     for (i, f) in files.iter().enumerate() {
         let data = if f == "-" {
@@ -287,8 +408,18 @@ pub fn run(files: &[String], o: &Options) -> Result<()> {
         let res = prepare(&data, &t).and_then(|p| {
             let (cols, rows) = fit_cells(p.w, p.h, &t, o);
             let id = base.wrapping_add(i as u32).max(1);
-            tty.out.write_all(encode(&p, id, cols, rows, &t).as_bytes())?;
-            let r = tty.read_until(Duration::from_secs(5), |s| s.contains("Fzgr;"));
+            let bytes = match t.proto {
+                Proto::Fuzzball => encode(&p, id, cols, rows, &t),
+                Proto::Kitty => encode_kitty(&p, id, cols, rows, tmux),
+                Proto::KittyPlaceholders => encode_placeholders(&p, id, cols, rows, tmux),
+            };
+            tty.out.write_all(bytes.as_bytes())?;
+            let r = match t.proto {
+                Proto::Fuzzball => tty.read_until(Duration::from_secs(5), |s| s.contains("Fzgr;")),
+                // Kitty only reports errors here (q=1), or nothing (q=2).
+                Proto::Kitty => tty.read_until(Duration::from_millis(300), |s| s.contains("\x1b_G")),
+                Proto::KittyPlaceholders => String::new(),
+            };
             if let Some(e) = reply_errors(&r).first() {
                 bail!("terminal rejected the image ({e})");
             }
@@ -316,7 +447,17 @@ mod tests {
     use super::*;
 
     fn term() -> TermInfo {
-        TermInfo { max_chunk: 8, g_mem: 1 << 20, g_max_dim: 100, png: true, cell: (10, 20), cols: 80, cursor_col: 0, tmux: false }
+        TermInfo {
+            proto: Proto::Fuzzball,
+            max_chunk: 8,
+            g_mem: 1 << 20,
+            g_max_dim: 100,
+            png: true,
+            cell: (10, 20),
+            cols: 80,
+            cursor_col: 0,
+            tmux: false,
+        }
     }
 
     #[test]
@@ -325,9 +466,26 @@ mod tests {
         let t = parse_replies(r, false).unwrap();
         assert_eq!(
             t,
-            TermInfo { max_chunk: 65536, g_mem: 335544320, g_max_dim: 10000, png: true, cell: (10, 19), cols: 87, cursor_col: 4, tmux: false }
+            TermInfo {
+                proto: Proto::Fuzzball,
+                max_chunk: 65536,
+                g_mem: 335544320,
+                g_max_dim: 10000,
+                png: true,
+                cell: (10, 19),
+                cols: 87,
+                cursor_col: 4,
+                tmux: false
+            }
         );
         assert!(parse_replies("\x1b[?62;22c", false).is_none());
+        // Both answered: Fuzzball wins; inside tmux, Kitty placeholders.
+        let both = format!("{r}\x1b_Gi=31;OK\x1b\\");
+        assert_eq!(parse_replies(&both, false).unwrap().proto, Proto::Fuzzball);
+        assert_eq!(parse_replies(&both, true).unwrap().proto, Proto::KittyPlaceholders);
+        let kitty = parse_replies("\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1b[8;24;80t\x1b[?62c", false).unwrap();
+        assert_eq!((kitty.proto, kitty.cell, kitty.max_chunk, kitty.png), (Proto::Kitty, (10, 20), 4096, true));
+        assert!(parse_replies("\x1b_Gi=31;EINVAL:no\x1b\\\x1b[?62c", false).is_none());
         assert!(has_da1(r) && !has_da1("\x1b[6;19;10t"));
     }
 
@@ -384,7 +542,31 @@ mod tests {
     }
 
     #[test]
+    fn kitty_encodings() {
+        let p = Payload { fmt: "rgba", w: 1, h: 1, bytes: vec![1, 2, 3, 4] };
+        assert_eq!(encode_kitty(&p, 9, 2, 1, false), "\x1b_Ga=T,i=9,c=2,r=1,q=1,f=32,s=1,v=1,m=0;AQIDBA==\x1b\\\r\n");
+        assert_eq!(kitty_apc("a=p,i=1", "", true), "\x1bPtmux;\x1b\x1b_Ga=p,i=1\x1b\x1b\\\x1b\\");
+        let big = Payload { fmt: "rgba", w: 64, h: 64, bytes: vec![0; 64 * 64 * 4] };
+        let s = encode_kitty(&big, 3, 4, 4, false);
+        assert_eq!(s.matches("\x1b_G").count(), 22_000usize.div_ceil(4096).max(6));
+        assert!(s.starts_with("\x1b_Ga=T,i=3,") && s.contains("\x1b_Gm=1;") && s.contains("\x1b_Gm=0;"));
+        let ph = encode_placeholders(&p, 0x010203, 2, 2, false);
+        assert!(ph.contains("\x1b_Ga=t,i=66051,q=2,f=32,s=1,v=1,m=0;"));
+        assert!(ph.contains("\x1b_Ga=p,U=1,i=66051,c=2,r=2,q=2\x1b\\"));
+        assert!(ph.contains("\x1b[38;2;1;2;3m\u{10EEEE}\u{305}\u{305}\u{10EEEE}\u{305}\u{30D}\x1b[39m\r\n"));
+        assert!(ph.ends_with("\u{10EEEE}\u{30D}\u{305}\u{10EEEE}\u{30D}\u{30D}\x1b[39m\r\n"));
+    }
+
+    #[test]
+    fn placeholder_grid_is_capped() {
+        let t = TermInfo { proto: Proto::KittyPlaceholders, cols: 1000, ..term() };
+        let (c, r) = fit_cells(4000, 100, &t, &Options { original: true, ..Default::default() });
+        assert!(c <= MAX_PLACEHOLDER_CELLS && r >= 1);
+    }
+
+    #[test]
     fn reply_errors_are_reported() {
+        assert_eq!(reply_errors("\x1b_Gi=3;ENOSPC:full\x1b\\\x1b_Gi=4;OK\x1b\\"), vec!["ENOSPC: full"]);
         assert_eq!(reply_errors("\x1bP=Fzgr;id=7,ok=0,err=ENOMEM,msg=too big\x1b\\"), vec!["ENOMEM: too big"]);
         assert!(reply_errors("\x1bP=Fzgr;id=7,ok=1,w=2,h=1\x1b\\").is_empty());
     }

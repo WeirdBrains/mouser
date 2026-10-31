@@ -1,7 +1,7 @@
 //! `mouser show` end to end against Mouser's own parser: capability query,
 //! upload, placement and cursor movement.
 
-use mouser_app::show::{Options, encode, fit_cells, parse_replies, prepare};
+use mouser_app::show::{Options, Proto, encode, encode_kitty, encode_placeholders, fit_cells, parse_replies, prepare, query};
 use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::Scrollback;
 use mouser_core::types::Size;
@@ -70,4 +70,61 @@ fn large_rgba_upload_is_chunked_within_max_chunk() {
     let mut t = TerminalParser::new(Size { cols: 80, rows: 24 }, Arc::new(Scrollback::new(Default::default())), out.clone());
     t.feed(s.as_bytes());
     assert_eq!(t.fuzzball.gfx.images[&5].rgba.len(), 160_000);
+}
+
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let mut data = Vec::new();
+    image::RgbaImage::from_pixel(w, h, image::Rgba([0, 128, 255, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut data), image::ImageFormat::Png)
+        .unwrap();
+    data
+}
+
+#[test]
+fn mouser_answers_both_queries_and_fuzzball_wins() {
+    let out = Out::default();
+    let mut t = TerminalParser::new(Size { cols: 80, rows: 24 }, Arc::new(Scrollback::new(Default::default())), out.clone());
+    t.feed(query(false).as_bytes());
+    let replies = String::from_utf8(std::mem::take(&mut *out.0.lock().unwrap())).unwrap();
+    assert!(replies.contains("\x1b_Gi=31;OK"), "{replies:?}");
+    assert_eq!(parse_replies(&replies, false).unwrap().proto, Proto::Fuzzball);
+    assert!(t.kitty_gfx.gfx.images.is_empty(), "the query stores nothing");
+}
+
+#[test]
+fn kitty_fallback_places_at_the_cursor() {
+    let out = Out::default();
+    let mut t = TerminalParser::new(Size { cols: 80, rows: 24 }, Arc::new(Scrollback::new(Default::default())), out.clone());
+    t.cell_px = (10, 20);
+    // A Kitty-only terminal: no Fuzzball reply.
+    let info = parse_replies("\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1b[8;24;80t\x1b[1;1R\x1b[?62c", false).unwrap();
+    let p = prepare(&png(100, 40), &info).unwrap();
+    assert_eq!(p.fmt, "png");
+    let (c, r) = fit_cells(p.w, p.h, &info, &Options::default());
+    t.feed(encode_kitty(&p, 77, c, r, false).as_bytes());
+    assert_eq!(String::from_utf8(std::mem::take(&mut *out.0.lock().unwrap())).unwrap(), "", "q=1: no OK");
+    let pl = &t.kitty_gfx.gfx.placements[0];
+    assert_eq!((pl.image_id, pl.cols, pl.rows), (77, 10, 2));
+    assert_eq!((t.screen.cursor.x, t.screen.cursor.y), (0, 2), "below the image");
+}
+
+#[test]
+fn placeholders_show_the_image_as_text() {
+    let out = Out::default();
+    let mut t = TerminalParser::new(Size { cols: 80, rows: 24 }, Arc::new(Scrollback::new(Default::default())), out.clone());
+    t.cell_px = (10, 20);
+    let info = parse_replies("\x1b_Gi=31;OK\x1b\\\x1b[6;20;10t\x1b[8;24;80t\x1b[1;1R\x1b[?62c", true).unwrap();
+    assert_eq!(info.proto, Proto::KittyPlaceholders);
+    let p = prepare(&png(100, 40), &info).unwrap();
+    let (c, r) = fit_cells(p.w, p.h, &info, &Options::default());
+    // What tmux hands the outer terminal: the unwrapped commands and the text.
+    t.feed(encode_placeholders(&p, 0x123456, c, r, false).as_bytes());
+    assert_eq!(String::from_utf8(std::mem::take(&mut *out.0.lock().unwrap())).unwrap(), "", "q=2: silent");
+    assert!(t.kitty_gfx.gfx.placements[0].virt);
+    assert_eq!((t.screen.cursor.x, t.screen.cursor.y), (0, 2));
+    let screen = &t.screen;
+    let row = |i: usize| (i < 24).then(|| screen.row(i));
+    let d = t.kitty_gfx.placeholder_draws(24, &row, (10, 20));
+    assert_eq!(d.len(), 2, "one run per row");
+    assert_eq!((d[0].width, d[0].height, d[1].row), (100, 20, 1));
 }
