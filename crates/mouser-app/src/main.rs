@@ -52,6 +52,38 @@ struct Cli {
     /// Override config dir (tests/manual runs)
     #[arg(long = "config-dir")]
     config_dir: Option<PathBuf>,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// Show images in this terminal (Fuzzball graphics).
+    ///
+    /// Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not
+    /// supported. Works in Mouser and other Fuzzball terminals. Not yet inside tmux:
+    /// messages are wrapped for passthrough, but tmux does not forward the
+    /// terminal's replies, so detection fails.
+    Show {
+        /// Image files; `-` reads stdin. Shown one after another.
+        #[arg(required = true)]
+        files: Vec<String>,
+        /// Width in cells (height follows the aspect ratio).
+        #[arg(long)]
+        width: Option<u32>,
+        /// Height in cells (width follows the aspect ratio).
+        #[arg(long)]
+        height: Option<u32>,
+        /// Fit the terminal width (default).
+        #[arg(long, conflicts_with = "original")]
+        fit: bool,
+        /// Natural size: one image pixel per screen pixel (the terminal still fits it to the screen).
+        #[arg(long)]
+        original: bool,
+        /// Image id to use (default: derived from the process id).
+        #[arg(long)]
+        id: Option<u32>,
+    },
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -202,6 +234,14 @@ impl Write for SharedWriter {
 fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
+    if let Some(Command::Show { files, width, height, fit: _, original, id }) = &cli.command {
+        let o = mouser_app::show::Options { width: *width, height: *height, original: *original, id: *id };
+        if let Err(e) = mouser_app::show::run(files, &o) {
+            eprintln!("mouser show: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let app_cfg = load_config(&cli)?;
     // Ensure built-in themes exist on disk
     let _ = mouser_core::themes::write_builtins_if_absent();
