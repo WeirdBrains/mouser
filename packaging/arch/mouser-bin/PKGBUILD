@@ -8,9 +8,10 @@ pkgdesc="Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty
 arch=('x86_64')
 url="https://github.com/WeirdBrains/mouser"
 license=('MIT')
-depends=('glibc' 'libgcc' 'hicolor-icon-theme' 'libxkbcommon' 'wayland')
+depends=('glibc' 'libgcc' 'libstdc++' 'hicolor-icon-theme' 'libxkbcommon' 'wayland')
 makedepends=('ncurses')
 optdepends=('vulkan-icd-loader: GPU renderer (falls back to CPU without it)'
+            'libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
             'libx11: X11 session support'
             'libxcursor: X11 cursors'
             'libxi: X11 input'

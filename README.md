@@ -121,8 +121,20 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   shell exits). A fresh install starts with the collapsed strip (click `«` to expand).
   `MOUSER_OPEN_SIDEBAR=1` forces it open and expanded for that run without overwriting the
   saved state.
-- Rendering uses the GPU (wgpu) when available and falls back to the CPU; set
+- Rendering uses the GPU when available and falls back to the CPU; set
   `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
+- GPU rendering engines are swappable: `mouser` (wgpu, default), `skia` (Skia over
+  OpenGL) or a custom engine (a shared library with a small C ABI):
+
+  ```bash
+  mouser engine list                 # * marks the engine new windows use
+  mouser engine use skia             # or: MOUSER_ENGINE=skia mouser
+  mouser engine install ./my-engine  # directory with engine.toml + library
+  mouser engine uninstall my-engine
+  ```
+
+  An engine that fails to load or crashes falls back to `mouser`. See `docs/engines.md`
+  (example engine: `crates/mouser-engine-example`).
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
   `font_family`/`font_size` overrides, and the sidebar's `sidebar_width`, `sidebar_open` and
   `sidebar_collapsed`. Values here win over `config.toml`.
