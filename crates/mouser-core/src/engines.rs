@@ -280,9 +280,29 @@ pub fn clear_sentinel(name: &str) {
 /// not count; one from an earlier process that never cleared it does.
 pub fn crashed_last_time(name: &str) -> bool {
     match fs::read_to_string(sentinel(name)) {
-        Ok(s) => !s.lines().any(|l| l.strip_prefix("pid=").and_then(|p| p.trim().parse::<u32>().ok()) == Some(std::process::id())),
+        // A marker of this process, or of another window that is starting
+        // right now (pid alive), is not a crash.
+        Ok(s) => match s.lines().find_map(|l| l.strip_prefix("pid=").and_then(|p| p.trim().parse::<u32>().ok())) {
+            Some(pid) => pid != std::process::id() && !alive(pid),
+            None => true,
+        },
         Err(_) => sentinel(name).exists(),
     }
+}
+
+#[cfg(unix)]
+fn alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    // SAFETY: signal 0 only checks that the process exists.
+    let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn alive(_: u32) -> bool {
+    false
 }
 
 /// Unix time the skipped engine was last started (the start that crashed).
@@ -448,6 +468,17 @@ mod tests {
         assert!(!crashed_last_time("glow"));
         set_sentinel("glow");
         assert!(!crashed_last_time("glow"), "our own start is not a crash");
+        #[cfg(unix)]
+        {
+            // Another window starting the same engine right now is not a crash either.
+            let mut other = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+            fs::write(sentinel("glow"), format!("pid={}\nstarted=1\n", other.id())).unwrap();
+            assert!(!crashed_last_time("glow"), "a live process's start marker");
+            other.kill().unwrap();
+            other.wait().unwrap();
+            assert!(crashed_last_time("glow"), "its process died during the start");
+            set_sentinel("glow");
+        }
         fs::write(sentinel("glow"), "pid=4000000000\nstarted=1\n").unwrap();
         assert!(crashed_last_time("glow"));
         clear_sentinel("glow");

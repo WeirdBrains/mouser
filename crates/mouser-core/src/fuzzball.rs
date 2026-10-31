@@ -407,7 +407,7 @@ pub mod mods {
 }
 
 /// Press, repeat or release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyAction {
     Press,
     Repeat,
@@ -415,7 +415,7 @@ pub enum KeyAction {
 }
 
 /// One key event for Fuzzball keyboard mode.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyEvent {
     pub action: KeyAction,
     /// W3C UI Events `code`, e.g. `KeyA`.
@@ -428,7 +428,7 @@ pub struct KeyEvent {
     pub text: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyName {
     Named(String),
     Char(char),

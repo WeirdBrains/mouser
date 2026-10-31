@@ -20,6 +20,8 @@ pub mod keys;
 pub mod scale;
 #[cfg(feature = "skia")]
 pub mod skia;
+#[cfg(unix)]
+pub mod split;
 pub mod text;
 pub mod ui;
 
@@ -28,7 +30,7 @@ pub use scale::ImageScaler;
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UiViewport {
     pub width: i32,
     pub height: i32,
@@ -92,13 +94,27 @@ pub struct RenderHooks {
     /// Receives a [`Waker`] that requests a redraw from any thread. The loop is
     /// event driven: without a wake-up or input it sleeps.
     pub set_waker: Option<Arc<dyn Fn(Waker) + Send + Sync>>,
+    /// Told the engine name whenever the window's engine changes (`"cpu"` for
+    /// the CPU renderer): the sidebar marks it active, and the session server
+    /// skips it if the UI process crashes (docs/engines.md §8).
+    pub on_engine: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    /// Told the window's inner size in physical pixels when it changes.
+    pub on_window_size: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// Test-only fault injection: `MOUSER_TEST_CRASH_ENGINE=skia:30` aborts the
+/// (UI) process on the 30th frame drawn by `skia`, like a native crash would.
+pub(crate) fn test_crash_engine() -> Option<(String, u32)> {
+    let v = std::env::var("MOUSER_TEST_CRASH_ENGINE").ok()?;
+    let (e, n) = v.split_once(':').unwrap_or((&v, "1"));
+    Some((e.to_string(), n.parse().unwrap_or(1).max(1)))
+}
+
 /// Selection input in view coordinates: `row` is a row of the view, which
 /// shows the live screen `scrolled_back` lines up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectEvent {
     /// Left press: `clicks` 1 = characters, 2 = words, 3 = lines; `extend`
     /// (Shift) moves the end of the current selection; `block` (Alt) selects a rectangle.
@@ -174,7 +190,7 @@ pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 pub type FontHook = Arc<dyn Fn() -> (f32, Option<String>) + Send + Sync>;
 
 /// Theme colours as 0xRRGGBB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Colors {
     pub bg: u32,
     pub fg: u32,
@@ -184,6 +200,7 @@ pub struct Colors {
 
 pub type StatusHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Renderer {
     pub cols: usize,
     pub rows: usize,
@@ -193,11 +210,13 @@ pub struct Renderer {
     pub title: Option<String>,
     /// Wayland app_id / X11 WM_CLASS (default "Mouser").
     pub app_id: Option<String>,
+    /// Initial inner size in physical pixels (a restarted UI keeps the old size).
+    pub size: Option<(u32, u32)>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, title: None, app_id: None }
+        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, title: None, app_id: None, size: None }
     }
 }
 
@@ -369,7 +388,7 @@ const NOTICE_TTL: Duration = Duration::from_secs(15);
 
 static NOTICE: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
 
-fn set_notice(msg: String) {
+pub(crate) fn set_notice(msg: String) {
     *NOTICE.lock().unwrap() = Some((msg, Instant::now()));
 }
 
@@ -454,9 +473,12 @@ fn set_icon(window: &winit::window::Window) {
 
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-    let attrs = winit::window::WindowAttributes::default()
-        .with_title(renderer.title.clone().unwrap_or_else(|| "Mouser".into()))
-        .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    let attrs = winit::window::WindowAttributes::default().with_title(renderer.title.clone().unwrap_or_else(|| "Mouser".into())).with_inner_size(
+        match renderer.size {
+            Some((w, h)) => winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(w, h)),
+            None => winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1100.0, 700.0)),
+        },
+    );
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut attrs = attrs;
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -485,6 +507,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut height = window.inner_size().height.max(1);
     let mut scale = window.scale_factor();
     let mut painter = Painter::pick(window.clone(), width, height)?;
+    let mut reported_engine = String::new();
+    let crash_test = test_crash_engine();
+    let mut frames_on_engine = 0u32;
     watch_engine_prefs(proxy.clone());
     let font_db = Arc::new(text::system_db());
     let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
@@ -755,6 +780,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     height = new_size.height.max(1);
                     painter.resize(width, height);
                     dirty = true;
+                    if let Some(h) = &hooks.on_window_size {
+                        h(width, height);
+                    }
                 }
                 WindowEvent::Focused(f) => {
                     if let Some(on_focus) = &hooks.on_focus {
@@ -921,6 +949,22 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 log::debug!(target: "mouser_frame", "prepare {:.2} ms paint {:.2} ms", (paint_start - _frame_timer.0).as_secs_f64() * 1e3, paint_start.elapsed().as_secs_f64() * 1e3);
                 if !painted {
                     dirty = true;
+                }
+                let name = painter.engine_name().unwrap_or("cpu").to_string();
+                if name != reported_engine {
+                    frames_on_engine = 0;
+                    if let Some(h) = &hooks.on_engine {
+                        h(name.clone());
+                    }
+                    reported_engine = name;
+                }
+                frames_on_engine += 1;
+                if let Some((e, n)) = &crash_test
+                    && *e == reported_engine
+                    && frames_on_engine >= *n
+                {
+                    eprintln!("mouser: MOUSER_TEST_CRASH_ENGINE: aborting in engine {e} after {n} frames");
+                    std::process::abort();
                 }
                 if echo_pending && let Some(t) = key_at.take() {
                     echo_pending = false;

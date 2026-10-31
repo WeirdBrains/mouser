@@ -24,7 +24,12 @@ raw-window-handle = "0.6"
 skia-safe = { version = "0.156.0", features = ["gl"], optional = true }
 glutin = { version = "0.32.3", optional = true }
 libloading = "0.9.0"
+serde = { workspace = true, features = ["rc"] }
+bincode = "1.3.3"
 
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 # Wayland clipboard and primary selection as the focused client (no wl-copy needed).

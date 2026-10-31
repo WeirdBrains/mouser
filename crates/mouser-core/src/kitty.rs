@@ -80,7 +80,7 @@ pub mod mods {
     pub const NUM_LOCK: u8 = 128;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyEventType {
     Press = 1,
     Repeat = 2,
@@ -88,7 +88,7 @@ pub enum KeyEventType {
 }
 
 /// Non-text keys, with the protocol's functional key codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Func {
     Escape,
     Enter,
@@ -173,7 +173,7 @@ impl Func {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyCode {
     /// A text key, as its unshifted character.
     Char(char),
@@ -181,7 +181,7 @@ pub enum KeyCode {
 }
 
 /// A key event in toolkit-neutral form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyInput {
     pub key: KeyCode,
     /// The shifted character, when shift is held and it differs.
