@@ -537,6 +537,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut last_autoscroll = Instant::now();
     // Keystroke -> first frame after the PTY answered (debug timing).
     let mut key_at: Option<Instant> = None;
+    // Press on a sidebar engine row: a click or, once moved, a drag (reorder).
+    let mut engine_drag: Option<ui::EngineDrag> = None;
     let mut echo_pending = false;
 
     event_loop.run(|event, elwt| {
@@ -581,6 +583,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
                     let (px, py) = (position.x.round() as i32, position.y.round() as i32);
+                    if let Some(d) = engine_drag.as_mut() {
+                        d.moved(px, py);
+                        dirty |= d.active;
+                        return;
+                    }
                     if dragging && let Some(on_act) = &hooks.on_ui_action {
                         let w = ui::clamp_sidebar_width(width as i32 - px, width as i32, fonts.cell_w);
                         (on_act)(ui::UiAction::ResizeSidebar(w));
@@ -607,6 +614,19 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if button == winit::event::MouseButton::Left
+                        && let Some(d) = engine_drag.take()
+                    {
+                        if let (Some(on_act), Some(layout)) = (&hooks.on_ui_action, &last_ui) {
+                            match d.release(layout) {
+                                ui::EngineDrop::Click(name) => on_act(ui::UiAction::UseEngine(name)),
+                                ui::EngineDrop::Reorder(order) => on_act(ui::UiAction::ReorderEngines(order)),
+                                ui::EngineDrop::Cancel => {}
+                            }
+                        }
+                        dirty = true;
+                        return;
+                    }
                     if selecting && button == winit::event::MouseButton::Left {
                         selecting = false;
                         mouse_down = None;
@@ -688,6 +708,12 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             dragging = true;
                             return;
                         }
+                        if button == winit::event::MouseButton::Left
+                            && let Some(d) = ui::EngineDrag::press(layout, pos.x.round() as i32, pos.y.round() as i32)
+                        {
+                            engine_drag = Some(d);
+                            return;
+                        }
                         let act = ui::hit_test(layout, pos.x.round() as i32, pos.y.round() as i32);
                         (on_act)(act);
                         dirty = true;
@@ -698,6 +724,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         key_at = Some(Instant::now());
                     }
                     dirty = true;
+                    if engine_drag.is_some() {
+                        // Escape cancels an engine drag; other keys wait for the drop.
+                        if key_event.state == ElementState::Pressed && matches!(key_event.logical_key, Key::Named(NamedKey::Escape)) {
+                            engine_drag = None;
+                        }
+                        return;
+                    }
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
                         return;
@@ -893,7 +926,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 let viewport = UiViewport { width: width as i32, height: height as i32, cell_w: fonts.cell_w, cell_h: fonts.cell_h };
-                let layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
+                let mut layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
+                if let Some(l) = layout.as_mut() {
+                    // A row dragged past the threshold; dropped on a vanished row: cancel.
+                    l.engine_drag = engine_drag.filter(|d| d.active && d.from < l.engines.len());
+                }
                 // The sidebar takes space from the terminal instead of covering it.
                 text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
                 if let Some(f) = &hooks.get_tabs {

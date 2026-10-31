@@ -164,7 +164,9 @@ stays unless the maintainer decides otherwise.
   `engine_rows`/`use_engine`, `engines::clear_own_sentinels` and live-pid-aware
   `crashed_last_time`. Tests `mouser-app/tests/split_tests.rs`,
   `mouser-render/tests/sidebar_engines_tests.rs`. **Rollback point: annotated tag
-  `pre-session-split` (adf349b)**, do not move or delete it. Off with `MOUSER_SPLIT=0`.
+  `pre-session-split` (adf349b)**, do not move or delete it. Off with `MOUSER_PROC_FORK=0` (was `MOUSER_SPLIT` before any release; no alias).
+  Drag-to-reorder engines (t149u): `ui::EngineDrag` etc., drag state in `run`, drawn in
+  `frame.rs`, `UiAction::ReorderEngines` -> app `reorder_engines` (`set_priority`).
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.

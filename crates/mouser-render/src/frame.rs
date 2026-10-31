@@ -428,11 +428,39 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
                     _ => mix(muted, 0xF7768E, 0.6),
                 };
                 canvas.draw_text(fonts, r.x + r.w - ui::BUTTON_PAD - lw, ty, label, state_col);
+                if layout.engine_drag.is_some_and(|d| layout.engines.get(d.from) == Some(e)) {
+                    // The dragged row stays in place, outlined, under its ghost.
+                    for (x, y, w, h) in [(r.x, r.y, r.w, 1), (r.x, r.y + r.h - 1, r.w, 1), (r.x, r.y, 1, r.h), (r.x + r.w - 1, r.y, 1, r.h)] {
+                        canvas.fill_rect(x, y, w, h, accent);
+                    }
+                }
                 if let Some(n) = &e.note {
                     let max = ((r.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
                     let t: String = n.chars().take(max).collect();
                     canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty + line_h - 6, &t, muted);
                 }
+            }
+        }
+        if let Some(d) = layout.engine_drag
+            && let Some(row) = layout.engines.get(d.from)
+        {
+            // Ghost of the row under the pointer.
+            let line_h = cell_h + 8;
+            let gy = d.pos.1 - line_h / 2;
+            let r = row.rect;
+            canvas.fill_rect(r.x, gy, r.w, line_h, mix(panel, accent, 0.35));
+            canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, gy + (line_h - cell_h) / 2, &row.name, fg);
+            // Insertion line between rows, drawn over the ghost.
+            if let Some(at) = d.target(layout) {
+                // Insertion line between rows.
+                let y = match layout.engines.get(at) {
+                    Some(e) => e.rect.y - 2,
+                    None => layout.engines.last().map_or(0, |e| e.rect.y + e.rect.h),
+                };
+                let r = row.rect;
+                canvas.fill_rect(r.x - 2, y - 1, r.w + 4, 3, accent);
+                canvas.fill_rect(r.x - 4, y - 3, 3, 7, accent);
+                canvas.fill_rect(r.x + r.w + 1, y - 3, 3, 7, accent);
             }
         }
         let a = layout.appearance_rect;
