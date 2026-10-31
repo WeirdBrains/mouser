@@ -394,6 +394,59 @@ kept), scroll-back position of the view (back at the bottom), an in-progress mou
 the glyph/image caches (rebuilt). Shells, programs, scrollback, tabs, images, selection,
 sidebar state and preferences are in the server and survive.
 
+### As built (t145u)
+
+- `mouser-render/src/split.rs`: `serve` (server, supervisor), `ui_main` (`mouser __ui`),
+  the `Call` enum (one variant per hook) answered by the hook's return value,
+  `Event`/`Answer` on the second socket (wake, clipboard). bincode 1 framing (u32
+  length + body). `RenderHooks` gained `on_engine` and `on_window_size`; `Renderer`
+  gained `size`.
+- Default on Unix; `MOUSER_SPLIT=0` runs single-process as before. Windows: always
+  single-process.
+- Exit handling: exit 0 = window closed (server ends); exit 3 = protocol mismatch
+  (server draws in-process); SIGKILL/SIGTERM/SIGINT/SIGHUP = killed from outside, the
+  window restarts on the **same** engine (not the engine's fault); any other signal or
+  exit code = crash, the engine is marked skipped with the reason
+  (`the UI process crashed (signal 6 (SIGABRT)) while drawing with skia`) and the new
+  window starts on the next engine; a crash on `mouser` restarts on the CPU renderer;
+  more than 5 crashes in 30 s -> CPU renderer, a crash there ends Mouser.
+- The new window shows why it restarted in the status bar.
+- The UI exits as soon as either socket closes (server gone) and removes its own start
+  markers. Start markers of a live process (another window starting) are not crashes.
+- Test hooks: `MOUSER_TEST_CRASH_ENGINE=<engine>:<n>` aborts the UI on its n-th frame
+  with that engine (works single-process too); `MOUSER_UI=headless` is a windowless
+  UI for tests that writes what it would show to `MOUSER_TEST_DUMP`
+  (`mouser-app/tests/split_tests.rs`).
+- Measured on alien-blue (Hyprland, RTX 3060, 1100x760; keystroke to the first frame
+  after the PTY's echo, 40 keys via Hyprland `send_shortcut`; `RUST_LOG=mouser_frame=debug`
+  logs `key-to-frame`):
+
+  | | single process (18f7280) | split |
+  |---|---|---|
+  | key-to-frame, mouser | p50 8.46 ms, p95 8.79 | p50 8.95, p95 9.05 |
+  | key-to-frame, skia | p50 8.61, p95 8.70 | p50 8.94, p95 9.00 |
+  | drag-resize, mouser | 62–63 fps, frame p95 7.0 ms | 61.3 fps, p95 13.8 |
+  | drag-resize, skia | 63 fps, p95 12.4–13.4 | 61.7 fps, p95 13.7 |
+
+  About +0.4 ms per keystroke; resize stays at the ~60 fps ceiling of the test.
+- Live: `kill -9` of the UI during a ticking shell: window back in ~0.3 s, same shell
+  pid, ticks continued, scrollback and both images shown. `MOUSER_TEST_CRASH_ENGINE=skia:12`:
+  SIGABRT, skia marked skipped, window back on the next engine, same shell pid.
+
+### Sidebar: Engines
+
+The bottom of the expanded right sidebar, above Appearance, lists the available engines
+(built-ins and installed ones) in priority order with their state: `active` (this
+window), `ok`, `skipped` or `failed`, with the reason on a second line. A click does
+`mouser engine use <name>` (unskip, move first); the window's preferences watcher then
+switches it live, like the CLI. Under a `MOUSER_ENGINE` override the click still saves
+the order but the window keeps its override until restarted. The sidebar has no keyboard
+focus navigation, so the section is mouse-only like the rest of the bar. Hit-testing:
+`ui::add_engines`, `ui::hit_test` -> `UiAction::UseEngine`
+(`mouser-render/tests/sidebar_engines_tests.rs`).
+
+Rollback point for the split: the annotated tag `pre-session-split` (adf349b).
+
 ## 9. Status and gaps
 
 
@@ -406,5 +459,8 @@ was already a little different).
 
 Gaps: no URL install (by decision: download, then install the folder); no per-engine
 options; damage is always the full frame; the frame has no text runs or font data
-(engines can't do their own shaping or subpixel text, by design for v1); native crashes
-in built-in engines (see §7).
+(engines can't do their own shaping or subpixel text, by design for v1). Native crashes
+in any engine are survived by the session split (§8) on Linux and macOS; Windows still
+runs single-process. A UI restart loses the window's scroll-back position, an
+in-progress drag and the GPU caches; the compositor may place the new window elsewhere.
+No per-user server or re-attach from a new launch yet.
