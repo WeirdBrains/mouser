@@ -232,9 +232,11 @@ fn set_icon(window: &winit::window::Window) {
 
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-    let mut attrs = winit::window::WindowAttributes::default()
+    let attrs = winit::window::WindowAttributes::default()
         .with_title(renderer.title.clone().unwrap_or_else(|| "Mouser".into()))
         .with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut attrs = attrs;
     #[cfg(all(unix, not(target_os = "macos")))]
     if let Some(id) = &renderer.app_id {
         use winit::platform::wayland::WindowAttributesExtWayland;
