@@ -1,7 +1,7 @@
 //! `mouser show` end to end against Mouser's own parser: capability query,
 //! upload, placement and cursor movement.
 
-use mouser_app::show::{Options, Proto, encode, encode_kitty, encode_placeholders, fit_cells, parse_replies, prepare, query};
+use mouser_app::show::{Options, Proto, encode, encode_kitty, encode_placeholders, fit_cells, parse_replies, placeholder_id, prepare, query};
 use mouser_core::parser::TerminalParser;
 use mouser_core::scrollback::Scrollback;
 use mouser_core::types::Size;
@@ -118,7 +118,7 @@ fn placeholders_show_the_image_as_text() {
     let p = prepare(&png(100, 40), &info).unwrap();
     let (c, r) = fit_cells(p.w, p.h, &info, &Options::default());
     // What tmux hands the outer terminal: the unwrapped commands and the text.
-    t.feed(encode_placeholders(&p, 0x123456, c, r, false).as_bytes());
+    t.feed(encode_placeholders(&p, placeholder_id(77_777), c, r, false).as_bytes());
     assert_eq!(String::from_utf8(std::mem::take(&mut *out.0.lock().unwrap())).unwrap(), "", "q=2: silent");
     assert!(t.kitty_gfx.gfx.placements[0].virt);
     assert_eq!((t.screen.cursor.x, t.screen.cursor.y), (0, 2));
