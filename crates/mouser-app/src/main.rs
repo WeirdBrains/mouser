@@ -691,19 +691,9 @@ fn main() -> Result<()> {
         on_paste: Some({
             let (parser, writer, app_state) = (parser.clone(), shared_writer.clone(), app_state.clone());
             Arc::new(move || {
-                let Some(text) = get_clipboard() else { return };
-                let mut st = app_state.lock().unwrap();
-                if st.mode == Mode::Command {
-                    st.command_buf.push_str(text.lines().next().unwrap_or(""));
-                    return;
+                if let Some(text) = get_clipboard() {
+                    paste_text(&text, &parser, &writer, &app_state);
                 }
-                if st.ssh.panel.is_some() || st.look.panel.is_some() {
-                    return;
-                }
-                drop(st);
-                let modes = parser.get().lock().unwrap().modes;
-                let mut w = writer.clone();
-                let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
             })
         }),
         on_select: Some({
@@ -729,12 +719,11 @@ fn main() -> Result<()> {
             })
         }),
         on_paste_primary: Some({
-            let (parser, writer) = (parser.clone(), shared_writer.clone());
+            let (parser, writer, app_state) = (parser.clone(), shared_writer.clone(), app_state.clone());
             Arc::new(move || {
-                let Some(text) = get_primary() else { return };
-                let modes = parser.get().lock().unwrap().modes;
-                let mut w = writer.clone();
-                let _ = w.write_all(&mouser_core::input::paste_bytes(&text, &modes));
+                if let Some(text) = get_primary() {
+                    paste_text(&text, &parser, &writer, &app_state);
+                }
             })
         }),
         hold_frame: Some({
@@ -812,6 +801,23 @@ impl ActiveParser {
     fn title(&self) -> String {
         self.session().map(|s| s.title()).unwrap_or_default()
     }
+}
+
+/// Paste into the command line, or into the active tab (bracketed when the
+/// program asked for it, control characters dropped). Panels ignore pastes.
+fn paste_text(text: &str, parser: &ActiveParser, writer: &tabs::ActiveWriter, app_state: &Mutex<AppState>) {
+    let mut st = app_state.lock().unwrap();
+    if st.mode == Mode::Command {
+        st.command_buf.push_str(text.lines().next().unwrap_or(""));
+        return;
+    }
+    if st.ssh.panel.is_some() || st.look.panel.is_some() {
+        return;
+    }
+    drop(st);
+    let modes = parser.get().lock().unwrap().modes;
+    let mut w = writer.clone();
+    let _ = w.write_all(&mouser_core::input::paste_bytes(text, &modes));
 }
 
 /// Rows of the view `scrolled_back` lines above the live screen, with paint.

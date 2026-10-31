@@ -367,3 +367,11 @@ fn size_report_follows_resize() {
     t.feed(b"\x1b[18t");
     assert_eq!(out.take(), "\x1b[8;24;80t");
 }
+
+#[test]
+fn paste_drops_control_characters() {
+    let mut m = mouser_core::parser::Modes::default();
+    assert_eq!(mouser_core::input::paste_bytes("a\tb\x03c\x1b[31md\x7fe\u{9b}f\x00", &m), b"a\tbc[31mdef");
+    m.bracketed_paste = true;
+    assert_eq!(mouser_core::input::paste_bytes("x\x1b[201~\x1by\nz", &m), b"\x1b[200~xy\nz\x1b[201~");
+}
