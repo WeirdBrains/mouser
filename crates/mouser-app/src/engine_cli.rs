@@ -98,8 +98,9 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
 fn state_text(name: &str) -> String {
     match engines::state(name) {
         engines::State::Ok => "ok".into(),
-        engines::State::Skipped { since } => format!(
-            "SKIPPED: crashed Mouser while starting{}; restore: mouser engine unskip {name}",
+        engines::State::Skipped { since, reason } => format!(
+            "SKIPPED: {}{}; restore: mouser engine unskip {name}",
+            reason.unwrap_or_else(|| "crashed Mouser while starting".into()),
             since.map(|t| format!(" {}", engines::ago(t))).unwrap_or_default()
         ),
         engines::State::Failed { at, reason } => {

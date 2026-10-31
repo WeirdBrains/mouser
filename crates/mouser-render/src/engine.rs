@@ -59,6 +59,12 @@ fn create_named(name: &str, window: &Arc<Window>, width: u32, height: u32) -> Re
     if let Err(why) = skip_check(name) {
         bail!("{why}");
     }
+    if !engines::is_builtin(name) && crate::engine_host::isolated() {
+        // Isolated: the library is only ever loaded in the host process, and a
+        // crash there is caught as EngineCrashed (no crash marker needed).
+        let inst = engines::find(name).ok_or_else(|| anyhow!("no engine named {name} (see `mouser engine list`)"))?;
+        return Ok(Box::new(crate::engine_host::HostedEngine::create(&inst.library(), name, window, width, height)?));
+    }
     let lib = if engines::is_builtin(name) { None } else { Some(load_installed(name)?) };
     #[cfg(not(feature = "skia"))]
     if lib.is_none() {
@@ -81,6 +87,19 @@ fn create_named(name: &str, window: &Arc<Window>, width: u32, height: u32) -> Re
     }
 }
 
+/// The first engine of `order` that is not skipped and exists in this build
+/// (what a window would try first).
+pub fn first_usable(order: &[String]) -> Option<String> {
+    engines::normalize(order.iter().cloned())
+        .into_iter()
+        .find(|n| skip_check(n).is_ok() && (n == "mouser" || available_builtins().iter().any(|(b, _)| b == n) || engines::find(n).is_some()))
+}
+
+/// The message of a caught panic.
+pub fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_else(|| "unknown panic".into())
+}
+
 /// The command that restores a skipped or failed engine.
 pub fn unskip_command(name: &str) -> String {
     format!("mouser engine unskip {name}")
@@ -92,7 +111,8 @@ pub fn skip_check(name: &str) -> std::result::Result<(), String> {
         return Ok(());
     }
     let when = engines::skipped_since(name).map(|t| format!(" ({})", engines::ago(t))).unwrap_or_default();
-    Err(format!("engine {name} is skipped: it crashed Mouser while starting{when}. Restore it with `{}`", unskip_command(name)))
+    let why = engines::skip_reason(name).unwrap_or_else(|| "it crashed Mouser while starting".into());
+    Err(format!("engine {name} is skipped: {why}{when}. Restore it with `{}`", unskip_command(name)))
 }
 
 /// Load an installed custom engine's library, refusing one that crashed
@@ -117,7 +137,20 @@ pub fn create(order: &[String], window: &Arc<Window>, width: u32, height: u32) -
     let mut notes = Vec::new();
     let mut last = None;
     for name in engines::normalize(order.iter().cloned()) {
-        match create_named(&name, window, width, height) {
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| create_named(&name, window, width, height)));
+        let made = match made {
+            Ok(r) => r,
+            Err(p) => {
+                let why = format!("engine {name} panicked while starting: {}", panic_text(&p));
+                engines::mark_skipped(&name, &why);
+                if name != "mouser" {
+                    notes.push(format!("{why}; skipped until `{}`", unskip_command(&name)));
+                    continue;
+                }
+                Err(anyhow!(why))
+            }
+        };
+        match made {
             Ok(e) => {
                 engines::clear_failure(&name);
                 return Ok((e, notes));
@@ -233,6 +266,21 @@ impl CustomLibrary {
             bail!("create failed: {}", if msg.is_empty() { "no reason given" } else { &msg });
         }
         Ok(p)
+    }
+}
+
+impl CustomLibrary {
+    pub(crate) fn resize_raw(&self, handle: *mut std::ffi::c_void, w: u32, h: u32) {
+        // SAFETY: handle from create_raw.
+        unsafe { (self.table.resize)(handle, w, h) }
+    }
+    pub(crate) fn draw_raw(&self, handle: *mut std::ffi::c_void, frame: &abi::MouserFrame) -> i32 {
+        // SAFETY: handle from create_raw; frame valid for the call.
+        unsafe { (self.table.draw)(handle, frame) }
+    }
+    pub(crate) fn destroy_raw(&self, handle: *mut std::ffi::c_void) {
+        // SAFETY: handle from create_raw, not used afterwards.
+        unsafe { (self.table.destroy)(handle) }
     }
 }
 
