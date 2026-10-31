@@ -301,7 +301,100 @@ still ends Mouser (next start skips that engine); an engine host shows its outpu
 softbuffer (one copy of each frame); the selection is kept by switching (it is core
 state) but nothing is preserved across a whole-Mouser crash.
 
-## 8. Status and gaps
+## 8. Session/UI process split (design, t145u)
+
+Goal: a native crash in **any** engine (GPU driver, wgpu, Skia's C++, a custom engine)
+never loses shells, scrollback, tabs or images. Rollback point: tag `pre-session-split`
+(adf349b).
+
+### Where the line is
+
+Mouser already has a narrow, data-only boundary between the terminal and the window:
+`RenderHooks` (mouser-render/src/lib.rs). The renderer loop asks for the view
+(`fetch_view`, `get_images`, `get_cursor`, `get_colors`, `get_font`, `get_tabs`,
+`get_ui_model`, `get_status`, `get_title`, ...) and reports input (`on_key_event`,
+`on_mouse`, `on_select`, `on_resize`, `on_ui_action`, `on_paste`, ...). Everything
+behind the hooks (sessions, PTYs, parser, scrollback, graphics, selection, sidebar
+model, preferences) is the **server**; the winit loop + engine is the **UI**. The split
+turns the hooks into calls over a socket. No terminal code moves, so behaviour stays the
+same and the single-process mode (Windows, `MOUSER_SPLIT=0`) keeps working unchanged.
+
+### Processes and lifecycle
+
+- `mouser` (the process the user starts) is the **server**: it parses the command line,
+  starts the sessions as today, then spawns the **UI** child `mouser __ui` and serves it.
+- One server per Mouser window (as today: one process per window). No daemon, so
+  nothing to discover: the UI gets two connected `socketpair` sockets as its stdin and
+  stdout (calls, events). No socket path exists, so there are no permissions to get
+  wrong and no stale sockets; another user cannot connect. (A per-user server with a
+  socket in `$XDG_RUNTIME_DIR/mouser/` (0700) for re-attaching from a new launch is
+  possible later on top of the same protocol.)
+- The UI is started from `/proc/self/exe` on Linux (the exact binary the server runs,
+  even after a package upgrade replaced the file), `current_exe()` elsewhere. Both
+  sides send a protocol version in the hello; on mismatch the server falls back to
+  running the UI in-process (single-process mode) and says so.
+- **UI exit codes**: 0 after a normal close (the user closed the window: the server
+  ends, like today); anything else, or a signal, is a **UI crash**.
+- **On a UI crash** the server marks the engine the UI last reported as skipped
+  (`engines::mark_skipped`, reason e.g. `UI process crashed (signal 11) while drawing with
+  skia`) and starts a new UI immediately, which walks the priority order as usual and
+  so uses the next engine. If the crashed engine was `mouser` (never skipped), the new
+  UI uses the CPU renderer (`MOUSER_RENDERER=cpu`). More than 5 crashes in 30 s: the
+  next UI also uses the CPU renderer; if that crashes too the server gives up and exits
+  (sessions end, as a crash does today).
+- The server exits when its last session ends (it tells the UI to close) or when the
+  window is closed.
+
+### Protocol
+
+Length-prefixed bincode messages.
+
+- **Calls** (UI -> server, request/response, one at a time): one message per hook with
+  the hook's arguments; the reply is its return value. Images: the reply carries each
+  placement's pixels only the first time the UI sees its key (the UI caches by key and
+  drops unused keys like the GPU engines do).
+- **Events** (server -> UI, pushed): `Wake` (redraw; coalesced), `Exit`, and clipboard
+  requests `ClipStore { text, primary }` / `ClipLoad { primary }` answered by the UI.
+  The clipboard lives in the UI because Wayland clipboard access needs the window's
+  connection and keyboard focus.
+- UI -> server notifications: `Engine(name)` whenever the UI's engine changes (so the
+  server knows what to skip after a crash), `Geometry(w, h)` (size for the next UI).
+
+State sync: there is no screen-state replication to keep in sync. The UI holds no
+terminal state, only per-window input state (scroll position, drag, hover) and caches
+(glyph atlas, image textures). A new UI starts empty and asks for the current view on
+its first frame, so "full snapshot on attach" is simply the first frame; afterwards every
+frame asks again (the view for the visible rows only, ~tens of KB). Damage tracking is
+still the full frame (as before the split).
+
+Resize: the UI sends `on_resize` (cols, rows, pixels) as before; the server resizes the
+PTYs. Input: key/mouse/selection events are hook calls; their replies are immediate.
+
+### Latency budget
+
+A frame makes ~12 calls; a socketpair round trip is ~10–30 µs, so ~0.3 ms per frame,
+well inside the 25 ms (40 fps) budget. Keystroke-to-frame adds one call for the key and
+the next frame's calls. Measured before/after (§9).
+
+### Engine host
+
+Kept for custom engines: inside the UI it turns a custom-engine crash into an in-place
+switch (no window re-creation, no flash), which is nicer than a UI restart. The UI
+restart covers everything the host doesn't (built-in engines, the host itself).
+
+### Platforms
+
+Linux and macOS: split by default. Windows: no socketpair/fd inheritance in std; stays
+single-process (custom engines still in-process) for now.
+
+### What a UI crash still loses
+
+The window itself (it is re-created: the compositor decides the position; the size is
+kept), scroll-back position of the view (back at the bottom), an in-progress mouse drag,
+the glyph/image caches (rebuilt). Shells, programs, scrollback, tabs, images, selection,
+sidebar state and preferences are in the server and survive.
+
+## 9. Status and gaps
 
 
 Measured on alien-blue (RTX 3060, Hyprland, 1100x760, the multi-image screen,
