@@ -109,32 +109,43 @@ pub fn load_installed(name: &str) -> Result<CustomLibrary> {
     Ok(lib)
 }
 
-/// Create the chosen engine, falling back to `mouser`. Returns the engine and,
-/// if the choice was not used, a message saying why and how to restore it.
-pub fn create(choice: &str, window: &Arc<Window>, width: u32, height: u32) -> Result<(Box<dyn Engine>, Option<String>)> {
-    if choice == "mouser" {
-        return create_named("mouser", window, width, height).map(|e| (e, None));
-    }
-    match create_named(choice, window, width, height) {
-        Ok(e) => {
-            engines::clear_failure(choice);
-            Ok((e, None))
+/// Walk `order` (mouser is always in it) and start the first engine that
+/// works. Returns it and one message per engine passed over (skipped or
+/// failed), each with its restore command. Errors only if even mouser fails
+/// (the caller then uses the CPU renderer).
+pub fn create(order: &[String], window: &Arc<Window>, width: u32, height: u32) -> Result<(Box<dyn Engine>, Vec<String>)> {
+    let mut notes = Vec::new();
+    let mut last = None;
+    for name in engines::normalize(order.iter().cloned()) {
+        match create_named(&name, window, width, height) {
+            Ok(e) => {
+                engines::clear_failure(&name);
+                return Ok((e, notes));
+            }
+            Err(e) if name == "mouser" => last = Some(e),
+            Err(e) => notes.push(fallback_message(&name, &format!("{e:#}"), "failed to start")),
         }
-        Err(e) => {
-            let why = fallback_message(choice, &format!("{e:#}"), "failed to start");
-            Ok((create_named("mouser", window, width, height)?, Some(why)))
-        }
     }
+    Err(last.unwrap_or_else(|| anyhow!("no GPU engine")))
+}
+
+/// The engines to try after `failed` broke at run time: the rest of the
+/// priority order (mouser always included).
+pub fn after(order: &[String], failed: &str) -> Vec<String> {
+    let order = engines::normalize(order.iter().cloned());
+    let i = order.iter().position(|n| n == failed).map(|i| i + 1).unwrap_or(0);
+    let rest: Vec<String> = order[i..].to_vec();
+    engines::normalize(rest)
 }
 
 /// Record a failure (unless the engine is skipped, which says it already) and
 /// build the "using mouser; restore with ..." message.
 pub fn fallback_message(name: &str, err: &str, what: &str) -> String {
     if engines::crashed_last_time(name) && err.contains("is skipped") {
-        return format!("{err}; using mouser");
+        return format!("{err}; trying the next engine");
     }
     engines::record_failure(name, &format!("{what}: {err}"));
-    format!("engine {name} {what}: {err}; using mouser. Details: `mouser engine list`; clear with `{}`", unskip_command(name))
+    format!("engine {name} {what}: {err}; trying the next engine. Details: `mouser engine list`; clear with `{}`", unskip_command(name))
 }
 
 /// Clears the crash marker once an engine has presented a few frames.

@@ -118,8 +118,15 @@ enum EngineCommand {
     Install { path: String },
     /// Remove an installed custom engine.
     Uninstall { name: String },
-    /// Use this engine for new windows (MOUSER_ENGINE overrides it); also unskips it.
+    /// Put this engine first in the priority order (and unskip it).
     Use { name: String },
+    /// Set the priority order (mouser is added last if left out); MOUSER_ENGINE=a,b overrides it for one run.
+    Priority {
+        #[arg(required = true)]
+        names: Vec<String>,
+    },
+    /// Move an engine in the priority order: first, last, up, down or a position (1 = first).
+    Move { name: String, to: String },
     /// Stop skipping an engine that crashed Mouser (and clear its recorded failure) without selecting it.
     #[command(visible_alias = "restore")]
     Unskip {
@@ -330,6 +337,8 @@ fn main() -> Result<()> {
             EngineCommand::Uninstall { name } => Action::Uninstall(name.clone()),
             EngineCommand::Use { name } => Action::Use(name.clone()),
             EngineCommand::Unskip { name, .. } => Action::Unskip(name.clone()),
+            EngineCommand::Priority { names } => Action::Priority(names.clone()),
+            EngineCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
         };
         if let Err(e) = mouser_app::engine_cli::run(&a, &mut std::io::stdout()) {
             eprintln!("mouser engine: {e:#}");

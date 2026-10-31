@@ -125,42 +125,112 @@ pub fn install(m: &Manifest, lib: &Path) -> Result<Installed> {
     Ok(Installed { manifest: m.clone(), dir: dest })
 }
 
-/// Remove an installed engine; switches the preference back to the default
-/// if it was selected. Returns whether it was selected.
+/// Remove an installed engine (and drop it from the priority list). Returns
+/// whether it was first in the list.
 pub fn uninstall(name: &str) -> Result<bool> {
+    if name == DEFAULT {
+        bail!("mouser is the built-in fallback engine and can never be removed (reorder with `mouser engine priority`)");
+    }
     if is_builtin(name) {
-        bail!("{name} is built in and cannot be uninstalled");
+        bail!("{name} is built in and cannot be uninstalled (move it down with `mouser engine move {name} last`)");
     }
     let inst = find(name).with_context(|| format!("no installed engine named {name}"))?;
     fs::remove_dir_all(&inst.dir)?;
     clear_sentinel(name);
     clear_failure(name);
-    let was = storage::load_preferences().engine.as_deref() == Some(name);
-    if was {
-        storage::update_preferences(|p| p.engine = None)?;
+    let saved = saved_priority();
+    let was = saved.first().map(String::as_str) == Some(name);
+    if saved.iter().any(|n| n == name) {
+        save_priority(saved.into_iter().filter(|n| n != name).collect())?;
     }
     Ok(was)
 }
 
-/// Select an engine for new windows.
-pub fn select(name: &str) -> Result<()> {
-    if !is_builtin(name) && find(name).is_none() {
-        bail!("no engine named {name} (see `mouser engine list`)");
+/// `mouser` is always present; names are de-duplicated (first wins).
+pub fn normalize(list: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for n in list {
+        let n = n.trim().to_string();
+        if !n.is_empty() && !out.contains(&n) {
+            out.push(n);
+        }
     }
-    clear_sentinel(name);
-    clear_failure(name);
-    storage::update_preferences(|p| p.engine = if name == DEFAULT { None } else { Some(name.to_string()) })?;
-    Ok(())
+    if !out.iter().any(|n| n == DEFAULT) {
+        out.push(DEFAULT.to_string());
+    }
+    out
 }
 
-/// The engine to use: `MOUSER_ENGINE`, else the preference, else `mouser`.
-pub fn chosen() -> String {
+/// The saved order: `engines`, else the old single `engine` key, else `[mouser]`.
+pub fn saved_priority() -> Vec<String> {
+    let p = storage::load_preferences();
+    normalize(p.engines.or_else(|| p.engine.map(|e| vec![e])).unwrap_or_default())
+}
+
+/// The order this run walks: `MOUSER_ENGINE=a,b,c` overrides the saved one.
+pub fn priority() -> Vec<String> {
     if let Ok(v) = std::env::var("MOUSER_ENGINE")
         && !v.trim().is_empty()
     {
-        return v.trim().to_string();
+        return normalize(v.split(',').map(str::to_string));
     }
-    storage::load_preferences().engine.unwrap_or_else(|| DEFAULT.to_string())
+    saved_priority()
+}
+
+fn save_priority(list: Vec<String>) -> Result<()> {
+    let list = normalize(list);
+    storage::update_preferences(|p| {
+        p.engine = None;
+        p.engines = if list == [DEFAULT] { None } else { Some(list.clone()) };
+    })?;
+    Ok(())
+}
+
+fn known(name: &str) -> Result<()> {
+    if !is_builtin(name) && find(name).is_none() {
+        bail!("no engine named {name} (see `mouser engine list`)");
+    }
+    Ok(())
+}
+
+/// Set the whole order (`mouser` is appended if left out).
+pub fn set_priority(names: &[String]) -> Result<Vec<String>> {
+    for n in names {
+        known(n)?;
+    }
+    save_priority(names.to_vec())?;
+    Ok(saved_priority())
+}
+
+/// Move `name` to index `to` (0 = first; clamped), adding it if absent.
+pub fn move_to(name: &str, to: usize) -> Result<Vec<String>> {
+    known(name)?;
+    let mut l: Vec<String> = saved_priority().into_iter().filter(|n| n != name).collect();
+    l.insert(to.min(l.len()), name.to_string());
+    save_priority(l)?;
+    Ok(saved_priority())
+}
+
+/// Move one step (`-1` up, `1` down).
+pub fn move_by(name: &str, delta: isize) -> Result<Vec<String>> {
+    known(name)?;
+    let l = saved_priority();
+    let i = l.iter().position(|n| n == name).unwrap_or(l.len()) as isize;
+    move_to(name, (i + delta).max(0) as usize)
+}
+
+/// Put an engine first (and unskip it).
+pub fn select(name: &str) -> Result<()> {
+    known(name)?;
+    clear_sentinel(name);
+    clear_failure(name);
+    move_to(name, 0)?;
+    Ok(())
+}
+
+/// The engine new windows try first.
+pub fn chosen() -> String {
+    priority().into_iter().next().unwrap_or_else(|| DEFAULT.to_string())
 }
 
 fn sentinel(name: &str) -> PathBuf {
@@ -178,6 +248,9 @@ fn now_secs() -> u64 {
 /// Mark an engine as starting; if Mouser dies before [`clear_sentinel`], the
 /// next start skips it.
 pub fn set_sentinel(name: &str) {
+    if name == DEFAULT {
+        return; // mouser is never skipped: it is the last GPU fallback.
+    }
     let _ = fs::create_dir_all(dir());
     let _ = fs::write(sentinel(name), format!("pid={}\nstarted={}\n", std::process::id(), now_secs()));
 }
@@ -328,6 +401,7 @@ mod tests {
         assert!(uninstall("mouser").is_err());
         assert!(uninstall("glow").unwrap());
         assert_eq!(chosen(), "mouser");
+        assert!(uninstall("mouser").unwrap_err().to_string().contains("never be removed"));
         assert!(find("glow").is_none());
     }
 
@@ -353,6 +427,38 @@ mod tests {
         assert!(crashed_last_time("glow"));
         clear_sentinel("glow");
         assert!(!crashed_last_time("glow"));
+    }
+
+    #[test]
+    #[serial]
+    fn priority_order_compat_and_mouser_always_present() {
+        let t = home();
+        let src = fake_engine(t.path(), "glow", 1);
+        let (m, lib) = source(&src).unwrap();
+        install(&m, &lib).unwrap();
+        assert_eq!(priority(), ["mouser"]);
+        // Old single key is a one-item list (+ mouser).
+        storage::update_preferences(|p| p.engine = Some("skia".into())).unwrap();
+        assert_eq!(priority(), ["skia", "mouser"]);
+        assert_eq!(set_priority(&["glow".into(), "skia".into()]).unwrap(), ["glow", "skia", "mouser"]);
+        assert_eq!(storage::load_preferences().engine, None, "old key replaced");
+        assert_eq!(set_priority(&["mouser".into(), "glow".into()]).unwrap(), ["mouser", "glow"], "mouser may move up");
+        assert!(set_priority(&["nope".into()]).is_err());
+        assert_eq!(move_to("skia", 1).unwrap(), ["mouser", "skia", "glow"]);
+        assert_eq!(move_by("glow", -1).unwrap(), ["mouser", "glow", "skia"]);
+        assert_eq!(move_by("mouser", 1).unwrap(), ["glow", "mouser", "skia"]);
+        assert_eq!(move_to("mouser", 99).unwrap(), ["glow", "skia", "mouser"]);
+        select("skia").unwrap();
+        assert_eq!(saved_priority(), ["skia", "glow", "mouser"]);
+        // SAFETY: serial test.
+        unsafe { std::env::set_var("MOUSER_ENGINE", "glow, skia,glow") };
+        assert_eq!(priority(), ["glow", "skia", "mouser"]);
+        unsafe { std::env::remove_var("MOUSER_ENGINE") };
+        assert!(!uninstall("glow").unwrap());
+        assert_eq!(saved_priority(), ["skia", "mouser"]);
+        // mouser can't be skipped.
+        set_sentinel("mouser");
+        assert_eq!(state("mouser"), State::Ok);
     }
 
     #[test]

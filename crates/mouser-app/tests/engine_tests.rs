@@ -71,11 +71,11 @@ fn install_list_use_uninstall() {
     let out = cli(Action::Install(src.display().to_string())).unwrap();
     assert!(out.contains("installed flat 0.1.0"), "{out}");
     let list = cli(Action::List).unwrap();
-    assert!(list.contains("* mouser"), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("* 1") && l.contains("mouser")), "{list}");
     assert!(list.contains("flat"), "{list}");
     cli(Action::Use("flat".into())).unwrap();
     assert_eq!(engines::chosen(), "flat");
-    assert!(cli(Action::List).unwrap().contains("* flat"));
+    assert!(cli(Action::List).unwrap().lines().any(|l| l.starts_with("* 1") && l.contains("flat")));
     let lib = mouser_render::engine::load_installed("flat").unwrap();
     assert_eq!(lib.name(), "flat");
     drop(lib); // Windows cannot delete a loaded DLL.
@@ -152,12 +152,12 @@ fn list_states_unskip_and_restored_engine_is_used() {
     cli(Action::Install(src.display().to_string())).unwrap();
     cli(Action::Use("flat".into())).unwrap();
     let list = cli(Action::List).unwrap();
-    assert!(list.lines().any(|l| l.starts_with("* flat") && l.contains(" ok ")), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("* 1") && l.contains("flat") && l.contains(" ok ")), "{list}");
 
     // Crashed while starting: skipped, with when and the restore command.
     engines::set_sentinel("flat");
     let list = cli(Action::List).unwrap();
-    assert!(list.lines().any(|l| l.starts_with("* flat") && l.contains("skipped")), "{list}");
+    assert!(list.lines().any(|l| l.starts_with("* 1") && l.contains("flat") && l.contains("skipped")), "{list}");
     assert!(list.contains("crashed Mouser while starting") && list.contains("s ago"), "{list}");
     assert!(list.contains("restore: mouser engine unskip flat"), "{list}");
     let e = mouser_render::engine::skip_check("flat").unwrap_err();
@@ -166,7 +166,7 @@ fn list_states_unskip_and_restored_engine_is_used() {
 
     // A failure while starting/drawing is recorded and shown, and still tried.
     let msg = mouser_render::engine::fallback_message("skia", "no GL display", "failed to start");
-    assert!(msg.contains("using mouser") && msg.contains("mouser engine unskip skia"), "{msg}");
+    assert!(msg.contains("trying the next engine") && msg.contains("mouser engine unskip skia"), "{msg}");
     let list = cli(Action::List).unwrap();
     assert!(list.lines().any(|l| l.contains("skia") && l.contains("failed")), "{list}");
     assert!(list.contains("failed to start: no GL display"), "{list}");
@@ -192,5 +192,39 @@ fn list_states_unskip_and_restored_engine_is_used() {
     assert_eq!(engines::chosen(), "mouser");
     assert!(cli(Action::Unskip(None)).unwrap().contains("nothing to do"));
     let list = cli(Action::List).unwrap();
-    assert!(!list.contains("skipped") && !list.contains("failed"), "{list}");
+    assert!(!list.lines().any(|l| l.contains(" skipped ") || l.contains(" failed ")), "{list}");
+}
+
+#[test]
+#[serial]
+fn cli_priority_and_move_keep_mouser() {
+    let h = home();
+    let src = source_dir(&h);
+    cli(Action::Install(src.display().to_string())).unwrap();
+    let out = cli(Action::Priority(vec!["flat".into(), "skia".into()])).unwrap();
+    assert!(out.contains("flat > skia > mouser"), "{out}");
+    let list = cli(Action::List).unwrap();
+    let names: Vec<&str> = list.lines().skip(1).filter_map(|l| l.split_whitespace().nth(if l.starts_with('*') { 2 } else { 1 })).take(3).collect();
+    assert_eq!(names, ["flat", "skia", "mouser"], "{list}");
+    assert!(list.contains("order (preferences): flat > skia > mouser"), "{list}");
+    assert!(cli(Action::Move("mouser".into(), "first".into())).unwrap().contains("mouser > flat > skia"));
+    assert!(cli(Action::Move("skia".into(), "2".into())).unwrap().contains("mouser > skia > flat"));
+    assert!(cli(Action::Move("flat".into(), "up".into())).unwrap().contains("mouser > flat > skia"));
+    assert!(cli(Action::Move("mouser".into(), "last".into())).unwrap().contains("flat > skia > mouser"));
+    assert!(cli(Action::Move("flat".into(), "zero".into())).is_err());
+    assert!(cli(Action::Use("skia".into())).unwrap().contains("skia > flat > mouser"));
+    let e = cli(Action::Uninstall("mouser".into())).unwrap_err().to_string();
+    assert!(e.contains("never be removed"), "{e}");
+    // Fallback walk: the next engine after a failed one, mouser last.
+    let order = engines::priority();
+    assert_eq!(mouser_render::engine::after(&order, "skia"), ["flat", "mouser"]);
+    assert_eq!(mouser_render::engine::after(&order, "mouser"), ["mouser"]);
+    // A skipped engine is passed over by the walk and listed as such.
+    engines::set_sentinel("skia");
+    assert!(mouser_render::engine::skip_check("skia").is_err());
+    assert!(mouser_render::engine::skip_check("flat").is_ok());
+    // MOUSER_ENGINE overrides the order for one run.
+    unsafe { std::env::set_var("MOUSER_ENGINE", "flat") };
+    assert!(cli(Action::List).unwrap().contains("order (MOUSER_ENGINE): flat > mouser"));
+    unsafe { std::env::remove_var("MOUSER_ENGINE") };
 }

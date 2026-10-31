@@ -128,7 +128,9 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
 
   ```bash
   mouser engine list                 # * marks the engine new windows use
-  mouser engine use skia             # or: MOUSER_ENGINE=skia mouser
+  mouser engine use skia             # put skia first (or: MOUSER_ENGINE=skia,mouser mouser)
+  mouser engine priority skia my-engine mouser   # full order; mouser is always the last fallback
+  mouser engine move my-engine up    # first | last | up | down | <position>
   mouser engine install ./my-engine  # directory with engine.toml + library
   mouser engine uninstall my-engine
   mouser engine unskip my-engine     # stop skipping an engine that crashed (--all: every engine)
