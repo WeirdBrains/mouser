@@ -18,7 +18,7 @@ pub mod scale;
 pub mod text;
 pub mod ui;
 
-pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, image_draws, render_frame};
+pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, KITTY_BELOW_BG, PADDING, grid_size, image_draws, layered_image_draws, render_frame};
 pub use scale::ImageScaler;
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 

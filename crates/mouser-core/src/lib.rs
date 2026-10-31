@@ -7,6 +7,7 @@ pub mod graphics;
 pub mod grid;
 pub mod input;
 pub mod kitty;
+pub mod kitty_graphics;
 pub mod parser;
 pub mod scrollback;
 pub mod search;

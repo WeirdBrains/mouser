@@ -2,6 +2,7 @@ use crate::fuzzball::{self, Fuzzball};
 use crate::graphics;
 use crate::grid::{Color, CursorShape, Rgb, Screen, Style, attr};
 use crate::kitty::KeyboardProtocolState;
+use crate::kitty_graphics::{self, KittyGraphics};
 use crate::scrollback::Scrollback;
 use crate::types::Size;
 use log::trace;
@@ -21,6 +22,8 @@ pub struct TerminalParser<W: Write> {
     vte: Parser,
     /// Fuzzball protocol state: images, placements, keyboard mode.
     pub fuzzball: Fuzzball,
+    /// Kitty graphics (fallback; Fuzzball takes precedence).
+    pub kitty_gfx: KittyGraphics,
     /// Lines scrolled off the top so far (monotonic; anchors image rows).
     pub lines_scrolled: i64,
     /// Cell size in pixels (for image placement), set by the front end.
@@ -51,6 +54,7 @@ pub struct TerminalParser<W: Write> {
     saved_charsets: ([Charset; 2], usize),
     last_char: Option<char>,
     dcs: Option<Dcs>,
+    apc: Apc,
 }
 
 /// Character sets that can be designated into G0/G1.
@@ -202,6 +206,22 @@ enum DcsKind {
     Overflow,
 }
 
+/// APC strings (`ESC _ ... ESC \\`) are cut out before vte, which ignores them.
+#[derive(Default)]
+enum Apc {
+    #[default]
+    Ground,
+    Esc,
+    Body(Vec<u8>),
+    BodyEsc(Vec<u8>),
+    /// Over [`APC_MAX`]: skipped up to its terminator.
+    Skip,
+    SkipEsc,
+}
+
+/// Largest APC body kept (chunked Kitty images arrive in many smaller ones).
+const APC_MAX: usize = 16 * 1024 * 1024;
+
 /// Name the terminal identifies as (XTVERSION, terminfo TN).
 pub const NAME: &str = "Mouser";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -216,6 +236,7 @@ impl<W: Write> TerminalParser<W> {
             style: Style::default(),
             vte: Parser::new(),
             fuzzball: Fuzzball::default(),
+            kitty_gfx: KittyGraphics::default(),
             lines_scrolled: 0,
             cell_px: (9, 18),
             graphics_generation: 0,
@@ -234,16 +255,114 @@ impl<W: Write> TerminalParser<W> {
             saved_charsets: ([Charset::Ascii; 2], 0),
             last_char: None,
             dcs: None,
+            apc: Apc::Ground,
         }
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
         let mut vte = std::mem::take(&mut self.vte);
         for &b in bytes {
-            vte.advance(self, b);
+            self.apc = match std::mem::take(&mut self.apc) {
+                Apc::Ground if b == 0x1b => Apc::Esc,
+                Apc::Ground => {
+                    vte.advance(self, b);
+                    Apc::Ground
+                }
+                Apc::Esc if b == b'_' => Apc::Body(Vec::new()),
+                Apc::Esc => {
+                    vte.advance(self, 0x1b);
+                    if b == 0x1b {
+                        Apc::Esc
+                    } else {
+                        vte.advance(self, b);
+                        Apc::Ground
+                    }
+                }
+                Apc::Body(buf) if b == 0x1b => Apc::BodyEsc(buf),
+                Apc::Body(mut buf) => {
+                    if buf.len() >= APC_MAX {
+                        Apc::Skip
+                    } else {
+                        buf.push(b);
+                        Apc::Body(buf)
+                    }
+                }
+                Apc::BodyEsc(buf) if b == b'\\' => {
+                    self.apc_dispatch(&buf);
+                    Apc::Ground
+                }
+                Apc::BodyEsc(mut buf) => {
+                    buf.extend_from_slice(&[0x1b, b]);
+                    Apc::Body(buf)
+                }
+                Apc::Skip if b == 0x1b => Apc::SkipEsc,
+                Apc::Skip => Apc::Skip,
+                Apc::SkipEsc if b == b'\\' => Apc::Ground,
+                Apc::SkipEsc => Apc::Skip,
+            };
         }
         self.vte = vte;
         self.flush_scrollback();
+    }
+
+    /// Whether either graphics protocol has placements.
+    fn has_placements(&self) -> bool {
+        !self.fuzzball.gfx.placements.is_empty() || !self.kitty_gfx.gfx.placements.is_empty()
+    }
+
+    /// Palette for Kitty's indexed image formats.
+    fn kitty_palette(&self) -> kitty_graphics::Palette {
+        let rgb = |c: Rgb| (c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32;
+        let mut p = [0u32; 256];
+        for (i, v) in p.iter_mut().enumerate().take(248) {
+            *v = rgb(self.color_for(i as u16));
+        }
+        let (fg, bg, cur) = (rgb(self.color_for(256)), rgb(self.color_for(257)), rgb(self.color_for(258)));
+        p[248..].copy_from_slice(&[bg, fg, fg, bg, cur, bg, fg, fg]);
+        p
+    }
+
+    /// A Kitty graphics command (`ESC _ G ... ESC \\`); other APC strings are ignored.
+    fn apc_dispatch(&mut self, body: &[u8]) {
+        if body.first() != Some(&b'G') {
+            return;
+        }
+        self.flush_scrollback();
+        let alt = self.screen.in_alt_screen();
+        let col = self.screen.cursor.x as u32;
+        let palette = self.kitty_palette();
+        let ctx = kitty_graphics::Ctx {
+            abs_row: self.lines_scrolled + self.screen.cursor.y as i64,
+            col,
+            top: self.lines_scrolled,
+            rows: self.screen.size.rows,
+            cols: self.screen.size.cols,
+            cell: self.cell_px,
+            alt,
+            other_mem: self.fuzzball.gfx.mem_used(),
+            palette: &palette,
+            now: std::time::Instant::now(),
+        };
+        let eff = self.kitty_gfx.handle(body, ctx);
+        if eff.changed {
+            self.graphics_generation += 1;
+        }
+        if let Some(r) = eff.reply {
+            self.reply(&r);
+        }
+        if let Some((dx, dy)) = eff.cursor {
+            self.move_after_image(col, dx, dy);
+        }
+    }
+
+    fn move_after_image(&mut self, col: u32, dx: u32, dy: u32) {
+        for _ in 0..dy {
+            self.screen.linefeed();
+        }
+        self.flush_scrollback();
+        let x = (col as usize + dx as usize).min(self.screen.size.cols.saturating_sub(1));
+        let y = self.screen.cursor.y;
+        self.screen.move_to(x, y);
     }
 
     pub fn resize(&mut self, size: Size) {
@@ -254,22 +373,29 @@ impl<W: Write> TerminalParser<W> {
         let shift = if size.rows > 0 && self.screen.cursor.y >= size.rows { self.screen.cursor.y + 1 - size.rows } else { 0 };
         self.screen.resize(size);
         self.flush_scrollback();
-        if !self.fuzzball.gfx.placements.is_empty()
-            && self.fuzzball.resize(alt, self.lines_scrolled, if alt { shift as i64 } else { 0 }, size.rows, size.cols)
-        {
+        let shift = if alt { shift as i64 } else { 0 };
+        let mut changed = false;
+        for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+            if !g.placements.is_empty() {
+                changed |= g.resize(alt, self.lines_scrolled, shift, size.rows, size.cols);
+            }
+        }
+        if changed {
             self.graphics_generation += 1;
         }
     }
 
     fn flush_scrollback(&mut self) {
         let events = self.screen.take_scroll_events();
-        if !self.fuzzball.gfx.placements.is_empty() {
+        if self.has_placements() {
             let alt = self.screen.in_alt_screen();
             let rows = self.screen.size.rows;
             let mut changed = false;
             for ev in events {
                 let base = self.lines_scrolled + ev.pushed_before as i64;
-                changed |= self.fuzzball.scrolled(alt, base, ev, rows);
+                for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+                    changed |= g.scrolled(alt, base, ev, rows);
+                }
             }
             if changed {
                 self.graphics_generation += 1;
@@ -288,11 +414,12 @@ impl<W: Write> TerminalParser<W> {
 
     /// Placements whose anchor row left the scrollback are removed (graphics.md §4).
     fn evict_scrolled_placements(&mut self) {
-        if self.fuzzball.gfx.placements.is_empty() {
+        if !self.has_placements() {
             return;
         }
         let first = self.lines_scrolled - self.scrollback.total_lines() as i64;
-        if self.fuzzball.evict_scrollback(first) {
+        let a = self.fuzzball.gfx.evict_scrollback(first);
+        if self.kitty_gfx.gfx.evict_scrollback(first) | a {
             self.graphics_generation += 1;
         }
     }
@@ -309,6 +436,7 @@ impl<W: Write> TerminalParser<W> {
             alt,
             screen_cols: self.screen.size.cols,
         };
+        self.fuzzball.other_mem = self.kitty_gfx.mem_used();
         let eff = self.fuzzball.handle(body, ctx);
         if eff.changed {
             self.graphics_generation += 1;
@@ -317,33 +445,35 @@ impl<W: Write> TerminalParser<W> {
             self.reply(&r);
         }
         if let Some((dx, dy)) = eff.cursor {
-            for _ in 0..dy {
-                self.screen.linefeed();
-            }
-            self.flush_scrollback();
-            let x = (col as usize + dx as usize).min(self.screen.size.cols - 1);
-            let y = self.screen.cursor.y;
-            self.screen.move_to(x, y);
+            self.move_after_image(col, dx, dy);
         }
     }
 
     /// Erasing cells removes Fuzzball placements that cover them (graphics.md §4).
-    fn erase_placements(&mut self, rows: std::ops::Range<usize>, cols: Option<(usize, usize)>) {
-        if self.fuzzball.gfx.placements.is_empty() {
+    /// Kitty placements only go with a whole-screen clear (`clear`), as the
+    /// Kitty protocol asks.
+    fn erase_placements(&mut self, rows: std::ops::Range<usize>, cols: Option<(usize, usize)>, clear: bool) {
+        if !self.has_placements() {
             return;
         }
         self.flush_scrollback();
         let alt = self.screen.in_alt_screen();
         let base = self.lines_scrolled;
+        let mut changed = false;
         match cols {
-            None => self.fuzzball.erase_rows(alt, base + rows.start as i64, base + rows.end as i64),
+            None => changed |= self.fuzzball.gfx.erase_rows(alt, base + rows.start as i64, base + rows.end as i64),
             Some((c0, c1)) => {
-                for r in rows {
-                    self.fuzzball.erase_cells(alt, base + r as i64, c0 as u32, c1 as u32);
+                for r in rows.clone() {
+                    changed |= self.fuzzball.gfx.erase_cells(alt, base + r as i64, c0 as u32, c1 as u32);
                 }
             }
         }
-        self.graphics_generation += 1;
+        if clear {
+            changed |= self.kitty_gfx.gfx.erase_rows(alt, base + rows.start as i64, base + rows.end as i64);
+        }
+        if changed {
+            self.graphics_generation += 1;
+        }
     }
 
     /// Current SGR as a DECRQSS-style parameter string (e.g. `0;1;38;2;1;2;3`).
@@ -499,10 +629,16 @@ impl<W: Write> TerminalParser<W> {
                 if set {
                     self.flush_scrollback();
                     self.screen.enter_alt_screen();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 } else {
                     self.flush_scrollback();
                     self.screen.leave_alt_screen();
                     self.fuzzball.leave_alt();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 }
             }
             1048 => {
@@ -517,10 +653,16 @@ impl<W: Write> TerminalParser<W> {
                     self.save_cursor();
                     self.flush_scrollback();
                     self.screen.enter_alt_screen();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 } else {
                     self.flush_scrollback();
                     self.screen.leave_alt_screen();
                     self.fuzzball.leave_alt();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                     self.restore_cursor();
                 }
             }
@@ -578,6 +720,7 @@ impl<W: Write> TerminalParser<W> {
         self.saved_style = Style::default();
         self.kitty_keyboard = KeyboardProtocolState::default();
         self.fuzzball = Fuzzball::default();
+        self.kitty_gfx = KittyGraphics::default();
         self.graphics_generation += 1;
         self.modes = Modes { grapheme: true, ..Modes::default() };
         self.color_overrides.clear();
@@ -846,8 +989,8 @@ impl<W: Write> Perform for TerminalParser<W> {
                 let mode = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
                 let (y, rows) = (self.screen.cursor.y, self.screen.size.rows);
                 match mode {
-                    0 => self.erase_placements(y..rows, None),
-                    1 => self.erase_placements(0..y + 1, None),
+                    0 => self.erase_placements(y..rows, None, false),
+                    1 => self.erase_placements(0..y + 1, None, false),
                     // ED 3 (xterm): clear the scrollback only, not the screen.
                     3 => {
                         self.flush_scrollback();
@@ -855,7 +998,7 @@ impl<W: Write> Perform for TerminalParser<W> {
                         self.evict_scrolled_placements();
                         return;
                     }
-                    _ => self.erase_placements(0..rows, None),
+                    _ => self.erase_placements(0..rows, None, true),
                 }
                 self.screen.erase_display(mode)
             }
@@ -867,12 +1010,12 @@ impl<W: Write> Perform for TerminalParser<W> {
                     1 => (0, x + 1),
                     _ => (0, cols),
                 };
-                self.erase_placements(y..y + 1, Some(span));
+                self.erase_placements(y..y + 1, Some(span), false);
                 self.screen.erase_line(mode)
             }
             (None, 'X') => {
                 let (x, y) = (self.screen.cursor.x, self.screen.cursor.y);
-                self.erase_placements(y..y + 1, Some((x, x + n)));
+                self.erase_placements(y..y + 1, Some((x, x + n)), false);
                 self.screen.erase_chars(n)
             }
 
