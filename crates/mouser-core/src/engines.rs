@@ -270,6 +270,19 @@ pub fn skip_reason(name: &str) -> Option<String> {
     fs::read_to_string(sentinel(name)).ok()?.lines().find_map(|l| l.strip_prefix("reason=").map(str::to_string))
 }
 
+/// Remove start markers this process wrote (it is exiting on purpose, e.g. a
+/// UI process whose server is gone), so they don't read as crashes later.
+pub fn clear_own_sentinels() {
+    let me = format!("pid={}", std::process::id());
+    let Ok(rd) = fs::read_dir(dir()) else { return };
+    for e in rd.flatten() {
+        if e.file_name().to_string_lossy().starts_with(".starting-") && fs::read_to_string(e.path()).is_ok_and(|s| s.lines().any(|l| l.trim() == me))
+        {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+}
+
 pub fn clear_sentinel(name: &str) {
     let _ = fs::remove_file(sentinel(name));
 }
@@ -477,6 +490,9 @@ mod tests {
             other.kill().unwrap();
             other.wait().unwrap();
             assert!(crashed_last_time("glow"), "its process died during the start");
+            set_sentinel("glow");
+            clear_own_sentinels();
+            assert!(!sentinel("glow").exists(), "own markers are removed on a deliberate exit");
             set_sentinel("glow");
         }
         fs::write(sentinel("glow"), "pid=4000000000\nstarted=1\n").unwrap();
