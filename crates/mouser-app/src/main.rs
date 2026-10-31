@@ -320,6 +320,22 @@ fn first_tab(cli: &Cli) -> FirstTab {
 
 fn main() -> Result<()> {
     env_logger::init();
+    // Isolated custom engine process (docs/engines.md §7); not a user command.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("__engine-host") {
+        let (Some(lib), Some(name)) = (args.get(2), args.get(3)) else { std::process::exit(2) };
+        let r = mouser_render::engine_host::serve(std::path::Path::new(lib), name, std::io::stdin().lock(), std::io::stdout().lock());
+        if let Err(e) = r {
+            eprintln!("mouser engine host: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if cfg!(unix)
+        && let Ok(exe) = std::env::current_exe()
+    {
+        mouser_render::engine_host::set_host_command(exe, vec!["__engine-host".into()]);
+    }
     let cli = Cli::parse();
     if let Some(Command::Show { files, width, height, fit: _, original, id }) = &cli.command {
         let o = mouser_app::show::Options { width: *width, height: *height, original: *original, id: *id };

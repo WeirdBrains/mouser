@@ -223,6 +223,11 @@ fn cli_priority_and_move_keep_mouser() {
     engines::set_sentinel("skia");
     assert!(mouser_render::engine::skip_check("skia").is_err());
     assert!(mouser_render::engine::skip_check("flat").is_ok());
+    // What a running window switches to when the order changes.
+    assert_eq!(mouser_render::engine::first_usable(&engines::priority()).as_deref(), Some("flat"));
+    engines::unskip("skia").unwrap();
+    let want = if mouser_render::engine::available_builtins().iter().any(|(b, _)| *b == "skia") { "skia" } else { "flat" };
+    assert_eq!(mouser_render::engine::first_usable(&engines::priority()).as_deref(), Some(want));
     // MOUSER_ENGINE overrides the order for one run.
     unsafe { std::env::set_var("MOUSER_ENGINE", "flat") };
     assert!(cli(Action::List).unwrap().contains("order (MOUSER_ENGINE): flat > mouser"));

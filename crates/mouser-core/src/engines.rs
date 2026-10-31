@@ -255,6 +255,21 @@ pub fn set_sentinel(name: &str) {
     let _ = fs::write(sentinel(name), format!("pid={}\nstarted={}\n", std::process::id(), now_secs()));
 }
 
+/// Mark an engine skipped now, with why (an isolated engine crashed, or a
+/// built-in one panicked); Mouser keeps running on the next engine.
+pub fn mark_skipped(name: &str, reason: &str) {
+    if name == DEFAULT {
+        return;
+    }
+    let _ = fs::create_dir_all(dir());
+    let _ = fs::write(sentinel(name), format!("started={}\nreason={}\n", now_secs(), reason.replace('\n', " ")));
+}
+
+/// Why an engine is skipped, if known (default: it crashed Mouser while starting).
+pub fn skip_reason(name: &str) -> Option<String> {
+    fs::read_to_string(sentinel(name)).ok()?.lines().find_map(|l| l.strip_prefix("reason=").map(str::to_string))
+}
+
 pub fn clear_sentinel(name: &str) {
     let _ = fs::remove_file(sentinel(name));
 }
@@ -298,9 +313,11 @@ pub fn clear_failure(name: &str) {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum State {
     Ok,
-    /// Crashed Mouser while starting at this unix time; skipped until unskipped.
+    /// Crashed (Mouser while starting, or its engine host) at this unix time;
+    /// skipped until unskipped.
     Skipped {
         since: Option<u64>,
+        reason: Option<String>,
     },
     /// Last attempt failed (unix time, reason); still tried on each start.
     Failed {
@@ -311,7 +328,7 @@ pub enum State {
 
 pub fn state(name: &str) -> State {
     if crashed_last_time(name) {
-        State::Skipped { since: skipped_since(name) }
+        State::Skipped { since: skipped_since(name), reason: skip_reason(name) }
     } else if let Some((at, reason)) = last_failure(name) {
         State::Failed { at, reason }
     } else {
@@ -472,11 +489,14 @@ mod tests {
         assert!(!unskip("glow").unwrap(), "nothing to clear");
         assert!(unskip("nope").is_err());
         set_sentinel("glow");
-        let State::Skipped { since: Some(at) } = state("glow") else { panic!("{:?}", state("glow")) };
+        let State::Skipped { since: Some(at), .. } = state("glow") else { panic!("{:?}", state("glow")) };
         assert!(ago(at).ends_with("s ago"));
         assert!(unskip("glow").unwrap());
         assert_eq!(state("glow"), State::Ok);
         assert_eq!(chosen(), "mouser", "unskip does not select");
+        mark_skipped("glow", "engine host crashed (signal 6)");
+        assert!(matches!(state("glow"), State::Skipped { reason: Some(r), .. } if r.contains("signal 6")));
+        unskip("glow").unwrap();
         record_failure("glow", "create failed:\nno GL");
         assert_eq!(state("glow"), State::Failed { at: last_failure("glow").unwrap().0, reason: "create failed: no GL".into() });
         set_sentinel("skia");
