@@ -56,6 +56,19 @@ Data flow:
   Fuzzball yet. Compliance matrix: [`docs/kitty-compliance.md`](docs/kitty-compliance.md).
 - Kitty graphics and iTerm2 `OSC 1337` images are **not** supported; use Fuzzball graphics.
 
+### Showing images: `mouser show`
+
+```sh
+mouser show photo.jpg diagram.png      # one after another, fitted to the width
+curl -s https://example.com/x.png | mouser show -
+mouser show --width 30 logo.png        # 30 cells wide, height keeps the aspect
+mouser show --original icon.png        # natural pixel size
+```
+
+Formats: PNG (sent as-is), JPEG, GIF (first frame), WebP, BMP. Video and audio are not
+supported. Exits non-zero outside a Fuzzball terminal, for unsupported files, and inside
+tmux (tmux does not forward the terminal's replies yet).
+
 ## Tabs
 
 Each tab has its own PTY, screen, scrollback and title (OSC 0/2, otherwise the
