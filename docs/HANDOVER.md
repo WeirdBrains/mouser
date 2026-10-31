@@ -205,3 +205,9 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Full suite, fmt, clippy green locally. Live (Hyprland focuswindow + verified activewindow, wtype): grid/carousel/pipe/file view/esc :c off-on all OK; screenshots ~/.cache/mouser-shots/live-*.png, mark.png. Note: wtype `-M alt space` types the word "space" — use `-k space`.
 - Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r68.g1d683a5-1-x86_64.pkg.tar.zst (not installed).
 - Open: in-app media player (uses xdg-open), third-party mode loading, modifiers other than alt.
+
+### Typed line kept + media player (t170u/t171u)
+- 7a8db14: cd/pipe keep the half-typed line: Ctrl+E, space, Ctrl+U (kill ring), command, Enter; when the shell is the PTY foreground again (tcgetpgrp == shell pid; Windows: short pause) Ctrl+Y + Backspace. Tested in a PTY with bash and zsh (tests/keep_line_tests.rs; fish not installed, test covers it if present); live on Michael's zsh. vi keymaps unsupported (documented).
+- 0ddda31: in-app player (src/modes/player.rs): ffprobe for streams, `ffmpeg -re ... rawvideo rgba` frames through the image path fitted to width, `ffplay -nodisp -vn` for sound; alt+k play/pause, alt+j/l seek 10s, alt+-/= volume, alt+q/Esc close; keys pass to the shell when no player is open (Effect::Pass). Stops on close/selection change. Desktop opener only without ffmpeg. Live: frames change (player-video-1/2.png), ffplay running, 0 helpers after pause/close; audio view player-audio.png.
+- Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r72.g0ddda31-1-x86_64.pkg.tar.zst. CI green on 0ddda31 (all 3 OSes).
+- Open: A/V sync is by common start (no drift correction); pause/seek restart helpers (brief gap); no ffmpeg on CI macOS/Windows means the decode tests skip there.
