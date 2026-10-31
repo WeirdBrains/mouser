@@ -1,6 +1,9 @@
 ## [Unreleased]
 
 Added:
+- Session server / UI split (Linux, macOS): the window and its engine run in a child `mouser __ui` process; sessions, PTYs, scrollback, tabs and images stay in the process you started. A native crash in any engine (built-in too) restarts the window on the next engine in the priority order with everything kept; the crashed engine is marked skipped with the signal; a crash in `mouser` restarts on the CPU renderer; a UI killed from outside restarts on the same engine. `MOUSER_SPLIT=0` keeps one process; Windows is unchanged (docs/engines.md §8)
+- Sidebar Engines section: available engines in priority order with active/ok/skipped/failed and the reason; a click switches the window live (same as `mouser engine use`)
+- Test hooks `MOUSER_TEST_CRASH_ENGINE=<engine>:<n>` and the headless test UI (`MOUSER_UI=headless`); `key-to-frame` timing in `RUST_LOG=mouser_frame=debug`
 - Live engine switching: running windows swap engine in place when the order or a skip mark changes (sessions, PTYs, scrollback, selection and images untouched)
 - Crash isolation: custom engines run in an engine host process (`mouser __engine-host`); a crash or hang there marks the engine skipped with the reason and the window continues on the next engine; panics in built-in engines are caught the same way; ABI adds `MOUSER_SURFACE_PIXELS`/`MouserPixels` (additive, still ABI 1); example engine option `MOUSER_FLAT_CRASH_AT`
 - Engine priority order: `engines = [...]` in preferences.toml (old `engine` key still read), `mouser engine priority a b ...`, `mouser engine move <name> first|last|up|down|<n>`, `use` moves an engine first; startup and runtime failures walk the order to the next engine; `MOUSER_ENGINE=a,b` overrides it for one run; `mouser` is always in the order, cannot be removed, uninstalled or skipped, and stays the final GPU fallback before the CPU renderer
@@ -28,6 +31,7 @@ Added:
 - `mouser show` falls back to Kitty graphics when Fuzzball does not answer, and works inside tmux (`allow-passthrough on`) through Kitty Unicode placeholders
 
 Changed:
+- A start marker left by another window that is still starting is no longer taken as a crash (two windows starting at once could skip each other's engine)
 - Images always fit the terminal width: `mouser show` scales each image up or down to the full width (starting on a new line), and Fuzzball placements made with the new `fit=w` key follow the width on every resize; `--width`, `--height` and `--original` still give fixed sizes
 - A placement that would overhang the right edge moves to column 0 at its requested size (scaled down only when wider than the screen) instead of shrinking in place and pinning to the last column at one column wide; Kitty placements with explicit `c`/`r` keep their size whenever it fits
 - Kitty keyboard protocol kept as a fallback behind Fuzzball keyboard mode

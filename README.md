@@ -140,7 +140,10 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   scrollback and images stay). Custom engines run isolated in an engine host process:
   if one crashes, the window carries on with the next engine and the crashed one is
   marked skipped (`mouser engine list`, restore with `unskip`). `mouser` is always the
-  last GPU fallback. See `docs/engines.md`
+  last GPU fallback. On Linux and macOS the window runs in its own process: if any
+  engine crashes, the window comes back on the next engine and your shells, scrollback,
+  tabs and images are still there. The bottom of the right sidebar lists the engines
+  with their state; click one to switch. See `docs/engines.md`
   (example engine: `crates/mouser-engine-example`).
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
   `font_family`/`font_size` overrides, and the sidebar's `sidebar_width`, `sidebar_open` and

@@ -157,6 +157,14 @@ stays unless the maintainer decides otherwise.
   `engine::first_usable`, `engines::mark_skipped`. Tests
   `mouser-app/tests/engine_host_tests.rs` (pixels match, start failure, crash -> PTY shell
   alive, skipped, unskip). Switching itself is only live-tested (needs a window).
+- Session/UI split + sidebar Engines (t145u): design docs/engines.md §8 (8ea37b6), code
+  1e5e45e, 1af7013. `mouser-render/src/split.rs` (server `serve`, UI `ui_main`, headless
+  test UI), `clipboard::set_remote`, `RenderHooks::{on_engine, on_window_size}`,
+  `ui::{add_engines, EngineRow, EngineState}`, `UiAction::UseEngine`, app
+  `engine_rows`/`use_engine`, `engines::clear_own_sentinels` and live-pid-aware
+  `crashed_last_time`. Tests `mouser-app/tests/split_tests.rs`,
+  `mouser-render/tests/sidebar_engines_tests.rs`. **Rollback point: annotated tag
+  `pre-session-split` (adf349b)**, do not move or delete it. Off with `MOUSER_SPLIT=0`.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
