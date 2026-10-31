@@ -43,6 +43,10 @@ pub struct Preferences {
     /// GPU rendering engine (`mouser engine use`); unset means `mouser`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<String>,
+    /// GPU engines in priority order (`mouser engine priority`); `mouser` is
+    /// always in it, last unless moved. Replaces `engine`, which is still read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engines: Option<Vec<String>>,
 }
 
 /// Load preferences, apply `f`, and save them back (keeps unrelated fields).

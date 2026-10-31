@@ -214,13 +214,15 @@ impl Painter {
     fn pick(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self> {
         let want_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
         if !want_cpu {
-            let choice = mouser_core::engines::chosen();
-            match engine::create(&choice, &window, width, height) {
-                Ok((e, why)) => {
-                    if let Some(why) = why {
+            let order = mouser_core::engines::priority();
+            match engine::create(&order, &window, width, height) {
+                Ok((e, notes)) => {
+                    for why in &notes {
                         log::warn!("{why}");
                         eprintln!("mouser: {why}");
-                        set_notice(why);
+                    }
+                    if !notes.is_empty() {
+                        set_notice(format!("{} (using {})", notes.join(" | "), e.name()));
                     }
                     log::info!("renderer: gpu engine {} ({})", e.name(), e.description());
                     eprintln!("mouser: renderer: gpu engine {} ({})", e.name(), e.description());
@@ -274,10 +276,16 @@ impl Painter {
                         let why = engine::fallback_message(&name, &format!("{e:#}"), "failed while drawing");
                         log::warn!("{why}");
                         eprintln!("mouser: {why}");
-                        set_notice(why);
-                        match engine::create_default(window, width, height) {
-                            Ok(m) => *engine = m,
-                            Err(e) => log::error!("mouser engine unavailable: {e:#}"),
+                        let next = engine::after(&mouser_core::engines::priority(), &name);
+                        match engine::create(&next, window, width, height) {
+                            Ok((m, notes)) => {
+                                set_notice(format!("{} (using {})", std::iter::once(why).chain(notes).collect::<Vec<_>>().join(" | "), m.name()));
+                                *engine = m;
+                            }
+                            Err(e) => {
+                                set_notice(why);
+                                log::error!("mouser engine unavailable: {e:#}");
+                            }
                         }
                         false
                     }

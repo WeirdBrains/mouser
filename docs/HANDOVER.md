@@ -148,6 +148,9 @@ stays unless the maintainer decides otherwise.
 - Engine skip state (t140u): `engines::State`, `unskip`/`unskip_all`, `.failed-<name>`
   records, `engine::skip_check`/`fallback_message`/`Guarded` (crash marker for skia and
   custom), status-bar notice `NOTICE` in mouser-render/src/lib.rs; CLI `unskip`/`restore`.
+- Engine priority (t142u/t144u): `engines::{priority, saved_priority, normalize,
+  set_priority, move_to, move_by}`, `Preferences::engines`; `engine::create(order)` walks
+  it, `engine::after(order, failed)` for runtime fallback. mouser never skipped/removable.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.

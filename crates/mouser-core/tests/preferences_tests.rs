@@ -17,6 +17,7 @@ fn preferences_round_trip_including_sidebar() {
         sidebar_open: Some(true),
         sidebar_collapsed: Some(true),
         engine: Some("skia".into()),
+        engines: None,
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();

@@ -14,6 +14,10 @@ pub enum Action {
     Use(String),
     /// Clear the crash skip / failure record (`None`: all engines).
     Unskip(Option<String>),
+    /// Set the whole priority order.
+    Priority(Vec<String>),
+    /// Move one engine: `first`, `last`, `up`, `down` or a 1-based position.
+    Move(String, String),
 }
 
 pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
@@ -61,12 +65,31 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             }
             Ok(())
         }
+        Action::Priority(names) => {
+            let l = engines::set_priority(names)?;
+            writeln!(out, "priority: {}", l.join(" > "))?;
+            Ok(())
+        }
+        Action::Move(n, to) => {
+            let l = match to.as_str() {
+                "first" | "top" => engines::move_to(n, 0)?,
+                "last" | "bottom" => engines::move_to(n, usize::MAX)?,
+                "up" => engines::move_by(n, -1)?,
+                "down" => engines::move_by(n, 1)?,
+                p => match p.parse::<usize>() {
+                    Ok(i) if i >= 1 => engines::move_to(n, i - 1)?,
+                    _ => bail!("position must be first, last, up, down or a number from 1"),
+                },
+            };
+            writeln!(out, "priority: {}", l.join(" > "))?;
+            Ok(())
+        }
         Action::Use(n) => {
             if n == "skia" && !mouser_render::engine::available_builtins().iter().any(|(b, _)| *b == "skia") {
                 bail!("this build has no Skia engine");
             }
             engines::select(n)?;
-            writeln!(out, "new windows will use the {n} engine (open windows keep theirs until restarted)")?;
+            writeln!(out, "{n} is now first: {}", engines::saved_priority().join(" > "))?;
             Ok(())
         }
     }
@@ -86,29 +109,35 @@ fn state_text(name: &str) -> String {
 }
 
 fn list(out: &mut dyn Write) -> Result<()> {
-    let chosen = engines::chosen();
-    let selected = |n: &str| if n == chosen { "*" } else { " " };
-    writeln!(out, "  {:<12} {:<10} {:<8} details", "engine", "version", "state")?;
+    let order = engines::priority();
+    let pos = |n: &str| order.iter().position(|o| o == n).map(|i| (i + 1).to_string()).unwrap_or_else(|| "-".into());
+    let first = order.first().cloned().unwrap_or_default();
+    let mark = |n: &str| if n == first { "*" } else { " " };
+    writeln!(out, "  {:<4} {:<12} {:<10} {:<8} details", "prio", "engine", "version", "state")?;
+    let mut rows: Vec<(String, String, String, String)> = Vec::new();
     for (n, d) in mouser_render::engine::available_builtins() {
-        let st = state_text(n);
-        let (short, rest) = split_state(&st);
-        writeln!(out, "{} {n:<12} {:<10} {short:<8} {d}{rest}", selected(n), "built-in")?;
+        let d = if n == "mouser" { format!("{d}; always the last fallback, cannot be removed") } else { d.to_string() };
+        rows.push((n.to_string(), "built-in".into(), d, state_text(n)));
     }
     for e in engines::installed() {
         match e {
-            Ok(i) => {
-                let m = &i.manifest;
-                let st = state_text(&m.name);
-                let (short, rest) = split_state(&st);
-                writeln!(out, "{} {:<12} {:<10} {short:<8} {}{rest}", selected(&m.name), m.name, m.version, m.description)?;
-            }
-            Err((dir, why)) => writeln!(out, "  {dir:<12} {:<10} {:<8} {why}", "?", "broken")?,
+            Ok(i) => rows.push((i.manifest.name.clone(), i.manifest.version.clone(), i.manifest.description.clone(), state_text(&i.manifest.name))),
+            Err((dir, why)) => writeln!(out, "  {:<4} {dir:<12} {:<10} {:<8} {why}", "-", "?", "broken")?,
         }
     }
-    if chosen != "mouser" && !engines::is_builtin(&chosen) && engines::find(&chosen).is_none() {
-        writeln!(out, "  (selected engine {chosen} is not installed; new windows use mouser)")?;
+    // Listed in priority order, then the rest.
+    rows.sort_by_key(|r| order.iter().position(|o| *o == r.0).unwrap_or(usize::MAX));
+    for (n, v, d, st) in rows {
+        let (short, rest) = split_state(&st);
+        writeln!(out, "{} {:<4} {n:<12} {v:<10} {short:<8} {d}{rest}", mark(&n), pos(&n))?;
     }
-    writeln!(out, "* = used by new windows (MOUSER_ENGINE or `mouser engine use`)")?;
+    for n in &order {
+        if !engines::is_builtin(n) && engines::find(n).is_none() {
+            writeln!(out, "  ({n} is in the priority list but not installed; skipped)")?;
+        }
+    }
+    let src = if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) { "MOUSER_ENGINE" } else { "preferences" };
+    writeln!(out, "order ({src}): {}; * = tried first; skipped/failed ones are passed over", order.join(" > "))?;
     Ok(())
 }
 

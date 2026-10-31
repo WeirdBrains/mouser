@@ -52,13 +52,21 @@ size. Custom engines see the same frame through the C ABI below
 
 ## 3. Lifecycle
 
-- The engine is chosen when a window is created: `MOUSER_ENGINE=<name>` (testing),
-  else `engine = "<name>"` in `~/.mouser/preferences.toml` (written by
-  `mouser engine use`), else `mouser`.
+- Engines are kept in a **priority order**: `engines = ["skia", "flat", "mouser"]` in
+  `~/.mouser/preferences.toml` (the old single `engine = "x"` key is still read as
+  `["x", "mouser"]` and replaced on the next change). `MOUSER_ENGINE=a,b` overrides the
+  order for one run. When a window is created Mouser walks the order and uses the
+  first engine that starts, passing over skipped ones and ones that fail (each with a
+  message); if every GPU engine fails, the CPU renderer is used as before.
+- **`mouser` is always in the order** and is the final GPU fallback: it is appended if
+  left out, it can be moved up (then engines after it are only reached if it fails),
+  it cannot be uninstalled, removed from the order or skipped (no crash marker is
+  ever written for it).
 - Creation failure (no adapter, missing library, ABI mismatch, `create` error) falls
   back to the Mouser engine, then to the CPU renderer, with a log line and a status
   message saying why.
-- A draw error at run time also drops to the Mouser engine for that window (logged).
+- A draw error at run time switches the window to the next engine after it in the order
+  (mouser at the latest), with a status-bar message.
 - **No hot swap in v1**: `mouser engine use NAME` changes the preference; new windows use
   it, open windows keep their engine until restarted. Swapping a live surface between
   APIs (wgpu, GL) is possible but needs careful surface teardown on Wayland; it can be
@@ -174,7 +182,10 @@ CLI (thin adapters over `mouser_core::engines`):
 | `mouser engine list` | built-in (`mouser`, `skia` if compiled in) and installed engines, the active one marked, broken ones with the reason |
 | `mouser engine install <dir \| engine.toml \| lib.so>` | checks the manifest, loads the library and checks its ABI, copies it into `engines/<name>/` |
 | `mouser engine uninstall <name>` | removes `engines/<name>/` (built-ins cannot be removed); if it was in use, the config goes back to `mouser` |
-| `mouser engine use <name>` | sets `engine` in `preferences.toml` (checks it exists; `mouser` clears it) |
+| `mouser engine use <name>` | moves it first in the order and unskips it |
+| `mouser engine priority <a> <b> ...` | sets the whole order (`mouser` appended if missing) |
+| `mouser engine move <name> first\|last\|up\|down\|<n>` | moves one engine (1 = first) |
+| `mouser engine unskip <name>\|--all` (alias `restore`) | clears skip/failure records, order unchanged |
 
 Installing from a URL is not supported in v1: download the engine yourself and install
 the directory (no network access from the terminal, no unsigned code fetched for you).
