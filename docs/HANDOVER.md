@@ -112,13 +112,14 @@ stays unless the maintainer decides otherwise.
   on Hyprland (word, line, drag+copy, block, auto-scroll into scrollback, Ctrl+Shift+V and
   middle-click paste into `cat`, clear on typing). Gaps: no Windows clipboard; resize does
   not reflow so wraps follow the old width; X11 PRIMARY needs xclip/xsel.
+- Images always fit the width (t132u): `fit=w` Fuzzball key, `mouser show` fills the
+  width and follows resizes; overhanging placements move to column 0 (no more 1-column pin).
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
 
 ## Open decisions
 - Inside tmux, `mouser show` prefers Kitty placeholders over Fuzzball (one-line flip).
-- Narrowed images pin to the last column at 1 column wide; alternative is a minimum width that moves them left.
 
 ## Suggested next steps
 0. Install the new package on the maintainer's machine (mouser-git from main or the next mouser-bin release) so command launching works there.

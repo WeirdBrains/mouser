@@ -46,13 +46,18 @@ ESC P = F z g r ; id=7,ok=1,w=64,h=64 ESC \
 ### 2.2 Place — `p`
 
 ```
-ESC P = F z g p ; id=<image>,pid=<n>[,cols=<n>,rows=<n>][,sx=,sy=,sw=,sh=][,z=<-1|0|1>][,move=<0|1>] ESC \
+ESC P = F z g p ; id=<image>,pid=<n>[,cols=<n>,rows=<n>][,sx=,sy=,sw=,sh=][,fit=w][,z=<-1|0|1>][,move=<0|1>] ESC \
 ```
 
 - Anchored at the **cursor cell**.
 - `cols`,`rows`: size in cells. If one is omitted it is derived from the aspect ratio; if
   both are omitted the image's pixel size is rounded up to whole cells using the current
   cell size.
+- `fit=w`: fill the width. The placement spans from the anchor column to the right edge
+  (`cols` is ignored, `rows` follows the aspect ratio) and is refitted on every resize,
+  scaled up or down, so it always fills the width; it moves to column 0 if the anchor
+  column is cut off. Any other `fit` value is `EINVAL`. Terminals that do not know `fit`
+  use `cols`/`rows`, so send them too.
 - `sx,sy,sw,sh`: source rectangle in image pixels (default: whole image).
 - `z`: `-1` behind text (above cell backgrounds), `0` (default) above text, `1` above
   text and cursor.
@@ -111,12 +116,12 @@ have no visible placements; if that is not enough the upload fails with `ENOMEM`
   "clear scrollback"), the whole placement is removed, even if it spans later rows.
 - **Scaling to the screen width.** The terminal keeps the requested anchor column and
   `cols`/`rows`, and shows each placement fitted to the current width (also when it is
-  first placed): unchanged if it fits; scaled down, aspect kept, if it overhangs the
-  right edge, keeping its anchor column (it **shrinks in place** to the columns left of
-  the edge); once the anchor column itself is cut off it is pinned to the last column,
-  one column wide, and never dropped. Its width changes by at most one column per
-  column of resize, so it never jumps in size. The rows it covers scale by the same factor.
-  A wider screen grows it back toward the request, never beyond. Images are not
+  first placed): unchanged if it fits; if it would overhang the right edge it moves to
+  column 0 at its requested size, scaled down (aspect kept) to the screen width when it is
+  wider than the screen. It is never narrower than the smaller of its request and the
+  screen, and never dropped. The rows it covers scale by the same factor. A wider screen
+  restores the requested anchor and size, never beyond; `fit=w` placements instead
+  always fill the width. Images are not
   scaled to the screen height: tall placements scroll like text.
 - On a shorter screen, lines pushed into the scrollback keep their placements; a
   placement whose anchor line is cut off below the last row is removed with that line

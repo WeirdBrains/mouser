@@ -104,75 +104,78 @@ fn boxed(t: &TerminalParser<std::io::Sink>, pid: u32) -> (u32, u32, u32) {
 }
 
 #[test]
-fn narrower_resize_scales_overhanging_placements() {
+fn overhanging_placement_moves_to_column_0_at_its_size_when_it_fits() {
     let mut t = term();
-    // col 10 (0-based), 8x4 cells; screen 20 -> 14 leaves 4 columns: half size.
+    // col 10 (0-based), 8x4 cells; at 14 columns it overhangs: column 0, full size.
     place(&mut t, 1, 2, 11, 8, 4);
     t.resize(Size { cols: 14, rows: 6 });
-    assert_eq!(boxed(&t, 1), (10, 4, 2));
-    assert_eq!(t.fuzzball.gfx.placements[0].pixel_size((10, 20)), (40, 40));
+    assert_eq!(boxed(&t, 1), (0, 8, 4));
     assert_eq!(screen_row(&t, 1), 1);
+    t.resize(Size { cols: 40, rows: 6 });
+    assert_eq!(boxed(&t, 1), (10, 8, 4), "requested anchor restored");
 }
 
 #[test]
-fn anchor_beyond_the_edge_is_pinned_and_shrunk_not_moved_or_dropped() {
+fn overhanging_placement_wider_than_the_screen_fits_the_width() {
     let mut t = term();
-    place(&mut t, 1, 3, 16, 4, 2);
-    // Anchor col 15 still on screen at 17 columns: shrinks in place to 2 columns.
-    t.resize(Size { cols: 17, rows: 6 });
-    assert_eq!(boxed(&t, 1), (15, 2, 1));
-    // Anchor cut off: pinned to the last column, one column wide.
-    t.resize(Size { cols: 10, rows: 6 });
-    assert_eq!(boxed(&t, 1), (9, 1, 1));
+    place(&mut t, 1, 2, 11, 8, 4);
+    t.resize(Size { cols: 4, rows: 6 });
+    assert_eq!(boxed(&t, 1), (0, 4, 2), "as wide as the screen, aspect kept");
+    assert_eq!(t.fuzzball.gfx.placements[0].pixel_size((10, 20)), (40, 40));
+    t.resize(Size { cols: 6, rows: 6 });
+    assert_eq!(boxed(&t, 1), (0, 6, 3));
     t.resize(Size { cols: 1, rows: 6 });
     assert_eq!(boxed(&t, 1), (0, 1, 1));
     t.resize(Size { cols: 20, rows: 6 });
-    assert_eq!(boxed(&t, 1), (15, 4, 2), "requested anchor and size restored");
-}
-
-#[test]
-fn narrowing_is_continuous() {
-    let mut t = term();
-    t.resize(Size { cols: 120, rows: 6 });
-    place(&mut t, 1, 2, 41, 60, 12);
-    let mut prev = boxed(&t, 1);
-    for w in (1..120).rev() {
-        t.resize(Size { cols: w, rows: 6 });
-        let b = boxed(&t, 1);
-        assert!(prev.1 - b.1 <= 1 && b.1 <= prev.1, "width {w}: {prev:?} -> {b:?}");
-        assert!(b.0 <= prev.0 && prev.0 - b.0 <= 1, "anchor moves one column at a time at most");
-        assert!(b.0 + b.1 <= w as u32, "fits");
-        if w > 40 {
-            assert_eq!(b.0, 40, "anchor kept while on screen");
-        }
-        prev = b;
-    }
-    for w in 2..=120 {
-        t.resize(Size { cols: w, rows: 6 });
-    }
-    assert_eq!(boxed(&t, 1), (40, 60, 12));
-}
-
-#[test]
-fn wider_resize_grows_back_to_the_requested_size_only() {
-    let mut t = term();
-    place(&mut t, 1, 2, 11, 8, 4);
-    t.resize(Size { cols: 14, rows: 6 });
-    t.resize(Size { cols: 16, rows: 6 });
-    assert_eq!(boxed(&t, 1), (10, 6, 3));
-    t.resize(Size { cols: 40, rows: 6 });
     assert_eq!(boxed(&t, 1), (10, 8, 4), "back to the request, not larger");
     let p = &t.fuzzball.gfx.placements[0];
     assert_eq!((p.req_col, p.req_cols, p.req_rows), (10, 8, 4));
 }
 
 #[test]
+fn no_placement_is_narrower_than_the_screen_or_its_request() {
+    let mut t = term();
+    t.resize(Size { cols: 120, rows: 6 });
+    place(&mut t, 1, 2, 41, 60, 12);
+    for w in (1..120).rev() {
+        t.resize(Size { cols: w, rows: 6 });
+        let b = boxed(&t, 1);
+        assert!(b.0 + b.1 <= w as u32, "width {w}: fits: {b:?}");
+        assert_eq!(b.1, 60.min(w as u32), "width {w}: never pinned narrow");
+    }
+    t.resize(Size { cols: 120, rows: 6 });
+    assert_eq!(boxed(&t, 1), (40, 60, 12));
+}
+
+#[test]
+fn fit_w_fills_the_width_and_follows_resizes_both_ways() {
+    let mut t = term();
+    // 2x2 px image, cells 10x20: fit=w at col 0 on 20 cols = 20 cols x 10 rows.
+    t.feed(b"\x1b[1;1H\x1bP=Fzgp;id=1,pid=1,cols=2,fit=w,move=0\x1b\\");
+    let pl = &t.fuzzball.gfx.placements[0];
+    assert!(pl.fill);
+    assert_eq!((pl.col, pl.cols, pl.rows), (0, 20, 10), "fit=w overrides cols");
+    t.resize(Size { cols: 8, rows: 6 });
+    let pl = &t.fuzzball.gfx.placements[0];
+    assert_eq!((pl.col, pl.cols, pl.rows), (0, 8, 4));
+    assert_eq!(pl.pixel_size((10, 20)), (80, 80));
+    t.resize(Size { cols: 60, rows: 6 });
+    let pl = &t.fuzzball.gfx.placements[0];
+    assert_eq!((pl.col, pl.cols, pl.rows), (0, 60, 30), "scaled up past its first size");
+    assert_eq!(pl.pixel_size((10, 20)), (600, 600));
+    t.feed(b"\x1b[2;1H\x1bP=Fzgp;id=1,pid=2,fit=x\x1b\\");
+    assert_eq!(t.fuzzball.gfx.placements.len(), 1, "fit only takes w");
+}
+
+#[test]
 fn placement_wider_than_the_screen_is_fitted_when_placed() {
     let mut t = term();
     place(&mut t, 1, 1, 11, 20, 2);
-    assert_eq!(boxed(&t, 1), (10, 10, 1));
-    t.resize(Size { cols: 40, rows: 6 });
-    assert_eq!(boxed(&t, 1), (10, 20, 2));
+    assert_eq!(boxed(&t, 1), (0, 20, 2));
+    place(&mut t, 2, 3, 11, 40, 2);
+    assert_eq!(boxed(&t, 2), (0, 20, 1));
+    t.resize(Size { cols: 60, rows: 6 });
+    assert_eq!(boxed(&t, 2), (10, 40, 2));
 }
 
 #[test]
@@ -193,9 +196,9 @@ fn alt_screen_placements_scale_too() {
     place(&mut t, 1, 1, 13, 8, 2);
     t.feed(b"\x1b[1;1H");
     t.resize(Size { cols: 10, rows: 6 });
-    assert_eq!(boxed(&t, 1), (9, 1, 1));
+    assert_eq!(boxed(&t, 1), (0, 8, 2));
     t.resize(Size { cols: 4, rows: 6 });
-    assert_eq!(boxed(&t, 1), (3, 1, 1));
+    assert_eq!(boxed(&t, 1), (0, 4, 1));
     t.resize(Size { cols: 30, rows: 6 });
     assert_eq!(boxed(&t, 1), (12, 8, 2));
 }

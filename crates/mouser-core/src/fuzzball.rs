@@ -319,6 +319,18 @@ impl Fuzzball {
             (None, Some(r)) => (((r as u64 * ch * sw as u64).div_ceil(sh as u64 * cw)).max(1) as u32, r),
             (None, None) => ((sw as u64).div_ceil(cw) as u32, (sh as u64).div_ceil(ch) as u32),
         };
+        // `fit=w`: as wide as the screen right of the cursor, rows from the aspect.
+        let fill = match p.get("fit").map(String::as_str) {
+            None => false,
+            Some("w") => true,
+            Some(_) => return Err((Error::Inval, "fit must be w")),
+        };
+        let (cols, rows) = if fill {
+            let c = (ctx.screen_cols.max(1) as u32).saturating_sub(ctx.col).max(1);
+            (c, ((c as u64 * cw * sh as u64).div_ceil(sw as u64 * ch)).max(1) as u32)
+        } else {
+            (cols, rows)
+        };
         if cols > 1000 || rows > 1000 {
             return Err((Error::Inval, "placement too large"));
         }
@@ -342,6 +354,7 @@ impl Fuzzball {
             src: (sx, sy, sw, sh),
             z,
             alt: ctx.alt,
+            fill,
             ..Placement::default()
         };
         pl.fit(ctx.screen_cols);

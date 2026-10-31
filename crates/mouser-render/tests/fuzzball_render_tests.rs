@@ -144,13 +144,13 @@ fn downscaled_image_is_area_averaged_on_cpu_and_gpu_paths() {
     let p = b64(&px);
     t.feed(format!("\x1bP=Fzgu;id=1,fmt=rgba,w={iw},h={ih},size={},len={}:{p}\x1b\\", px.len(), p.len()).as_bytes());
     t.feed(b"\x1b[1;9H\x1bP=Fzgp;id=1,pid=1,cols=4,rows=1,move=0\x1b\\");
-    // Anchor col 8: a 10-column screen leaves 2 columns, so the box is halved.
-    t.resize(Size { cols: 10, rows: 4 });
+    // A 2-column screen: the box moves to column 0 and is halved.
+    t.resize(Size { cols: 2, rows: 4 });
     let mut scaler = ImageScaler::default();
     let images = image_draws(&t.fuzzball.gfx, false, t.lines_scrolled, 4, (cw as u32, ch as u32), &mut scaler);
     assert_eq!(images.len(), 1);
     let d = &images[0];
-    assert_eq!((d.col, d.width, d.height), (8, 2 * cw as u32, (ch / 2) as u32));
+    assert_eq!((d.col, d.width, d.height), (0, 2 * cw as u32, (ch / 2) as u32));
     // Prescaled 1:1, so both renderers sample it exactly.
     assert_eq!((d.img_w, d.img_h, d.src), (d.width, d.height, (0, 0, d.width, d.height)));
     let again = image_draws(&t.fuzzball.gfx, false, t.lines_scrolled, 4, (cw as u32, ch as u32), &mut scaler);
@@ -174,7 +174,7 @@ fn downscaled_image_is_area_averaged_on_cpu_and_gpu_paths() {
     let (w, h) = ((cw * 10 + 2 * PADDING) as usize, (ch * 4 + 2 * PADDING) as usize);
     let mut cpu = vec![0u32; w * h];
     render_frame(&mut Canvas::new(&mut cpu, w, h), &mut fonts, &frame);
-    let (x0, y0) = (PADDING + 8 * cw, PADDING);
+    let (x0, y0) = (PADDING, PADDING);
     for dx in [0, 1, cw, 2 * cw - 1] {
         let c = cpu[(y0 + 1) as usize * w + (x0 + dx) as usize];
         // Red and blue averaged, not nearest-neighbour stripes.
