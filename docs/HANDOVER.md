@@ -113,6 +113,7 @@ stays unless the maintainer decides otherwise.
 - Narrowed images pin to the last column at 1 column wide; alternative is a minimum width that moves them left.
 
 ## Suggested next steps
+0. Install the new package on the maintainer's machine (mouser-git from main or the next mouser-bin release) so command launching works there.
 1. Add a LICENSE file and publish the AUR packages (maintainer).
 2. Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.
 3. Confirm website claims, retake the screenshot, publish the site.
