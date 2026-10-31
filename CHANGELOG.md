@@ -4,19 +4,20 @@ Added:
 - Fuzzball protocol v0.1 (`docs/protocol/`): image upload/place/delete/query, keyboard mode with structured key events, capability query (`DCS = F z c q`, XTGETTCAP `Fz`)
 - Golden-pixel tests for Fuzzball images (CPU and the GPU display list)
 - `tools/fuzzball-demo.py` demo client
-- `mouser show <file|->...`: show PNG, JPEG, GIF (first frame), WebP and BMP images in a Fuzzball terminal, fitted to the width (`--width`, `--height`, `--original`, `--id`); no video or audio; not yet through tmux
+- `mouser show <file|->...`: show PNG, JPEG, GIF (first frame), WebP and BMP images in a Fuzzball terminal, fitted to the width (`--width`, `--height`, `--original`, `--id`); no video or audio
 - Fuzzball placements follow their text through scroll regions, SU/SD, IL/DL, the scrollback and resize; they are removed when their anchor row leaves the scrollback, scrolls off the alternate screen
 - Fuzzball images scale to fit the screen width on resize (and when placed), shrink in place at their anchor column (pinned to the last column, one column wide, once the anchor is cut off), and grow back on a wider screen; downscaled images are area-averaged and cached for both renderers; cell-size changes rescale their pixels
 - Abandoned Fuzzball uploads are discarded by a timer after 10 s
 - ED 3 (`CSI 3 J`) clears the scrollback (and the placements in it) without touching the screen
+- Kitty graphics protocol as a fallback behind Fuzzball (graphics.md §7): direct/chunked, file, temp-file and shared-memory transmission, `f=8/16/24/32/100`, zlib, every action and delete specifier, replies with `q`, feature queries, image numbers, relative placements, Unicode placeholders, animation and frame composition, z layers under/over cell backgrounds; shares the placement lifecycle, renderer, scale cache and memory quota with Fuzzball
+- `mouser show` falls back to Kitty graphics when Fuzzball does not answer, and works inside tmux (`allow-passthrough on`) through Kitty Unicode placeholders
 
 Changed:
-- Kitty keyboard protocol is the only Kitty protocol, kept as a fallback behind Fuzzball keyboard mode
+- Kitty keyboard protocol kept as a fallback behind Fuzzball keyboard mode
 - Kitty keyboard: Ctrl/Alt/Super keys carry no associated text (flag 16)
 - Kitty keyboard compliance fixes: F13+/media/keypad keys, lock bits on text keys, Enter/Tab/Backspace releases, Ctrl+Backspace, Ctrl+Shift/Super text keys in legacy mode; tests per spec section
 
 Removed:
-- Kitty graphics protocol (APC `_G`)
 - `OSC 1337` image claims from the docs (never implemented)
 - `xterm-kitty` TERM fallback; TERM is `mouser` or `xterm-256color`
 

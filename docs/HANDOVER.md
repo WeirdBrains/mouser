@@ -36,14 +36,23 @@ DECCOLM 132-column · G2/G3/national charsets · protected areas · ENQ answerba
 OSC 133 UI.
 
 ## Fuzzball
-Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. Kitty graphics, OSC 1337
-and xterm-kitty were removed; Kitty keyboard is the only fallback.
+Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. OSC 1337 and xterm-kitty
+were removed. Kitty keyboard and Kitty graphics are fallbacks; Fuzzball takes precedence.
 Placements follow their text (scroll regions, IL/DL, scrollback, resize) and are removed
 when their anchor row leaves the scrollback; abandoned uploads expire on a timer
-(`Session::watch_upload` in `crates/mouser-app/src/tabs.rs`). Resize scales placements to the screen width, shrinking in place (`Placement::fit`, requested
+(`Session::watch_graphics` in `crates/mouser-app/src/tabs.rs`, which also plays Kitty
+animations and is kicked through a condvar when new timer work arrives). Resize scales placements to the screen width, shrinking in place (`Placement::fit`, requested
 col/cols/rows kept) and `ImageScaler` caches area-averaged downscales for both renderers.
 Decisions: protocol README §10 #10–15.
-`mouser show` (crates/mouser-app/src/show.rs, tested in crates/mouser-app/tests/show_tests.rs) displays images; tmux detection does not work yet (tmux drops the outer terminal's replies).
+`mouser show` (crates/mouser-app/src/show.rs, tested in crates/mouser-app/tests/show_tests.rs) displays images: Fuzzball first, Kitty fallback, Kitty Unicode placeholders inside tmux (README §10 #19-20).
+
+## Kitty graphics
+`crates/mouser-core/src/kitty_graphics.rs` (own `Graphics` store with `kitty: true`, shared
+lifecycle methods in `graphics.rs`, APC interception in `TerminalParser::feed`), tests in
+`crates/mouser-core/tests/kitty_graphics_tests.rs`. Renderer layers (`frame.rs`): z below
+`KITTY_BELOW_BG` under cell backgrounds, other negative z between backgrounds and text.
+Placeholders are drawn by `KittyGraphics::placeholder_draws` from the live screen cells
+(three combining marks per cell). Supported set and deliberate limits: graphics.md §7.
 Not yet done: IME events, lock-key state.
 
 ## Website

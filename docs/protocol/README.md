@@ -235,6 +235,16 @@ Placement lifecycle (graphics.md §4), decided in v0.1:
 | 15 | Downscale quality | Renderers draw downscaled images from a cached area-averaged copy at the displayed size (Mouser: `mouser-render/src/scale.rs`), so CPU and GPU sample 1:1 with no nearest-neighbour stripes. | Quality without rescaling every frame. |
 | 14 | Abandoned uploads | Discarded by a timer 10 s after the last chunk (not only when the next chunk arrives). | Frees the buffer of a crashed uploader. |
 
+Kitty graphics fallback (graphics.md §7), decided 2026-10-30:
+
+| # | Question | Decision | Rationale |
+|---|----------|----------|-----------|
+| 16 | Kitty graphics? | **Supported as a fallback**, full protocol incl. placeholders and animation (Michael: "Full kitty support, but Fuzzball takes precedence"). | Existing tools (icat, chafa, yazi, …) work in Mouser today. |
+| 17 | Precedence | Both always accepted; separate id namespaces; one shared memory quota; Fuzzball draws above Kitty at equal z; `mouser show` uses Fuzzball when it answers. | No conflicts to resolve at the wire level; Fuzzball stays primary. |
+| 18 | Kitty lifecycle | Kitty's own rules where they differ: only clear-screen erases, scroll regions move only placements fully inside, many `p=0` placements per image. Scrollback, alt screen and resize scaling as for Fuzzball. | Kitty clients expect kitty's behaviour. |
+| 19 | `mouser show` inside tmux | tmux 3.x forwards passthrough replies after answering DA1 itself, so `mouser show` waits for the graphics replies. With a Kitty-capable outer terminal it uses **Kitty Unicode placeholders** (even when Fuzzball also answers), otherwise Fuzzball passthrough. | Placeholders are text, so tmux moves and redraws the image; Fuzzball has no placeholder mode. Michael can flip this. |
+| 20 | Placeholder ids | Low byte in a 256-colour foreground, high byte in the third diacritic. | tmux downgrades true colour for terminals it does not know take RGB. |
+
 Not yet implemented in Mouser: IME events, lock-key state (`locks` is always 0).
 
 A demo client is in `tools/fuzzball-demo.py`.

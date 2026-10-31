@@ -39,12 +39,19 @@ tic -x -o ~/.terminfo extra/mouser.terminfo
 ## Commands
 
 `mouser show [--width N] [--height N] [--fit|--original] [--id N] <file|->...` shows
-images in a Fuzzball terminal. It sends `DCS = F z c q`, `CSI 16 t`, `CSI 18 t`,
-`CSI 6 n` and DA1, waits up to 1.5 s for the replies (DA1 ends the wait), then uploads
-each image in base64 chunks of at most `max_chunk`, places it at the cursor fitted to
-the columns right of it (aspect kept) and moves the cursor below it. PNG within the
+images. It sends `DCS = F z c q`, the Kitty query `ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`,
+`CSI 16 t`, `CSI 18 t`, `CSI 6 n` and DA1, and waits up to 1.5 s for the replies (DA1
+ends the wait outside tmux). With a Fuzzball reply it uploads each image in base64
+chunks of at most `max_chunk`, places it at the cursor fitted to the columns right of
+it (aspect kept) and moves the cursor below it. With only a Kitty reply it sends
+`a=T` in 4096-byte chunks with `q=1` (errors only) and the same fit. PNG within the
 published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
 RGBA and scaled down to `g_max_dim` / `g_mem` if needed. Video and audio are out of
-scope. Inside tmux the messages are wrapped for passthrough, but tmux does not return
-the terminal's replies, so detection fails and the command exits with an error.
+scope. Inside tmux every message is wrapped for passthrough. tmux answers DA1 itself and
+forwards the outer terminal's replies afterwards, so there `mouser show` waits for the
+graphics replies instead. If the outer terminal answers the Kitty query, the image is
+transmitted quietly (`q=2`), given a `U=1` virtual placement and printed as rows of
+`U+10EEEE` placeholders (id low byte in a 256-colour foreground, high byte in the
+third diacritic; at most 297x297 cells), so tmux moves and redraws it; otherwise
+Fuzzball is passed through. Without any reply it points at `allow-passthrough`.
 Code: `crates/mouser-app/src/show.rs`.

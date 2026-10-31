@@ -11,7 +11,7 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 - Fast text rendering via `winit` + `softbuffer` + `fontdue` (CPU rasterization, zero-copy blits)
 - Chunked, compressed scrollback using Zstd or LZ4, with idle-based auto-compression and transparent on-demand decompression
 - Scrollback search across compressed history
-- Fuzzball protocol (graphics + keyboard, `docs/protocol/`), with the Kitty keyboard protocol as the only fallback
+- Fuzzball protocol (graphics + keyboard, `docs/protocol/`), with the Kitty keyboard and Kitty graphics protocols as fallbacks
 - TOML configuration for font, colors, scrollback size, compression algorithm/level, and idle thresholds
 
 ## Why these crates?
@@ -47,14 +47,17 @@ Data flow:
 - To avoid UI stalls, the renderer prefetches ±1 chunk around the viewport and schedules recompression after those chunks again go idle.
 - The maximum scrollback is bounded (`max_scrollback_lines`) and drops the oldest chunks when exceeded.
 
-## Fuzzball and Kitty keyboard
+## Fuzzball and Kitty fallbacks
 
 - **Fuzzball** is Mouser's own protocol for images and structured key events (DCS, tag `Fz`,
   tmux/screen-friendly). Spec: [`docs/protocol/`](docs/protocol/README.md). Try it with
   `tools/fuzzball-demo.py` inside Mouser.
-- **Kitty keyboard protocol** is supported as the only fallback, for apps that don't speak
+- **Kitty keyboard protocol** is supported as a fallback, for apps that don't speak
   Fuzzball yet. Compliance matrix: [`docs/kitty-compliance.md`](docs/kitty-compliance.md).
-- Kitty graphics and iTerm2 `OSC 1337` images are **not** supported; use Fuzzball graphics.
+- **Kitty graphics protocol** is supported as a fallback too (`kitten icat`, chafa, yazi, …),
+  including Unicode placeholders and animation; Fuzzball takes precedence. Details and
+  limits: [`docs/protocol/graphics.md` §7](docs/protocol/graphics.md).
+- iTerm2 `OSC 1337` images are **not** supported.
 
 ### Showing images: `mouser show`
 
@@ -66,8 +69,10 @@ mouser show --original icon.png        # natural pixel size
 ```
 
 Formats: PNG (sent as-is), JPEG, GIF (first frame), WebP, BMP. Video and audio are not
-supported. Exits non-zero outside a Fuzzball terminal, for unsupported files, and inside
-tmux (tmux does not forward the terminal's replies yet).
+supported. Uses Fuzzball graphics when the terminal answers, Kitty graphics otherwise.
+Inside tmux (`set -g allow-passthrough on`) it shows Kitty Unicode placeholders, which
+tmux moves and redraws like text. Exits non-zero when neither protocol answers and for
+unsupported files.
 
 ## Tabs
 

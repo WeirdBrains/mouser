@@ -151,10 +151,78 @@ ESC P = F z g d ; what=image,id=1,free=1 ESC \
 
 ## 6. Design notes (compared with Kitty graphics)
 
-Mouser does not implement Kitty graphics; these notes explain the design choices.
+Mouser also implements Kitty graphics as a fallback (§7); these notes explain why Fuzzball is designed differently.
 
 
 - One encoding of each concept (no `a=T` shortcut, no `I=` numbers, no `t=f/t/s`).
 - Explicit payload length; base64 only in v0.1 (`raw=0`, see README §10).
 - Placements are text-grid objects with defined erase/reflow rules.
 - Limits are advertised rather than implicit.
+
+## 7. Kitty graphics fallback in Mouser
+
+Mouser implements the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/)
+for applications that do not speak Fuzzball yet (`kitten icat`, chafa, timg, yazi, …).
+**Fuzzball takes precedence:** both are always accepted, Kitty images live in their own id
+namespace (Kitty image 1 and Fuzzball image 1 are different images), and at equal z
+Fuzzball images draw above Kitty images. Code: `crates/mouser-core/src/kitty_graphics.rs`;
+tests: `crates/mouser-core/tests/kitty_graphics_tests.rs`.
+
+Supported:
+
+- Framing: APC `ESC _ G <keys> ; <payload> ESC \` (bodies over 16 MiB are skipped).
+- Media: `t=d` (chunked with `m=1`/`m=0`; a delete aborts a partial upload; idle uploads
+  are dropped after 10 s), `t=f`, `t=t` (deleted after reading only when it is in a temp
+  directory and its path contains `tty-graphics-protocol`), `t=s` (POSIX shared memory,
+  unlinked after reading; Unix only). `S`/`O` size and offset. Files: symlinks followed,
+  regular files only, `/proc`, `/sys` and `/dev` (except `/dev/shm`) refused before
+  opening, at most 320 MiB, and every failure is the same `EBADF:Failed to read image file`.
+- Formats `f=24`, `f=32`, `f=100` (PNG), and the indexed `f=8`/`f=16`; `o=z` (zlib,
+  output bounded by the expected size).
+- Actions `a=t`, `T`, `p`, `q` (also feature queries with `e=`), `d`, `f`, `a`, `c`.
+- Ids: `i`, image numbers `I` (the terminal picks the id and replies `i=…,I=…`), `p`;
+  `i` with `I` is `EINVAL`. Images sent without `i`/`I` get hidden ids and no replies.
+- Replies `OK` / `ENOENT` / `EINVAL` / `ENODATA` / `EBADPNG` / `EBADF` / `ENOSPC` /
+  `ENOPARENT` / `ECYCLE` / `ETOODEEP` / `EFBIG`, suppressed by `q=1` (OK) and `q=2` (all).
+- Placement keys `x,y,w,h` (source rectangle), `X,Y` (pixel offset in the cell), `c,r`
+  (one given: the other follows the aspect; both: letterboxed), `C=1`, `z`. Several
+  `p=0` placements of one image coexist; the same `i`/`p` replaces (and moves its
+  relative children with it). The cursor moves right by the columns and down by the
+  rows minus one unless `C=1` or the placement is relative.
+- z layers: `z < -1,073,741,824` under cell backgrounds, other negative z between
+  backgrounds and text, `z >= 0` above text.
+- Every delete specifier `a c f i n p q r x y z`, lowercase and uppercase (uppercase
+  frees image data left without placements). Virtual placements are only removed by
+  `i`/`I`/`n`/`N`/`r`/`R`.
+- Relative placements `P`,`Q`,`H`,`V`: chains of up to 9, cycles rejected, children
+  deleted with their parent (and their image once it has no placements).
+- Unicode placeholders: `U=1` virtual placements and `U+10EEEE` cells with row, column
+  and image-id-byte diacritics (omitted ones inferred from the cell to the left), image
+  id from the foreground (256-colour or RGB), placement id from the underline colour.
+  The image is fitted, aspect kept, into the placement's `c` x `r` box. Relative
+  placements may hang off a virtual placement (positioned from its placeholder cells).
+- Animation: `a=f` frames (`x`,`y`,`s`,`v` rectangle, base frame `c`, edit frame `r`,
+  background `Y`, overwrite `X=1`, gap `z`, gapless negative gaps), `a=a` (`s=1/2/3`,
+  `c`, `r`+`z`, loop count `v`), `a=c` composition (`ENOENT`/`EINVAL` as specified) and
+  `d=f`. Frames play on the tab's graphics timer.
+- Lifecycle: Kitty placements scroll with their text (in a scroll region only when
+  entirely inside it), follow the scrollback and are removed with their anchor row,
+  scale on resize like Fuzzball placements (§4) if they fitted when placed, and are
+  cleared by `ED 2`, `ED 3` (scrollback), leaving or entering the alternate screen and
+  RIS. Erasing lines or characters leaves them alone, as the Kitty protocol requires.
+- Memory: one 320 MiB quota shared with Fuzzball images; frames beyond the first have a
+  separate 320 MiB quota.
+
+Deliberate limits:
+
+- Placeholders are drawn on the live screen only: scrollback lines keep no colours, so a
+  placeholder scrolled into the scrollback shows as blank cells.
+- Placements scrolled across a scroll-region margin are not clipped (the protocol asks
+  for clipping); they keep moving with their anchor and go once it leaves the region.
+- A placement wider than the screen when placed is truncated on the right (as the
+  protocol says) and is not scaled on resize; one that fitted is scaled like Fuzzball's.
+- `f=8`/`f=16` colours are resolved when the image arrives; a later theme change does not
+  recolour it.
+- Placements relative to a virtual placement are treated as virtual themselves
+  (screen-position deletes do not remove them).
+- No disk-backed storage for animation frames (kitty's 5x frame quota).
