@@ -86,7 +86,10 @@ Commander shows a scrollable file list above the prompt after `cd`; `t` cycles v
 Only commander is described so far; wait for the maintainer before building it.
 
 ## Packaging
-CI may only use GitHub-owned or verified actions (WeirdBrains org policy).
+CI may only use GitHub-owned or verified actions (WeirdBrains org policy); any other
+action fails the run at startup with no jobs. The workflows install Rust with `rustup`,
+cache with `actions/cache` and publish with `gh release create` (2737875); the release
+path is untested until the next tag.
 Arch: `packaging/arch/PKGBUILD.tmpl` exists. Planned: AUR-ready `mouser-git` and
 `mouser-bin` PKGBUILDs with `.SRCINFO`, a `.pkg.tar.zst` attached to releases, and
 `makepkg -si` install docs. AUR registration is currently closed, so publishing waits;
@@ -94,6 +97,14 @@ AUR packages need a personal maintainer account.
 Remaining `m3talsmith/mouser` URLs: release workflow, Formula, Casks, PKGBUILD,
 nfpm.yaml, AGENTS.md, docs/release.md, metainfo. Keep the app ID
 `io.github.m3talsmith.mouser` unless the maintainer decides otherwise.
+
+## Recent work on main (since v0.7.2)
+- Kitty graphics fallback: 8332289, 5628141, 529c968, 75e5bcf, docs f9212d7.
+- Command-line launching and xdg-terminal-exec desktop entry: 88e50c1; CI fixes
+  2737875 (actions policy), 5da1891 (non-Linux warning), 4b70ea7 (Windows test).
+- Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
+  is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
+  ratatui#2854.
 
 ## Open decisions
 - Inside tmux, `mouser show` prefers Kitty placeholders over Fuzzball (one-line flip).
