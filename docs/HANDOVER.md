@@ -104,6 +104,14 @@ stays unless the maintainer decides otherwise.
 - Command-line launching and xdg-terminal-exec desktop entry: 88e50c1; CI fixes
   2737875 (actions policy), 5da1891 (non-Linux warning), 4b70ea7 (Windows test).
 - Arch packaging (mouser-git, mouser-bin) and URL move to WeirdBrains: see Packaging.
+- Selection, copy and paste: 3acc2a1 (model `mouser-core/src/selection.rs`, app glue
+  `mouser-app/src/select.rs`, renderer hooks), c21b8c0 (paste sanitising, Shift+Insert),
+  022c8a6 (smithay-clipboard: Hyprland ignores `wl-copy --primary` over data-control, so
+  PRIMARY/clipboard are set through Mouser's own Wayland connection; auto-scroll keeps
+  going when the compositor stops sending motion after the pointer leaves). Live-verified
+  on Hyprland (word, line, drag+copy, block, auto-scroll into scrollback, Ctrl+Shift+V and
+  middle-click paste into `cat`, clear on typing). Gaps: no Windows clipboard; resize does
+  not reflow so wraps follow the old width; X11 PRIMARY needs xclip/xsel.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.

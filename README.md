@@ -95,7 +95,8 @@ An ssh tab that exits with an error stays open showing
 
 ## Terminal
 
-- **Ctrl+Shift+V** pastes (bracketed when the app asks for it).
+- **Drag** selects text (double-click word, triple-click line, Alt+drag block, Shift+click extends); **Ctrl+Shift+C** copies.
+- **Ctrl+Shift+V** pastes the clipboard (bracketed when the app asks for it); **middle-click** / **Shift+Insert** paste the selection (PRIMARY). On macOS use Cmd+C / Cmd+V.
 - **Ctrl+click** opens an OSC 8 hyperlink.
 - **Shift+mouse** bypasses an app's mouse capture.
 - Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (otherwise `xterm-256color`).

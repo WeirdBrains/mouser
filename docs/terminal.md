@@ -6,10 +6,18 @@ Mouser emulates a modern xterm (VT220+ with xterm and ECMA-48 extensions).
 
 | Key / action | What it does |
 |---|---|
-| Ctrl+Shift+V | Paste the clipboard (`wl-paste`). Wrapped in `ESC[200~ … ESC[201~` when the app enabled bracketed paste (mode 2004). |
+| Drag | Select characters (screen and scrollback; dragging past the top/bottom edge scrolls). |
+| Double-click / triple-click | Select a word / a line. Word characters are letters, digits and `[selection] word_chars` (default `@-./_~?&=%+#:`). |
+| Shift+click | Extend the selection. |
+| Alt+drag | Block (rectangular) selection. |
+| Ctrl+Shift+C (Cmd+C on macOS) | Copy the selection to the clipboard. Selecting also sets PRIMARY on Linux. |
+| Ctrl+Shift+V (Cmd+V on macOS) | Paste the clipboard. Wrapped in `ESC[200~ … ESC[201~` when the app enabled bracketed paste (mode 2004). Control characters other than tab, LF and CR are dropped. |
+| Middle-click / Shift+Insert | Paste PRIMARY (Linux; Shift+Insert pastes the clipboard elsewhere). |
 | Ctrl+click | Open an OSC 8 hyperlink under the pointer (`http`, `https`, `mailto`, `file` only, via `xdg-open`). |
 | Shift+mouse | Bypass mouse reporting when an app (vim, tmux…) has grabbed the mouse. |
 | Mouse wheel | Scrollback; reported to the app in mouse modes; arrow keys on the alternate screen. |
+
+Copied text joins soft-wrapped lines, ends hard lines with a newline and trims trailing blanks. The selection clears when its text changes or a typed key is sent to the app. It is drawn with the theme's `selection_foreground`/`selection_background`, or inverse colours. Clipboard access uses the Wayland connection, then `wl-copy`/`wl-paste`, `xclip`/`xsel` on X11, `pbcopy`/`pbpaste` on macOS.
 
 OSC 52 clipboard *writes* are passed to `wl-copy`; clipboard *reads* are never answered.
 
