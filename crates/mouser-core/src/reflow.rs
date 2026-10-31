@@ -223,7 +223,8 @@ impl Layout {
     }
 
     /// Make room below line `line` for `delta` more rows (insert empty lines) or
-    /// give back up to `-delta` empty lines that directly follow it.
+    /// give back up to `-delta` empty lines that directly follow it (never a line
+    /// another point is on, so images below and the cursor keep their rows).
     pub fn adjust_after(&mut self, line: usize, delta: i64) {
         if delta > 0 {
             let n = delta as usize;
@@ -233,7 +234,10 @@ impl Layout {
                 p.0 += n;
             }
         } else if delta < 0 {
-            let empty = self.lines[line + 1..].iter().take_while(|l| l.width() == 0).count();
+            // Only empty lines nothing is anchored to (another image, the cursor).
+            let pts = &self.pts;
+            let empty =
+                self.lines[line + 1..].iter().enumerate().take_while(|(i, l)| l.width() == 0 && !pts.iter().any(|p| p.0 == line + 1 + i)).count();
             let n = empty.min(delta.unsigned_abs() as usize);
             if n == 0 {
                 return;
