@@ -134,6 +134,17 @@ stays unless the maintainer decides otherwise.
   full re-wrap). Live sweep harness /tmp/mx/img/sweep.sh. Known: an occasional 0.3–1 s
   frame at the start/end of a Hyprland resize is spent blocked in present (compositor
   frame pacing), not in Mouser's code.
+- Swappable GPU engines (t137u/t138u): design docs/engines.md (85cad5b). Trait
+  `mouser-render/src/engine.rs` (`Engine`, `MouserEngine` wraps `gpu::GpuPainter`,
+  `CustomLibrary`/`CustomEngine`, `FrameBuf` = DisplayList -> C frame, `load_installed`),
+  `mouser-render/src/skia.rs` (feature `skia`, glutin + skia-safe, A8 glyph atlas,
+  DontWait swaps), `mouser-core/src/engines.rs` (manifests, install/uninstall/select,
+  `chosen()`, crash sentinel `engines/.starting-<name>`), `mouser-app/src/engine_cli.rs`,
+  crates `mouser-engine-abi` and `mouser-engine-example`. Tests:
+  `mouser-app/tests/engine_tests.rs` (builds the example into target/engine-tests),
+  `mouser-render/tests/engine_frame_tests.rs`, unit tests in engines.rs and the ABI crate.
+  Live (alien-blue, 1100x760 multi-image screen, drag-resize sweep): mouser 57 fps,
+  skia 59–60, flat 59. Gaps: no hot swap, no URL install, full-frame damage only.
 - Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
   is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.

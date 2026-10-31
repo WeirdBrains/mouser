@@ -18,7 +18,7 @@ underlines, box drawing, the tab bar, panels, the status line and images into a
 | clear | colour (0xRRGGBB) |
 | rect | x, y, w, h, colour |
 | glyph | x, y (top-left of the bitmap), char, colour; the bitmap comes from the core's font stack (8-bit coverage, cached per char and size) |
-| image | x, y, drawn width/height, RGBA pixels already scaled to the drawn size (area-averaged), a cache key, a source rect |
+| image | x, y, drawn width/height, the RGBA8 image (already downscaled by the core when large), a source rect, a cache key; engines scale nearest-neighbour to the drawn size |
 
 So an engine never sees terminal state (grid, scrollback, Fuzzball/Kitty placements,
 selection): those are all resolved by the core into the ops above, which keeps every
@@ -40,24 +40,26 @@ pub trait Engine {
     fn description(&self) -> String;                 // e.g. adapter / backend
     fn resize(&mut self, width: u32, height: u32);
     /// Draw and present. Ok(false): surface was reset, draw again.
-    fn draw(&mut self, list: &DisplayList, glyphs: &mut dyn Glyphs) -> anyhow::Result<bool>;
+    fn draw(&mut self, list: &DisplayList, fonts: &mut FontStack) -> anyhow::Result<bool>;
 }
 ```
 
-`Glyphs` gives an engine the coverage bitmap and metrics for a char at the current
-font size, plus a generation number that changes when the font or size changes (so
-atlases can be dropped). Engines are created with the window (`Arc<Window>`) and its
-size; built-in engines use winit/raw-window-handle directly.
+`FontStack::glyph(ch)` gives the coverage bitmap and metrics for a char at the
+current size; `fonts.generation` changes when the font or size changes, so atlases
+can be dropped. Built-in engines are created with the window (`Arc<Window>`) and its
+size. Custom engines see the same frame through the C ABI below
+(`engine::FrameBuf` converts a `DisplayList`).
 
 ## 3. Lifecycle
 
 - The engine is chosen when a window is created: `MOUSER_ENGINE=<name>` (testing),
-  else `[render] engine = "<name>"` in `config.toml`, else `mouser`.
+  else `engine = "<name>"` in `~/.mouser/preferences.toml` (written by
+  `mouser engine use`), else `mouser`.
 - Creation failure (no adapter, missing library, ABI mismatch, `create` error) falls
   back to the Mouser engine, then to the CPU renderer, with a log line and a status
   message saying why.
 - A draw error at run time also drops to the Mouser engine for that window (logged).
-- **No hot swap in v1**: `mouser engine use NAME` changes the config; new windows use
+- **No hot swap in v1**: `mouser engine use NAME` changes the preference; new windows use
   it, open windows keep their engine until restarted. Swapping a live surface between
   APIs (wgpu, GL) is possible but needs careful surface teardown on Wayland; it can be
   added later without changing engines.
@@ -99,14 +101,18 @@ typedef struct { uint32_t kind;  /* 1 Wayland, 2 Xlib, 3 Xcb, 4 AppKit, 5 Win32 
 typedef struct { int32_t x, y, w, h; uint32_t color; } MouserRect;
 typedef struct { int32_t x, y; uint32_t w, h, stride, color; const uint8_t *coverage;
                  uint64_t key; } MouserGlyph;        /* key: stable per (char, font generation) */
-typedef struct { int32_t x, y; uint32_t w, h; const uint8_t *rgba; uint64_t key; } MouserImage;
+typedef struct { int32_t x, y; uint32_t w, h;          /* drawn size */
+                 uint32_t img_w, img_h, src_x, src_y, src_w, src_h;
+                 const uint8_t *rgba; uint64_t key; } MouserImage; /* RGBA8, straight alpha */
 typedef struct { uint32_t kind; uint32_t index; } MouserOp; /* 0 rect, 1 glyph, 2 image */
 
 typedef struct {
     uint32_t width, height, clear;
     int32_t dirty_x, dirty_y, dirty_w, dirty_h;   /* v1: always the whole surface */
     const MouserOp *ops; size_t op_count;         /* painting order */
-    const MouserRect *rects; const MouserGlyph *glyphs; const MouserImage *images;
+    const MouserRect *rects; size_t rect_count;
+    const MouserGlyph *glyphs; size_t glyph_count;
+    const MouserImage *images; size_t image_count;
 } MouserFrame;
 ```
 
@@ -114,12 +120,17 @@ All pointers in a frame are valid only during `draw`. Colours are 0xRRGGBB. The
 header is `crates/mouser-engine-abi/mouser_engine.h`; the Rust side of the ABI is the
 `mouser-engine-abi` crate, which engine authors can depend on.
 
-Guards on the Mouser side: the ABI number and `size` must match, the name must match
-the manifest, every call is wrapped so a Rust panic in Mouser's shim cannot unwind
-into the library, and a **crash sentinel**: before calling `create` Mouser writes
+Guards on the Mouser side: the ABI number must match and `size` must be at least the
+v1 table, the reported name must match the manifest (checked at install and at load),
+a negative `draw` result switches the window to the Mouser engine, and a **crash sentinel**: before calling `create` Mouser writes
 `engines/.starting-<name>`, and removes it after the first frames are presented. If
 Mouser finds the sentinel at the next start (the engine crashed the process), it skips
-that engine, uses the Mouser engine and says so; `mouser engine use <name>` clears it.
+that engine, uses the Mouser engine and says so (`mouser engine list` shows it too);
+`mouser engine use <name>` or reinstalling clears it.
+
+Why not XDG (`$XDG_DATA_HOME/mouser/engines`)? Mouser keeps all of its state under
+one directory, `~/.mouser` or `$MOUSER_HOME` (docs/storage.md), so engines follow
+that rule; tests point `MOUSER_HOME` (and `HOME`) at a temporary directory.
 
 ## 5. Installing
 
@@ -143,7 +154,7 @@ CLI (thin adapters over `mouser_core::engines`):
 | `mouser engine list` | built-in (`mouser`, `skia` if compiled in) and installed engines, the active one marked, broken ones with the reason |
 | `mouser engine install <dir \| engine.toml \| lib.so>` | checks the manifest, loads the library and checks its ABI, copies it into `engines/<name>/` |
 | `mouser engine uninstall <name>` | removes `engines/<name>/` (built-ins cannot be removed); if it was in use, the config goes back to `mouser` |
-| `mouser engine use <name>` | sets `[render] engine` in `config.toml` (checks it exists) |
+| `mouser engine use <name>` | sets `engine` in `preferences.toml` (checks it exists; `mouser` clears it) |
 
 Installing from a URL is not supported in v1: download the engine yourself and install
 the directory (no network access from the terminal, no unsigned code fetched for you).
@@ -151,9 +162,38 @@ the directory (no network access from the terminal, no unsigned code fetched for
 ## 6. Built-in engines
 
 - `mouser`: the wgpu renderer (Vulkan/GL/Metal/DX12): instanced quads, a glyph atlas,
-  image textures cached by key.
-- `skia`: Skia through OpenGL (glutin on the window). Rects as Skia rects, glyphs as
-  alpha-mask images tinted by colour, images as Skia images cached by key. Built
-  behind the `skia` cargo feature (the `skia-safe` crate downloads prebuilt Skia).
-- Example custom engine: `crates/mouser-engine-example` (`flat`), built as a cdylib, used
-  by the tests for install/load/fallback.
+  image textures cached by key. Unchanged; it is now behind the trait.
+- `skia`: Skia (Ganesh) over OpenGL through glutin (EGL, then GLX; CGL on macOS, WGL
+  on Windows). Rects are Skia rects; glyphs go into one A8 atlas image drawn with the
+  glyph colour (Skia tints alpha-only images and batches quads sharing a texture);
+  images are Skia images cached by key, drawn nearest-neighbour. Swaps without
+  waiting for vblank (`SwapInterval::DontWait`): on Wayland/NVIDIA a vsynced EGL swap
+  blocked ~30 ms per frame during a drag-resize; Mouser already caps frames at one per
+  8 ms. Built behind the `skia` cargo feature of `mouser-app`, **on by default**
+  (the `skia-safe` crate downloads a prebuilt, statically linked Skia at build time;
+  no system packages; the binary then needs `libstdc++` and, to use Skia, `libEGL`
+  or `libGL`). `cargo build --no-default-features` leaves it out.
+- Example custom engine: `crates/mouser-engine-example` (`flat`), a `cdylib` that
+  rasterises the ABI frame on the CPU and presents it with softbuffer. Tests build it
+  and use it for install/list/use/uninstall, ABI mismatch and load-failure fallback;
+  `tests/engine_frame_tests.rs` checks its output against the CPU reference image.
+
+```bash
+cargo build --release -p mouser-engine-example
+mkdir flat && cp target/release/libmouser_engine_flat.so crates/mouser-engine-example/engine.toml flat/
+mouser engine install flat && mouser engine use flat
+```
+
+## 7. Status and gaps
+
+Measured on alien-blue (RTX 3060, Hyprland, 1100x760, the multi-image screen,
+~240 drag-resize steps): mouser 57 fps (frame p95 8.9 ms), skia 59–60 fps (p95
+12.8–13.1 ms), flat 59 fps (p95 11–12 ms). The sweep issues one resize per ~16 ms, so
+~60 fps is the ceiling of the test. Skia's output matches the CPU reference to a few
+hundred pixels (cursor/rounding); the wgpu engine differs slightly more (its blending
+was already a little different).
+
+Gaps: no hot swap; no URL install; no per-engine options; damage is always the full
+frame; the frame has no text runs or font data (engines can't do their own shaping or
+subpixel text, by design for v1); a crashing custom engine still takes the window down
+(the sentinel only protects the next start).

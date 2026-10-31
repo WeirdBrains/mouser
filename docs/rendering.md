@@ -26,7 +26,9 @@ Terminal
 
 Mouser picks a renderer at startup and logs it (`mouser: renderer: ...` on stderr):
 
-- **GPU (default):** wgpu. Glyphs are rasterised with fontdue into an R8 atlas
+- **GPU (default):** a swappable engine, see [engines.md](./engines.md): `mouser`
+  (wgpu, below) by default, `skia`, or an installed custom engine; any failure falls
+  back to `mouser`. The `mouser` engine is wgpu. Glyphs are rasterised with fontdue into an R8 atlas
   texture; each rect and glyph of the frame's display list is one instanced quad
   with its colour. Blending matches the CPU path.
 - **CPU fallback:** softbuffer with the per-size glyph cache. Used when wgpu can't
