@@ -119,8 +119,15 @@ pub fn parse_replies(r: &str, tmux: bool) -> Option<TermInfo> {
     })
 }
 
-/// Cells for a `w` x `h` pixel image. Aspect ratio is kept; by default the width is
-/// capped at the columns right of the cursor.
+/// Whether the image fits the terminal width (no `--width`, `--height` or
+/// `--original`): it is shown from column 0 across the whole width.
+pub fn fills(o: &Options) -> bool {
+    o.width.is_none() && o.height.is_none() && !o.original
+}
+
+/// Cells for a `w` x `h` pixel image. Aspect ratio is kept; by default the image
+/// is scaled up or down to the columns right of the cursor (the whole width once
+/// the cursor is at column 0); `--original` keeps one image pixel per screen pixel.
 pub fn fit_cells(w: u32, h: u32, t: &TermInfo, o: &Options) -> (u32, u32) {
     let (cw, ch) = (t.cell.0.max(1) as f64, t.cell.1.max(1) as f64);
     let (w, h) = (w.max(1) as f64, h.max(1) as f64);
@@ -137,8 +144,7 @@ pub fn fit_cells(w: u32, h: u32, t: &TermInfo, o: &Options) -> (u32, u32) {
         (Some(c), None) => (c as f64, rows_for(c as f64)),
         (None, Some(r)) => (cols_for(r as f64), r as f64),
         (None, None) => {
-            let c = (w / cw).ceil().max(1.0);
-            let c = if o.original { c } else { c.min(avail) };
+            let c = if o.original { (w / cw).ceil().max(1.0) } else { avail };
             (c, rows_for(c))
         }
     };
@@ -275,8 +281,9 @@ pub fn placeholder_id(seed: u32) -> u32 {
 /// Bytes that upload `p` as image `id` in chunks of at most `max_chunk` base64
 /// characters, place it at the cursor in `cols` x `rows` cells and move the
 /// cursor to the start of the line below it. Only the last chunk asks for a
-/// success reply; errors are always reported.
-pub fn encode(p: &Payload, id: u32, cols: u32, rows: u32, t: &TermInfo) -> String {
+/// success reply; errors are always reported. `fill` asks the terminal to keep
+/// the placement as wide as the screen (`fit=w`), also after a resize.
+pub fn encode(p: &Payload, id: u32, cols: u32, rows: u32, fill: bool, t: &TermInfo) -> String {
     let data = b64(&p.bytes);
     let chunk = (t.max_chunk.min(1 << 20) / 4 * 4).max(4);
     let mut out = String::new();
@@ -287,7 +294,8 @@ pub fn encode(p: &Payload, id: u32, cols: u32, rows: u32, t: &TermInfo) -> Strin
         let tail = if last { "quiet=0" } else { "more=1,quiet=1" };
         out += &message(&format!("gu;{head}len={},{tail}:{part}", part.len()), t.tmux);
     }
-    out += &message(&format!("gp;id={id},pid=1,cols={cols},rows={rows},quiet=1"), t.tmux);
+    let fit = if fill { ",fit=w" } else { "" };
+    out += &message(&format!("gp;id={id},pid=1,cols={cols},rows={rows}{fit},quiet=1"), t.tmux);
     // `move=1` left the cursor on the image's last row; continue below it.
     out += "\r\n";
     out
@@ -415,11 +423,19 @@ pub fn run(files: &[String], o: &Options) -> Result<()> {
         } else {
             std::fs::read(f).with_context(|| format!("reading {f}"))?
         };
+        let fill = fills(o);
+        if fill && t.cursor_col > 0 {
+            // Fitting the width starts at column 0.
+            tty.out.write_all(b"\r\n")?;
+            t.cursor_col = 0;
+        }
         let res = prepare(&data, &t).and_then(|p| {
             let (cols, rows) = fit_cells(p.w, p.h, &t, o);
+            // Too tall to fill the width (over the row cap): fixed size instead.
+            let fill = fill && cols == t.cols;
             let id = base.wrapping_add(i as u32).max(1);
             let bytes = match t.proto {
-                Proto::Fuzzball => encode(&p, id, cols, rows, &t),
+                Proto::Fuzzball => encode(&p, id, cols, rows, fill, &t),
                 Proto::Kitty => encode_kitty(&p, id, cols, rows, tmux),
                 Proto::KittyPlaceholders => encode_placeholders(&p, placeholder_id(id), cols, rows, tmux),
             };
@@ -501,22 +517,26 @@ mod tests {
 
     #[test]
     fn fits_width_keeps_aspect() {
+        assert_eq!(term().cols % 4, 0, "the assertions below assume this");
         let t = term();
         // 400x200 px image, 10x20 cells: natural 40x10 cells.
-        assert_eq!(fit_cells(400, 200, &t, &Options::default()), (40, 10));
+        // Scaled up to the whole width.
+        assert_eq!(fit_cells(400, 200, &t, &Options::default()), (t.cols, t.cols / 4));
         let narrow = TermInfo { cols: 30, cursor_col: 10, ..t.clone() };
         assert_eq!(fit_cells(400, 200, &narrow, &Options::default()), (20, 5));
         assert_eq!(fit_cells(400, 200, &narrow, &Options { original: true, ..Default::default() }), (40, 10));
         assert_eq!(fit_cells(400, 200, &t, &Options { width: Some(20), ..Default::default() }), (20, 5));
         assert_eq!(fit_cells(400, 200, &t, &Options { height: Some(5), ..Default::default() }), (20, 5));
         assert_eq!(fit_cells(400, 200, &t, &Options { width: Some(20), height: Some(2), ..Default::default() }), (8, 2));
-        assert_eq!(fit_cells(1, 1, &t, &Options::default()), (1, 1));
+        assert_eq!(fit_cells(1, 1, &t, &Options::default()), (t.cols, t.cols / 2));
+        assert!(fills(&Options::default()) && !fills(&Options { original: true, ..Default::default() }));
+        assert!(!fills(&Options { width: Some(3), ..Default::default() }));
     }
 
     #[test]
     fn encodes_chunked_upload_and_place() {
         let p = Payload { fmt: "rgba", w: 2, h: 1, bytes: vec![255, 0, 0, 255, 0, 0, 255, 255] };
-        let s = encode(&p, 7, 4, 2, &term());
+        let s = encode(&p, 7, 4, 2, false, &term());
         // 12 base64 chars in chunks of 8.
         assert_eq!(
             s,

@@ -70,9 +70,14 @@ Omarchy's run `xdg-terminal-exec btop` as `mouser -e btop`.
 images. It sends `DCS = F z c q`, the Kitty query `ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`,
 `CSI 16 t`, `CSI 18 t`, `CSI 6 n` and DA1, and waits up to 1.5 s for the replies (DA1
 ends the wait outside tmux). With a Fuzzball reply it uploads each image in base64
-chunks of at most `max_chunk`, places it at the cursor fitted to the columns right of
-it (aspect kept) and moves the cursor below it. With only a Kitty reply it sends
-`a=T` in 4096-byte chunks with `q=1` (errors only) and the same fit. PNG within the
+chunks of at most `max_chunk`, starts a new line if the cursor is not in column 0 and
+places the image across the whole terminal width (scaled up or down, aspect kept) with
+`fit=w`, so it keeps filling the width when the window is resized; it then moves the
+cursor below it. `--width`/`--height` give a fixed size and `--original` the natural
+pixel size instead. An image too tall to fill the width within 1000 rows is shrunk to
+fit 1000 rows. With only a Kitty reply it sends `a=T` in 4096-byte chunks with `q=1`
+(errors only) and `c`/`r` for the full width (Kitty has no fill mode, so it does not
+follow later resizes). PNG within the
 published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
 RGBA and scaled down to `g_max_dim` / `g_mem` if needed. Video and audio are out of
 scope. Inside tmux every message is wrapped for passthrough. tmux answers DA1 itself and

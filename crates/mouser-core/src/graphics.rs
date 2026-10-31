@@ -58,6 +58,9 @@ pub struct Placement {
     /// Never refitted to the screen width (a Kitty placement already wider than
     /// the screen when placed is truncated on the right, as the protocol says).
     pub fixed: bool,
+    /// Fuzzball `fit=w`: always as wide as the screen right of the anchor
+    /// column, scaled up or down (aspect kept) on every resize.
+    pub fill: bool,
     /// Kitty `U=1` virtual placement: drawn only through Unicode placeholders.
     pub virt: bool,
     /// Kitty relative placement: parent `(image id, placement id)` and the
@@ -67,18 +70,21 @@ pub struct Placement {
 }
 
 impl Placement {
-    /// Fit the requested box into a screen `screen_cols` wide, shrinking in place:
-    /// unchanged when it fits; otherwise it keeps its anchor column and shrinks
-    /// (aspect kept) to the columns left of the right edge. Once the anchor column
-    /// itself is cut off it is pinned to the last column at one column wide, so the
-    /// size changes by at most one column per column of resize and nothing is dropped.
+    /// Fit the placement to a screen `screen_cols` wide. A `fill` placement spans
+    /// from its anchor column to the right edge (moved to column 0 once the anchor
+    /// is cut off). Any other placement keeps its requested anchor and size when
+    /// they fit; when it would overhang the right edge it moves to column 0 and is
+    /// scaled down (aspect kept) to at most the screen width. Rows scale with the
+    /// width; a wider screen restores the request.
     pub fn fit(&mut self, screen_cols: usize) {
         let w = (screen_cols.max(1) as u64).min(u32::MAX as u64) as u32;
-        let (col, cols) = if self.req_col + self.req_cols <= w {
+        let (col, cols) = if self.fill {
+            let col = if self.req_col < w { self.req_col } else { 0 };
+            (col, w - col)
+        } else if self.req_col + self.req_cols <= w {
             (self.req_col, self.req_cols)
         } else {
-            let c = w.saturating_sub(self.req_col).max(1);
-            (self.req_col.min(w - c), c)
+            (0, self.req_cols.min(w))
         };
         self.col = col;
         self.cols = cols.max(1);

@@ -62,7 +62,7 @@ Data flow:
 ### Showing images: `mouser show`
 
 ```sh
-mouser show photo.jpg diagram.png      # one after another, fitted to the width
+mouser show photo.jpg diagram.png      # one after another, each scaled to the terminal width (follows resizes)
 curl -s https://example.com/x.png | mouser show -
 mouser show --width 30 logo.png        # 30 cells wide, height keeps the aspect
 mouser show --original icon.png        # natural pixel size
