@@ -17,15 +17,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Only GitHub-owned and verified actions are allowed in WeirdBrains.
       - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
 
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: actions/cache@v4
         with:
-          cache-on-failure: true
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: cargo-${{ runner.os }}-
 
       - name: Install Linux deps
         if: runner.os == 'Linux'
