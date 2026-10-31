@@ -1,6 +1,8 @@
 //! Image store shared by the Fuzzball graphics protocol (see `fuzzball.rs`
-//! and `docs/protocol/graphics.md`): decoded images, cell-anchored placements,
-//! memory accounting and the base64 / PNG decoders.
+//! and `docs/protocol/graphics.md`) and the Kitty graphics fallback
+//! (`kitty_graphics.rs`): decoded images, cell-anchored placements, their
+//! lifecycle (scrolling, erasing, resizing), memory accounting and the
+//! base64 / PNG decoders.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,7 +25,7 @@ pub struct Image {
     pub key: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Placement {
     pub image_id: u32,
     pub id: u32,
@@ -46,6 +48,22 @@ pub struct Placement {
     pub alt: bool,
     /// Last time it was placed (for eviction order).
     pub stamp: u64,
+    /// Kitty `X`/`Y`: pixel offset of the image inside the anchor cell.
+    pub x_off: u32,
+    pub y_off: u32,
+    /// Kitty placement without `c`/`r`: drawn at this natural pixel size.
+    pub natural: Option<(u32, u32)>,
+    /// Keep the source aspect ratio inside the box, centred (Kitty `c`/`r`).
+    pub letterbox: bool,
+    /// Never refitted to the screen width (a Kitty placement already wider than
+    /// the screen when placed is truncated on the right, as the protocol says).
+    pub fixed: bool,
+    /// Kitty `U=1` virtual placement: drawn only through Unicode placeholders.
+    pub virt: bool,
+    /// Kitty relative placement: parent `(image id, placement id)` and the
+    /// `H`/`V` cell offset from it.
+    pub parent: Option<(u32, u32)>,
+    pub rel: (i32, i32),
 }
 
 impl Placement {
@@ -70,15 +88,60 @@ impl Placement {
     /// Displayed size in pixels for a cell size: `cols` cells wide, and as tall as
     /// the requested box scaled by the same factor.
     pub fn pixel_size(&self, cell: (u32, u32)) -> (u32, u32) {
-        let (cw, ch) = (cell.0.max(1) as u64, cell.1.max(1) as u64);
-        let w = self.cols as u64 * cw;
-        let h = if self.cols == self.req_cols {
-            self.rows as u64 * ch
-        } else {
-            (self.req_rows as u64 * ch * self.cols as u64 / self.req_cols.max(1) as u64).max(1)
-        };
-        (w as u32, h as u32)
+        let r = self.draw_rect(cell);
+        (r.2, r.3)
     }
+
+    /// Where the image is drawn relative to the anchor cell's top-left pixel:
+    /// `(x, y, width, height)`. The requested box (natural size, or `req_cols x
+    /// req_rows` cells) is scaled by `cols / req_cols` after a shrink, then the
+    /// source rectangle is letterboxed into it when asked.
+    pub fn draw_rect(&self, cell: (u32, u32)) -> (u32, u32, u32, u32) {
+        let (cw, ch) = (cell.0.max(1) as u64, cell.1.max(1) as u64);
+        let (num, den) = (self.cols as u64, self.req_cols.max(1) as u64);
+        let scale = |v: u64| if num == den { v } else { (v * num / den).max(1) };
+        let (bw, bh) = match self.natural {
+            Some((w, h)) => (scale(w as u64), scale(h as u64)),
+            None if num == den => (self.cols as u64 * cw, self.rows as u64 * ch),
+            None => (self.cols as u64 * cw, scale(self.req_rows as u64 * ch)),
+        };
+        let off = |v: u64| v * num / den;
+        let (mut x, mut y, mut w, mut h) = (off(self.x_off as u64), off(self.y_off as u64), bw.max(1), bh.max(1));
+        if self.letterbox && self.natural.is_none() {
+            let (sw, sh) = (self.src.2.max(1) as u64, self.src.3.max(1) as u64);
+            if w * sh > h * sw {
+                let nw = (h * sw / sh).max(1);
+                x += (w - nw) / 2;
+                w = nw;
+            } else {
+                let nh = (w * sh / sw).max(1);
+                y += (h - nh) / 2;
+                h = nh;
+            }
+        }
+        let c = |v: u64| v.min(u32::MAX as u64) as u32;
+        (c(x), c(y), c(w), c(h))
+    }
+
+    /// Whether the placement covers cell (`row` absolute, `col`).
+    pub fn covers(&self, row: i64, col: u32) -> bool {
+        !self.virt && row >= self.row && row < self.row + self.rows as i64 && col >= self.col && col < self.col + self.cols
+    }
+}
+
+/// One image to draw: anchor cell (row relative to the top of the view, may
+/// be negative), pixel offset from it and drawn size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draw {
+    pub image_id: u32,
+    pub src: (u32, u32, u32, u32),
+    pub row: i64,
+    pub col: i64,
+    pub x_off: i64,
+    pub y_off: i64,
+    pub width: u32,
+    pub height: u32,
+    pub z: i32,
 }
 
 /// A published limit (`g_mem`, `g_max_place`) would be exceeded.
@@ -87,6 +150,10 @@ pub struct OverLimit;
 
 #[derive(Debug, Default)]
 pub struct Graphics {
+    /// Follow the Kitty rules: several unnamed (`p=0`) placements per image,
+    /// erase commands other than clear-screen leave placements alone, and only
+    /// placements entirely inside a scroll region scroll with it.
+    pub kitty: bool,
     pub images: HashMap<u32, Image>,
     pub placements: Vec<Placement>,
     next_key: u64,
@@ -130,7 +197,9 @@ impl Graphics {
 
     /// Add or move placement `(image_id, id)`.
     pub fn place(&mut self, mut p: Placement) -> Result<(), OverLimit> {
-        self.placements.retain(|q| !(q.image_id == p.image_id && q.id == p.id && q.alt == p.alt));
+        if !(self.kitty && p.id == 0) {
+            self.placements.retain(|q| !(q.image_id == p.image_id && q.id == p.id && (q.alt == p.alt || self.kitty)));
+        }
         if self.placements.iter().filter(|q| q.alt == p.alt).count() >= MAX_PLACEMENTS {
             return Err(OverLimit);
         }
@@ -162,8 +231,138 @@ impl Graphics {
             .filter(|p| p.alt == alt && p.row + p.rows as i64 > top && p.row < top + rows as i64)
             .filter_map(|p| self.images.get(&p.image_id).map(|i| (p, i)))
             .collect();
-        v.sort_by_key(|(p, _)| (p.z, p.stamp));
+        v.retain(|(p, _)| !p.virt);
+        v.sort_by_key(|(p, _)| (p.z, if self.kitty { p.image_id } else { 0 }, p.stamp));
         v
+    }
+
+    /// Draws for the placements visible in absolute rows `top .. top + rows`.
+    pub fn draws(&self, alt: bool, top: i64, rows: usize, cell: (u32, u32)) -> Vec<Draw> {
+        self.visible(alt, top, rows)
+            .into_iter()
+            .map(|(p, _)| {
+                let r = p.draw_rect(cell);
+                Draw {
+                    image_id: p.image_id,
+                    src: p.src,
+                    row: p.row - top,
+                    col: p.col as i64,
+                    x_off: r.0 as i64,
+                    y_off: r.1 as i64,
+                    width: r.2,
+                    height: r.3,
+                    z: p.z,
+                }
+            })
+            .collect()
+    }
+
+    /// Replace image `id`'s pixels (same size), e.g. for an animation frame.
+    pub fn set_rgba(&mut self, id: u32, rgba: Arc<Vec<u8>>) {
+        self.next_key += 1;
+        if let Some(i) = self.images.get_mut(&id) {
+            i.rgba = rgba;
+            i.key = self.next_key;
+        }
+    }
+
+    /// The alternate screen was left: its placements go with it.
+    pub fn leave_alt(&mut self) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt && !p.virt);
+        before != self.placements.len()
+    }
+
+    /// Follow a scroll on screen `alt`. `base`: absolute row of screen row 0 when it
+    /// happened; `rows`: screen height. Placements scrolled out of the region go.
+    /// Kitty placements only scroll when entirely inside the region.
+    pub fn scrolled(&mut self, alt: bool, base: i64, ev: crate::grid::ScrollEvent, rows: usize) -> bool {
+        let (top, bottom) = (base + ev.top as i64, base + ev.bottom as i64);
+        let n = ev.delta.unsigned_abs() as i64;
+        let mut changed = false;
+        if ev.to_scrollback {
+            // Region rows keep their absolute row; rows below the region stay on the
+            // same screen row, which is now `n` further down in absolute terms.
+            if ev.bottom + 1 < rows {
+                for p in self.placements.iter_mut().filter(|p| p.alt == alt && !p.virt && p.row > bottom && p.row < base + rows as i64) {
+                    p.row += n;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+        let kitty = self.kitty;
+        let before = self.placements.len();
+        let mut moved = Vec::new();
+        for (i, p) in self.placements.iter_mut().enumerate() {
+            let inside = p.row >= top && if kitty { p.row + p.rows as i64 - 1 <= bottom } else { p.row <= bottom };
+            if p.alt == alt && !p.virt && inside {
+                p.row += ev.delta as i64;
+                changed = true;
+                if p.row < top || p.row > bottom {
+                    moved.push(i);
+                }
+            }
+        }
+        for i in moved.into_iter().rev() {
+            self.placements.remove(i);
+        }
+        changed || before != self.placements.len()
+    }
+
+    /// Main-screen placements anchored above absolute row `first` (no longer in the
+    /// scrollback) are removed. Image data stays until deleted or evicted.
+    pub fn evict_scrollback(&mut self, first: i64) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| !p.alt && !p.virt && p.row < first);
+        before != self.placements.len()
+    }
+
+    /// Apply a grid resize. `alt`: the active screen; `top`: absolute row of the
+    /// first visible line; `shift`: rows the active alt screen moved up to keep the
+    /// cursor visible; `rows`/`cols`: the new size. Mouser does not rewrap text, so
+    /// placements whose anchor cell was cut off (below the last row, right of the
+    /// last column, or above the alt screen) are removed; the rest keep their cells.
+    /// The inactive main screen is blanked by a resize in the alt screen, so its
+    /// visible placements go too.
+    pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize) -> bool {
+        let before = self.placements.len();
+        if alt && shift != 0 {
+            for p in self.placements.iter_mut().filter(|p| p.alt && !p.virt) {
+                p.row -= shift;
+            }
+        }
+        let bottom = top + rows as i64;
+        self.delete(false, |p| {
+            if p.virt {
+                return false;
+            }
+            if p.alt != alt {
+                return !p.alt && p.row >= top;
+            }
+            p.row >= bottom || (p.alt && p.row < top)
+        });
+        let mut changed = before != self.placements.len() || shift != 0;
+        for p in self.placements.iter_mut().filter(|p| !p.virt && !p.fixed) {
+            let old = (p.col, p.cols, p.rows);
+            p.fit(cols);
+            changed |= old != (p.col, p.cols, p.rows);
+        }
+        changed
+    }
+
+    /// Erase covered rows `from..to` (absolute) on a screen: placements touching them go.
+    pub fn erase_rows(&mut self, alt: bool, from: i64, to: i64) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt == alt && !p.virt && p.row < to && p.row + p.rows as i64 > from);
+        before != self.placements.len()
+    }
+
+    /// Erase cells `c0..c1` of absolute row `row`.
+    pub fn erase_cells(&mut self, alt: bool, row: i64, c0: u32, c1: u32) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt == alt && !p.virt && row >= p.row && row < p.row + p.rows as i64 && c0 < p.col + p.cols && c1 > p.col);
+        before != self.placements.len()
     }
 }
 

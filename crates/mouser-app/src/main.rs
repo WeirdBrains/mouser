@@ -333,7 +333,16 @@ fn main() -> Result<()> {
             p.cell_px = cell;
             let top = if p.screen.in_alt_screen() { p.lines_scrolled } else { p.lines_scrolled - scrolled_back as i64 };
             let alt = p.screen.in_alt_screen();
-            mouser_render::image_draws(&p.fuzzball.gfx, alt, top, rows, cell, &mut scaler.lock().unwrap())
+            let live = p.lines_scrolled - top;
+            let screen = &p.screen;
+            let row = |i: usize| {
+                let y = i as i64 - live;
+                (y >= 0 && (y as usize) < screen.size.rows).then(|| screen.row(y as usize))
+            };
+            let mut kitty = p.kitty_gfx.gfx.draws(alt, top, rows, cell);
+            kitty.extend(p.kitty_gfx.placeholder_draws(rows, &row, cell));
+            let fuzz = p.fuzzball.gfx.draws(alt, top, rows, cell);
+            mouser_render::layered_image_draws(&[(&p.kitty_gfx.gfx, kitty), (&p.fuzzball.gfx, fuzz)], &mut scaler.lock().unwrap())
         })
     };
     let on_key = {

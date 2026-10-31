@@ -57,14 +57,15 @@ pub struct Style {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
-    /// Up to two combining marks / ZWJ joiners attached to `ch` (`'\0'` = none).
-    pub comb: [char; 2],
+    /// Up to three combining marks / ZWJ joiners attached to `ch` (`'\0'` = none);
+    /// Kitty Unicode placeholders carry three diacritics.
+    pub comb: [char; 3],
     pub style: Style,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: ' ', comb: ['\0'; 2], style: Style::default() }
+        Self { ch: ' ', comb: ['\0'; 3], style: Style::default() }
     }
 }
 
@@ -286,10 +287,10 @@ impl Screen {
         st.attrs &= !(attr::WIDE | attr::WIDE_CONT);
         if w == 2 {
             self.clear_wide_at(self.cursor.x + 1);
-            self.cells[i] = Cell { ch, comb: ['\0'; 2], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
-            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; 2], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
+            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
+            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
         } else {
-            self.cells[i] = Cell { ch, comb: ['\0'; 2], style: st };
+            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: st };
         }
         if self.cursor.x + w < cols {
             self.cursor.x += w;

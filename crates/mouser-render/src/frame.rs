@@ -3,6 +3,7 @@
 
 use crate::text::{Draw, FontStack, luminance, mix};
 use crate::ui::{self, UiLayout};
+use mouser_core::kitty_graphics::PLACEHOLDER;
 
 /// Padding between the window edge and the terminal grid, in pixels.
 pub const PADDING: i32 = 8;
@@ -67,12 +68,12 @@ pub struct CellPaint {
     pub ul_color: u32,
     pub flags: u8,
     /// Combining marks drawn over the base glyph (`'\0'` = none).
-    pub comb: [char; 2],
+    pub comb: [char; 3],
 }
 
 impl CellPaint {
     pub fn plain(fg: u32) -> Self {
-        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 2] }
+        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 3] }
     }
 }
 
@@ -104,20 +105,27 @@ fn draw_underline(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, style: u8, colo
     }
 }
 
-fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+/// Cell backgrounds of a styled row. All rows' backgrounds are painted before
+/// any text so wide glyphs and italics overhang cleanly, and so Kitty images
+/// with `z < KITTY_BELOW_BG` can sit under them and other negative z between
+/// them and the text.
+fn draw_row_bgs(canvas: &mut dyn Draw, fonts: &FontStack, top: i32, styles: &[CellPaint]) {
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
-    // Backgrounds first so wide glyphs and italics overhang cleanly.
     for (col, p) in styles.iter().enumerate() {
         if let Some(bg) = p.bg {
             canvas.fill_rect(PADDING + col as i32 * cw, top, cw, ch, bg);
         }
     }
+}
+
+fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+    let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let under_y = top + (fonts.ascent + 2).min(ch - 3);
     for (col, c) in line.chars().enumerate() {
         let x = PADDING + col as i32 * cw;
         let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
         let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
-        if p.flags & paint::NO_GLYPH == 0 {
+        if p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER {
             let g = if p.flags & paint::ITALIC != 0 { crate::text::italic_key(c) } else { c };
             canvas.draw_char(fonts, x, top, g, p.fg);
             if p.flags & paint::BOLD != 0 {
@@ -175,33 +183,47 @@ pub fn image_draws(
     cell: (u32, u32),
     scaler: &mut crate::scale::ImageScaler,
 ) -> Vec<ImageDraw> {
-    let mut draws: Vec<ImageDraw> = gfx
-        .visible(alt, top, rows)
-        .into_iter()
-        .map(|(pl, im)| {
-            let (width, height) = pl.pixel_size(cell);
-            ImageDraw {
+    layered_image_draws(&[(gfx, gfx.draws(alt, top, rows, cell))], scaler)
+}
+
+/// Draw commands for several stores, each with its draws (for example Kitty
+/// placements and placeholders, then Fuzzball placements). Sorted by z; at
+/// equal z later layers draw on top, so Fuzzball goes last to take precedence.
+pub fn layered_image_draws(
+    layers: &[(&mouser_core::graphics::Graphics, Vec<mouser_core::graphics::Draw>)],
+    scaler: &mut crate::scale::ImageScaler,
+) -> Vec<ImageDraw> {
+    let mut draws: Vec<ImageDraw> = Vec::new();
+    for (gfx, list) in layers {
+        for d in list {
+            let Some(im) = gfx.images.get(&d.image_id) else { continue };
+            let i32c = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            draws.push(ImageDraw {
                 key: im.key,
                 rgba: im.rgba.clone(),
                 img_w: im.width,
                 img_h: im.height,
-                src: pl.src,
-                col: pl.col as i32,
-                row: (pl.row - top) as i32,
-                x_off: 0,
-                y_off: 0,
-                width,
-                height,
-                z: pl.z,
-            }
-        })
-        .collect();
+                src: d.src,
+                col: i32c(d.col),
+                row: i32c(d.row),
+                x_off: i32c(d.x_off),
+                y_off: i32c(d.y_off),
+                width: d.width,
+                height: d.height,
+                z: d.z,
+            });
+        }
+    }
+    draws.sort_by_key(|d| d.z);
     scaler.prepare(&mut draws);
     draws
 }
 
-fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool, top: i32) {
-    for img in images.iter().filter(|i| (i.z < 0) == below) {
+/// Kitty images with a z-index below this draw under cell backgrounds.
+pub const KITTY_BELOW_BG: i32 = -1_073_741_824;
+
+fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], z: std::ops::Range<i64>, top: i32) {
+    for img in images.iter().filter(|i| z.contains(&(i.z as i64))) {
         let x = PADDING + img.col * fonts.cell_w + img.x_off;
         let y = top + img.row * fonts.cell_h + img.y_off;
         canvas.draw_image(img, x, y);
@@ -224,15 +246,21 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
     canvas.clear(frame.bg);
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let top0 = frame.top(ch);
-    draw_images(canvas, fonts, frame.images, true, top0);
+    let (lo, below_bg) = (i64::MIN, KITTY_BELOW_BG as i64);
+    draw_images(canvas, fonts, frame.images, lo..below_bg, top0);
+    for (row, st) in frame.styles.iter().enumerate().take(frame.lines.len()) {
+        draw_row_bgs(canvas, fonts, top0 + row as i32 * ch, st);
+    }
+    draw_images(canvas, fonts, frame.images, below_bg..0, top0);
     for (row, line) in frame.lines.iter().enumerate() {
         let top = top0 + row as i32 * ch;
         match frame.styles.get(row) {
             Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, top, line, st, frame.fg),
+            _ if line.contains(PLACEHOLDER) => canvas.draw_text(fonts, PADDING, top, &line.replace(PLACEHOLDER, " "), frame.fg),
             _ => canvas.draw_text(fonts, PADDING, top, line, frame.fg),
         }
     }
-    draw_images(canvas, fonts, frame.images, false, top0);
+    draw_images(canvas, fonts, frame.images, 0..i64::MAX, top0);
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = top0 + cy as i32 * ch;
@@ -242,7 +270,7 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
         match frame.cursor_shape {
             CursorShape::Block => {
                 canvas.fill_rect(x, y, w, ch, color);
-                if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)) {
+                if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)).filter(|c| *c != PLACEHOLDER) {
                     canvas.draw_char(fonts, x, y, c, frame.bg);
                 }
             }
