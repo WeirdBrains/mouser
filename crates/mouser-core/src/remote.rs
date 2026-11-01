@@ -279,7 +279,9 @@ mod tests {
         assert!(ssh_target(&a(&["bash"])).is_none());
         assert!(ssh_target(&a(&["ssh", "-p"])).is_none());
         let argv = t.argv(Path::new("/h/cache/ssh"), "ls");
-        assert!(argv.contains(&"BatchMode=yes".to_string()) && argv.contains(&"ControlPath=/h/cache/ssh/%C".to_string()));
+        assert!(
+            argv.contains(&"BatchMode=yes".to_string()) && argv.contains(&format!("ControlPath={}", Path::new("/h/cache/ssh").join("%C").display()))
+        );
         assert_eq!(&argv[argv.len() - 3..], &a(&["web1", "--", "ls"])[..]);
     }
 
