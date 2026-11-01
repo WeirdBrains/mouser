@@ -1,6 +1,7 @@
-//! `mouser plugin …` (docs/plugins.md). Mirrors `mouser engine …`; engines are
-//! plugins of kind `engine`, so `mouser plugin install <engine dir>` hands off to
-//! the engine installer and `mouser engine …` stays as their alias.
+//! `mouser plugin …` (docs/plugins.md). Engines are plugins of kind `engine`:
+//! `mouser engine X` is `mouser plugin X --kind engine` (the same [`run_kind`]),
+//! which hands engine actions to the engine loader's CLI (`engine_cli`).
+//! `mouser plugin install <engine dir>` installs an engine too.
 
 use anyhow::{Result, bail};
 use mouser_core::permissions::{Decision, Store};
@@ -25,18 +26,73 @@ pub enum Action {
     Revoke(String),
     /// Start an MCP plugin, handshake and list its tools.
     Probe(String),
+    /// Engines: put first (and unskip).
+    Use(String),
+    /// Engines: clear the crash skip / failure (`None`: all).
+    Unskip(Option<String>),
+}
+
+/// A `--kind` name.
+pub fn parse_kind(s: &str) -> Result<Kind> {
+    Kind::ALL
+        .into_iter()
+        .find(|k| k.name() == s)
+        .ok_or_else(|| anyhow::anyhow!("unknown kind {s:?} (one of {})", Kind::ALL.iter().map(|k| k.name()).collect::<Vec<_>>().join(", ")))
+}
+
+/// `mouser plugin [--kind K] ACTION`; `mouser engine ACTION` is kind `engine`.
+pub fn run_kind(action: &Action, kind: Option<&str>, out: &mut dyn Write) -> Result<()> {
+    let kind = kind.map(parse_kind).transpose()?;
+    let engine_named = |n: &str| plugins::find(n).is_none() && plugins::is_engine(n);
+    match (kind, action) {
+        (Some(Kind::Engine), _) => engine(action, out),
+        (None, Action::Use(_) | Action::Unskip(None)) => engine(action, out),
+        (None, Action::Unskip(Some(n))) if engine_named(n) => engine(action, out),
+        (_, Action::Use(_) | Action::Unskip(_)) => bail!("use and unskip are for engines (`mouser engine …`)"),
+        (Some(k), Action::List) => list(out, Some(k)),
+        _ => run(action, out),
+    }
+}
+
+/// Engine actions (`--kind engine`).
+fn engine(action: &Action, out: &mut dyn Write) -> Result<()> {
+    use crate::engine_cli::{self, Action as E};
+    let e = match action {
+        Action::List => E::List,
+        Action::Install(p) => E::Install(p.clone()),
+        Action::Uninstall(n) => E::Uninstall(n.clone()),
+        Action::Use(n) => E::Use(n.clone()),
+        Action::Unskip(n) => E::Unskip(n.clone()),
+        Action::Priority(l) => E::Priority(l.clone()),
+        Action::Move(n, to) => E::Move(n.clone(), to.clone()),
+        Action::Enable(n) | Action::Disable(n) => {
+            if !plugins::is_engine(n) {
+                bail!("no engine named {n} (see `mouser engine list`)");
+            }
+            let on = matches!(action, Action::Enable(_));
+            plugins::set_enabled(n, on)?;
+            let order = mouser_core::engines::priority().join(" > ");
+            writeln!(out, "{n} {}; engines tried: {order}", if on { "enabled" } else { "disabled" })?;
+            return Ok(());
+        }
+        Action::Permissions(..) | Action::PermissionsList | Action::Revoke(_) | Action::Probe(_) => {
+            bail!("engines have no permissions or MCP tools (they are native libraries); see `mouser plugin permissions`")
+        }
+    };
+    engine_cli::run(&e, out)
 }
 
 pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
     match action {
-        Action::List => list(out),
+        Action::Use(_) | Action::Unskip(_) => run_kind(action, None, out),
+        Action::List => list(out, None),
         Action::Install(p) => {
             if p.starts_with("http://") || p.starts_with("https://") {
                 bail!("installing from a URL is not supported; download the plugin and run `mouser plugin install <dir>`");
             }
             let path = Path::new(p);
             let d = if path.is_dir() { path.to_path_buf() } else { path.parent().unwrap_or(Path::new(".")).to_path_buf() };
-            if d.join("engine.toml").is_file() && !d.join("plugin.toml").is_file() {
+            if mouser_core::engines::is_engine_dir(&d) {
                 return crate::engine_cli::run(&crate::engine_cli::Action::Install(p.clone()), out);
             }
             let i = plugins::install(path)?;
@@ -62,6 +118,7 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             writeln!(out, "uninstalled {n} (and forgot its permissions)")?;
             Ok(())
         }
+        Action::Enable(n) | Action::Disable(n) if plugins::find(n).is_none() && plugins::is_engine(n) => engine(action, out),
         Action::Enable(n) | Action::Disable(n) => {
             let on = matches!(action, Action::Enable(_));
             plugins::set_enabled(n, on)?;
@@ -166,18 +223,31 @@ fn permissions(n: &str, sets: &[String], out: &mut dyn Write) -> Result<()> {
     Ok(())
 }
 
-fn list(out: &mut dyn Write) -> Result<()> {
+fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
     let r = plugins::Registry::load();
     writeln!(out, "  {:<4} {:<14} {:<9} {:<9} {:<16} details", "prio", "plugin", "version", "via", "provides")?;
     let mut i = 0;
-    for e in r.entries.iter().filter(|e| !e.kinds.contains(&Kind::Engine)) {
+    for e in r.entries.iter().filter(|e| !e.kinds.contains(&Kind::Engine) && only.is_none_or(|k| e.kinds.contains(&k))) {
         i += 1;
         let state = if e.enabled { "" } else { " [disabled]" };
-        let cmds = if e.commands.is_empty() { String::new() } else { format!("; commands: {}", e.commands.join(", ")) };
+        let cmds = match &e.hotkey {
+            Some(h) => format!("; hotkey ctrl+shift+m {h}"),
+            None if e.commands.is_empty() => String::new(),
+            None => format!("; commands: {}", e.commands.join(", ")),
+        };
         writeln!(out, "  {i:<4} {:<14} {:<9} {:<9} {:<16} {}{cmds}{state}", e.name, e.version, e.transport.name(), kinds(&e.kinds), e.description)?;
     }
     for (d, why) in &r.broken {
         writeln!(out, "  -    {d:<14} {:<9} {:<9} {:<16} broken: {why}", "?", "-", "-")?;
+    }
+    if only.is_some() {
+        if i == 0 {
+            writeln!(out, "  (none)")?;
+        }
+        return Ok(());
+    }
+    if r.modes().is_empty() {
+        writeln!(out, "no mode is enabled: Mouser runs as a plain terminal (`mouser plugin enable commander`)")?;
     }
     let engines: Vec<&str> = r.providers(Kind::Engine).iter().map(|e| e.name.as_str()).collect();
     writeln!(out, "engines (kind engine, ordered by `mouser engine priority`): {}", engines.join(", "))?;

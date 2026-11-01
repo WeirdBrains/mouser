@@ -1,4 +1,5 @@
-//! `mouser engine list | install | uninstall | use` (docs/engines.md).
+//! Engine actions behind `mouser engine …` = `mouser plugin … --kind engine`
+//! (docs/engines.md). Engines are plugins; the list comes from the registry.
 
 use anyhow::{Result, bail};
 use mouser_core::engines;
@@ -116,14 +117,26 @@ fn list(out: &mut dyn Write) -> Result<()> {
     let mark = |n: &str| if n == first { "*" } else { " " };
     writeln!(out, "  {:<4} {:<12} {:<10} {:<8} details", "prio", "engine", "version", "state")?;
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
-    for (n, d) in mouser_render::engine::available_builtins() {
-        let d = if n == "mouser" { format!("{d}; always the last fallback, cannot be removed") } else { d.to_string() };
-        rows.push((n.to_string(), "built-in".into(), d, state_text(n)));
+    let built = mouser_render::engine::available_builtins();
+    let reg = mouser_core::plugins::Registry::load();
+    for e in reg.entries.iter().filter(|e| e.kinds.contains(&mouser_core::plugins::Kind::Engine)) {
+        let n = e.name.as_str();
+        let (v, d) = if e.dir.is_none() {
+            // Built in: listed only when this build has it.
+            let Some((_, d)) = built.iter().find(|(b, _)| *b == n) else { continue };
+            (
+                e.version.clone(),
+                if n == engines::DEFAULT { format!("{d}; always the last fallback, cannot be removed or disabled") } else { d.to_string() },
+            )
+        } else {
+            (e.version.clone(), e.description.clone())
+        };
+        let st = if e.enabled { state_text(n) } else { format!("DISABLED: enable: mouser engine enable {n}") };
+        rows.push((n.to_string(), v, d, st));
     }
     for e in engines::installed() {
-        match e {
-            Ok(i) => rows.push((i.manifest.name.clone(), i.manifest.version.clone(), i.manifest.description.clone(), state_text(&i.manifest.name))),
-            Err((dir, why)) => writeln!(out, "  {:<4} {dir:<12} {:<10} {:<8} {why}", "-", "?", "broken")?,
+        if let Err((dir, why)) = e {
+            writeln!(out, "  {:<4} {dir:<12} {:<10} {:<8} {why}", "-", "?", "broken")?;
         }
     }
     // Listed in priority order, then the rest.
@@ -146,6 +159,8 @@ fn list(out: &mut dyn Write) -> Result<()> {
 fn split_state(st: &str) -> (&'static str, String) {
     if st == "ok" {
         ("ok", String::new())
+    } else if let Some(r) = st.strip_prefix("DISABLED: ") {
+        ("disabled", format!("\n      -> {r}"))
     } else if let Some(r) = st.strip_prefix("SKIPPED: ") {
         ("skipped", format!("\n      -> {r}"))
     } else {
