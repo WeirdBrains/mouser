@@ -2,7 +2,7 @@
 name = "mouser-pty"
 edition = "2024"
 version.workspace = true
-license = "MIT"
+license = "BSD-3-Clause"
 description = "PTY spawn and IO glue for Mouser"
 repository = ""
 

@@ -2,7 +2,7 @@
 name = "mouser-app"
 edition = "2024"
 version.workspace = true
-license = "MIT"
+license = "BSD-3-Clause"
 description = "Mouser application binary"
 repository = ""
 

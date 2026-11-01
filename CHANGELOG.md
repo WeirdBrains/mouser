@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed: license
+
+- Mouser is now licensed under BSD-3-Clause (was MIT). See `LICENSE`.
+
 ### Changed (P6): modes and engines are plugins (docs/plugins.md)
 
 - commander, chat and the mouser/skia engines are compiled-in plugins with their

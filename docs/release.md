@@ -88,8 +88,7 @@ Needs the maintainer's personal AUR account (registration is closed at the momen
 1. Add an SSH key to the AUR account, then
    `git clone ssh://aur@aur.archlinux.org/mouser-git.git` (and `mouser-bin.git`).
 2. Copy `PKGBUILD` and `.SRCINFO` in, set the `# Maintainer:` line, commit, push.
-3. Before publishing, add a `LICENSE` file to the repo: MIT requires the license text
-   in `/usr/share/licenses/<pkg>/` (the PKGBUILDs install it when present; namcap reports
-   an error until then).
+3. The repo's `LICENSE` (BSD-3-Clause) must ship in `/usr/share/licenses/<pkg>/`;
+   both PKGBUILDs install it.
 4. Per release, push the updated `mouser-bin` PKGBUILD/.SRCINFO to the AUR.
 

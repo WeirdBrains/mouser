@@ -239,5 +239,5 @@ See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). Tests live in `crate
 
 ## License
 
-MIT
+BSD-3-Clause. See [LICENSE](LICENSE).
 

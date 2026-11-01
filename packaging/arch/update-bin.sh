@@ -20,7 +20,7 @@ sed -i -e "s/^pkgver=.*/pkgver=$ver/" -e "s/^pkgrel=.*/pkgrel=1/" \
   echo "pkgbase = mouser-bin"
   sed -n "s/^pkgdesc=\"\(.*\)\"/\tpkgdesc = \1/p" PKGBUILD
   printf '\tpkgver = %s\n\tpkgrel = 1\n' "$ver"
-  printf '\turl = %s\n\tarch = x86_64\n\tlicense = MIT\n' "$url"
+  printf '\turl = %s\n\tarch = x86_64\n\tlicense = BSD-3-Clause\n' "$url"
   printf '\tmakedepends = ncurses\n'
   for d in glibc libgcc hicolor-icon-theme libxkbcommon wayland; do printf '\tdepends = %s\n' "$d"; done
   sed -n "s/^ *'\([^']*: [^']*\)'.*/\toptdepends = \1/p; s/^optdepends=('\([^']*\)'/\toptdepends = \1/p" PKGBUILD
