@@ -414,3 +414,58 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
     - warm: prompt 5,000–8,900 t/s, generation 75–110 t/s, a turn takes 1.4–2.4 s (10.8 s when a new prompt size compiles shaders).
   - The GUI Gemma screenshot was skipped: the test window was moved to another workspace mid-test, so a region capture would only show the user's screen.
 - Open: the Edit button on the card, a model picker in the dock, cost, images, killing (not just abandoning) a running MCP call, a light-theme screenshot, and open questions 12–14 (answered with the plan's proposals).
+
+### P6: modes and engines are plugins (docs/plugins.md)
+- Commits:
+  - 7975623 core;
+  - 33c424e render/app/CLI + example;
+  - 1ff252f docs;
+  - 3be0167 queued-event cwd fix;
+  - 4ee3e76 Windows clippy fix.
+- CI:
+  - run 41356839191 failed on Windows clippy (unix-only test helpers), fixed in 4ee3e76;
+  - run 41357399586 green on Linux, macOS and Windows.
+- Packages (not installed), in `/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-pkg/`:
+  - default `mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst`;
+  - local-llm `llm/mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst`.
+- Core (`plugins.rs`):
+  - compiled-in manifests `src/builtin/{commander,chat,mouser,skia}.toml` (`BUILTIN_MANIFESTS`, `builtin_manifest()`);
+  - `[engine]` (transport `library`) and `[mode]` (hotkey, `[[mode.keys]]`) tables;
+  - `Manifest::from_engine` / `to_engine`: engine.toml read as plugin.toml, and `engines::read_dir_manifest` prefers plugin.toml;
+  - `set_enabled` works for built-ins and engines except `mouser` (`can_disable`);
+  - `Registry::modes()` / `engines()`, `Entry.hotkey`;
+  - `CommandReply` gains `lines` and `title`;
+  - installing a mode keeps the built-in modes ahead of it.
+- Core (`engines.rs`):
+  - `priority()` drops disabled engines (they keep their place in prefs);
+  - `select` refuses disabled ones;
+  - `MOUSER_ENGINE` is unfiltered.
+- The engine order stays in the `engines` preference, not `plugins.order.engine`; see plan §8 "As built".
+- Render:
+  - `Host::from_registry(&Registry, make)`: priority order; hotkey clashes are left out with a note; none enabled gives a plain terminal;
+  - `Host::names()`;
+  - `modes/plugin.rs` `PluginMode`: the command transport, one background run per event (activate, key, cwd; latest queued). `run` must be allowed, and `files.read` is needed for the cwd.
+- App:
+  - main builds the mode host from the registry where chat used to be pushed; notes are shown after that;
+  - the sidebar engine list comes from `Registry::engines()`;
+  - one clap enum serves `plugin` and `engine` (`plugin_action`), with `--kind` global on `plugin`;
+  - `plugin_cli::run_kind` routes kind engine to `engine_cli`;
+  - `engine_cli::list` is registry-driven and shows disabled engines.
+- Example: `examples/plugins/hello-mode` (mode on `h`, keys t and f).
+- Tests:
+  - core `builtin_manifests_are_plugin_toml`, `mode_and_engine_manifest_checks`, `engines_are_plugins_disable_and_migrate` (old `engine = "skia"` key);
+  - render `mode_registry_tests`;
+  - app `engines_and_modes_through_the_plugin_cli` (engine list == plugin list --kind engine) and `plugin_toml_engine_installs_through_the_plugin_cli` (real flat engine);
+  - main.rs parse test: engine X == plugin X --kind engine;
+  - existing commander and engine tests unchanged.
+  - Full workspace: 423 passed, 0 failed, 4 ignored.
+- Live check (release build, temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch `/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-p6`):
+  - in the CLI: engine list == plugin list --kind engine (diff), `disable mouser` refused, `use` of a disabled skia refused;
+  - in a floating, unfocused window: `esc :h` switched to hello-mode, and its program logged `activate`, `cwd`, `key time`, `key files` with the cwd; switched to `:a` and `:c`.
+  - No P6 screenshots: the test window is translucent, so a region capture shows what is behind it. Captures that did were deleted at once. Next time make the test window opaque first, or capture headless.
+- Open:
+  - MCP-transport modes (rejected with a message);
+  - mode plugins can't type into the shell or read the screen;
+  - the skia row is listed even when not in the order (as before);
+  - questions 15–16 (engine alias kept; skia stays in the package);
+  - the full test suite's deliberate engine-crash tests leave SIGABRT core dumps of the debug binary, and the desktop shows a "Process crashed: mouser-app" notice.
