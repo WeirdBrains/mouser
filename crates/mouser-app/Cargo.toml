@@ -24,6 +24,7 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 mouser-core = { path = "../mouser-core" }
 mouser-pty = { path = "../mouser-pty" }
 mouser-render = { path = "../mouser-render" }
+mouser-llm = { path = "../mouser-llm", optional = true }
 
 [dev-dependencies]
 tempfile = "3.10.1"
@@ -35,4 +36,7 @@ mouser-engine-abi = { path = "../mouser-engine-abi" }
 # The Skia GPU engine (skia-safe downloads prebuilt Skia at build time).
 default = ["skia"]
 skia = ["mouser-render/skia"]
+# The built-in local model (llama.cpp with Vulkan, Metal on macOS); docs/models.md §Local.
+# Build needs cmake, clang, and Vulkan headers + shaderc (Linux/Windows).
+local-llm = ["dep:mouser-llm"]
 

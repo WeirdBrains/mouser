@@ -8,6 +8,9 @@ members = [
   "crates/mouser-app",
   "crates/icon-tools",
 ]
+# Built only through mouser-app's `local-llm` feature (llama.cpp needs cmake,
+# clang and Vulkan/Metal), so the default build and CI never compile it.
+exclude = ["crates/mouser-llm"]
 resolver = "2"
 
 [workspace.package]

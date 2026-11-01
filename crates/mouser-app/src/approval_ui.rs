@@ -26,6 +26,8 @@ pub enum Origin {
     McpRun { id: String },
     /// Call this tool on an MCP server after a grant.
     McpTool { id: String, tool: String, args: Option<serde_json::Value> },
+    /// Download these local-model weights (asked every time, never saved).
+    ModelDownload { id: String },
 }
 
 pub struct Request {
@@ -35,12 +37,19 @@ pub struct Request {
     pub detail: Vec<String>,
     pub scope: Scope,
     pub origin: Origin,
+    /// Only "Allow once" / "Deny" (nothing is remembered).
+    pub once_only: bool,
     shown: Option<Instant>,
 }
 
 impl Request {
     pub fn new(plugin: &str, caps: Vec<String>, detail: Vec<String>, scope: Scope, origin: Origin) -> Self {
-        Request { plugin: plugin.into(), caps, detail, scope, origin, shown: None }
+        Request { plugin: plugin.into(), caps, detail, scope, origin, once_only: false, shown: None }
+    }
+
+    /// A question that is never saved as a permission (e.g. a model download).
+    pub fn once(who: &str, detail: Vec<String>, origin: Origin) -> Self {
+        Request { once_only: true, ..Request::new(who, vec![], detail, Scope::Installed, origin) }
     }
 }
 
@@ -66,7 +75,7 @@ impl Approvals {
 
     /// Key while the popup is open; `Some` once answered.
     pub fn key(&mut self, bytes: &[u8]) -> Option<(Request, Answer)> {
-        let offer = offer(&self.queue.front()?.scope);
+        let offer = offer_for(self.queue.front()?);
         let a = match bytes {
             b"y" | b"Y" | b"o" | b"\r" => Answer::Once,
             b"a" if offer.contains(&1) => Answer::Always,
@@ -85,7 +94,7 @@ impl Approvals {
         if !self.armed() {
             return None;
         }
-        let offer = offer(&self.queue.front()?.scope);
+        let offer = offer_for(self.queue.front()?);
         let a = match i {
             0 => Answer::Once,
             1 if offer.contains(&1) => Answer::Always,
@@ -107,13 +116,14 @@ impl Approvals {
         }
         let armed = r.shown.is_some_and(|t| t.elapsed() >= ARM_DELAY);
         let who = match r.scope {
+            _ if r.once_only => format!("{} (asked every time):", r.plugin),
             Scope::Installed if r.plugin.starts_with("mcp:") => format!("MCP client \"{}\" asks to:", &r.plugin[4..]),
             Scope::Installed => format!("Plugin \"{}\" asks to:", r.plugin),
             Scope::FuzzballLocal => format!("Program in this tab (\"{}\") asks to:", r.plugin),
             Scope::FuzzballRemote { .. } => format!("REMOTE program (over ssh, \"{}\") asks to:", r.plugin),
         };
         let mut lines: Vec<String> = r.caps.iter().map(|c| format!("  • {}  ({c})", plugins::capability_text(c))).collect();
-        if r.caps.is_empty() {
+        if r.caps.is_empty() && !r.once_only {
             lines.push("  • connect as a plugin (no capabilities)".into());
         }
         lines.extend(r.detail.iter().cloned());
@@ -128,11 +138,15 @@ impl Approvals {
         if more > 0 {
             lines.push(format!("({more} more waiting)"));
         }
-        Some(ui::approval_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, &offer(&r.scope), armed))
+        Some(ui::approval_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, &offer_for(r), armed))
     }
 }
 
 /// The answers offered: remote gets once / always (known host) / deny.
+fn offer_for(r: &Request) -> Vec<u8> {
+    if r.once_only { vec![0, 2] } else { offer(&r.scope) }
+}
+
 pub fn offer(scope: &Scope) -> Vec<u8> {
     match scope {
         Scope::FuzzballRemote { host: Some(_) } => vec![0, 1, 2],
