@@ -1,0 +1,15 @@
+# Built-in mode plugin (compiled into Mouser; docs/modes.md). Disable with
+# `mouser plugin disable commander`; with every mode off Mouser is a plain terminal.
+name = "commander"
+version = "builtin"
+description = "file commander mode: folders, previews, file ops, player (built in)"
+permissions = ["files.read", "files.write", "shell.type"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "builtin"
+
+[mode]
+hotkey = "c"
