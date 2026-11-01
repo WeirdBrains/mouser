@@ -400,7 +400,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - `chat_host.rs` `ChatHost`. Mouser tools run through `AppTools { preapproved: true }` after the chat card. Mutating tools always ask; reads obey only a broker "never" for `chat`. MCP tools follow `broker_name`/`tool_cap`.
   - Registered after `mcp_tools::start` in main.
   - `examples/chat_live.rs` (required feature local-llm).
-- Tests: `agent_tests` (8: allow, card once/deny/never, for-chat vs always-ask, cancel mid-stream/card/tool, step limit, transcript, redaction, nameless call) and `chat_render_tests` (2).
+- Tests: `agent_tests` (8: allow, card once/deny/never, for-chat vs always-ask, cancel mid-stream/card/tool (the tool sees the cancel), step limit, transcript, redaction, nameless call) and `chat_render_tests` (2).
 - Live check:
   - Temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch in `/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-p5`.
   - Mock provider (loopback, port 17901) in a floating, unfocused window:
@@ -413,7 +413,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
     - the token question was answered with `DEMO_TOKEN=[redacted]`;
     - warm: prompt 5,000–8,900 t/s, generation 75–110 t/s, a turn takes 1.4–2.4 s (10.8 s when a new prompt size compiles shaders).
   - The GUI Gemma screenshot was skipped: the test window was moved to another workspace mid-test, so a region capture would only show the user's screen.
-- Open: the Edit button on the card, a model picker in the dock, cost, images, killing (not just abandoning) a running MCP call, a light-theme screenshot, and open questions 12–14 (answered with the plan's proposals).
+- Open: the Edit button on the card, a model picker in the dock, cost, images, a light-theme screenshot, and open questions 12–14 (answered with the plan's proposals).
 
 ### P6: modes and engines are plugins (docs/plugins.md)
 - Commits:

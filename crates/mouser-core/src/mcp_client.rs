@@ -245,10 +245,24 @@ impl Manager {
 
     /// Call a tool (blocking). The caller must have the broker's permission.
     pub fn call(&self, id: &str, tool: &str, args: Value) -> Result<String> {
+        self.call_cancellable(id, tool, args, None)
+    }
+
+    /// [`call`](Self::call) that stops when `cancel` is set (the chat's cancel):
+    /// the server is told, and a stdio server that keeps running is stopped and
+    /// reconnected.
+    pub fn call_cancellable(&self, id: &str, tool: &str, args: Value, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<String> {
         let s = self.slot(id).with_context(|| format!("no MCP server {id}"))?;
         let mut g = s.client.lock().unwrap();
         let c = g.as_mut().with_context(|| format!("{id} is not connected"))?;
-        let r = c.call(tool, args);
+        let r = c.call_cancellable(tool, args, cancel);
+        if c.is_dead() {
+            *g = None;
+            drop(g);
+            set(&s, &self.wake, |v| v.status = Status::Connecting);
+            s.kick();
+            return r;
+        }
         if let Err(e) = &r {
             let m = e.to_string();
             if m.contains("exited") || m.contains("connecting") || m.contains("expired") || m.contains("no reply") {
