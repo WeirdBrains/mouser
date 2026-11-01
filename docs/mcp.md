@@ -87,7 +87,7 @@ picks a tab; the default is the active one.
 P3 of docs/plans/mcp-agent.md. Mouser connects to the MCP servers you list and
 to every enabled MCP plugin (`transport = "mcp"`, docs/plugins.md), shows their
 tools in the sidebar, and calls them only through the permission broker. The
-chat mode (P5) will use the same connections.
+chat mode (docs/chat.md) uses the same connections.
 
 ## Add a server
 

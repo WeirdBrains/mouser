@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Added (P5): chat mode, the agent (docs/chat.md)
+
+- New mode plugin `chat` (`esc :a`). It swaps commander out and docks above the prompt with a transcript, an input and Cancel. Keys are in `modes.toml` `[chat.keys]`.
+- It sees the active tab's screen and the last 200 scrollback lines, with secrets redacted (best effort). Screen text and tool output are marked untrusted in the prompt.
+- Tools come from Mouser itself (in-process), connected MCP servers and MCP plugins.
+  - Every call goes through the permission broker, with an approval card in the dock showing the real action.
+  - Shell, typing and file-write tools ask on every call. Other tools can be allowed for the chat.
+- Cancel (Esc, alt+x, Ctrl+C or the button) always works: it stops the stream, denies an open card and abandons a running tool. There is a limit of 8 tool steps per turn.
+- It uses `mouser model default`: gemma-local with `--features local-llm`, or any provider. Hosted providers show a one-time "screen text is sent to" note.
+- Transcripts are saved to `$MOUSER_HOME/chats/*.jsonl` (0600); `[chat] transcripts = false` turns this off.
+- `examples/chat_live` is a headless live run with a sandboxed shell tool (feature local-llm).
+
 ### Added (P4b): the built-in local model (docs/models.md §The local model)
 
 - `gemma-local` runs Gemma 4 E2B (default) or E4B on llama.cpp inside Mouser: crate `mouser-llm`, behind the opt-in cargo feature `local-llm`, with Vulkan (Metal on macOS). The default build and CI are unchanged.
