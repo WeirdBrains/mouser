@@ -13,6 +13,7 @@ pub mod input;
 pub mod kitty;
 pub mod kitty_graphics;
 pub mod mcp;
+pub mod mcp_client;
 pub mod mcp_server;
 pub mod modes;
 pub mod parser;

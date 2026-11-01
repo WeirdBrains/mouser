@@ -56,6 +56,34 @@ pub struct Preferences {
 pub struct McpPrefs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<McpServerPrefs>,
+    /// `[[mcp.servers]]`: MCP servers Mouser connects to (docs/mcp.md §Client).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<McpServerEntry>,
+}
+
+/// One `[[mcp.servers]]` entry: a stdio `command` or an HTTP(S) `url`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+    /// Extra environment for a stdio server; values may be `keychain:NAME`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Bearer token reference: `keychain:<secret name>` (never the token itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// PEM CA/cert to trust for an HTTPS url (e.g. Mouser's self-signed cert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// `[mcp.server]` in preferences.toml.

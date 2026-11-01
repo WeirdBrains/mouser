@@ -20,6 +20,7 @@ fn preferences_round_trip_including_sidebar() {
         engines: None,
         mcp: Some(mouser_core::storage::McpPrefs {
             server: Some(mouser_core::storage::McpServerPrefs { enabled: true, https: true, ..Default::default() }),
+            servers: vec![],
         }),
     };
     save_preferences(&p).unwrap();

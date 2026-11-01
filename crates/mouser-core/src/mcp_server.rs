@@ -537,6 +537,33 @@ mod tests {
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn the_mcp_client_over_http_and_https() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        let (port, _) = start(None);
+        let url = format!("http://127.0.0.1:{port}/mcp");
+        let mut c = crate::mcp::Client::connect(&url, Some(TOK.into()), None).unwrap();
+        assert_eq!(c.server.1, "9.9");
+        assert_eq!(c.tools().unwrap()[0].name, "echo");
+        let r = c.call("echo", json!({"x": 1})).unwrap();
+        assert!(r.contains("\"x\"") && r.contains("mouser"), "{r}");
+        assert!(c.call("echo", json!({"fail": true})).is_err());
+        c.ping().unwrap();
+        let e = crate::mcp::Client::connect(&url, Some("wrong".into()), None).err().unwrap().to_string();
+        assert!(e.contains("refused"), "{e}");
+        let (cfg, cert, _) = tls_config(None, None).unwrap();
+        let (sport, _) = start(Some(cfg));
+        for host in ["127.0.0.1", "localhost"] {
+            let mut c = crate::mcp::Client::connect(&format!("https://{host}:{sport}/mcp"), Some(TOK.into()), Some(&cert)).unwrap();
+            assert_eq!(c.tools().unwrap().len(), 1);
+        }
+        // Without the CA (public roots only) the self-signed cert is refused.
+        assert!(crate::mcp::Client::connect(&format!("https://127.0.0.1:{sport}/mcp"), Some(TOK.into()), None).is_err());
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
     trait ErrOrEmpty {
         fn is_err_or_empty(&self) -> bool;
     }

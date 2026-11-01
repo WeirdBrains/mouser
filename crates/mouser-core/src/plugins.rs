@@ -82,11 +82,14 @@ pub const CAPABILITIES: [(&str, &str); 9] = [
 ];
 
 pub fn capability_text(cap: &str) -> &'static str {
+    if cap.starts_with("tool.") {
+        return "call this MCP tool";
+    }
     CAPABILITIES.iter().find(|(c, _)| *c == cap).map_or("(unknown capability)", |(_, t)| t)
 }
 
 pub fn known_capability(cap: &str) -> bool {
-    CAPABILITIES.iter().any(|(c, _)| *c == cap)
+    cap.strip_prefix("tool.").is_some_and(|t| !t.is_empty()) || CAPABILITIES.iter().any(|(c, _)| *c == cap)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
