@@ -289,6 +289,11 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("seek_forward", "l", "player: forward 10 s"),
     b("volume_down", "-", "player: volume down"),
     b("volume_up", "=", "player: volume up"),
+    b("zoom_in", "=", "image view: zoom in (same key as volume up in the player)"),
+    b("zoom_out", "-", "image view: zoom out (same key as volume down in the player)"),
+    b("zoom_fit", "0", "image view: fit"),
+    b("zoom_actual", "1", "image view: 100% (actual pixels)"),
+    b("menu", "i", "header overflow menu (\u{2022}\u{2022}\u{2022}) when the window is narrow"),
 ];
 
 const fn b(id: &'static str, key: &'static str, describe: &'static str) -> crate::modes::Binding {
@@ -853,7 +858,21 @@ mod tests {
 
     #[test]
     fn bindings_cover_every_action() {
-        for b in BINDINGS.iter().filter(|b| !matches!(b.id, "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up")) {
+        for b in BINDINGS.iter().filter(|b| {
+            !matches!(
+                b.id,
+                "play_pause"
+                    | "seek_back"
+                    | "seek_forward"
+                    | "volume_down"
+                    | "volume_up"
+                    | "zoom_in"
+                    | "zoom_out"
+                    | "zoom_fit"
+                    | "zoom_actual"
+                    | "menu"
+            )
+        }) {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);
         }
         let k = crate::modes::Keymap::new(BINDINGS);

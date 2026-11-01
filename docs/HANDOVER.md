@@ -215,3 +215,8 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - a3a960d: player rewritten: no ffplay; cpal audio sample clock (minus device latency) drives video frames by PTS (late dropped), wall clock without audio; pause/volume in-process; seek restarts both ffmpeg readers at -ss. Measured on Linux: A/V offset mean 20 ms (half a 25 fps frame), no drift over 66 s, seek gap ~80 ms. Needs alsa-lib (libasound2-dev on CI).
 
 - 3f44c83 / c33f5cf: Phase 1 follow-ups. Player sync centred (mean -0.2 ms, p95 9.5 ms, 0 drops); back control (‹ back, alt+p, alt+Backspace, clickable path, no . / ..); video thumbnails (cached in $MOUSER_HOME/cache/thumbs); search feedback; popups opaque over previews; `[mouser]` line runs non-Mouser commands in the shell (`!` forces); double-Esc after closing a viewer no longer eats the next key; commander follows SSH sessions (OSC 7 + ssh side channel); carousel slides (180 ms ease-in-out).
+
+### t181u/t182u: zoom, interactive player, rounded boxes + shadows, header ••• menu
+- frame.rs: `round_rect`, `round_box`, `drop_shadow`, `RADIUS`=8; all panel styles, buttons, sidebar engine rows, modal, tabs; new `PanelStyle::Progress{done,hover}`.
+- commander.rs: `Zoom`, `zoom_rect`, `zoom_about`, `header_fit`, `Hits`, `pointer_*` actions (`pack_xy`); lib.rs routes left press/move/release over the dock and ctrl+wheel (`zoom_wheel`).
+- Not done: t185u remote ranged/parallel fetch with sparse cache + range map (and the separate fetch module for future sync, t186u). Remote files still show the "pipe it" notice.

@@ -523,6 +523,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut modifiers = ModifiersState::empty();
     let mut grid = (0usize, 0usize);
     let mut dragging = false;
+    // Left button went down over a mode's view: moves and the release go to it.
+    let mut dock_press = false;
     let mut resize_cursor = false;
     let mut dirty = true;
     let mut last_frame: Option<Instant> = None;
@@ -584,6 +586,15 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
                     let (px, py) = (position.x.round() as i32, position.y.round() as i32);
+                    if let Some(on_act) = &hooks.on_ui_action
+                        && (dock_press || last_ui.as_ref().is_some_and(|l| l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(px, py))))
+                    {
+                        on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::commander::pack_xy(px, py) });
+                        dirty = true;
+                        if dock_press {
+                            return;
+                        }
+                    }
                     if let Some(d) = engine_drag.as_mut() {
                         d.moved(px, py);
                         dirty |= d.active;
@@ -615,6 +626,15 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if dock_press && button == winit::event::MouseButton::Left {
+                        dock_press = false;
+                        if let (Some(on_act), Some(p)) = (&hooks.on_ui_action, cursor_pos) {
+                            on_act(ui::UiAction::Mode { action: "pointer_up".into(), arg: modes::commander::pack_xy(p.x as i32, p.y as i32) });
+                        }
+                        mouse_down = None;
+                        dirty = true;
+                        return;
+                    }
                     if button == winit::event::MouseButton::Left
                         && let Some(d) = engine_drag.take()
                     {
@@ -654,6 +674,19 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
                 WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                    // Over a mode's view: the mode sees the press (seek bar,
+                    // image pan); the item under it is clicked as usual below.
+                    if button == winit::event::MouseButton::Left
+                        && let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
+                        && l.panel.is_none()
+                        && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(pos.x as i32, pos.y as i32))
+                    {
+                        on_act(ui::UiAction::Mode { action: "pointer_down".into(), arg: modes::commander::pack_xy(pos.x as i32, pos.y as i32) });
+                        on_act(ui::hit_test(l, pos.x.round() as i32, pos.y.round() as i32));
+                        dock_press = true;
+                        dirty = true;
+                        return;
+                    }
                     if let (Some(on_act), Some(pos)) = (&hooks.on_ui_action, cursor_pos)
                         && let Some(act) = ui::tab_hit(
                             &tab_bar,
@@ -836,7 +869,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         && last_ui.as_ref().is_some_and(|l| l.panel.is_none())
                         && d.panel.rect.contains(pos.x as i32, pos.y as i32)
                     {
-                        if lines != 0 {
+                        if lines != 0 && modifiers.control_key() {
+                            // Ctrl+wheel zooms the image around the pointer.
+                            on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::commander::pack_xy(pos.x as i32, pos.y as i32) });
+                            on_act(ui::UiAction::Mode { action: "zoom_wheel".into(), arg: lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32 });
+                        } else if lines != 0 {
                             (on_act)(ui::UiAction::Mode { action: "scroll".into(), arg: -lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32 });
                         }
                         return;

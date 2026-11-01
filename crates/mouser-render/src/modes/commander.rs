@@ -267,6 +267,114 @@ pub struct CommanderMode {
     /// The player's key hints, from the current keymap.
     player_keys: String,
     slide: Slide,
+    /// Image view zoom (None: fit).
+    zoom: Option<Zoom>,
+    /// Natural size of the image in the file view.
+    nat: Option<(PathBuf, (u32, u32))>,
+    /// Last pointer position over the view (window px).
+    pointer: (i32, i32),
+    press: Option<Press>,
+    hits: Hits,
+    /// Header overflow (•••) dropdown open.
+    menu_open: bool,
+    last_scrub: Option<std::time::Instant>,
+}
+
+/// Zoom of the image in the file view: scale (1.0 = actual pixels) and the
+/// image point (0..1) at the centre of the body.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Zoom {
+    pub path: PathBuf,
+    pub scale: f64,
+    pub cx: f64,
+    pub cy: f64,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Press {
+    Pan { at: (i32, i32), c0: (f64, f64) },
+    Scrub,
+    Volume,
+}
+
+/// Where the interactive parts were drawn last frame.
+#[derive(Clone, Copy, Debug, Default)]
+struct Hits {
+    bar: Rect,
+    vol: Rect,
+    image: Rect,
+    video: Rect,
+    menu: Rect,
+}
+
+fn inside(r: Rect, (x, y): (i32, i32)) -> bool {
+    r.w > 0 && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+}
+
+/// Pointer position packed into an action argument (`x | y << 15`).
+pub fn pack_xy(x: i32, y: i32) -> i32 {
+    x.clamp(0, 0x7fff) | (y.clamp(0, 0x7fff) << 15)
+}
+
+fn unpack_xy(a: i32) -> (i32, i32) {
+    (a & 0x7fff, (a >> 15) & 0x7fff)
+}
+
+/// Fit scale of a `nat` image in `body`.
+fn fit_scale(body: Rect, nat: (u32, u32)) -> f64 {
+    if nat.0 == 0 || nat.1 == 0 {
+        return 1.0;
+    }
+    (body.w as f64 / nat.0 as f64).min(body.h as f64 / nat.1 as f64)
+}
+
+/// Where a zoomed image goes: centred when smaller than the body, else
+/// positioned by the centre point (clamped so no gap shows at the edges).
+pub fn zoom_rect(body: Rect, nat: (u32, u32), z: &mut Zoom) -> Rect {
+    let (dw, dh) = (nat.0 as f64 * z.scale, nat.1 as f64 * z.scale);
+    let axis = |b0: i32, bl: i32, d: f64, c: &mut f64| -> i32 {
+        if d <= bl as f64 {
+            *c = 0.5;
+            b0 + ((bl as f64 - d) / 2.0) as i32
+        } else {
+            let half = bl as f64 / 2.0 / d;
+            *c = c.clamp(half, 1.0 - half);
+            (b0 as f64 + bl as f64 / 2.0 - *c * d).round() as i32
+        }
+    };
+    let x = axis(body.x, body.w, dw, &mut z.cx);
+    let y = axis(body.y, body.h, dh, &mut z.cy);
+    Rect { x, y, w: dw.round().max(1.0) as i32, h: dh.round().max(1.0) as i32 }
+}
+
+/// Zoom by `factor` keeping the image point under `anchor` still.
+pub fn zoom_about(body: Rect, nat: (u32, u32), z: &mut Zoom, factor: f64, anchor: (i32, i32)) {
+    let r = zoom_rect(body, nat, z);
+    let u = ((anchor.0 - r.x) as f64 / r.w as f64).clamp(0.0, 1.0);
+    let v = ((anchor.1 - r.y) as f64 / r.h as f64).clamp(0.0, 1.0);
+    let fit = fit_scale(body, nat);
+    let s1 = (z.scale * factor).clamp(fit.min(1.0) * 0.5, 16.0);
+    let (dw, dh) = (nat.0 as f64 * s1, nat.1 as f64 * s1);
+    z.cx = u + (body.x as f64 + body.w as f64 / 2.0 - anchor.0 as f64) / dw;
+    z.cy = v + (body.y as f64 + body.h as f64 / 2.0 - anchor.1 as f64) / dh;
+    z.scale = s1;
+}
+
+/// Header buttons that fit in `room` px (right to left); the rest go to the
+/// ••• menu. Returns how many fit.
+pub fn header_fit(widths: &[i32], room: i32, menu_w: i32) -> usize {
+    let all: i32 = widths.iter().sum();
+    if all <= room {
+        return widths.len();
+    }
+    let mut used = menu_w;
+    widths
+        .iter()
+        .take_while(|w| {
+            used += **w;
+            used <= room
+        })
+        .count()
 }
 
 impl Default for CommanderMode {
@@ -307,6 +415,10 @@ struct Out {
     /// (what, full rect, visible part)
     slots: Vec<(Want, Rect, Rect)>,
     texts: Vec<PathBuf>,
+    /// Loading in the background (not drawn yet).
+    extra: Vec<Want>,
+    /// The open ••• dropdown (images under it are hidden).
+    menu: Option<Rect>,
 }
 
 impl CommanderMode {
@@ -323,6 +435,13 @@ impl CommanderMode {
             body_w: 0,
             player_keys: String::new(),
             slide: Slide::default(),
+            zoom: None,
+            nat: None,
+            pointer: (0, 0),
+            press: None,
+            hits: Hits::default(),
+            menu_open: false,
+            last_scrub: None,
         }
     }
 
@@ -504,7 +623,26 @@ impl CommanderMode {
             return self.player_view(body, cw, ch, o);
         }
         if cmdr::kind_of(&p.to_string_lossy()) == Kind::Image {
-            o.slots.push(((p.to_path_buf(), 2048), body, body));
+            self.hits.image = body;
+            let nat = self.natural(p);
+            let zoomed = self.zoom.as_ref().is_some_and(|z| z.path == p);
+            match (nat, zoomed) {
+                (Some(nat), true) => {
+                    let z = self.zoom.as_mut().unwrap();
+                    let r = zoom_rect(body, nat, z);
+                    // Past the 2048 px preview: the full image, the preview until it loads.
+                    let hi = (p.to_path_buf(), 16384);
+                    if r.w.max(r.h) > 2048 && !matches!(self.previews.get(&hi), Some(Some(_))) {
+                        o.extra.push(hi);
+                        o.slots.push(((p.to_path_buf(), 2048), r, body));
+                    } else if r.w.max(r.h) > 2048 {
+                        o.slots.push((hi, r, body));
+                    } else {
+                        o.slots.push(((p.to_path_buf(), 2048), r, body));
+                    }
+                }
+                _ => o.slots.push(((p.to_path_buf(), 2048), body, body)),
+            }
             return;
         }
         if self.full_text.as_ref().is_none_or(|t| t.0 != p) {
@@ -529,6 +667,119 @@ impl CommanderMode {
         }
     }
 
+    /// Natural size of an image (cached for the open file).
+    fn natural(&mut self, p: &Path) -> Option<(u32, u32)> {
+        if self.nat.as_ref().is_none_or(|n| n.0 != p) {
+            let d = image::image_dimensions(p).ok()?;
+            self.nat = Some((p.to_path_buf(), d));
+        }
+        self.nat.as_ref().map(|n| n.1)
+    }
+
+    /// Zoom label for the header ("fit 37%", "200%").
+    fn zoom_label(&mut self, p: &Path) -> Option<String> {
+        let body = self.hits.image;
+        let nat = self.natural(p)?;
+        Some(match self.zoom.as_ref().filter(|z| z.path == p) {
+            Some(z) => format!("{:.0}%", z.scale * 100.0),
+            None => format!("fit {:.0}%", fit_scale(body, nat) * 100.0),
+        })
+    }
+
+    /// Zoom the open image; `factor` None = fit, Some(0.0) = 100%.
+    fn zoom_image(&mut self, factor: Option<f64>, anchor: Option<(i32, i32)>) -> bool {
+        let Some(Overlay::Preview(p)) = self.c.overlay.clone() else { return false };
+        if cmdr::kind_of(&p.to_string_lossy()) != Kind::Image {
+            return false;
+        }
+        let Some(nat) = self.natural(&p) else { return true };
+        let body = self.hits.image;
+        let fit = fit_scale(body, nat);
+        let mut z = self.zoom.clone().filter(|z| z.path == p).unwrap_or(Zoom { path: p.clone(), scale: fit, cx: 0.5, cy: 0.5 });
+        let centre = (body.x + body.w / 2, body.y + body.h / 2);
+        match factor {
+            None => {
+                self.zoom = None;
+                return true;
+            }
+            Some(0.0) => {
+                let k = 1.0 / z.scale;
+                zoom_about(body, nat, &mut z, k, centre)
+            }
+            Some(f) => zoom_about(body, nat, &mut z, f, anchor.unwrap_or(centre)),
+        }
+        self.zoom = if (z.scale - fit).abs() < 1e-3 { None } else { Some(z) };
+        true
+    }
+
+    /// Pan the zoomed image by pixels.
+    fn pan(&mut self, dx: i32, dy: i32) -> bool {
+        let Some(nat) = self.nat.as_ref().map(|n| n.1) else { return false };
+        let Some(z) = self.zoom.as_mut().filter(|z| matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == z.path)) else { return false };
+        z.cx += dx as f64 / (nat.0 as f64 * z.scale);
+        z.cy += dy as f64 / (nat.1 as f64 * z.scale);
+        zoom_rect(self.hits.image, nat, z);
+        true
+    }
+
+    fn pointer(&mut self, id: &str, at: (i32, i32)) {
+        self.pointer = at;
+        let frac = |r: Rect| ((at.0 - r.x) as f64 / r.w.max(1) as f64).clamp(0.0, 1.0);
+        match id {
+            "pointer_down" => {
+                self.press = None;
+                if let Some(pl) = self.player.as_mut() {
+                    if inside(self.hits.bar, at) {
+                        pl.seek_to(frac(self.hits.bar) * pl.info.duration);
+                        self.press = Some(Press::Scrub);
+                    } else if inside(self.hits.vol, at) {
+                        let v = (frac(self.hits.vol) * 100.0).round() as i32;
+                        pl.change_volume(v - pl.volume as i32);
+                        self.press = Some(Press::Volume);
+                    } else if inside(self.hits.video, at) {
+                        pl.toggle();
+                    }
+                } else if let Some(z) = &self.zoom
+                    && inside(self.hits.image, at)
+                {
+                    self.press = Some(Press::Pan { at, c0: (z.cx, z.cy) });
+                }
+            }
+            "pointer_move" => match self.press {
+                Some(Press::Scrub) => {
+                    let now = std::time::Instant::now();
+                    if self.last_scrub.is_none_or(|t| now.duration_since(t).as_millis() >= 120)
+                        && let Some(pl) = self.player.as_mut()
+                    {
+                        pl.seek_to(frac(self.hits.bar) * pl.info.duration);
+                        self.last_scrub = Some(now);
+                    }
+                }
+                Some(Press::Volume) => {
+                    if let Some(pl) = self.player.as_mut() {
+                        let v = (frac(self.hits.vol) * 100.0).round() as i32;
+                        pl.change_volume(v - pl.volume as i32);
+                    }
+                }
+                Some(Press::Pan { at: a0, c0 }) => {
+                    if let (Some(z), Some(nat)) = (self.zoom.as_mut(), self.nat.as_ref().map(|n| n.1)) {
+                        z.cx = c0.0 - (at.0 - a0.0) as f64 / (nat.0 as f64 * z.scale);
+                        z.cy = c0.1 - (at.1 - a0.1) as f64 / (nat.1 as f64 * z.scale);
+                        zoom_rect(self.hits.image, nat, z);
+                    }
+                }
+                None => {}
+            },
+            _ => {
+                if let (Some(Press::Scrub), Some(pl)) = (self.press, self.player.as_mut()) {
+                    pl.seek_to(frac(self.hits.bar) * pl.info.duration);
+                }
+                self.press = None;
+                self.last_scrub = None;
+            }
+        }
+    }
+
     /// Video fitted to the width with the controls below; audio: name,
     /// progress and controls.
     fn player_view(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
@@ -538,15 +789,11 @@ impl CommanderMode {
         let row_h = ch + 6;
         let pos = pl.position();
         let dur = pl.info.duration;
-        let state = if pl.playing() { "playing" } else { "paused" };
-        let status = format!("{state}  {} / {}  vol {}%", super::player::clock(pos), super::player::clock(dur), pl.volume);
-        let bar_cols = (body.w / cw.max(1) - 2).max(10);
-        let done = if dur > 0.0 { ((pos / dur) * bar_cols as f64) as i32 } else { 0 };
-        let bar = format!("[{}{}]", "=".repeat(done.clamp(0, bar_cols) as usize), "-".repeat((bar_cols - done).clamp(0, bar_cols) as usize));
         let mut y = body.y;
         let name = pl.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         if pl.info.video {
-            let r = Rect { x: body.x, y, w: body.w, h: (body.h - 3 * row_h).max(ch) };
+            let r = Rect { x: body.x, y, w: body.w, h: (body.h - 3 * row_h - 4).max(ch) };
+            self.hits.video = r;
             match pl.frame() {
                 Some(f) => {
                     o.frames.push(ModeImage { key: f.key, rgba: f.rgba, width: f.w, height: f.h, src: (0, 0, f.w, f.h), rect: fit(r, f.w, f.h) })
@@ -555,6 +802,7 @@ impl CommanderMode {
             }
             y = r.y + r.h;
         } else {
+            self.hits.video = Rect::default();
             o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, format!("♪ {name}"), PanelStyle::Title, UiAction::None));
             y += row_h * 2;
         }
@@ -562,10 +810,45 @@ impl CommanderMode {
             o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, e.clone(), PanelStyle::Error, UiAction::None));
             y += row_h;
         }
-        for (t, st) in [(bar, PanelStyle::Label), (status, PanelStyle::Label), (controls, PanelStyle::Hint)] {
-            o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, clip_text(&t, body.w / cw.max(1)), st, UiAction::None));
-            y += row_h;
+        // Seek bar: time, bar (click seeks, drag scrubs, hover shows the time), length.
+        let per = |t: f64| if dur > 0.0 { ((t / dur).clamp(0.0, 1.0) * 1000.0) as u16 } else { 0 };
+        let (l, rt) = (super::player::clock(pos), super::player::clock(dur));
+        let lw = (l.chars().count() as i32 + 1) * cw;
+        let rw = (rt.chars().count() as i32 + 1) * cw;
+        let bar = Rect { x: body.x + lw, y, w: (body.w - lw - rw).max(cw), h: row_h };
+        let hover = if inside(bar, self.pointer) || matches!(self.press, Some(Press::Scrub)) {
+            Some(((self.pointer.0 - bar.x) as f64 / bar.w as f64).clamp(0.0, 1.0) * dur)
+        } else {
+            None
+        };
+        o.items.push(item(Rect { x: body.x, w: lw, ..bar }, l, PanelStyle::Label, UiAction::None));
+        o.items.push(item(bar, "", PanelStyle::Progress { done: per(pos), hover: hover.map_or(u16::MAX, per) }, UiAction::None));
+        o.items.push(item(Rect { x: bar.x + bar.w + cw, w: rw, ..bar }, rt, PanelStyle::Label, UiAction::None));
+        self.hits.bar = bar;
+        y += row_h + 2;
+        // Buttons, state (or the hovered time), volume.
+        let mut x = body.x;
+        let bh = row_h - 2;
+        let play = if pl.playing() { "❚❚ pause" } else { "▶ play" };
+        for (t, a) in [("« 10s", "seek_back"), (play, "play_pause"), ("10s »", "seek_forward")] {
+            let bw = (t.chars().count() as i32 + 2) * cw;
+            o.items.push(item(Rect { x, y, w: bw, h: bh }, t, PanelStyle::Button { primary: a == "play_pause" }, act(a, 0)));
+            x += bw + cw / 2;
         }
+        let status = match (hover, &pl.error) {
+            (Some(t), _) => format!("→ {}", super::player::clock(t)),
+            (None, _) => if pl.playing() { "playing" } else { "paused" }.to_string(),
+        };
+        let vw = (cw * 12).min(body.w / 5);
+        let vlabel = format!("vol {}%", pl.volume);
+        let vlw = (vlabel.chars().count() as i32 + 1) * cw;
+        let vol = Rect { x: body.x + body.w - vw, y, w: vw, h: bh };
+        o.items.push(item(Rect { x: x + cw, y, w: (vol.x - vlw - x - cw).max(0), h: bh }, status, PanelStyle::Label, UiAction::None));
+        o.items.push(item(Rect { x: vol.x - vlw, y, w: vlw, h: bh }, vlabel, PanelStyle::Label, UiAction::None));
+        o.items.push(item(vol, "", PanelStyle::Progress { done: pl.volume as u16 * 10, hover: u16::MAX }, UiAction::None));
+        self.hits.vol = vol;
+        y += row_h;
+        o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, clip_text(&controls, body.w / cw.max(1)), PanelStyle::Hint, UiAction::None));
     }
 
     fn options_panel(&self, ctx: &Context) -> Panel {
@@ -682,7 +965,10 @@ impl Mode for CommanderMode {
     }
 
     fn escape(&mut self) -> bool {
-        if self.c.piping {
+        if self.menu_open {
+            self.menu_open = false;
+            true
+        } else if self.c.piping {
             self.c.pipe_key(b"\x1b");
             true
         } else if self.c.searching {
@@ -694,6 +980,62 @@ impl Mode for CommanderMode {
     }
 
     fn action(&mut self, id: &str, arg: i32) -> Effect {
+        if matches!(id, "pointer_down" | "pointer_move" | "pointer_up") {
+            self.pointer(id, unpack_xy(arg));
+            return Effect::None;
+        }
+        if id == "menu" {
+            if self.hits.menu.w == 0 && !self.menu_open {
+                return Effect::Pass;
+            }
+            self.menu_open = !self.menu_open;
+            return Effect::None;
+        }
+        self.menu_open = false;
+        let viewing_image = matches!(&self.c.overlay, Some(Overlay::Preview(p)) if cmdr::kind_of(&p.to_string_lossy()) == Kind::Image);
+        // The zoom and volume keys are shared by default: each view takes its own.
+        let id = match id {
+            "volume_up" if viewing_image => "zoom_in",
+            "volume_down" if viewing_image => "zoom_out",
+            "zoom_in" if self.player.is_some() => "volume_up",
+            "zoom_out" if self.player.is_some() => "volume_down",
+            i => i,
+        };
+        match id {
+            "zoom_in" | "zoom_out" | "zoom_fit" | "zoom_actual" | "zoom_wheel" => {
+                let f = match id {
+                    "zoom_in" => Some(1.25),
+                    "zoom_out" => Some(0.8),
+                    "zoom_fit" => None,
+                    "zoom_actual" => Some(0.0),
+                    _ => Some(if arg > 0 { 1.15f64.powi(arg) } else { 0.87f64.powi(-arg) }),
+                };
+                let anchor = (id == "zoom_wheel").then_some(self.pointer);
+                return if self.zoom_image(f, anchor) { Effect::None } else { Effect::Pass };
+            }
+            _ => {}
+        }
+        if self.zoom.is_some() && viewing_image {
+            let step = (self.hits.image.h / 8).max(16);
+            let (dx, dy) = match id {
+                "left" => (-step, 0),
+                "right" => (step, 0),
+                "up" => (0, -step),
+                "down" => (0, step),
+                "scroll" => (0, arg * step / 2),
+                _ => (0, 0),
+            };
+            if (dx, dy) != (0, 0) && self.pan(dx, dy) {
+                return Effect::None;
+            }
+        }
+        if id == "scroll"
+            && let Some(p) = self.player.as_mut()
+            && inside(self.hits.vol, self.pointer)
+        {
+            p.change_volume(-arg * 5);
+            return Effect::None;
+        }
         // Player keys belong to the player; without one they go to the shell.
         if matches!(id, "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up") {
             let Some(p) = self.player.as_mut() else { return Effect::Pass };
@@ -798,7 +1140,7 @@ impl Mode for CommanderMode {
         if self.player.as_ref().is_some_and(|pl| !matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == pl.path)) {
             self.player = None;
         }
-        let mut o = Out { items: Vec::new(), frames: Vec::new(), slots: Vec::new(), texts: Vec::new() };
+        let mut o = Out { items: Vec::new(), frames: Vec::new(), slots: Vec::new(), texts: Vec::new(), extra: Vec::new(), menu: None };
         let row_h = ch + 8;
         let (x0, y0, w) = (rect.x + 10, rect.y + 6, rect.w - 20);
         // Header: where we are, then the buttons.
@@ -817,7 +1159,35 @@ impl Mode for CommanderMode {
                 (format!("{} ({})", self.c.view.name(), keys.label("switch_view")), act("switch_view", 0)),
             ]
         };
-        for (t, a) in buttons {
+        // Narrow: the path shortens first (down to ~16 columns), then the
+        // buttons that still do not fit go, one by one, into a ••• menu.
+        let widths: Vec<i32> = buttons.iter().map(|(t, _)| (t.chars().count() as i32 + 2) * cw + cw / 2).collect();
+        let menu_w = 5 * cw + cw / 2;
+        let back_min = 8 * cw;
+        let fits = header_fit(&widths, w - back_min - 16 * cw, menu_w);
+        let mut rest = buttons;
+        let hidden = rest.split_off(fits);
+        self.hits.menu = Rect::default();
+        if !hidden.is_empty() {
+            bx -= menu_w - cw / 2;
+            let mr = Rect { x: bx, y: y0, w: menu_w - cw / 2, h: row_h - 2 };
+            self.hits.menu = mr;
+            o.items.push(item(mr, "•••", PanelStyle::Button { primary: self.menu_open }, act("menu", 0)));
+            bx -= cw / 2;
+            if self.menu_open {
+                let mw = hidden.iter().map(|(t, _)| t.chars().count() as i32 + 4).max().unwrap_or(8) * cw;
+                let r = Rect { x: (mr.x + mr.w - mw).max(rect.x + 4), y: mr.y + mr.h + 4, w: mw, h: hidden.len() as i32 * row_h + 8 };
+                o.menu = Some(r);
+                o.items.push(item(r, "", PanelStyle::Popup, UiAction::None));
+                for (i, (t, a)) in hidden.into_iter().enumerate() {
+                    let rr = Rect { x: r.x + 4, y: r.y + 4 + i as i32 * row_h, w: r.w - 8, h: row_h };
+                    o.items.push(item(rr, t, PanelStyle::Option { selected: false, highlight: 0 }, a));
+                }
+            }
+        } else {
+            self.menu_open = false;
+        }
+        for (t, a) in rest {
             let bw = (t.chars().count() as i32 + 2) * cw;
             bx -= bw;
             o.items.push(item(Rect { x: bx, y: y0, w: bw, h: row_h - 2 }, t, PanelStyle::Button { primary: false }, a));
@@ -845,7 +1215,11 @@ impl Mode for CommanderMode {
         let room = |tx: i32| ((bx - tx) / cw - 1).max(0);
         match (&file, &self.c.cwd) {
             (Some(p), _) => {
-                let t = clip_text(&show(p), room(tx));
+                let t = match self.zoom_label(p) {
+                    Some(z) => format!("{z} · {}", show(p)),
+                    None => show(p),
+                };
+                let t = clip_text(&t, room(tx));
                 o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, t, PanelStyle::Title, UiAction::None));
             }
             (None, Some(d)) => {
@@ -973,7 +1347,7 @@ impl Mode for CommanderMode {
             }
         }
         // Only what is on screen loads; text snippets of files that left are dropped.
-        self.previews.want(o.slots.iter().map(|s| s.0.clone()).collect());
+        self.previews.want(o.slots.iter().map(|s| s.0.clone()).chain(o.extra.iter().cloned()).collect());
         self.texts.retain(|p, _| o.texts.contains(p));
         let mut images = Vec::new();
         for (want, full, clip) in &o.slots {
@@ -1002,12 +1376,20 @@ impl Mode for CommanderMode {
         if let Some(p) = &panel {
             images.retain(|(i, _)| !overlaps(i.rect, p.rect));
         }
-        // Never outside the view (e.g. over the prompt below it).
-        let images: Vec<(ModeImage, Rect)> = images.into_iter().map(|(i, c)| (i, intersect(c, rect))).collect();
+        let menu = o.menu;
+        // Never outside the view (e.g. over the prompt below it), and clear
+        // of its rounded corners.
+        let inner = Rect { x: rect.x + crate::frame::RADIUS, w: rect.w - 2 * crate::frame::RADIUS, ..rect };
+        let mut images: Vec<(ModeImage, Rect)> = images.into_iter().map(|(i, c)| (i, intersect(c, inner))).collect();
+        let mut frames = o.frames;
+        if let Some(m) = menu {
+            images.retain(|(i, c)| !overlaps(intersect(i.rect, *c), m));
+            frames.retain(|f| !overlaps(f.rect, m));
+        }
         View {
             dock: Some(Panel { rect, items: o.items }),
             panel,
-            images: images.into_iter().chain(o.frames.into_iter().map(|f| (f, rect))).filter_map(|(i, clip)| crop(i, clip)).collect(),
+            images: images.into_iter().chain(frames.into_iter().map(|f| (f, inner))).filter_map(|(i, clip)| crop(i, clip)).collect(),
         }
     }
 }
@@ -1458,5 +1840,99 @@ mod tests {
         assert!(m.previews().decoded().is_empty());
         m.c.selected = 1;
         assert_eq!(m.action("open", 0), Effect::Run("cd -- '/srv/app'".into()), "cd over the PTY");
+    }
+
+    #[test]
+    fn image_zoom_keys_wheel_pan_and_header_percent() {
+        let t = tempfile::tempdir().unwrap();
+        image::RgbaImage::from_pixel(400, 200, image::Rgba([0, 0, 255, 255])).save(t.path().join("big.png")).unwrap();
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        m.cwd_changed(t.path());
+        m.c.overlay = Some(Overlay::Preview(t.path().join("big.png")));
+        let v = wait_loaded(&mut m, 1);
+        let title = |v: &View| v.dock.as_ref().unwrap().items.iter().find(|i| i.text.contains("big.png")).unwrap().text.clone();
+        assert!(title(&v).contains("fit "), "{}", title(&v));
+        // volume keys zoom in the image view (shared keys), alt+1 = 100%.
+        assert_eq!(m.action("volume_up", 0), Effect::None);
+        assert!(m.zoom.is_some());
+        assert_eq!(m.action("zoom_actual", 0), Effect::None);
+        let v = m.view(&ctx(), &k);
+        assert!(title(&v).starts_with("100% · "), "{}", title(&v));
+        for _ in 0..8 {
+            m.action("zoom_in", 0);
+        }
+        let v = m.view(&ctx(), &k);
+        let body = m.hits.image;
+        // Clipped to the view: never larger than the body.
+        for i in &v.images {
+            assert!(i.rect.x >= body.x - 1 && i.rect.y >= body.y - 1 && i.rect.y + i.rect.h <= body.y + body.h + 1, "{:?} {:?}", i.rect, body);
+        }
+        // Pan with arrows and drag moves the centre.
+        let c0 = m.zoom.as_ref().unwrap().cx;
+        m.action("right", 0);
+        assert!(m.zoom.as_ref().unwrap().cx > c0);
+        let mid = (body.x + body.w / 2, body.y + body.h / 2);
+        m.action("pointer_down", pack_xy(mid.0, mid.1));
+        m.action("pointer_move", pack_xy(mid.0 + 50, mid.1));
+        m.action("pointer_up", pack_xy(mid.0 + 50, mid.1));
+        assert!(m.zoom.as_ref().unwrap().cx < c0 + 0.2);
+        // Ctrl+wheel zooms about the pointer: the image point under it stays put.
+        m.action("zoom_fit", 0);
+        assert!(m.zoom.is_none());
+        let nat = (400, 200);
+        let mut z = Zoom { path: "x".into(), scale: fit_scale(body, nat), cx: 0.5, cy: 0.5 };
+        let a = (body.x + body.w / 4, body.y + body.h / 2);
+        let r0 = zoom_rect(body, nat, &mut z);
+        let u0 = (a.0 - r0.x) as f64 / r0.w as f64;
+        zoom_about(body, nat, &mut z, 2.0, a);
+        let r1 = zoom_rect(body, nat, &mut z);
+        assert!((((a.0 - r1.x) as f64 / r1.w as f64) - u0).abs() < 0.01);
+        // Without an image view the zoom keys go to the shell.
+        m.c.overlay = None;
+        assert_eq!(m.action("zoom_fit", 0), Effect::Pass);
+    }
+
+    #[test]
+    fn narrow_header_collapses_buttons_into_menu() {
+        assert_eq!(header_fit(&[50, 50, 50], 200, 30), 3);
+        assert_eq!(header_fit(&[50, 50, 50], 140, 30), 2, "progressive: only what does not fit");
+        assert_eq!(header_fit(&[50, 50, 50], 40, 30), 0);
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("a/b")).unwrap();
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        m.cwd_changed(&t.path().join("a/b"));
+        let wide = m.view(&ctx(), &k).dock.unwrap();
+        assert!(!wide.items.iter().any(|i| i.text == "•••"));
+        assert_eq!(m.action("menu", 0), Effect::Pass, "no menu when everything fits");
+        let narrow = Context { viewport: UiViewport { width: 420, height: 600, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 8, w: 420, h: 592 } };
+        let d = m.view(&narrow, &k).dock.unwrap();
+        let dots = d.items.iter().find(|i| i.text == "•••").expect("overflow button");
+        assert!(dots.rect.x + dots.rect.w > 360, "upper right");
+        assert!(d.items.iter().any(|i| i.text.starts_with("‹ back")), "back stays");
+        assert!(d.items.iter().any(|i| i.text == "help"), "help still fits");
+        assert!(!d.items.iter().any(|i| i.text == "options"));
+        assert_eq!(m.action("menu", 0), Effect::None);
+        let d = m.view(&narrow, &k).dock.unwrap();
+        let opt = d.items.iter().find(|i| i.text == "options").expect("in the dropdown");
+        assert!(matches!(opt.style, PanelStyle::Option { .. }));
+        assert!(d.items.iter().any(|i| i.style == PanelStyle::Popup));
+        assert_eq!(m.action("options", 0), Effect::None);
+        assert!(!m.menu_open, "choosing closes it");
+        m.action("menu", 0);
+        assert!(m.escape() && !m.menu_open);
+    }
+
+    #[test]
+    fn player_bar_and_volume_hits() {
+        let mut m = CommanderMode::new();
+        m.hits.vol = Rect { x: 100, y: 10, w: 100, h: 20 };
+        m.pointer = (150, 15);
+        // No player: pointer events are harmless.
+        m.action("pointer_down", pack_xy(150, 15));
+        m.action("pointer_up", pack_xy(150, 15));
+        assert!(m.press.is_none());
+        assert_eq!(unpack_xy(pack_xy(1234, 987)), (1234, 987));
     }
 }

@@ -27,7 +27,7 @@ pub struct UiCategory {
     pub items: Vec<UiItem>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -272,6 +272,11 @@ pub enum PanelStyle {
     },
     /// Background of a dropdown drawn over the panel.
     Popup,
+    /// Seek / volume bar: `done` and the hover mark (`u16::MAX`: none) in 1/1000.
+    Progress {
+        done: u16,
+        hover: u16,
+    },
     /// Dropdown row; bit `i` of `highlight` marks char `i` as matched.
     Option {
         selected: bool,

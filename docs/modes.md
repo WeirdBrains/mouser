@@ -230,6 +230,17 @@ plus the selection's neighbours, so the incoming item loads during the slide.
   (password-only host): ssh's error and a hint. Local files are never shown for a
   remote shell. After `exit` the local shell is back and so is its folder.
 
+#### Image zoom, player controls, header menu
+
+- Image view: `alt+=` / `alt+-` zoom (they are the player's volume keys too: in the image view they zoom, in the player they change volume; remap `zoom_in`/`zoom_out` to split them), `alt+0` fit, `alt+1` 100%. Ctrl+wheel zooms about the pointer; when zoomed, drag, `alt+arrows` or the wheel pan. The header shows `fit 37%` / `200%`. Past 2048 px the full image is decoded (the preview shows until it is ready). Images stay inside the view and clear of its rounded corners (the renderers have no per-pixel clip, so images are inset rather than masked).
+- Player: `« 10s`, play/pause and `10s »` buttons; the seek bar seeks on click, scrubs on drag (seeks at most every 120 ms, a final one on release) and shows the hovered time; the volume bar takes click, drag and wheel. Clicking the video toggles play.
+- Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a `•••` menu (`menu`, default `alt+i`).
+- Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.
+
+#### Future: remote fetch layer / sync
+
+Planned (t185u/t186u), not built yet: ranged parallel fetch of remote files into a sparse cache (range map, mtime+size key, rsync/scp completion, transfer queue) behind its own module so a later local<->remote sync feature can reuse it.
+
 ### Plugin API (`mouser_render::modes`)
 
 A mode implements the `Mode` trait and is registered with `Host::new` (the first
