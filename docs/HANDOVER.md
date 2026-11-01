@@ -228,3 +228,29 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - measure: `MX_REMOTE_DIR=/tmp/mx/rmedia MX_SSH_DEST=fakehost MOUSER_SSH_CONFIG=/tmp/mx/sshd/ssh_config [MOUSER_SSH_BIN=/tmp/mx/slow-ssh MOUSER_REMOTE_BACKEND=cat] cargo test -p mouser-render --lib --release measure_remote -- --ignored --nocapture`.
 - Live: inside the window, `ssh -F /tmp/mx/sshd/ssh_config -t fakehost bash --rcfile /tmp/mx/sshd/rc -i` (a plain ssh hits Michael's zsh/omz update prompt).
 - Open: post-seek A/V catch-up spike on slow links (up to ~570 ms for a few frames); first grid load sometimes slow to appear; sync not built.
+
+### t198u: P1 plugin system (docs/plans/mcp-agent.md, docs/plugins.md)
+- 8368b48: the plan records Michael's decisions (t196u-t197u): MCP + Fuzzball + command transports, no native libs in v1; MCP server stdio + loopback HTTP + HTTPS option (P2); llama.cpp built in + OpenAI/Anthropic-compatible URL; Gemma 4 E2B default with an E4B switch; any model is a `model-provider` plugin.
+- a3c9f88 (core):
+  - `plugins.rs`: the manifest, `$MOUSER_HOME/plugins/<name>`, `state.toml` (priority, disabled), and `Registry` with `providers(kind)` and `command(word)`. It lists commander and the engines as built-ins, and has `run_command` (JSON stdin/stdout, 10 s, scrubbed env).
+  - `permissions.rs`: `Store`/`Broker` (allow/ask/never, `Scope` Installed / FuzzballLocal / FuzzballRemote; remote is never persisted).
+  - `mcp.rs`: a hand-rolled stdio JSON-RPC client (initialize, tools/list, tools/call). rmcp was approved, but it is deferred to P3 to keep tokio out of P1.
+  - `fuzzball.rs`: `p h`/`p q`/`p b`, `plugin_hellos`, `plugin_grants`, `sub=gkp`. Caps are joined with `+`, because `:` is the payload separator.
+- d90247d (app):
+  - `plugin_cli.rs` (`mouser plugin …`; an engine dir goes to the engine installer).
+  - `approval_ui.rs`: a queue, 400 ms arming, and remote requests get only once/deny.
+  - In main.rs, `plugin_hellos` is polled each layout from every tab. `resolve_approval` and `command_plugin`/`spawn_command_plugin` sit before the shell fallback on the `[mouser]` line. While a popup is open it takes keys, clicks and pastes.
+  - In render: `ui::approval_panel`, `UiAction::Approve(u8)`.
+- bcec94d: examples/plugins (hello-command sh, hello-mcp python3, hello-fuzzball sh), docs/plugins.md, the CHANGELOG.
+- Tests: manifest/registry/priority/enable, command roundtrip + timeout + env scrub, the broker, the MCP fake server, Fuzzball `p` (and fuzzed), the CLI end to end with the examples, and popup layout/hit-test. CI green on bcec94d (all 3 OSes).
+- Live (isolated temp HOME/MOUSER_HOME window; focus verified via `hyprctl dispatch 'hl.dsp.focus({ window = "address:0x…" })'`, since Hyprland 0.56 Lua needs the hl.dsp form; focus was given back to Michael's window after):
+  - the Fuzzball popup, then `y`, gives `granted: notify+screen.read`;
+  - F10 `hello Michael` shows the command popup, then `a` gives the notice "[hello-command] Hello, Michael!" and `run = "allow"` is saved.
+  - Shots: ~/.cache/mouser-shots/p1-approval-fuzzball.png, p1-fuzzball-popup.png, p1-fuzzball-granted.png, p1-command-popup.png, p1-command-ran.png.
+- Package (not installed): ~/.cache/mouser-pkg/mouser-git-0.7.2.r88.gbcec94d-1-x86_64.pkg.tar.zst.
+- Open:
+  - "a mouser command" is read as `[mouser]` line commands; Michael may clarify.
+  - Granted capabilities are recorded, but nothing consumes them until P2/P3 (screen.read etc. become real with Mouser's MCP tools).
+  - Built-ins can't be disabled yet (P6).
+  - MCP plugins start only through `plugin probe` (P3 wires them to the sidebar and agent).
+  - No approval UI on Windows for command plugins with sh (the examples need sh/python3).
