@@ -1,4 +1,5 @@
 mod appearance_ui;
+mod approval_ui;
 mod remote_list;
 mod select;
 mod ssh_ui;
@@ -45,6 +46,8 @@ struct AppState {
     remote: remote_list::RemoteLister,
     /// When an Esc last closed a mode window or viewer.
     esc_closed_at: Option<std::time::Instant>,
+    /// Plugin approval popups (always on top; own the keyboard while open).
+    approvals: approval_ui::Approvals,
 }
 use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
@@ -119,6 +122,36 @@ enum Command {
         #[command(subcommand)]
         action: EngineCommand,
     },
+    /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
+    Plugin {
+        #[command(subcommand)]
+        action: PluginCommand,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum PluginCommand {
+    /// List plugins by priority, with what each provides and how it connects.
+    List,
+    /// Install a plugin from a directory with plugin.toml (an engine.toml directory installs an engine).
+    Install { path: String },
+    /// Remove an installed plugin and its saved permissions.
+    Uninstall { name: String },
+    /// Turn a plugin on.
+    Enable { name: String },
+    /// Turn a plugin off without removing it.
+    Disable { name: String },
+    /// Set the priority order (the rest keep their order after these).
+    Priority {
+        #[arg(required = true)]
+        names: Vec<String>,
+    },
+    /// Move one plugin: first, last, up, down or a 1-based position.
+    Move { name: String, to: String },
+    /// Show or set permissions: `mouser plugin permissions NAME [cap=allow|ask|never ...]` (`*=never` for all).
+    Permissions { name: String, set: Vec<String> },
+    /// Start an MCP plugin, do the handshake and list its tools.
+    Probe { name: String },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -388,6 +421,25 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+    if let Some(Command::Plugin { action }) = &cli.command {
+        use mouser_app::plugin_cli::Action;
+        let a = match action {
+            PluginCommand::List => Action::List,
+            PluginCommand::Install { path } => Action::Install(path.clone()),
+            PluginCommand::Uninstall { name } => Action::Uninstall(name.clone()),
+            PluginCommand::Enable { name } => Action::Enable(name.clone()),
+            PluginCommand::Disable { name } => Action::Disable(name.clone()),
+            PluginCommand::Priority { names } => Action::Priority(names.clone()),
+            PluginCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
+            PluginCommand::Permissions { name, set } => Action::Permissions(name.clone(), set.clone()),
+            PluginCommand::Probe { name } => Action::Probe(name.clone()),
+        };
+        if let Err(e) = mouser_app::plugin_cli::run(&a, &mut std::io::stdout()) {
+            eprintln!("mouser plugin: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     let app_cfg = load_config(&cli)?;
     select::set_word_chars(app_cfg.selection.as_ref().and_then(|s| s.word_chars.clone()));
     // Ensure built-in themes exist on disk
@@ -426,6 +478,7 @@ fn main() -> Result<()> {
         esc_gen: 0,
         remote: Default::default(),
         esc_closed_at: None,
+        approvals: Default::default(),
     }));
     {
         let mut st = app_state.lock().unwrap();
@@ -493,6 +546,13 @@ fn main() -> Result<()> {
         let parser = parser.clone();
         Arc::new(move |bytes: Vec<u8>| {
             let mut state = app_state.lock().unwrap();
+            if state.approvals.open() {
+                // The popup owns the keyboard: nothing reaches the tab or the mode.
+                if let Some((req, a)) = state.approvals.key(&bytes) {
+                    resolve_approval(&mut state, req, a, &app_state);
+                }
+                return;
+            }
             match state.mode {
                 Mode::Shell => {
                     if state.ssh.panel.is_some() {
@@ -577,14 +637,18 @@ fn main() -> Result<()> {
             };
             let alt = session.as_ref().is_some_and(|s| s.parser.lock().unwrap().screen.in_alt_screen());
             let place = session.as_ref().and_then(|s| s.place());
+            let sessions = tabs.lock().unwrap().list.clone();
             let mut st = app_state.lock().unwrap();
+            plugin_hellos(&mut st, &sessions);
             let layout = ui_layout(&mut st, vp);
             attach_mode_view(&mut st, layout, vp, tab_h, alt, place)
         })
     };
     fn ui_layout(st: &mut AppState, vp: mouser_render::UiViewport) -> Option<ui::UiLayout> {
         {
-            let panel = st.ssh.panel_view(vp);
+            // The approval popup wins over every other panel.
+            let panel = st.approvals.panel_view(vp);
+            let panel = panel.or_else(|| st.ssh.panel_view(vp));
             let panel = panel.or_else(|| st.look.panel_view(vp));
             if !st.sidebar_open && st.pending_delete.is_none() && st.pending_edit.is_none() {
                 return panel.map(|p| ui::UiLayout { panel: Some(p), ..ui::without_sidebar(vp.width, vp.height) });
@@ -634,6 +698,14 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         let (tabs_ui, sb_cfg, writer_ui) = (tabs.clone(), sb_cfg.clone(), shared_writer.clone());
         Arc::new(move |act: ui::UiAction| match act.clone() {
+            ui::UiAction::Approve(i) => {
+                let mut st = app_state.lock().unwrap();
+                if let Some((req, a)) = st.approvals.action(i) {
+                    resolve_approval(&mut st, req, a, &app_state);
+                }
+            }
+            // While a popup is open, clicks elsewhere do nothing (only its buttons answer).
+            _ if app_state.lock().unwrap().approvals.open() => {}
             ui::UiAction::OpenAdd(ui::Category::Ssh) => app_state.lock().unwrap().ssh.open_add(),
             ui::UiAction::OpenEdit { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_edit(&name),
             ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
@@ -774,6 +846,7 @@ fn main() -> Result<()> {
                     let mode_key =
                         !alt && legacy.as_deref().is_some_and(|b| st.esc_pending.is_some() || b == b"\x1b" || b == b"\x1b:" || st.modes.takes(b));
                     mode_key
+                        || st.approvals.open()
                         || st.mode == Mode::Command
                         || st.ssh.panel.is_some()
                         || st.look.panel.is_some()
@@ -968,6 +1041,9 @@ impl ActiveParser {
 /// program asked for it, control characters dropped). Panels ignore pastes.
 fn paste_text(text: &str, parser: &ActiveParser, writer: &tabs::ActiveWriter, app_state: &Mutex<AppState>) {
     let mut st = app_state.lock().unwrap();
+    if st.approvals.open() {
+        return;
+    }
     if st.mode == Mode::Command {
         st.command_buf.push_str(text.lines().next().unwrap_or(""));
         return;
@@ -1420,10 +1496,129 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
     } else if let Some(rest) = trimmed.strip_prefix("connect ") {
         let mut w = writer.clone();
         let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
+    } else if command_plugin(trimmed, app_state) {
+        // A command plugin's word: run (or asked to run) by the plugin.
     } else {
         // Not a Mouser command: the shell's.
         run_in_shell(trimmed, writer, app_state);
     }
+}
+
+/// Whether a tab's program is on another host (Fuzzball plugins from there are untrusted).
+fn session_remote(s: &tabs::Session) -> bool {
+    matches!(s.place(), Some(mouser_core::remote::Place::Remote { .. }))
+        || s.foreground_argv().and_then(|a| a.first().cloned()).is_some_and(|p| {
+            let p = p.rsplit('/').next().unwrap_or(&p).to_string();
+            matches!(p.as_str(), "ssh" | "mosh" | "mosh-client" | "et" | "autossh")
+        })
+}
+
+/// Pick up Fuzzball `p h` handshakes from every tab and run them by the broker.
+fn plugin_hellos(st: &mut AppState, sessions: &[std::sync::Arc<tabs::Session>]) {
+    use mouser_core::permissions::{Broker, Check, Scope};
+    for s in sessions {
+        let hellos = std::mem::take(&mut s.parser.lock().unwrap().fuzzball.plugin_hellos);
+        for h in hellos {
+            let scope = if session_remote(s) { Scope::FuzzballRemote } else { Scope::FuzzballLocal };
+            match Broker::check(&h.name, &h.caps, &scope) {
+                Check::Allow => fuzzball_answer(s, h.id, &h.name, Some(&h.caps)),
+                Check::Deny => fuzzball_answer(s, h.id, &h.name, None),
+                Check::Ask(_) => {
+                    let detail = vec![format!("Tab: {}   kind: {}   scope: this tab only, until it closes", s.title(), h.kind)];
+                    st.approvals.push(approval_ui::Request::new(
+                        &h.name,
+                        h.caps.clone(),
+                        detail,
+                        scope,
+                        approval_ui::Origin::Fuzzball { session: s.clone(), id: h.id },
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn fuzzball_answer(s: &tabs::Session, id: u32, name: &str, granted: Option<&[String]>) {
+    if let Some(c) = granted {
+        s.parser.lock().unwrap().fuzzball.plugin_grants.insert(name.to_string(), c.to_vec());
+    }
+    let mut w = s.writer.clone();
+    let _ = w.write_all(mouser_core::fuzzball::plugin_reply(id, granted).as_bytes());
+    let _ = w.flush();
+}
+
+/// Apply the user's answer to a popup.
+fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core::permissions::Answer, app_state: &Arc<Mutex<AppState>>) {
+    let _ = mouser_core::permissions::Broker::answer(&req.plugin, &req.caps, &req.scope, a);
+    match req.origin {
+        approval_ui::Origin::Fuzzball { session, id } => {
+            fuzzball_answer(&session, id, &req.plugin, a.granted().then_some(&req.caps[..]));
+            st.look.say(format!("[mouser] {} plugin {}", if a.granted() { "allowed" } else { "denied" }, req.plugin));
+        }
+        approval_ui::Origin::Command { line } => {
+            if a.granted() {
+                spawn_command_plugin(&req.plugin, &line, app_state);
+            } else {
+                st.look.say(format!("[mouser] {} was not allowed to run", req.plugin));
+            }
+        }
+    }
+    wake();
+}
+
+/// `[mouser]` line words owned by a command plugin. True when it was one.
+fn command_plugin(line: &str, app_state: &Arc<Mutex<AppState>>) -> bool {
+    use mouser_core::permissions::{Broker, Check, Scope};
+    let (word, _) = mouser_core::plugins::split_line(line);
+    let reg = mouser_core::plugins::Registry::load();
+    let Some(e) = reg.command(word) else { return false };
+    let name = e.name.clone();
+    let caps = vec!["run".to_string()];
+    let mut st = app_state.lock().unwrap();
+    match Broker::check(&name, &caps, &Scope::Installed) {
+        Check::Allow => {
+            drop(st);
+            spawn_command_plugin(&name, line, app_state);
+        }
+        Check::Deny => st.look.say(format!("[mouser] {name} is set to never run (mouser plugin permissions {name})")),
+        Check::Ask(_) => {
+            let argv = mouser_core::plugins::find(&name).map(|i| i.argv().join(" ")).unwrap_or_default();
+            let detail = vec![format!("Command: {line}"), format!("Runs: {argv}")];
+            st.approvals.push(approval_ui::Request::new(
+                &name,
+                caps,
+                detail,
+                Scope::Installed,
+                approval_ui::Origin::Command { line: line.to_string() },
+            ));
+            wake();
+        }
+    }
+    true
+}
+
+/// Run a command plugin off the UI thread; its reply becomes a notice.
+fn spawn_command_plugin(name: &str, line: &str, app_state: &Arc<Mutex<AppState>>) {
+    let (name, line, app_state) = (name.to_string(), line.to_string(), app_state.clone());
+    std::thread::spawn(move || {
+        let (word, args) = mouser_core::plugins::split_line(&line);
+        let msg = match mouser_core::plugins::find(&name) {
+            None => format!("[mouser] plugin {name} is gone"),
+            Some(p) => {
+                let cwd = std::env::current_dir().ok().map(|d| d.display().to_string());
+                let req = mouser_core::plugins::CommandRequest { api: mouser_core::plugins::API, command: word.to_string(), args, cwd };
+                match mouser_core::plugins::run_command(&p, &req) {
+                    Ok(r) => match r.error {
+                        Some(e) => format!("[{name}] error: {e}"),
+                        None => format!("[{name}] {}", r.text.trim()),
+                    },
+                    Err(e) => format!("[mouser] {e:#}"),
+                }
+            }
+        };
+        app_state.lock().unwrap().look.say(msg);
+        wake();
+    });
 }
 
 fn apply_set(conn: &mut Connection, kv: &str) {
