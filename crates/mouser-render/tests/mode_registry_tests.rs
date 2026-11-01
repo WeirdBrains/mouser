@@ -4,16 +4,20 @@
 //! MOUSER_HOME.
 
 use mouser_core::agent::{AgentHost, AgentTool, Chat, Check, ScreenContext};
-use mouser_core::modes::Keymap;
-use mouser_core::permissions::{Decision, Store};
 use mouser_core::plugins::{self, Registry};
-use mouser_render::UiViewport;
-use mouser_render::modes::{Context, Host, Mode, chat::ChatMode};
-use mouser_render::ui::Rect;
+use mouser_render::modes::{Host, Mode, chat::ChatMode};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(unix)]
+use {
+    mouser_core::modes::Keymap,
+    mouser_core::permissions::{Decision, Store},
+    mouser_render::UiViewport,
+    mouser_render::modes::Context,
+    mouser_render::ui::Rect,
+    std::time::{Duration, Instant},
+};
 
 struct NoModel;
 impl AgentHost for NoModel {
@@ -42,16 +46,19 @@ fn example(n: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins").join(n)
 }
 
+#[cfg(unix)]
 fn ctx() -> Context {
     Context { viewport: UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 30, w: 1000, h: 770 } }
 }
 
+#[cfg(unix)]
 fn dock_text(m: &mut dyn Mode) -> String {
     let keys = Keymap::new(m.bindings());
     m.view(&ctx(), &keys).dock.map(|d| d.items.iter().map(|i| i.text.clone()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
 }
 
 /// Wait until the plugin's reply is in the dock.
+#[cfg(unix)]
 fn wait_for(m: &mut dyn Mode, want: &str) -> String {
     let t = Instant::now();
     loop {
