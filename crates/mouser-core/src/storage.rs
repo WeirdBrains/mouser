@@ -53,6 +53,9 @@ pub struct Preferences {
     /// `[models]`: model providers and the default model (docs/models.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models: Option<crate::models::ModelsPrefs>,
+    /// `[chat]`: the agent chat mode (docs/chat.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<crate::agent::ChatPrefs>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
