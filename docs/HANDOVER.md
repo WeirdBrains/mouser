@@ -220,3 +220,11 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - frame.rs: `round_rect`, `round_box`, `drop_shadow`, `RADIUS`=8; all panel styles, buttons, sidebar engine rows, modal, tabs; new `PanelStyle::Progress{done,hover}`.
 - commander.rs: `Zoom`, `zoom_rect`, `zoom_about`, `header_fit`, `Hits`, `pointer_*` actions (`pack_xy`); lib.rs routes left press/move/release over the dock and ctrl+wheel (`zoom_wheel`).
 - Not done: t185u remote ranged/parallel fetch with sparse cache + range map (and the separate fetch module for future sync, t186u). Remote files still show the "pipe it" notice.
+
+### t183u-t186u: remote files
+- mouser-core/src/fetch.rs: RangeMap, Remote (ssh side channel, tools), RemoteFile key, open()->Handle (prioritize, wait, read, url() HTTP range server, on_progress), backends rsync/scp/cat, LRU evict. Tests: range map, next() priority, HTTP parse, fake-ssh parallel fetch + priority + HTTP + head-only + LRU.
+- commander (render): Previews has 3 workers + RemoteCtx; decode_remote (remote ffmpeg thumbs, early low-res, whole fetch); open_remote handle for viewer/player; heads for text tiles; fit = width. Player::open_input + keep.
+- Host::set_remote(.., ssh); Mode::remote_ssh.
+- measure: `MX_REMOTE_DIR=/tmp/mx/rmedia MX_SSH_DEST=fakehost MOUSER_SSH_CONFIG=/tmp/mx/sshd/ssh_config [MOUSER_SSH_BIN=/tmp/mx/slow-ssh MOUSER_REMOTE_BACKEND=cat] cargo test -p mouser-render --lib --release measure_remote -- --ignored --nocapture`.
+- Live: inside the window, `ssh -F /tmp/mx/sshd/ssh_config -t fakehost bash --rcfile /tmp/mx/sshd/rc -i` (a plain ssh hits Michael's zsh/omz update prompt).
+- Open: post-seek A/V catch-up spike on slow links (up to ~570 ms for a few frames); first grid load sometimes slow to appear; sync not built.

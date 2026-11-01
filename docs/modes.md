@@ -237,9 +237,19 @@ plus the selection's neighbours, so the incoming item loads during the slide.
 - Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a `•••` menu (`menu`, default `alt+i`).
 - Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.
 
-#### Future: remote fetch layer / sync
+#### Remote files (SSH sessions)
 
-Planned (t185u/t186u), not built yet: ranged parallel fetch of remote files into a sparse cache (range map, mtime+size key, rsync/scp completion, transfer queue) behind its own module so a later local<->remote sync feature can reuse it.
+Remote listings preview, view and play like local ones, through `mouser_core::fetch`:
+
+- Side channel: the session's own ssh options, `BatchMode`, ControlMaster under `$MOUSER_HOME/cache/ssh` (`MOUSER_SSH_CONFIG` for Mouser's config, `MOUSER_SSH_BIN` to swap ssh in tests).
+- Reads: `tail -c +N | head -c L` ranges, 3 at a time per file, 3 files at once (others queue). The first is the 256 KB head (image header, start of text, video start); after that 2 MB chunks from the priority offset, wrapping. Seeks (player, through a local HTTP Range server ffmpeg reads) and scrolls (text) move the priority.
+- Cache: `$MOUSER_HOME/cache/remote/<key>.data` (sparse) + `.map` (filled ranges); key = host + path + size + mtime, so an unchanged file is never fetched again. LRU-trimmed to `MOUSER_REMOTE_CACHE_MB` (2048).
+- When nothing shows a file any more its reads stop; files up to `MOUSER_REMOTE_COMPLETE_MB` (64) finish into the cache: rsync `--inplace` (when both ends have it; what is cached is not resent), else scp, else the ranged reads. `MOUSER_REMOTE_BACKEND=rsync|scp|cat` forces one.
+- Thumbnails: the host's ffmpeg makes a small PNG (only that crosses); without it images are fetched whole (up to 64 MB for tiles) and videos decoded locally from ranged reads. Cached in `cache/thumbs`.
+- Viewer: the header bytes give the size at once; a 1024 px preview shows scaled up, the full image replaces it when fetched; a status line shows progress or the error. Text shows what has arrived and grows.
+- Measured on a localhost sshd throttled to 4 MB/s per read: 33 MB 8000x6000 JPEG header 0.1 s, first preview 0.65 s, full 3.4 s; 153 MB 1080p video (moov at the end) first frame 1.7 s, seek to an unfetched 90 s 1.3 s, all here 12.9 s; A/V offset p5 -3.5 / p95 4.0 ms.
+- Future: the fetch layer (range map, cache keys, backends, transfer queue) is its own module so a local<->remote sync can reuse it; sync itself is not built.
+- Images fit the terminal's width (default and `alt+0`).
 
 ### Plugin API (`mouser_render::modes`)
 

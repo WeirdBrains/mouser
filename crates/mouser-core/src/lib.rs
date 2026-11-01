@@ -3,6 +3,7 @@ pub mod commander;
 pub mod compression;
 pub mod connections;
 pub mod engines;
+pub mod fetch;
 pub mod fuzzball;
 pub mod fuzzy;
 pub mod graphics;

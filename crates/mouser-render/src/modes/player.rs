@@ -224,6 +224,10 @@ struct Out {
 
 pub struct Player {
     pub path: PathBuf,
+    /// What ffmpeg reads (`path`, or a URL for remote files).
+    input: PathBuf,
+    /// Kept alive while playing (a remote transfer).
+    pub keep: Option<Box<dyn std::any::Any + Send>>,
     pub info: Info,
     /// 0..=100.
     pub volume: u8,
@@ -247,11 +251,18 @@ pub struct Player {
 impl Player {
     /// Probe `path` and start playing, decoding video `width` px wide.
     pub fn open(path: &Path, width: u32, waker: Option<Waker>) -> Self {
-        let info = probe(path);
+        Self::open_input(path, path, width, waker)
+    }
+
+    /// Play `input` (a file or a URL ffmpeg reads) shown as `path`.
+    pub fn open_input(path: &Path, input: &Path, width: u32, waker: Option<Waker>) -> Self {
+        let info = probe(input);
         let s = Arc::new(Shared::default());
         s.volume.store(0.8f32.to_bits(), Ordering::Relaxed);
         let mut p = Self {
             path: path.to_path_buf(),
+            input: input.to_path_buf(),
+            keep: None,
             info: info.unwrap_or_default(),
             volume: 80,
             s,
@@ -377,7 +388,7 @@ impl Player {
             let (w, h, fps) = (self.size.0, self.size.1, self.info.fps);
             let child = Command::new("ffmpeg")
                 .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", &ss, "-i"])
-                .arg(&self.path)
+                .arg(&self.input)
                 .args(["-an", "-vf", &format!("fps={fps},scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
@@ -396,7 +407,7 @@ impl Player {
         if let Some(o) = self.out {
             let child = Command::new("ffmpeg")
                 .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", &ss, "-i"])
-                .arg(&self.path)
+                .arg(&self.input)
                 .args(["-vn", "-f", "f32le", "-ac", &o.channels.to_string(), "-ar", &o.rate.to_string(), "pipe:1"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
