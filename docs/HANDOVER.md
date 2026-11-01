@@ -378,3 +378,39 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - The first long prompt is slow once, while the NVIDIA driver compiles shaders.
   - In-app popup: screenshots `~/.cache/mouser-shots/p4b-popup.png` and `p4b-denied.png`. Deny downloads nothing and saves no permission.
 - Deferred: E4B not downloaded; no GPU selection or KV-cache reuse across turns; the popup can't cancel a running download; chat mode is P5.
+
+### P5: chat mode, the agent (docs/chat.md)
+- Commits:
+  - 42ec7b0 core;
+  - bcae534 render;
+  - 15b2524 app;
+  - e737bed docs.
+- CI: run 41351536334, green on Linux, macOS and Windows.
+- Packages (not installed), in `/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-pkg/`. Big build dirs now live on /mnt/ext1, not /tmp or ~/.cache.
+  - default: `mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst`;
+  - local-llm: `llm/mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst` (depends on vulkan-icd-loader).
+- Core: `agent.rs`.
+  - `Chat` (send/cancel/answer/clear, `State` with entries and the pending card) and the `AgentHost` trait.
+  - `Check` (Allow / Deny / Ask lines) and `Answer` (Once / ForChat / Deny).
+  - `redact()`, `untrusted()`, MAX_STEPS 8, tool output capped at 8,000 characters, transcripts `$MOUSER_HOME/chats/*.jsonl` (0600).
+  - `Preferences.chat` (`[chat] transcripts`).
+  - Malformed calls with an empty name are dropped; small models sometimes emit them.
+- Render: `modes/chat.rs` `ChatMode` (hotkey `a`, the bindings, the dock with header, transcript, card and input) and `Host::push`.
+- App:
+  - `chat_host.rs` `ChatHost`. Mouser tools run through `AppTools { preapproved: true }` after the chat card. Mutating tools always ask; reads obey only a broker "never" for `chat`. MCP tools follow `broker_name`/`tool_cap`.
+  - Registered after `mcp_tools::start` in main.
+  - `examples/chat_live.rs` (required feature local-llm).
+- Tests: `agent_tests` (8: allow, card once/deny/never, for-chat vs always-ask, cancel mid-stream/card/tool, step limit, transcript, redaction, nameless call) and `chat_render_tests` (2).
+- Live check:
+  - Temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch in `/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-p5`.
+  - Mock provider (loopback, port 17901) in a floating, unfocused window:
+    - redacted token (`p5-1-mock-redacted.png`);
+    - the `shell_run` card (`p5-2-card.png`), allowed and ran in the tab (`p5-3-allowed.png`);
+    - Esc cancel mid-stream (`p5-4-cancelled.png`);
+    - deny (`p5-5-denied.png`), all in `~/.cache/mouser-shots/`.
+  - Gemma 4 E2B via Vulkan, headless `chat_live` with a sandboxed sh:
+    - `ls -la` card → allow → output → correct file list;
+    - the token question was answered with `DEMO_TOKEN=[redacted]`;
+    - warm: prompt 5,000–8,900 t/s, generation 75–110 t/s, a turn takes 1.4–2.4 s (10.8 s when a new prompt size compiles shaders).
+  - The GUI Gemma screenshot was skipped: the test window was moved to another workspace mid-test, so a region capture would only show the user's screen.
+- Open: the Edit button on the card, a model picker in the dock, cost, images, killing (not just abandoning) a running MCP call, a light-theme screenshot, and open questions 12–14 (answered with the plan's proposals).
