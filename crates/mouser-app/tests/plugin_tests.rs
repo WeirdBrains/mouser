@@ -96,3 +96,55 @@ fn install_list_permissions_priority_and_examples_run() {
     assert!(!mouser_core::permissions::Store::load().plugins.contains_key("hello-command"));
     unsafe { std::env::remove_var("MOUSER_HOME") };
 }
+
+fn kind(a: Action, k: Option<&str>) -> anyhow::Result<String> {
+    let mut v = Vec::new();
+    mouser_app::plugin_cli::run_kind(&a, k, &mut v)?;
+    Ok(String::from_utf8(v).unwrap())
+}
+
+/// P6: engines and modes are plugins; `mouser engine X` = `mouser plugin X --kind engine`.
+#[test]
+#[serial_test::serial]
+fn engines_and_modes_through_the_plugin_cli() {
+    let t = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+    unsafe { std::env::remove_var("MOUSER_ENGINE") };
+    let engine_list = || {
+        let mut v = Vec::new();
+        mouser_app::engine_cli::run(&mouser_app::engine_cli::Action::List, &mut v).unwrap();
+        String::from_utf8(v).unwrap()
+    };
+    // The same list either way.
+    assert_eq!(kind(Action::List, Some("engine")).unwrap(), engine_list());
+    assert!(engine_list().contains("mouser"));
+    assert!(kind(Action::List, Some("nope")).is_err());
+    // The permanent engine can't be disabled; others can, and leave the walk.
+    let e = kind(Action::Disable("mouser".into()), Some("engine")).unwrap_err().to_string();
+    assert!(e.contains("permanent"), "{e}");
+    let o = kind(Action::Disable("skia".into()), Some("engine")).unwrap();
+    assert!(o.contains("skia disabled; engines tried: mouser"), "{o}");
+    assert!(kind(Action::Use("skia".into()), Some("engine")).unwrap_err().to_string().contains("disabled"));
+    if mouser_render::engine::available_builtins().iter().any(|(n, _)| *n == "skia") {
+        assert!(engine_list().contains("disabled"), "{}", engine_list());
+    }
+    // `mouser plugin enable skia` (no --kind) reaches the same engine.
+    cli(Action::Enable("skia".into())).unwrap();
+    assert!(mouser_core::plugins::is_enabled("skia"));
+    assert_eq!(kind(Action::List, Some("engine")).unwrap(), engine_list());
+    // Built-in modes: listed with their hotkeys, and can be turned off.
+    let l = kind(Action::List, Some("mode")).unwrap();
+    assert!(l.contains("commander") && l.contains("hotkey ctrl+shift+m c") && l.contains("chat") && !l.contains("openai"), "{l}");
+    cli(Action::Disable("commander".into())).unwrap();
+    cli(Action::Disable("chat".into())).unwrap();
+    let l = cli(Action::List).unwrap();
+    assert!(l.contains("[disabled]") && l.contains("plain terminal"), "{l}");
+    cli(Action::Enable("commander".into())).unwrap();
+    cli(Action::Enable("chat".into())).unwrap();
+    // A mode plugin installs like any plugin.
+    let o = cli(Action::Install(examples().join("hello-mode").display().to_string())).unwrap();
+    assert!(o.contains("installed hello-mode 0.1.0 (mode)") && o.contains("run"), "{o}");
+    assert!(kind(Action::List, Some("mode")).unwrap().contains("hotkey ctrl+shift+m h"));
+    assert!(kind(Action::Use("hello-mode".into()), None).is_err());
+    unsafe { std::env::remove_var("MOUSER_HOME") };
+}

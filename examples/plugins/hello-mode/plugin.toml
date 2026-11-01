@@ -1,0 +1,23 @@
+# A mode plugin (P6, docs/modes.md): ctrl+shift+m h switches to it; it docks
+# above the prompt like the built-in modes. Mouser runs hello-mode.sh once per
+# event (activate, a key below, a cwd change) and shows the lines it returns.
+name = "hello-mode"
+version = "0.1.0"
+description = "a tiny mode: shows where you are and the time"
+# run: start the program (asked for in `mouser plugin permissions hello-mode`);
+# files.read: Mouser sends it the shell's working directory.
+permissions = ["run", "files.read"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "command"
+command = ["sh", "./hello-mode.sh"]
+
+[mode]
+hotkey = "h"
+keys = [
+  { id = "time", key = "t", describe = "show the time" },
+  { id = "files", key = "f", describe = "count the files here" },
+]

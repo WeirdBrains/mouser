@@ -10,6 +10,7 @@
 pub mod chat;
 pub mod commander;
 pub mod player;
+pub mod plugin;
 
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use crate::{UiViewport, Waker};
@@ -142,6 +143,44 @@ impl Host {
     /// The modes built into Mouser: commander (default).
     pub fn builtin() -> Self {
         Self::new(vec![Box::new(commander::CommanderMode::new())])
+    }
+
+    /// The mode switcher from the plugin registry (P6): enabled modes in
+    /// priority order, the first one active. Commander and command-transport
+    /// mode plugins are made here; `make` builds the rest (the app's chat mode)
+    /// or returns `None` for modes this build lacks. A plugin whose hotkey is
+    /// already taken is left out with a note. No enabled mode: an empty host,
+    /// and Mouser is a plain terminal.
+    pub fn from_registry(r: &mouser_core::plugins::Registry, mut make: impl FnMut(&mouser_core::plugins::Entry) -> Option<Box<dyn Mode>>) -> Self {
+        use mouser_core::plugins::Transport;
+        let mut modes: Vec<Box<dyn Mode>> = Vec::new();
+        let mut notes = Vec::new();
+        for e in r.modes() {
+            let m: Option<Box<dyn Mode>> = match (e.transport, e.name.as_str()) {
+                (Transport::Builtin, "commander") => Some(Box::new(commander::CommanderMode::new())),
+                (Transport::Command, _) => {
+                    mouser_core::plugins::find(&e.name).and_then(plugin::PluginMode::new).map(|m| Box::new(m) as Box<dyn Mode>)
+                }
+                _ => make(e),
+            };
+            let Some(m) = m else {
+                notes.push(format!("mode {} is not available in this build", e.name));
+                continue;
+            };
+            if let Some(o) = modes.iter().find(|o| o.hotkey() == m.hotkey()) {
+                notes.push(format!("mode {} left out: hotkey {} is {}'s", e.name, m.hotkey(), o.name()));
+                continue;
+            }
+            modes.push(m);
+        }
+        let mut h = Self::new(modes);
+        h.notes.extend(notes);
+        h
+    }
+
+    /// Names of the registered modes, in switcher order.
+    pub fn names(&self) -> Vec<&'static str> {
+        self.modes.iter().map(|(m, _)| m.name()).collect()
     }
 
     /// Register another mode (not active until switched to).

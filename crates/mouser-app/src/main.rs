@@ -119,10 +119,11 @@ enum Command {
         #[arg(long)]
         id: Option<u32>,
     },
-    /// Manage GPU rendering engines (mouser, skia, custom); see docs/engines.md.
+    /// Manage GPU rendering engines (mouser, skia, custom); the same as
+    /// `mouser plugin … --kind engine` (engines are plugins); see docs/engines.md.
     Engine {
         #[command(subcommand)]
-        action: EngineCommand,
+        action: PluginCommand,
     },
     /// Mouser's MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md.
     Mcp {
@@ -136,6 +137,10 @@ enum Command {
     },
     /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
+        /// Only this kind: mode, engine, model-provider, tool-provider, command.
+        /// With `engine` this is `mouser engine …`.
+        #[arg(long, global = true)]
+        kind: Option<String>,
         #[command(subcommand)]
         action: PluginCommand,
     },
@@ -287,47 +292,26 @@ enum McpServersCommand {
 
 #[derive(clap::Subcommand, Debug)]
 enum PluginCommand {
-    /// List plugins by priority, with what each provides and how it connects.
+    /// List plugins (or engines) by priority, with what each provides and its state.
     List,
-    /// Install a plugin from a directory with plugin.toml (an engine.toml directory installs an engine).
+    /// Install from a directory with plugin.toml (or an engine's engine.toml).
     Install { path: String },
-    /// Remove an installed plugin and its saved permissions.
+    /// Remove an installed plugin or engine (and a plugin's saved permissions).
     Uninstall { name: String },
-    /// Turn a plugin on.
+    /// Turn a plugin or engine on (built-ins included).
     Enable { name: String },
-    /// Turn a plugin off without removing it.
+    /// Turn a plugin or engine off without removing it (not the mouser engine).
     Disable { name: String },
-    /// Set the priority order (the rest keep their order after these).
-    Priority {
-        #[arg(required = true)]
-        names: Vec<String>,
-    },
-    /// Move one plugin: first, last, up, down or a 1-based position.
-    Move { name: String, to: String },
-    /// List every saved permission (no NAME), show or set one (`cap=allow|ask|never ...`, `*=never` for all), or `NAME revoke`.
-    Permissions { name: Option<String>, set: Vec<String> },
-    /// Start an MCP plugin, do the handshake and list its tools.
-    Probe { name: String },
-}
-
-#[derive(clap::Subcommand, Debug)]
-enum EngineCommand {
-    /// List built-in and installed engines (* marks the one new windows use).
-    List,
-    /// Install a custom engine from a directory with engine.toml (or the manifest or library in it).
-    Install { path: String },
-    /// Remove an installed custom engine.
-    Uninstall { name: String },
-    /// Put this engine first in the priority order (and unskip it).
+    /// Engines: put this engine first in the priority order (and unskip it).
     Use { name: String },
-    /// Set the priority order (mouser is added last if left out); MOUSER_ENGINE=a,b overrides it for one run.
+    /// Set the priority order (the rest keep their order; for engines mouser stays last).
     Priority {
         #[arg(required = true)]
         names: Vec<String>,
     },
-    /// Move an engine in the priority order: first, last, up, down or a position (1 = first).
+    /// Move one: first, last, up, down or a 1-based position.
     Move { name: String, to: String },
-    /// Stop skipping an engine that crashed Mouser (and clear its recorded failure) without selecting it.
+    /// Engines: stop skipping one that crashed Mouser (and clear its failure) without selecting it.
     #[command(visible_alias = "restore")]
     Unskip {
         #[arg(required_unless_present = "all", conflicts_with = "all")]
@@ -336,6 +320,37 @@ enum EngineCommand {
         #[arg(long)]
         all: bool,
     },
+    /// List every saved permission (no NAME), show or set one (`cap=allow|ask|never ...`, `*=never` for all), or `NAME revoke`.
+    Permissions { name: Option<String>, set: Vec<String> },
+    /// Start an MCP plugin, do the handshake and list its tools.
+    Probe { name: String },
+}
+
+/// `mouser plugin …` / `mouser engine …` as a plugin_cli action and the kind it
+/// is limited to (`mouser engine X` is `mouser plugin X --kind engine`).
+fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<String>, &'static str)> {
+    use mouser_app::plugin_cli::Action;
+    let (action, kind, who) = match c {
+        Command::Engine { action } => (action, Some("engine".to_string()), "mouser engine"),
+        Command::Plugin { action, kind } => (action, kind.clone(), "mouser plugin"),
+        _ => return None,
+    };
+    let a = match action {
+        PluginCommand::List => Action::List,
+        PluginCommand::Install { path } => Action::Install(path.clone()),
+        PluginCommand::Uninstall { name } => Action::Uninstall(name.clone()),
+        PluginCommand::Enable { name } => Action::Enable(name.clone()),
+        PluginCommand::Disable { name } => Action::Disable(name.clone()),
+        PluginCommand::Use { name } => Action::Use(name.clone()),
+        PluginCommand::Unskip { name, .. } => Action::Unskip(name.clone()),
+        PluginCommand::Priority { names } => Action::Priority(names.clone()),
+        PluginCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
+        PluginCommand::Permissions { name: None, .. } => Action::PermissionsList,
+        PluginCommand::Permissions { name: Some(name), set } if set.len() == 1 && set[0] == "revoke" => Action::Revoke(name.clone()),
+        PluginCommand::Permissions { name: Some(name), set } => Action::Permissions(name.clone(), set.clone()),
+        PluginCommand::Probe { name } => Action::Probe(name.clone()),
+    };
+    Some((a, kind, who))
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -562,19 +577,9 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    if let Some(Command::Engine { action }) = &cli.command {
-        use mouser_app::engine_cli::Action;
-        let a = match action {
-            EngineCommand::List => Action::List,
-            EngineCommand::Install { path } => Action::Install(path.clone()),
-            EngineCommand::Uninstall { name } => Action::Uninstall(name.clone()),
-            EngineCommand::Use { name } => Action::Use(name.clone()),
-            EngineCommand::Unskip { name, .. } => Action::Unskip(name.clone()),
-            EngineCommand::Priority { names } => Action::Priority(names.clone()),
-            EngineCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
-        };
-        if let Err(e) = mouser_app::engine_cli::run(&a, &mut std::io::stdout()) {
-            eprintln!("mouser engine: {e:#}");
+    if let Some((a, kind, who)) = cli.command.as_ref().and_then(plugin_action) {
+        if let Err(e) = mouser_app::plugin_cli::run_kind(&a, kind.as_deref(), &mut std::io::stdout()) {
+            eprintln!("{who}: {e:#}");
             std::process::exit(1);
         }
         return Ok(());
@@ -665,27 +670,6 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
-    if let Some(Command::Plugin { action }) = &cli.command {
-        use mouser_app::plugin_cli::Action;
-        let a = match action {
-            PluginCommand::List => Action::List,
-            PluginCommand::Install { path } => Action::Install(path.clone()),
-            PluginCommand::Uninstall { name } => Action::Uninstall(name.clone()),
-            PluginCommand::Enable { name } => Action::Enable(name.clone()),
-            PluginCommand::Disable { name } => Action::Disable(name.clone()),
-            PluginCommand::Priority { names } => Action::Priority(names.clone()),
-            PluginCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
-            PluginCommand::Permissions { name: None, .. } => Action::PermissionsList,
-            PluginCommand::Permissions { name: Some(name), set } if set.len() == 1 && set[0] == "revoke" => Action::Revoke(name.clone()),
-            PluginCommand::Permissions { name: Some(name), set } => Action::Permissions(name.clone(), set.clone()),
-            PluginCommand::Probe { name } => Action::Probe(name.clone()),
-        };
-        if let Err(e) = mouser_app::plugin_cli::run(&a, &mut std::io::stdout()) {
-            eprintln!("mouser plugin: {e:#}");
-            std::process::exit(1);
-        }
-        return Ok(());
-    }
     let app_cfg = load_config(&cli)?;
     select::set_word_chars(app_cfg.selection.as_ref().and_then(|s| s.word_chars.clone()));
     // Ensure built-in themes exist on disk
@@ -718,7 +702,8 @@ fn main() -> Result<()> {
         look: appearance_ui::Appearance::new(font_size0, font_family0.clone(), config_font_size),
         pending_delete: None,
         pending_edit: None,
-        modes: mouser_render::modes::Host::builtin(),
+        // Filled from the plugin registry below, once the chat host can be made.
+        modes: mouser_render::modes::Host::new(vec![]),
         mode_images: (Vec::new(), 0),
         esc_pending: None,
         esc_gen: 0,
@@ -726,13 +711,6 @@ fn main() -> Result<()> {
         esc_closed_at: None,
         approvals: Default::default(),
     }));
-    {
-        let mut st = app_state.lock().unwrap();
-        let notes = std::mem::take(&mut st.modes.notes);
-        if let Some(n) = notes.into_iter().next() {
-            st.look.say(n);
-        }
-    }
 
     // Hooks for renderer
     let fetch = {
@@ -1075,10 +1053,28 @@ fn main() -> Result<()> {
     };
     let notes = mcp_tools::start(tabs.clone(), app_state.clone());
     {
-        // The chat mode (P5): its agent sees the tabs and runs tools through ChatHost.
-        let host = Arc::new(chat_host::ChatHost::new(tabs.clone(), app_state.clone()));
-        let chat = mouser_core::agent::Chat::new(host);
-        app_state.lock().unwrap().modes.push(Box::new(mouser_render::modes::chat::ChatMode::new(chat)));
+        // The mode switcher comes from the plugin registry (P6): enabled modes
+        // in priority order (commander first by default), built-in or plugin.
+        // The chat mode (P5)'s agent sees the tabs and runs tools through ChatHost.
+        let reg = mouser_core::plugins::Registry::load();
+        let modes = mouser_render::modes::Host::from_registry(&reg, |e| match e.name.as_str() {
+            "chat" if e.transport == mouser_core::plugins::Transport::Builtin => {
+                let host = Arc::new(chat_host::ChatHost::new(tabs.clone(), app_state.clone()));
+                Some(Box::new(mouser_render::modes::chat::ChatMode::new(mouser_core::agent::Chat::new(host))) as Box<dyn mouser_render::modes::Mode>)
+            }
+            _ => None,
+        });
+        log::info!("modes: {}", if modes.names().is_empty() { "none (plain terminal)".to_string() } else { modes.names().join(", ") });
+        let mut st = app_state.lock().unwrap();
+        st.modes = modes;
+        // modes.toml problems and modes left out (shown once).
+        let notes = std::mem::take(&mut st.modes.notes);
+        for n in &notes {
+            log::warn!("{n}");
+        }
+        if let Some(n) = notes.into_iter().next() {
+            st.look.say(n);
+        }
     }
     mcp_clients();
     if !notes.is_empty() {
@@ -1714,8 +1710,14 @@ fn spawn_mcp_call(id: &str, tool: &str, args: Option<serde_json::Value>, app_sta
 fn engine_rows() -> Vec<(String, ui::EngineState, Option<String>)> {
     use mouser_core::engines;
     let active = ACTIVE_ENGINE.lock().unwrap().clone();
-    let mut names: Vec<String> = mouser_render::engine::available_builtins().iter().map(|(n, _)| n.to_string()).collect();
-    names.extend(engines::installed().into_iter().flatten().map(|i| i.manifest.name));
+    // Enabled engines from the plugin registry (built-ins only if this build has them).
+    let built = mouser_render::engine::available_builtins();
+    let mut names: Vec<String> = mouser_core::plugins::Registry::load()
+        .engines()
+        .iter()
+        .filter(|e| e.dir.is_some() || built.iter().any(|(b, _)| *b == e.name))
+        .map(|e| e.name.clone())
+        .collect();
     let order = engines::priority();
     names.sort_by_key(|n| order.iter().position(|o| o == n).unwrap_or(usize::MAX));
     names
@@ -2484,12 +2486,25 @@ mod tests {
         assert!(cli(&["show", "x.png"]).command.is_some());
         assert!(matches!(
             cli(&["engine", "unskip", "--all"]).command,
-            Some(Command::Engine { action: EngineCommand::Unskip { name: None, all: true } })
+            Some(Command::Engine { action: PluginCommand::Unskip { name: None, all: true } })
         ));
         assert!(matches!(
             cli(&["engine", "restore", "skia"]).command,
-            Some(Command::Engine { action: EngineCommand::Unskip { name: Some(_), all: false } })
+            Some(Command::Engine { action: PluginCommand::Unskip { name: Some(_), all: false } })
         ));
+        // P6: `mouser engine X` is `mouser plugin X --kind engine`.
+        let pa = |a: &[&str]| plugin_action(cli(a).command.as_ref().unwrap()).map(|(a, k, _)| (a, k));
+        for (e, p) in [
+            (vec!["engine", "list"], vec!["plugin", "list", "--kind", "engine"]),
+            (vec!["engine", "use", "skia"], vec!["plugin", "--kind", "engine", "use", "skia"]),
+            (vec!["engine", "priority", "skia", "mouser"], vec!["plugin", "priority", "skia", "mouser", "--kind", "engine"]),
+            (vec!["engine", "disable", "skia"], vec!["plugin", "disable", "skia", "--kind", "engine"]),
+            (vec!["engine", "move", "skia", "up"], vec!["plugin", "move", "skia", "up", "--kind", "engine"]),
+            (vec!["engine", "unskip", "--all"], vec!["plugin", "unskip", "--all", "--kind", "engine"]),
+        ] {
+            assert_eq!(pa(&e), pa(&p), "{e:?}");
+        }
+        assert_eq!(pa(&["plugin", "list"]).unwrap().1, None);
         assert!(Cli::try_parse_from(["mouser", "engine", "unskip"]).is_err());
         assert!(Cli::try_parse_from(["mouser", "--version"]).is_err_and(|e| e.kind() == clap::error::ErrorKind::DisplayVersion));
     }

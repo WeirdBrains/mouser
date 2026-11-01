@@ -257,3 +257,40 @@ fn sidebar_drop_order_is_saved_like_engine_priority() {
     assert_eq!(engines::saved_priority(), ["mouser", "skia"]);
     assert_eq!(engines::set_priority(&["skia".to_string()]).unwrap().last().map(String::as_str), Some("mouser"), "mouser is kept");
 }
+
+/// P6: an engine described by plugin.toml (kind = "engine") installs through
+/// `mouser plugin install`, loads over the same C ABI, and is listed and
+/// disabled like any plugin.
+#[test]
+#[serial]
+fn plugin_toml_engine_installs_through_the_plugin_cli() {
+    let h = home();
+    let d = h.0.path().join("flat-plugin");
+    std::fs::create_dir_all(&d).unwrap();
+    let lib = example_lib();
+    let lib_name = lib.file_name().unwrap().to_string_lossy().into_owned();
+    std::fs::copy(&lib, d.join(&lib_name)).unwrap();
+    std::fs::write(
+        d.join("plugin.toml"),
+        format!(
+            "name = \"flat\"\nversion = \"0.2.0\"\ndescription = \"example\"\nprovides = [{{ kind = \"engine\" }}]\n[run]\ntransport = \"library\"\n[engine]\nabi = 1\nlibrary = \"{lib_name}\"\n"
+        ),
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    mouser_app::plugin_cli::run(&mouser_app::plugin_cli::Action::Install(d.display().to_string()), &mut out).unwrap();
+    let out = String::from_utf8(out).unwrap();
+    assert!(out.contains("installed flat 0.2.0"), "{out}");
+    let lib = mouser_render::engine::load_installed("flat").unwrap();
+    assert_eq!(lib.name(), "flat");
+    drop(lib);
+    cli(Action::Use("flat".into())).unwrap();
+    assert_eq!(engines::chosen(), "flat");
+    mouser_core::plugins::set_enabled("flat", false).unwrap();
+    assert_eq!(engines::chosen(), "mouser", "a disabled engine is passed over");
+    let list = cli(Action::List).unwrap();
+    assert!(list.contains("flat") && list.contains("disabled"), "{list}");
+    mouser_core::plugins::set_enabled("flat", true).unwrap();
+    assert_eq!(engines::chosen(), "flat");
+    cli(Action::Uninstall("flat".into())).unwrap();
+}
