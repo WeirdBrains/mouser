@@ -1,5 +1,27 @@
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-01
+
+Mouser 1.0: everything below since 0.7.2 (modes and engines as plugins, the chat
+agent, MCP server and client, model providers, the local model) plus these fixes.
+
+### Fixed
+
+- Scrollback keeps colours and attributes (bold, underline, inverse, …) after lines
+  scroll off and through reflow; plain-text readers are unchanged.
+- Chat cancel now stops a running MCP call: the server gets `notifications/cancelled`,
+  and a stdio server that hasn't stopped within 1 s is killed (its whole process
+  group) and reconnected. Before, the call was only abandoned.
+- Media player: after a seek, audio waits for the first video frame (at most 3 s), so
+  on slow SSH links the picture no longer starts up to ~570 ms behind the sound.
+- Commander mouse input (click to select, double-click to open, buttons, wheel and
+  Ctrl+wheel zoom) is now covered by tests through the window's own routing.
+
+### Known limitations
+
+- Windows runs single-process: an engine or GPU driver crash closes the window and
+  ends its shells, and custom engines run in-process (README, Known limitations).
+
 ### Changed: license
 
 - Mouser is now licensed under BSD-3-Clause (was MIT). See `LICENSE`.
