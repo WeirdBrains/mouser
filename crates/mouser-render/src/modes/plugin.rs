@@ -31,8 +31,9 @@ struct Shared {
     status: Option<String>,
     error: Option<String>,
     busy: bool,
-    /// An event that came in while the program was running (latest wins).
-    queued: Option<(String, String)>,
+    /// An event that came in while the program was running (latest wins),
+    /// with the directory to send for it.
+    queued: Option<(String, String, Option<String>)>,
 }
 
 pub struct PluginMode {
@@ -83,17 +84,17 @@ impl PluginMode {
             s.error = Some(format!("{} needs permission to run: mouser plugin permissions {} run=allow", self.name, self.name));
             return;
         }
+        let cwd = if self.allowed("files.read") { self.cwd.as_ref().map(|d| d.display().to_string()) } else { None };
         {
             let mut s = self.shared.lock().unwrap();
             if s.busy {
-                s.queued = Some((event.into(), id.into()));
+                s.queued = Some((event.into(), id.into(), cwd));
                 return;
             }
             s.busy = true;
         }
-        let cwd = if self.allowed("files.read") { self.cwd.as_ref().map(|d| d.display().to_string()) } else { None };
         let (p, shared, waker) = (self.plugin.clone(), self.shared.clone(), self.waker.clone());
-        let (mut event, mut id) = (event.to_string(), id.to_string());
+        let (mut event, mut id, mut cwd) = (event.to_string(), id.to_string(), cwd);
         std::thread::spawn(move || {
             loop {
                 let req = CommandRequest { api: plugins::API, command: "mode".into(), args: vec![event.clone(), id.clone()], cwd: cwd.clone() };
@@ -114,8 +115,8 @@ impl PluginMode {
                     Err(e) => s.error = Some(format!("{e:#}")),
                 }
                 match s.queued.take() {
-                    Some((e, i)) => {
-                        (event, id) = (e, i);
+                    Some((e, i, d)) => {
+                        (event, id, cwd) = (e, i, d);
                         drop(s);
                     }
                     None => {

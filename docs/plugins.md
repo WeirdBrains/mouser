@@ -112,7 +112,7 @@ hotkey = "h"                    # one letter/digit; not c, a (built-ins) or p
 keys = [{ id = "time", key = "t", describe = "show the time" }]
 ```
 
-It joins the mode switcher (`ctrl+shift+m`, `esc :h`) after the built-in modes and
+It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the built-in modes and
 docks above the prompt like them. Mouser runs its program once per event, off the
 UI thread, with the command-plugin contract (10 s limit, scrubbed environment):
 `{"api":1,"command":"mode","args":[EVENT,ID],"cwd":...}` with EVENT `activate`,

@@ -134,6 +134,9 @@ fn plugin_mode_runs_with_permission(home: &Path) {
     let mut st = Store::load();
     st.set("hello-mode", "files.read", Decision::Allow);
     st.save().unwrap();
+    // The cwd change arrives while the activate run is busy: queued, and it
+    // carries the new directory (not the one from the earlier request).
+    m.activate();
     m.cwd_changed(home);
     let s = wait_for(&mut m, &home.display().to_string());
     assert!(s.contains("event: cwd"), "{s}");
