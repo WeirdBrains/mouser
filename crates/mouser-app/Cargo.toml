@@ -40,3 +40,7 @@ skia = ["mouser-render/skia"]
 # Build needs cmake, clang, and Vulkan headers + shaderc (Linux/Windows).
 local-llm = ["dep:mouser-llm"]
 
+
+[[example]]
+name = "chat_live"
+required-features = ["local-llm"]
