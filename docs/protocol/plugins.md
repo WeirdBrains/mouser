@@ -42,6 +42,11 @@ ESC P = F z p b ; id=3,name=hello-fuzzball ESC \      -> ok=1 (drops the tab's g
   the keyboard and mouse while it is open, so output from the program can't
   draw, cover or answer it. Answers are ignored for the first 400 ms.
 - A program on another host (an ssh/mosh session in the tab, or a remote place)
-  is **untrusted**: the popup offers only *Allow once* and *Deny*, nothing is
-  remembered, and a saved `allow` doesn't apply. A saved `never` still does.
+  is **untrusted** by default. The popup offers *Allow once*, *Allow always* and
+  *Deny*. *Allow always* is saved for that host identity only: `user@hostname:port`
+  as `ssh -G` resolves it, plus the host key's SHA256 fingerprint from ssh's
+  known_hosts file when it is there. A different host or host key, another plugin
+  name, or a request for more capabilities asks again. Without an identity (no ssh
+  in the foreground) there is no *Allow always*. A local `never` for the name
+  also blocks it remotely.
 - Locally, *Always* and *Never* are saved as `fuzzball:<name>`.

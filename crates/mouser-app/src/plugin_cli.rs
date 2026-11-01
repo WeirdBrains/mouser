@@ -19,6 +19,10 @@ pub enum Action {
     Move(String, String),
     /// Show (no setting) or set `cap=allow|ask|never` (`*` for every requested one).
     Permissions(String, Vec<String>),
+    /// Every saved permission, by key (plugin, `fuzzball:<name>`, `ssh:<host>/<name>`).
+    PermissionsList,
+    /// Forget everything saved under a key.
+    Revoke(String),
     /// Start an MCP plugin, handshake and list its tools.
     Probe(String),
 }
@@ -84,6 +88,26 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             Ok(())
         }
         Action::Permissions(n, sets) => permissions(n, sets, out),
+        Action::PermissionsList => {
+            let st = Store::load();
+            if st.plugins.is_empty() {
+                writeln!(out, "no saved permissions (everything asks)")?;
+            }
+            for (k, caps) in &st.plugins {
+                let c: Vec<String> = caps.iter().map(|(c, d)| format!("{c}={}", d.name())).collect();
+                writeln!(out, "{k:?}: {}", c.join(", "))?;
+            }
+            writeln!(out, "revoke with: mouser plugin permissions '<key>' revoke")?;
+            Ok(())
+        }
+        Action::Revoke(k) => {
+            if mouser_core::permissions::forget(k)? {
+                writeln!(out, "revoked {k}; it asks again")?;
+                Ok(())
+            } else {
+                bail!("nothing saved under {k:?} (see `mouser plugin permissions`)")
+            }
+        }
         Action::Probe(n) => {
             let Some(i) = plugins::find(n) else { bail!("no plugin named {n}") };
             if i.manifest.run.transport != Transport::Mcp {
@@ -107,7 +131,7 @@ fn kinds(k: &[Kind]) -> String {
 fn permissions(n: &str, sets: &[String], out: &mut dyn Write) -> Result<()> {
     let requested: Vec<String> = match plugins::find(n) {
         Some(i) => i.manifest.permissions,
-        None if n.starts_with("fuzzball:") => plugins::CAPABILITIES.iter().map(|c| c.0.to_string()).collect(),
+        None if n.starts_with("fuzzball:") || n.starts_with("ssh:") => plugins::CAPABILITIES.iter().map(|c| c.0.to_string()).collect(),
         None => bail!("no plugin named {n} (Fuzzball plugins are named fuzzball:<name>)"),
     };
     let mut st = Store::load();

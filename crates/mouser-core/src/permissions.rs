@@ -60,14 +60,21 @@ pub enum Scope {
     Installed,
     /// A Fuzzball plugin from a program in a local tab: saved under `fuzzball:<name>`.
     FuzzballLocal,
-    /// A Fuzzball plugin over ssh (or another remote): untrusted, always asks,
-    /// nothing is saved and saved `allow`s are ignored.
-    FuzzballRemote,
+    /// A Fuzzball plugin over ssh (or another remote). With the host's identity
+    /// (`user@host:port` + host key fingerprint) an "Allow always" is saved for
+    /// that host, plugin and capabilities only; without one it always asks.
+    FuzzballRemote { host: Option<String> },
 }
 
 impl Scope {
+    /// Whether "Allow always" can be saved.
     pub fn persistable(&self) -> bool {
-        !matches!(self, Scope::FuzzballRemote)
+        !matches!(self, Scope::FuzzballRemote { host: None })
+    }
+
+    /// Whether "Never" is offered (remote: only once / always / deny).
+    pub fn offers_never(&self) -> bool {
+        !matches!(self, Scope::FuzzballRemote { .. })
     }
 }
 
@@ -75,6 +82,7 @@ impl Scope {
 pub fn key(plugin: &str, scope: &Scope) -> String {
     match scope {
         Scope::Installed => plugin.to_string(),
+        Scope::FuzzballRemote { host: Some(h) } => format!("ssh:{h}/{plugin}"),
         _ => format!("fuzzball:{plugin}"),
     }
 }
@@ -137,7 +145,10 @@ impl Broker {
     pub fn check(plugin: &str, caps: &[String], scope: &Scope) -> Check {
         let st = Store::load();
         let k = key(plugin, scope);
-        if caps.iter().any(|c| st.get(&k, c) == Decision::Never) {
+        // A local `never` for this Fuzzball name also holds over ssh.
+        let local = key(plugin, &Scope::FuzzballLocal);
+        let remote = matches!(scope, Scope::FuzzballRemote { .. });
+        if caps.iter().any(|c| st.get(&k, c) == Decision::Never || (remote && st.get(&local, c) == Decision::Never)) {
             return Check::Deny;
         }
         if !scope.persistable() {
@@ -154,7 +165,7 @@ impl Broker {
             Answer::Never => Decision::Never,
             _ => return Ok(()),
         };
-        if !scope.persistable() {
+        if !scope.persistable() || (d == Decision::Never && !scope.offers_never()) {
             return Ok(());
         }
         let mut st = Store::load();
@@ -166,13 +177,15 @@ impl Broker {
     }
 }
 
-/// Drop everything saved for an installed plugin.
-pub fn forget(plugin: &str) -> Result<()> {
+/// Drop everything saved under `key` (a plugin name, `fuzzball:<name>` or
+/// `ssh:<host>/<name>`). Returns whether there was anything.
+pub fn forget(key: &str) -> Result<bool> {
     let mut st = Store::load();
-    if st.plugins.remove(plugin).is_some() {
+    let had = st.plugins.remove(key).is_some();
+    if had {
         st.save()?;
     }
-    Ok(())
+    Ok(had)
 }
 
 #[cfg(test)]
@@ -194,8 +207,8 @@ mod tests {
         Broker::answer("p", &caps[1..], &i, Answer::Always).unwrap();
         assert_eq!(Broker::check("p", &caps, &i), Check::Allow);
         assert_eq!(Store::load().get("p", "run"), Decision::Allow);
-        // Remote Fuzzball: asks every time, nothing saved, even with the same name.
-        let r = Scope::FuzzballRemote;
+        // Remote Fuzzball without a host identity: asks every time, nothing saved.
+        let r = Scope::FuzzballRemote { host: None };
         Broker::answer("p", &caps, &r, Answer::Always).unwrap();
         assert_eq!(Broker::check("p", &caps, &r), Check::Ask(caps.clone()));
         assert!(!Store::load().plugins.contains_key("fuzzball:p"));
@@ -206,8 +219,48 @@ mod tests {
         assert_eq!(Broker::check("p", &caps, &i), Check::Allow);
         // A saved never also denies a remote one.
         assert_eq!(Broker::check("p", &caps, &r), Check::Deny);
-        forget("p").unwrap();
+        assert!(forget("p").unwrap());
+        assert!(!forget("p").unwrap());
         assert_eq!(Broker::check("p", &caps, &i), Check::Ask(caps.clone()));
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn ssh_allow_always_is_per_host_plugin_and_capabilities() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        let h1 = Scope::FuzzballRemote { host: Some("m@10.0.0.1:22 SHA256:aaa".into()) };
+        let caps = vec!["notify".to_string(), "screen.read".to_string()];
+        assert_eq!(Broker::check("p", &caps, &h1), Check::Ask(caps.clone()));
+        Broker::answer("p", &caps, &h1, Answer::Always).unwrap();
+        assert_eq!(Broker::check("p", &caps, &h1), Check::Allow);
+        assert_eq!(Broker::check("p", &caps[..1], &h1), Check::Allow, "fewer capabilities are covered");
+        // More capabilities: asks for the new one only.
+        let more = vec!["notify".to_string(), "shell.type".to_string()];
+        assert_eq!(Broker::check("p", &more, &h1), Check::Ask(vec!["shell.type".into()]));
+        // Another host, the same host with another key, another plugin, or a local tab: ask.
+        for s in [
+            Scope::FuzzballRemote { host: Some("m@10.0.0.2:22 SHA256:aaa".into()) },
+            Scope::FuzzballRemote { host: Some("m@10.0.0.1:22 SHA256:bbb".into()) },
+            Scope::FuzzballRemote { host: None },
+            Scope::FuzzballLocal,
+        ] {
+            assert_eq!(Broker::check("p", &caps, &s), Check::Ask(caps.clone()), "{s:?}");
+        }
+        assert_eq!(Broker::check("q", &caps, &h1), Check::Ask(caps.clone()));
+        // Never is not saved for remote scopes (not offered there).
+        Broker::answer("q", &caps, &h1, Answer::Never).unwrap();
+        assert_eq!(Broker::check("q", &caps, &h1), Check::Ask(caps.clone()));
+        // Saved under a revocable key.
+        let k = key("p", &h1);
+        assert_eq!(k, "ssh:m@10.0.0.1:22 SHA256:aaa/p");
+        assert!(Store::load().plugins.contains_key(&k));
+        assert!(forget(&k).unwrap());
+        assert_eq!(Broker::check("p", &caps, &h1), Check::Ask(caps.clone()));
+        // A local never also blocks the remote one.
+        Broker::answer("p", &caps, &Scope::FuzzballLocal, Answer::Never).unwrap();
+        assert_eq!(Broker::check("p", &caps, &h1), Check::Deny);
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 }

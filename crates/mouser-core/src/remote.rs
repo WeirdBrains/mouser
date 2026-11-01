@@ -28,6 +28,20 @@ pub struct SshTarget {
 }
 
 impl SshTarget {
+    /// Who the host is, for remembering remote plugin grants: `user@hostname:port`
+    /// as ssh resolves it (`ssh -G`, offline), plus ` SHA256:…` of the host key
+    /// from the known_hosts file ssh uses, when it is there. `None` if ssh can't say.
+    pub fn identity(&self) -> Option<String> {
+        let out = std::process::Command::new(crate::fetch::ssh_bin()).args(&self.opts).arg("-G").arg(&self.dest).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        identity_from(&String::from_utf8_lossy(&out.stdout), |file, host| {
+            let o = std::process::Command::new("ssh-keygen").args(["-l", "-F", host, "-f", file]).output().ok()?;
+            String::from_utf8_lossy(&o.stdout).split_whitespace().find(|w| w.starts_with("SHA256:")).map(str::to_string)
+        })
+    }
+
     /// `user@host` for the header (the destination as typed).
     pub fn label(&self) -> String {
         let user = self.opts.windows(2).find(|w| w[0] == "-l").map(|w| w[1].clone());
@@ -298,5 +312,43 @@ mod tests {
         let v = parse_ls(bsd, Path::new("/Users/m"));
         assert_eq!((v.len(), v[0].name.as_str(), v[0].size), (1, "notes.txt", 120));
         assert!(listing_command(Path::new("/a b")).starts_with("cd -- '/a b' && "));
+    }
+}
+
+/// `identity` from `ssh -G` output; `fingerprint(known_hosts file, host pattern)`.
+pub fn identity_from(g: &str, fingerprint: impl Fn(&str, &str) -> Option<String>) -> Option<String> {
+    let get = |k: &str| g.lines().find_map(|l| l.strip_prefix(k).and_then(|r| r.strip_prefix(' ')).map(str::trim));
+    let (user, host, port) = (get("user")?, get("hostname")?, get("port").unwrap_or("22"));
+    if user.is_empty() || host.is_empty() {
+        return None;
+    }
+    let pattern = if port == "22" { host.to_string() } else { format!("[{host}]:{port}") };
+    let fp = get("userknownhostsfile")
+        .into_iter()
+        .flat_map(|f| f.split_whitespace())
+        .map(|f| match f.strip_prefix("~/") {
+            Some(r) => dirs::home_dir().map(|h| h.join(r).display().to_string()).unwrap_or_default(),
+            None => f.to_string(),
+        })
+        .filter(|f| std::path::Path::new(f).is_file())
+        .find_map(|f| fingerprint(&f, &pattern));
+    Some(match fp {
+        Some(fp) => format!("{user}@{host}:{port} {fp}"),
+        None => format!("{user}@{host}:{port}"),
+    })
+}
+
+#[cfg(test)]
+mod identity_tests {
+    #[test]
+    fn identity_from_ssh_g_with_and_without_fingerprint() {
+        let t = tempfile::tempdir().unwrap();
+        let kh = t.path().join("kh");
+        std::fs::write(&kh, "x").unwrap();
+        let g = format!("user m\nhostname 127.0.0.1\nport 22422\nuserknownhostsfile {} /nope\n", kh.display());
+        let id = super::identity_from(&g, |f, h| (h == "[127.0.0.1]:22422" && f.ends_with("kh")).then(|| "SHA256:abc".into()));
+        assert_eq!(id.as_deref(), Some("m@127.0.0.1:22422 SHA256:abc"));
+        assert_eq!(super::identity_from("user r\nhostname web1\nport 22\n", |_, _| None).as_deref(), Some("r@web1:22"));
+        assert_eq!(super::identity_from("hostname web1\n", |_, _| None), None);
     }
 }
