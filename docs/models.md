@@ -164,5 +164,5 @@ several seconds.
 ## Not yet
 
 Responses API, images, retries/backoff, listing models from the server
-(`/models`), the `network` grant for plugin-declared hosts, and the chat mode that
-uses all this (P5).
+(`/models`), and the `network` grant for plugin-declared hosts. The chat mode (docs/chat.md)
+uses the default model.

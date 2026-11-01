@@ -38,6 +38,7 @@ Menus, keybindings and the command line dispatch the same named actions.
 
 Exactly one mode plugin is active at a time (or none). Mouser starts in the default
 mode, **commander**. Switching replaces the current mode; there is no stacking.
+The second built-in mode is **chat** (`esc :a`), the agent; see docs/chat.md.
 
 - `esc :` then the mode's hotkey and Enter switches to it (`esc :c` = commander).
   Typing the hotkey of the mode that is already on turns modes off (plain terminal);
