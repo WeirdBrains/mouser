@@ -1851,8 +1851,8 @@ mod tests {
         m.cwd_changed(t.path());
         m.c.overlay = Some(Overlay::Preview(t.path().join("big.png")));
         let v = wait_loaded(&mut m, 1);
-        let title = |v: &View| v.dock.as_ref().unwrap().items.iter().find(|i| i.text.contains("big.png")).unwrap().text.clone();
-        assert!(title(&v).contains("fit "), "{}", title(&v));
+        let title = |v: &View| v.dock.as_ref().unwrap().items.iter().find(|i| i.style == PanelStyle::Title).unwrap().text.clone();
+        assert!(title(&v).starts_with("fit "), "{}", title(&v));
         // volume keys zoom in the image view (shared keys), alt+1 = 100%.
         assert_eq!(m.action("volume_up", 0), Effect::None);
         assert!(m.zoom.is_some());
