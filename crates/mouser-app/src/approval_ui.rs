@@ -20,6 +20,8 @@ pub enum Origin {
     Fuzzball { session: Arc<Session>, id: u32 },
     /// Run this `[mouser]` line with the plugin after a grant.
     Command { line: String },
+    /// An MCP tool call waiting for the answer.
+    Mcp { reply: std::sync::mpsc::Sender<bool> },
 }
 
 pub struct Request {
@@ -101,6 +103,7 @@ impl Approvals {
         }
         let armed = r.shown.is_some_and(|t| t.elapsed() >= ARM_DELAY);
         let who = match r.scope {
+            Scope::Installed if r.plugin.starts_with("mcp:") => format!("MCP client \"{}\" asks to:", &r.plugin[4..]),
             Scope::Installed => format!("Plugin \"{}\" asks to:", r.plugin),
             Scope::FuzzballLocal => format!("Program in this tab (\"{}\") asks to:", r.plugin),
             Scope::FuzzballRemote { .. } => format!("REMOTE program (over ssh, \"{}\") asks to:", r.plugin),

@@ -1,5 +1,6 @@
 mod appearance_ui;
 mod approval_ui;
+mod mcp_tools;
 mod remote_list;
 mod select;
 mod ssh_ui;
@@ -122,10 +123,44 @@ enum Command {
         #[command(subcommand)]
         action: EngineCommand,
     },
+    /// Mouser's MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md.
+    Mcp {
+        #[command(subcommand)]
+        action: McpCommand,
+    },
     /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
         #[command(subcommand)]
         action: PluginCommand,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum McpCommand {
+    /// Speak MCP on stdin/stdout, bridged to the running Mouser (for clients that start servers).
+    Serve {
+        #[arg(long, required = true)]
+        stdio: bool,
+    },
+    /// Show whether it's on, the endpoints, the certificate and where the token is.
+    Status,
+    /// Turn the server on (loopback HTTP; `--https` adds TLS with a self-signed or your cert).
+    Enable {
+        #[arg(long)]
+        https: bool,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        https_port: Option<u16>,
+    },
+    /// Turn it off.
+    Disable,
+    /// Print (`--show`) or replace (`--rotate`) the bearer token.
+    Token {
+        #[arg(long, conflicts_with = "rotate")]
+        show: bool,
+        #[arg(long)]
+        rotate: bool,
     },
 }
 
@@ -417,6 +452,26 @@ fn main() -> Result<()> {
         };
         if let Err(e) = mouser_app::engine_cli::run(&a, &mut std::io::stdout()) {
             eprintln!("mouser engine: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if let Some(Command::Mcp { action }) = &cli.command {
+        use mouser_app::mcp_cli::Action;
+        let a = match action {
+            McpCommand::Serve { .. } => Action::ServeStdio,
+            McpCommand::Status => Action::Status,
+            McpCommand::Enable { https, port, https_port } => Action::Enable { https: *https, port: *port, https_port: *https_port },
+            McpCommand::Disable => Action::Disable,
+            McpCommand::Token { rotate: true, .. } => Action::TokenRotate,
+            McpCommand::Token { show: true, .. } => Action::TokenShow,
+            McpCommand::Token { .. } => {
+                eprintln!("mouser mcp token: use --show or --rotate");
+                std::process::exit(2);
+            }
+        };
+        if let Err(e) = mouser_app::mcp_cli::run(&a, &mut std::io::stdout()) {
+            eprintln!("mouser mcp: {e:#}");
             std::process::exit(1);
         }
         return Ok(());
@@ -826,6 +881,13 @@ fn main() -> Result<()> {
             }
         })
     };
+    let notes = mcp_tools::start(tabs.clone(), app_state.clone());
+    if !notes.is_empty() {
+        for n in &notes {
+            eprintln!("{n}");
+        }
+        app_state.lock().unwrap().look.say(notes.join("  "));
+    }
     discover_font_families();
     let hooks = RenderHooks {
         on_key_bytes: on_key.clone(),
@@ -1564,6 +1626,9 @@ fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core
         approval_ui::Origin::Fuzzball { session, id } => {
             fuzzball_answer(&session, id, &req.plugin, a.granted().then_some(&req.caps[..]));
             st.look.say(format!("[mouser] {} plugin {}", if a.granted() { "allowed" } else { "denied" }, req.plugin));
+        }
+        approval_ui::Origin::Mcp { reply } => {
+            let _ = reply.send(a.granted());
         }
         approval_ui::Origin::Command { line } => {
             if a.granted() {
