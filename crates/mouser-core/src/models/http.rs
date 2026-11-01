@@ -49,43 +49,90 @@ impl std::fmt::Display for HttpError {
 }
 impl std::error::Error for HttpError {}
 
-/// POST JSON to `url` and call `line` for every body line (SSE); `line`
-/// returns false to stop (cancel). Non-2xx replies become [`HttpError`].
-pub fn post_lines(url: &str, headers: &[(&str, String)], body: &str, ca: Option<&std::path::Path>, line: &mut dyn FnMut(&str) -> bool) -> Result<()> {
+/// A response: status, headers (lowercased names) and the (de-chunked) body.
+pub struct Response {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Box<dyn BufRead>,
+}
+
+impl Response {
+    pub fn header(&self, k: &str) -> Option<&str> {
+        self.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+    }
+}
+
+/// One HTTP/1.1 request (no redirects).
+pub fn request(method: &str, url: &str, headers: &[(&str, String)], body: Option<&str>, ca: Option<&std::path::Path>) -> Result<Response> {
     let t = Target::parse(url)?;
     let mut s = open(&t, ca)?;
     let mut req = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAccept: text/event-stream, application/json\r\nUser-Agent: mouser/{}\r\nContent-Length: {}\r\nConnection: close\r\n",
+        "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: mouser/{}\r\nConnection: close\r\n",
         t.path,
         t.host_header(),
-        env!("CARGO_PKG_VERSION"),
-        body.len()
+        env!("CARGO_PKG_VERSION")
     );
+    if let Some(b) = body {
+        req.push_str(&format!("Content-Type: application/json\r\nAccept: text/event-stream, application/json\r\nContent-Length: {}\r\n", b.len()));
+    }
     for (k, v) in headers {
         req.push_str(&format!("{k}: {v}\r\n"));
     }
     req.push_str("\r\n");
     s.write_all(req.as_bytes())?;
-    s.write_all(body.as_bytes())?;
+    if let Some(b) = body {
+        s.write_all(b.as_bytes())?;
+    }
     s.flush()?;
     let mut r = BufReader::new(s);
     let mut status_line = String::new();
     r.read_line(&mut status_line)?;
     let status: u16 = status_line.split_whitespace().nth(1).and_then(|c| c.parse().ok()).context("bad HTTP reply")?;
-    let mut chunked = false;
+    let mut hs = Vec::new();
     loop {
         let mut h = String::new();
         if r.read_line(&mut h)? == 0 || h == "\r\n" || h == "\n" {
             break;
         }
-        if let Some((k, v)) = h.split_once(':')
-            && k.trim().eq_ignore_ascii_case("transfer-encoding")
-            && v.trim().eq_ignore_ascii_case("chunked")
-        {
-            chunked = true;
+        if let Some((k, v)) = h.split_once(':') {
+            hs.push((k.trim().to_ascii_lowercase(), v.trim().to_string()));
         }
     }
-    let mut body_reader: Box<dyn BufRead> = if chunked { Box::new(BufReader::new(Chunked { r, left: 0, done: false })) } else { Box::new(r) };
+    let chunked = hs.iter().any(|(k, v)| k == "transfer-encoding" && v.eq_ignore_ascii_case("chunked"));
+    let body: Box<dyn BufRead> = if chunked { Box::new(BufReader::new(Chunked { r, left: 0, done: false })) } else { Box::new(r) };
+    Ok(Response { status, headers: hs, body })
+}
+
+/// GET following up to 5 redirects (relative or absolute `Location`).
+pub fn get(url: &str, headers: &[(&str, String)], ca: Option<&std::path::Path>) -> Result<Response> {
+    let mut url = url.to_string();
+    for _ in 0..6 {
+        let r = request("GET", &url, headers, None, ca)?;
+        if matches!(r.status, 301 | 302 | 303 | 307 | 308) {
+            let loc = r.header("location").context("redirect without Location")?.to_string();
+            url = if loc.starts_with("http://") || loc.starts_with("https://") {
+                loc
+            } else {
+                let t = Target::parse(&url)?;
+                format!(
+                    "{}://{}{}",
+                    if t.https { "https" } else { "http" },
+                    t.host_header(),
+                    if loc.starts_with('/') { loc } else { format!("/{loc}") }
+                )
+            };
+            continue;
+        }
+        return Ok(r);
+    }
+    bail!("too many redirects")
+}
+
+/// POST JSON to `url` and call `line` for every body line (SSE); `line`
+/// returns false to stop (cancel). Non-2xx replies become [`HttpError`].
+pub fn post_lines(url: &str, headers: &[(&str, String)], body: &str, ca: Option<&std::path::Path>, line: &mut dyn FnMut(&str) -> bool) -> Result<()> {
+    let r = request("POST", url, headers, Some(body), ca)?;
+    let (status, mut body_reader) = (r.status, r.body);
     if !(200..300).contains(&status) {
         let mut b = String::new();
         let _ = body_reader.take(64 * 1024).read_to_string(&mut b);

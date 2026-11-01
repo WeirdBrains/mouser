@@ -7,6 +7,7 @@
 pub mod anthropic;
 pub mod google;
 pub mod http;
+pub mod local;
 pub mod openai;
 
 use anyhow::{Context, Result, bail};
@@ -246,6 +247,9 @@ pub struct ModelsPrefs {
     pub default: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<ProviderEntry>,
+    /// `[models.local]`: the built-in local model's options (P4b).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<local::LocalPrefs>,
 }
 
 /// `[model]` in a model-provider plugin's plugin.toml.
@@ -300,8 +304,8 @@ pub enum Origin {
     Configured,
     /// An installed plugin's `[model]` table.
     Plugin,
-    /// The local Gemma stub (P4b).
-    Stub,
+    /// The built-in local model (`gemma-local`, P4b).
+    Local,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,8 +342,8 @@ pub fn all() -> Vec<Provider> {
         models.extend(all.into_iter().filter(|m| *m != d));
         out.push(Provider {
             entry: ProviderEntry { name: "gemma-local".into(), api: Api::LlamaCpp, url: String::new(), key: None, models, ca: None },
-            origin: Origin::Stub,
-            description: "Gemma 4 on llama.cpp (not built yet: P4b)".into(),
+            origin: Origin::Local,
+            description: "Gemma 4 on llama.cpp, built in (local-llm)".into(),
         });
     }
     for i in crate::plugins::installed().into_iter().flatten() {
@@ -399,10 +403,7 @@ pub fn default_choice() -> Option<(String, String)> {
 pub fn open(name: &str) -> Result<Box<dyn ModelProvider>> {
     let p = find(name).with_context(|| format!("no model provider {name} (see `mouser model list`)"))?;
     match p.origin {
-        Origin::Stub => bail!(
-            "{name} is not built yet: the local llama.cpp/Gemma provider is P4b and waits for Michael's OK (build deps and model download). It will default to {} (switch: mouser model default {name}/gemma-4-e4b)",
-            p.default_model().unwrap_or("gemma-4-e2b")
-        ),
+        Origin::Local => return Ok(Box::new(local::Local { models: p.entry.models.clone() })),
         Origin::Preset => bail!("{name} needs an API key first: mouser model add {name} --key-stdin"),
         _ => {}
     }

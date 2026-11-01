@@ -1,10 +1,10 @@
-# The local model provider (P4b, docs/plans/mcp-agent.md §6). STUB: nothing is
-# built or downloaded yet; that waits for Michael's OK (llama.cpp build deps and
-# the model download). It declares its models so `mouser model` can list and
-# select them.
+# The local model provider (P4b, docs/models.md §Local). llama.cpp is built in
+# with the `local-llm` cargo feature; weights download only after consent
+# (`mouser model local download`), or point it at a compatible server instead
+# (`mouser model local url`).
 name = "gemma-local"
-version = "0.0.0-stub"
-description = "Gemma 4 on llama.cpp, built into Mouser (not built yet: P4b)"
+version = "0.1.0"
+description = "Gemma 4 on llama.cpp, built into Mouser (cargo feature local-llm)"
 provides = [{ kind = "model-provider" }]
 run = { transport = "builtin" }
 permissions = ["models.download"]
