@@ -340,6 +340,14 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Deferred: the Responses API, images, retries, `/models` listing and the plugin `network` grant.
 
 ### P4b: the built-in local model (docs/models.md §The local model)
+- Commits:
+  - 143858b core;
+  - c61fc45 app + mouser-llm;
+  - 37cb9d8 docs/PKGBUILD;
+  - then a macOS test-race fix and the variant deps (see git log).
+- Packages (not installed):
+  - default: `~/.cache/mouser-pkg/mouser-git-0.7.2.r105.g37cb9d8-1-x86_64.pkg.tar.zst` (29 MB binary);
+  - local-llm: `~/.cache/mouser-pkg/llm/mouser-git-0.7.2.r105.g37cb9d8-1-x86_64.pkg.tar.zst` (73 MB binary, links libvulkan.so.1, so the variant `depends` on vulkan-icd-loader).
 - Core (`models/local.rs`):
   - The weights catalog has E2B and E4B Q4_0 from ggml-org, with pinned sizes and SHA256.
   - `dir()`: `MOUSER_MODELS_DIR`, then `[models.local] dir`, then `$MOUSER_HOME/models`.
@@ -363,7 +371,9 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Live check (Michael OK'd the E2B download, t206u):
   - The weights were downloaded with Mouser's own downloader into `/mnt/ext1/home/m3talsmith/Projects/.models/gemma/` and verified against the published SHA256.
   - Run with a temp HOME/MOUSER_HOME and `MOUSER_MODELS_DIR` pointing there.
-  - RTX 3060 via Vulkan: load about 0.9 s warm, prompt 2,800-5,500 t/s, generation about 90-110 t/s.
+  - RTX 3060 via Vulkan: load about 1.0 s warm, prompt 2,700-5,400 t/s, generation 91-119 t/s.
+  - VRAM: 1,227 MiB baseline → 3,396 MiB peak, so about 2.2 GB for E2B plus an 8k context.
+  - The file was re-verified with sha256sum against the HF API LFS oid.
   - The `get_time {"city":"Oslo"}` call → demo result → "The current time in Oslo is 14:05."
   - The first long prompt is slow once, while the NVIDIA driver compiles shaders.
   - In-app popup: screenshots `~/.cache/mouser-shots/p4b-popup.png` and `p4b-denied.png`. Deny downloads nothing and saves no permission.

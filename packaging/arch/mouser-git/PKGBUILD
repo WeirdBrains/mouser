@@ -15,6 +15,11 @@ optdepends=('vulkan-icd-loader: GPU renderer (falls back to CPU without it)'
             'libxcursor: X11 cursors'
             'libxi: X11 input'
             'libxrandr: X11 monitors')
+# The opt-in local-model variant (MOUSER_LOCAL_LLM=1 makepkg) links libvulkan.
+if [[ -n ${MOUSER_LOCAL_LLM:-} ]]; then
+  depends+=('vulkan-icd-loader')
+  makedepends+=('cmake' 'clang' 'vulkan-headers' 'shaderc' 'spirv-headers')
+fi
 provides=('mouser')
 conflicts=('mouser' 'mouser-bin')
 options=('!lto')
@@ -38,7 +43,6 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
   # Opt-in built-in local model (docs/models.md): MOUSER_LOCAL_LLM=1 makepkg
-  # (also needs cmake clang vulkan-headers shaderc spirv-headers to build).
   cargo build --frozen --release -p mouser-app ${MOUSER_LOCAL_LLM:+--features local-llm}
   mkdir -p terminfo
   tic -x -o terminfo extra/mouser.terminfo
