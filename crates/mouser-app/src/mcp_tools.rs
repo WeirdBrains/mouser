@@ -18,6 +18,8 @@ pub const APPROVAL_WAIT: Duration = Duration::from_secs(300);
 pub struct AppTools {
     pub tabs: Arc<Mutex<tabs::Tabs>>,
     pub app_state: Arc<Mutex<AppState>>,
+    /// The caller already asked (the chat's approval card); skip the popup.
+    pub preapproved: bool,
 }
 
 fn tool(name: &str, desc: &str, props: Value, required: &[&str], read_only: bool) -> Value {
@@ -130,6 +132,9 @@ impl AppTools {
 
     /// The broker, then the popup (blocking this call until the user answers).
     fn ask(&self, client: &str, cap: &str, detail: Vec<String>) -> std::result::Result<(), String> {
+        if self.preapproved {
+            return Ok(());
+        }
         let who = format!("mcp:{client}");
         let caps = vec![cap.to_string()];
         match Broker::check(&who, &caps, &Scope::Installed) {
@@ -266,7 +271,7 @@ pub fn start(tabs: Arc<Mutex<tabs::Tabs>>, app_state: Arc<Mutex<AppState>>) -> V
     if let mouser_core::secrets::Store::File(p) = &store {
         notes.push(format!("[mouser] warning: no OS keychain; the MCP token is in {} (0600)", p.display()));
     }
-    let server = mouser_core::mcp_server::Server::new(Arc::new(AppTools { tabs, app_state }), token, env!("CARGO_PKG_VERSION"));
+    let server = mouser_core::mcp_server::Server::new(Arc::new(AppTools { tabs, app_state, preapproved: false }), token, env!("CARGO_PKG_VERSION"));
     match mouser_core::mcp_server::bind(cfg.port) {
         Ok(l) => {
             let s = server.clone();

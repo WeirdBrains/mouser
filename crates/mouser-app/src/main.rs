@@ -1,5 +1,6 @@
 mod appearance_ui;
 mod approval_ui;
+mod chat_host;
 mod mcp_tools;
 mod remote_list;
 mod select;
@@ -1073,6 +1074,12 @@ fn main() -> Result<()> {
         })
     };
     let notes = mcp_tools::start(tabs.clone(), app_state.clone());
+    {
+        // The chat mode (P5): its agent sees the tabs and runs tools through ChatHost.
+        let host = Arc::new(chat_host::ChatHost::new(tabs.clone(), app_state.clone()));
+        let chat = mouser_core::agent::Chat::new(host);
+        app_state.lock().unwrap().modes.push(Box::new(mouser_render::modes::chat::ChatMode::new(chat)));
+    }
     mcp_clients();
     if !notes.is_empty() {
         for n in &notes {
