@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added (P2): Mouser's MCP server (docs/mcp.md)
+
+- It is off by default. Turn it on with `mouser mcp enable [--https]`; `mouser mcp status | disable | token --show | --rotate` manage it, and the settings live under `[mcp.server]` in preferences.toml.
+- It offers three transports:
+  - `mouser mcp serve --stdio`, which bridges to the running Mouser;
+  - Streamable HTTP on `127.0.0.1:7801/mcp`;
+  - HTTPS on `127.0.0.1:7802/mcp`, with your own cert or a self-signed one kept in `$MOUSER_HOME/mcp/` (pin it by its SHA256).
+- Security:
+  - It binds loopback only and needs a bearer token.
+  - The token is kept in the OS keychain (Keychain, Credential Manager, Secret Service), or in a 0600 file with a warning.
+  - Host and Origin are checked against DNS rebinding.
+- Tools: `tabs_list`, `screen_read`, `scrollback_read`, `shell_type`, `shell_run`, `files_list`, `files_read`, `files_mkdir`, `files_copy`, `files_move` and `files_trash` (to Mouser's trash).
+- Typing, running and file changes ask first in Mouser's approval popup (key `mcp:<client>`).
+
 ### Added (t200u): Allow always for plugins over ssh
 
 - The approval popup for a remote (ssh) Fuzzball plugin offers **Allow always** next to Allow once and Deny.
