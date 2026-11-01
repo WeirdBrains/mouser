@@ -13,6 +13,7 @@ pub mod kitty_graphics;
 pub mod modes;
 pub mod parser;
 pub mod reflow;
+pub mod remote;
 pub mod scrollback;
 pub mod search;
 pub mod selection;

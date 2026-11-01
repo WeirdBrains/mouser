@@ -121,17 +121,46 @@ impl Session {
         });
     }
 
-    /// The shell's working directory: /proc/<pid>/cwd where there is one,
-    /// else the last OSC 7 report, else the start directory.
-    pub fn cwd_now(&self) -> Option<std::path::PathBuf> {
-        let pid = self.pid.load(Ordering::Relaxed);
-        if pid != 0
-            && let Ok(p) = std::fs::read_link(format!("/proc/{pid}/cwd"))
-        {
-            return Some(p);
-        }
+    /// Where commander should look: local folder, or remote (foreground
+    /// `ssh` and/or an OSC 7 from another host).
+    pub fn place(&self) -> Option<mouser_core::remote::Place> {
         let osc7 = self.parser.lock().unwrap().cwd.clone();
-        osc7.and_then(|u| osc7_path(&u)).or_else(|| self.cwd.clone()).or_else(|| std::env::var_os("HOME").map(Into::into))
+        let fg = self.foreground_argv();
+        // The local folder only from /proc or a local OSC 7, never a remote one.
+        let local = || {
+            let pid = self.pid.load(Ordering::Relaxed);
+            if pid != 0
+                && let Ok(p) = std::fs::read_link(format!("/proc/{pid}/cwd"))
+            {
+                return Some(p);
+            }
+            osc7.as_deref()
+                .and_then(mouser_core::remote::osc7)
+                .filter(|(h, _)| mouser_core::remote::is_local_host(h, mouser_core::remote::local_hostname()))
+                .map(|(_, p)| p)
+                .or_else(|| self.cwd.clone())
+                .or_else(|| std::env::var_os("HOME").map(Into::into))
+        };
+        let shell_fg = self.shell_in_foreground().unwrap_or(true);
+        mouser_core::remote::place(osc7.as_deref(), fg.as_deref(), shell_fg, local())
+    }
+
+    /// argv of the terminal's foreground process (unix).
+    pub fn foreground_argv(&self) -> Option<Vec<String>> {
+        #[cfg(unix)]
+        {
+            let pg = self.master.lock().unwrap().as_ref()?.process_group_leader()?;
+            if let Ok(b) = std::fs::read(format!("/proc/{pg}/cmdline")) {
+                return Some(b.split(|c| *c == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect());
+            }
+            let out = std::process::Command::new("ps").args(["-o", "args=", "-p", &pg.to_string()]).output().ok()?;
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!s.is_empty()).then(|| s.split_whitespace().map(String::from).collect())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
     }
 
     /// Whether the shell (not a program it started) is the terminal's
@@ -400,36 +429,5 @@ impl Write for ActiveWriter {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-
-/// `file://host/some%20dir` -> `/some dir`.
-pub fn osc7_path(u: &str) -> Option<std::path::PathBuf> {
-    let rest = u.strip_prefix("file://")?;
-    let path = &rest[rest.find('/')?..];
-    let b = path.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%'
-            && i + 2 < b.len()
-            && let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).ok()?, 16)
-        {
-            out.push(v);
-            i += 3;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    Some(std::path::PathBuf::from(String::from_utf8_lossy(&out).into_owned()))
-}
-
-#[cfg(test)]
-mod osc7_tests {
-    #[test]
-    fn parses_osc7() {
-        assert_eq!(super::osc7_path("file://box/home/m/a%20b"), Some("/home/m/a b".into()));
-        assert_eq!(super::osc7_path("nope"), None);
     }
 }

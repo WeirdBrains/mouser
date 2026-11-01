@@ -143,12 +143,13 @@ fn entry(name: String, path: PathBuf) -> Entry {
 /// The directory's entries like `ls` with `flags`. `.` and `..` are never
 /// listed: going up is the back control (alt+p, alt+Backspace, the header).
 pub fn list_dir(dir: &Path, flags: &Flags) -> std::io::Result<Vec<Entry>> {
-    let mut v: Vec<Entry> = std::fs::read_dir(dir)?
-        .flatten()
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-        .filter(|(n, _)| flags.all || !n.starts_with('.'))
-        .map(|(n, p)| entry(n, p))
-        .collect();
+    let v: Vec<Entry> = std::fs::read_dir(dir)?.flatten().map(|e| entry(e.file_name().to_string_lossy().into_owned(), e.path())).collect();
+    Ok(arrange(v, flags))
+}
+
+/// Dotfiles (unless `-a`), sort and reverse, like `ls`.
+pub fn arrange(v: Vec<Entry>, flags: &Flags) -> Vec<Entry> {
+    let mut v: Vec<Entry> = v.into_iter().filter(|e| flags.all || !e.name.starts_with('.')).filter(|e| e.name != "." && e.name != "..").collect();
     match flags.sort {
         Sort::Name => v.sort_by_key(|e| e.name.to_lowercase()),
         Sort::Modified => v.sort_by_key(|e| std::cmp::Reverse(e.modified)),
@@ -157,7 +158,7 @@ pub fn list_dir(dir: &Path, flags: &Flags) -> std::io::Result<Vec<Entry>> {
     if flags.reverse {
         v.reverse();
     }
-    Ok(v)
+    v
 }
 
 /// `ls -h` size.
@@ -370,6 +371,13 @@ pub struct Commander {
     /// The pipe prompt has focus; its text.
     pub piping: bool,
     pub pipe_cmd: String,
+    /// `user@host` while the shell is on another machine (entries are remote
+    /// paths; files are not read locally).
+    pub remote: Option<String>,
+    /// A one-line message in the header (e.g. why a remote file did not open).
+    pub notice: Option<String>,
+    /// The remote listing as received (re-arranged when the flags change).
+    remote_raw: Vec<Entry>,
 }
 
 impl Commander {
@@ -392,9 +400,64 @@ impl Commander {
         let Some(dir) = dir else { return };
         let mtime = std::fs::metadata(&dir).and_then(|m| m.modified()).ok();
         let stamp = (dir.clone(), mtime, self.flags);
+        if self.remote.is_some() {
+            self.remote = None;
+            self.stamp = None;
+        }
         if self.stamp.as_ref() == Some(&stamp) {
             return;
         }
+        let listing = list_dir(&dir, &self.flags).map_err(|e| format!("{}: {e}", dir.display()));
+        self.load(dir, listing);
+        self.stamp = Some(stamp);
+    }
+
+    /// The shell is on `label` (user@host) in `dir` (`None`: unknown), with
+    /// this listing (`None`: still loading, `Some(Err)`: failed). `.` and `..`
+    /// are dropped; the flags (`-a`, sort, reverse) apply as locally.
+    pub fn set_remote(&mut self, label: String, dir: Option<PathBuf>, listing: Option<Result<Vec<Entry>, String>>) {
+        let label_changed = self.remote.as_ref() != Some(&label);
+        self.remote = Some(label.clone());
+        self.stamp = None;
+        let Some(dir) = dir else {
+            self.entries.clear();
+            if label_changed || self.cwd.is_some() {
+                self.marks.clear();
+                self.selected = 0;
+            }
+            self.cwd = None;
+            self.error = Some(format!(
+                "remote ({label}): no directory info. The remote shell does not report its folder (OSC 7) or there is no ssh side channel; see docs/modes.md"
+            ));
+            return;
+        };
+        let listing = match listing {
+            Some(r) => r.map(|v| {
+                self.remote_raw = v.clone();
+                arrange(v, &self.flags)
+            }),
+            None if self.cwd.as_ref() == Some(&dir) && self.error.is_none() && !label_changed => return,
+            None => Ok(Vec::new()),
+        };
+        self.load(dir, listing);
+    }
+
+    /// List again after the flags changed (local: re-read; remote: re-sort).
+    pub fn relist(&mut self) {
+        if self.remote.is_some() {
+            if let Some(d) = self.cwd.clone()
+                && self.error.is_none()
+            {
+                let v = arrange(self.remote_raw.clone(), &self.flags);
+                self.load(d, Ok(v));
+            }
+        } else {
+            let d = self.cwd.clone();
+            self.set_cwd(d);
+        }
+    }
+
+    fn load(&mut self, dir: PathBuf, listing: Result<Vec<Entry>, String>) {
         let came_from =
             self.cwd.as_ref().filter(|old| **old != dir).and_then(|old| {
                 old.strip_prefix(&dir).ok().and_then(|r| r.components().next()).map(|c| c.as_os_str().to_string_lossy().into_owned())
@@ -405,14 +468,14 @@ impl Commander {
             self.filter.clear();
             self.marks.clear();
         }
-        match list_dir(&dir, &self.flags) {
+        match listing {
             Ok(v) => {
                 self.entries = v;
                 self.error = None;
             }
             Err(e) => {
                 self.entries.clear();
-                self.error = Some(format!("{}: {e}", dir.display()));
+                self.error = Some(e);
             }
         }
         // Going up selects the folder you came from.
@@ -422,7 +485,6 @@ impl Commander {
             self.selected = i;
         }
         self.cwd = Some(dir);
-        self.stamp = Some(stamp);
         self.clamp();
     }
 
@@ -520,6 +582,7 @@ impl Commander {
 
     /// Do `a`; `per_row` is the grid's items per row (1 in the list).
     pub fn apply(&mut self, a: Action, per_row: usize) -> Effect {
+        self.notice = None;
         let n = self.visible().len();
         let per_row = if self.view == View::Grid { per_row.max(1) } else { 1 };
         match a {
@@ -586,6 +649,15 @@ impl Commander {
         let Some(e) = self.selected_entry().cloned() else { return Effect::None };
         match e.kind {
             Kind::Dir => Effect::Cd(e.path),
+            // Remote files are not fetched: open them with a command instead.
+            _ if self.remote.is_some() => {
+                self.notice = Some(format!(
+                    "{} is on {}: no preview or player for remote files (pipe it into a command)",
+                    e.name,
+                    self.remote.as_deref().unwrap_or("")
+                ));
+                Effect::None
+            }
             Kind::Video | Kind::Audio => Effect::External(e.path),
             _ => {
                 self.overlay = Some(Overlay::Preview(e.path));
@@ -879,5 +951,52 @@ mod tests {
         assert_eq!(c.selected, 2);
         c.apply(Action::Left, 3);
         assert_eq!(c.selected, 1);
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+
+    fn e(name: &str, dir: bool) -> Entry {
+        Entry {
+            name: name.into(),
+            path: PathBuf::from(format!("/srv/{name}")),
+            kind: if dir { Kind::Dir } else { kind_of(name) },
+            mode: if dir { "drwxr-xr-x".into() } else { "-rw-r--r--".into() },
+            size: 1,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn remote_listing_unknown_dir_and_back_to_local() {
+        let mut c = Commander::new();
+        c.set_remote("me@web1".into(), None, None);
+        assert!(c.entries.is_empty() && c.error.as_deref().unwrap().starts_with("remote (me@web1): no directory info"));
+        c.set_remote("me@web1".into(), Some("/srv".into()), None);
+        assert!(c.entries.is_empty() && c.error.is_none(), "loading: nothing stale");
+        c.set_remote("me@web1".into(), Some("/srv".into()), Some(Ok(vec![e("b.png", false), e(".env", false), e("app", true)])));
+        assert_eq!(c.visible().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), [".env", "app", "b.png"]);
+        c.flags.all = false;
+        c.relist();
+        assert_eq!(c.visible().len(), 2, "flags re-sort the remote listing, no local read");
+        // Folders cd (over the PTY), files say why they don't open.
+        c.selected = 0;
+        assert_eq!(c.open_selected(), Effect::Cd("/srv/app".into()));
+        c.selected = 1;
+        assert_eq!(c.open_selected(), Effect::None);
+        assert!(c.overlay.is_none() && c.notice.as_deref().unwrap().contains("remote"));
+        // Up on the remote side selects where we came from.
+        c.set_remote("me@web1".into(), Some("/srv/app/x".into()), Some(Ok(vec![])));
+        c.set_remote("me@web1".into(), Some("/srv/app".into()), None);
+        c.set_remote("me@web1".into(), Some("/srv".into()), Some(Ok(vec![e("app", true), e("zz", true)])));
+        assert_eq!(c.selected_entry().unwrap().name, "app");
+        // Back home: local listing again.
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("local.txt"), b"").unwrap();
+        c.set_cwd(Some(t.path().to_path_buf()));
+        assert!(c.remote.is_none());
+        assert_eq!(c.visible()[0].name, "local.txt");
     }
 }
