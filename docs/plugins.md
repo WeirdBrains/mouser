@@ -121,8 +121,10 @@ two plugins can't claim the same word.
 `run.command` starts a stdio MCP server (newline-delimited JSON-RPC 2.0). In
 P1, Mouser does `initialize`, `notifications/initialized`, `tools/list` and
 `tools/call` (`mouser_core::mcp::Client`); `mouser plugin probe` shows the
-result. P3 moves this onto the `rmcp` client and puts the tools in the sidebar
-and the agent.
+result. Since P3 every enabled MCP plugin is also a connection in the sidebar's
+MCP section (`plugin:<name>`). It starts once its `run` permission is granted
+(click its row), and each tool call asks via the broker with capability
+`tool.<name>`. See docs/mcp.md §Client.
 
 ## Fuzzball plugins
 

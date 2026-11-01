@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added (P3): MCP client and the sidebar MCP section (docs/mcp.md §Client)
+
+- `[[mcp.servers]]` in preferences.toml takes a stdio `command` (with `env`) or a Streamable HTTP(S) `url`. Secrets are `keychain:NAME` references; tokens go to the OS keychain (or a 0600 file with a warning) and never into preferences.
+- `mouser mcp servers add NAME (--url URL [--token-stdin] [--ca PEM] | [--env K=V] -- COMMAND…) | list | remove NAME | test NAME [--call TOOL --args JSON]`.
+- Mouser keeps a connection to every server and every enabled MCP plugin. It reconnects with backoff, pings every 30 s, and accepts JSON or SSE replies. Plain http is allowed to loopback only; https checks the Mozilla roots or your `ca`.
+- The sidebar has an **MCP** section showing each server's state (connecting, connected, failed with the reason, ask, denied, off) and its tools. Click a server to show its tools or retry it; click a tool to call it.
+- `[mouser]` line: `mcp`, `mcp tools ID`, `mcp reconnect ID`, `mcp call ID TOOL [JSON]`.
+- Every tool call goes through the permission broker (`mcp-server:<name>` / plugin name, capability `tool.<name>`) with the approval popup. MCP plugins need their `run` permission before they start.
+
 ### Added (P2): Mouser's MCP server (docs/mcp.md)
 
 - It is off by default. Turn it on with `mouser mcp enable [--https]`; `mouser mcp status | disable | token --show | --rotate` manage it, and the settings live under `[mcp.server]` in preferences.toml.

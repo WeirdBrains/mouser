@@ -1,6 +1,6 @@
 # Plan: plugins, MCP and the agent chat mode (t187u-t189u)
 
-Status: **P1 and P2 done** (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
+Status: **P1, P2 and P3 done** (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
 2026-10-31 after Phase 1 (commander) closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
 install approval), security model, tests, rough size and open questions. Section 9
 lists the sources behind the facts in it.
@@ -234,6 +234,14 @@ own chat mode).
   6. For `files.trash`, use the OS trash, or a Mouser trash under $MOUSER_HOME?
 
 ## 4. P3: MCP client and the sidebar
+
+> **Done (as built):**
+> - Hand-rolled client on std + rustls, like P2, not rmcp: stdio plus Streamable HTTP(S) with JSON/SSE replies.
+> - `[[mcp.servers]]` takes `command`/`env`/`url`/`token`/`ca`/`enabled`; the token is sent as a bearer.
+> - Per-server threads reconnect with backoff and ping.
+> - The sidebar MCP section has expandable tool lists; the `[mouser]` line has `mcp …`.
+> - Broker capability `tool.<name>`.
+> - Deferred: resources, prompts, list-changed, `server/discover`, OAuth (Q7), project-local config (Q8), per-server enable toggles in the sidebar.
 
 ### Scope
 - The user lists MCP servers to use. Mouser connects, lists their tools, resources
