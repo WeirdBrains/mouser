@@ -6,10 +6,31 @@ Mouser emulates a modern xterm (VT220+ with xterm and ECMA-48 extensions).
 
 | Key / action | What it does |
 |---|---|
-| Ctrl+Shift+V | Paste the clipboard (`wl-paste`). Wrapped in `ESC[200~ … ESC[201~` when the app enabled bracketed paste (mode 2004). |
+| Drag | Select characters (screen and scrollback; dragging past the top/bottom edge scrolls). |
+| Double-click / triple-click | Select a word / a line. Word characters are letters, digits and `[selection] word_chars` (default `@-./_~?&=%+#:`). |
+| Shift+click | Extend the selection. |
+| Alt+drag | Block (rectangular) selection. |
+| Ctrl+Shift+C (Cmd+C on macOS) | Copy the selection to the clipboard. Selecting also sets PRIMARY on Linux. |
+| Ctrl+Shift+V (Cmd+V on macOS) | Paste the clipboard. Wrapped in `ESC[200~ … ESC[201~` when the app enabled bracketed paste (mode 2004). Control characters other than tab, LF and CR are dropped. |
+| Middle-click / Shift+Insert | Paste PRIMARY (Linux; Shift+Insert pastes the clipboard elsewhere). |
 | Ctrl+click | Open an OSC 8 hyperlink under the pointer (`http`, `https`, `mailto`, `file` only, via `xdg-open`). |
 | Shift+mouse | Bypass mouse reporting when an app (vim, tmux…) has grabbed the mouse. |
 | Mouse wheel | Scrollback; reported to the app in mouse modes; arrow keys on the alternate screen. |
+
+Resizing the window re-wraps the main screen and the scrollback: lines that wrapped
+because they were too long are joined and split again at the new width, hard line breaks
+stay, double-width characters are never split, attributes, links and combining marks are
+kept, and the cursor stays on the same character. The old screen's first row stays at the
+top unless the cursor would fall off the bottom. Images move with their text, and a
+fitted image that grows or shrinks takes or gives back the empty lines under it. The
+alternate screen (full-screen apps) is only cut or padded; the app redraws it. A resize
+clears the selection. A resize re-wraps the screen and the newest 2000 scrollback rows at
+once (about 1 ms); older scrollback lines are re-wrapped right after on a worker in
+8192-row steps (about 3 ms each, 200 000 lines in about 60 ms), so dragging the window
+edge stays smooth with any scrollback size. Until then, very old lines may still show at
+the previous width. `RUST_LOG=mouser_frame=debug` logs frame and resize timings.
+
+Copied text joins soft-wrapped lines, ends hard lines with a newline and trims trailing blanks. The selection clears when its text changes or a typed key is sent to the app. It is drawn with the theme's `selection_foreground`/`selection_background`, or inverse colours. Clipboard access uses the Wayland connection, then `wl-copy`/`wl-paste`, `xclip`/`xsel` on X11, `pbcopy`/`pbpaste` on macOS.
 
 OSC 52 clipboard *writes* are passed to `wl-copy`; clipboard *reads* are never answered.
 
@@ -28,10 +49,56 @@ Not yet: DECSLRM (left/right margins), DECCOLM 132-column switching, double-size
 
 ## TERM and terminfo
 
-Mouser sets `COLORTERM=truecolor` and picks `TERM` in this order: `xterm-kitty` (if its terminfo is installed), `mouser`, then `xterm-256color`.
+Mouser sets `COLORTERM=truecolor` and picks `TERM` in this order: `mouser` (if its terminfo is installed), then `xterm-256color`.
 
 To install Mouser's own entry for your user (styled underlines, truecolor, synchronized output, bracketed paste and focus capabilities):
 
 ```sh
 tic -x -o ~/.terminfo extra/mouser.terminfo
 ```
+
+## Commands
+
+`mouser [OPTIONS] [-e CMD ARGS... | -- CMD ARGS...]` opens a window. Options:
+
+- `-e, --command CMD ARGS...` runs `CMD` (no shell in between) instead of the login
+  shell; everything after `-e` is passed to it. `mouser -- CMD ARGS...` is the same.
+  The window closes when the command exits.
+- `--hold` keeps it open with `[process exited N]` instead.
+- `--working-directory DIR` (alias `--dir`) starts the first tab in `DIR` instead of
+  `$HOME`; a missing directory is reported on stderr and `$HOME` used.
+- `-T, --title TITLE` sets the window title until the program sets one.
+- `--class CLASS` (alias `--app-id`) sets the Wayland app_id / X11 WM_CLASS
+  (default `Mouser`), for window rules.
+- `-V, --version` prints the version.
+
+The desktop entry declares these for
+[xdg-terminal-exec](https://github.com/Vladimir-csp/xdg-terminal-exec)
+(`X-TerminalArgExec=-e`, `X-TerminalArgDir=--working-directory`,
+`X-TerminalArgTitle=--title`, `X-TerminalArgAppId=--class`, `X-TerminalArgHold=--hold`),
+so with `mouser.desktop` first in `~/.config/xdg-terminals.list` launchers such as
+Omarchy's run `xdg-terminal-exec btop` as `mouser -e btop`.
+
+`mouser show [--width N] [--height N] [--fit|--original] [--id N] <file|->...` shows
+images. It sends `DCS = F z c q`, the Kitty query `ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \`,
+`CSI 16 t`, `CSI 18 t`, `CSI 6 n` and DA1, and waits up to 1.5 s for the replies (DA1
+ends the wait outside tmux). With a Fuzzball reply it uploads each image in base64
+chunks of at most `max_chunk`, starts a new line if the cursor is not in column 0 and
+places the image across the whole terminal width (scaled up or down, aspect kept) with
+`fit=w`, so it keeps filling the width when the window is resized; it then moves the
+cursor below it. `--width`/`--height` give a fixed size and `--original` the natural
+pixel size instead. An image too tall to fill the width within 1000 rows is shrunk to
+fit 1000 rows. With only a Kitty reply it sends `a=T` in 4096-byte chunks with `q=1`
+(errors only) and `c`/`r` for the full width (Kitty has no fill mode, so it does not
+follow later resizes; it still moves with its text). `fit=w` is sent only when the
+terminal advertises `g_fit=w`. PNG within the
+published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
+RGBA and scaled down to `g_max_dim` / `g_mem` if needed. Video and audio are out of
+scope. Inside tmux every message is wrapped for passthrough. tmux answers DA1 itself and
+forwards the outer terminal's replies afterwards, so there `mouser show` waits for the
+graphics replies instead. If the outer terminal answers the Kitty query, the image is
+transmitted quietly (`q=2`), given a `U=1` virtual placement and printed as rows of
+`U+10EEEE` placeholders (id low byte in a 256-colour foreground, high byte in the
+third diacritic; at most 297x297 cells), so tmux moves and redraws it; otherwise
+Fuzzball is passed through. Without any reply it points at `allow-passthrough`.
+Code: `crates/mouser-app/src/show.rs`.

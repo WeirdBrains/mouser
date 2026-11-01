@@ -1,4 +1,4 @@
-# Fuzzball keyboard — draft v0
+# Fuzzball keyboard — v0.1 (implementable draft)
 
 Subsystem letter: `k`. Framing, replies and errors: see [README](README.md).
 

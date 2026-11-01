@@ -2,7 +2,7 @@
 name = "mouser-core"
 edition = "2024"
 version = "0.4.0"
-license = "MIT"
+license = "BSD-3-Clause"
 description = "Terminal core for Mouser: grid, parser, scrollback with compression, and search"
 repository = ""
 
@@ -27,7 +27,23 @@ toml.workspace = true
 dirs = "5.0.1"
 hex = "0.4"
 unicode-width = "0.1.14"
+flate2 = "1"
 png = { version = "0.17.16", default-features = false }
+# MCP server (P2): TLS for the HTTPS option, self-signed certs, token in the OS keychain.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rustls-pemfile = "2"
+rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
+sha2 = "0.10"
+webpki-roots = "1"
+minijinja = { version = "3", features = ["json", "loop_controls"] }
+minijinja-contrib = { version = "3", features = ["pycompat"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { version = "3", features = ["async-secret-service", "crypto-rust", "tokio"] }
 
 [dev-dependencies]
 tempfile = "3.10.1"
@@ -37,3 +53,6 @@ env_logger.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

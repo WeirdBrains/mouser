@@ -1,0 +1,15 @@
+# Built-in engine plugin: Mouser's own wgpu renderer (docs/engines.md). It is
+# the permanent fallback: always last in the walk and never disabled or removed.
+name = "mouser"
+version = "builtin"
+description = "Mouser's wgpu GPU renderer (CPU fallback built in); the permanent fallback"
+
+[[provides]]
+kind = "engine"
+
+[run]
+transport = "builtin"
+
+[engine]
+abi = 1
+library = "(built in)"

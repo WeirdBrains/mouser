@@ -10,17 +10,28 @@ use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
 
+pub mod boxdraw;
+pub mod clipboard;
+pub mod engine;
+pub mod engine_host;
 pub mod frame;
 pub mod gpu;
 pub mod keys;
+pub mod modes;
+pub mod scale;
+#[cfg(feature = "skia")]
+pub mod skia;
+#[cfg(unix)]
+pub mod split;
 pub mod text;
 pub mod ui;
 
-pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, PADDING, grid_size, render_frame};
+pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, KITTY_BELOW_BG, PADDING, grid_size, image_draws, layered_image_draws, render_frame};
+pub use scale::ImageScaler;
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UiViewport {
     pub width: i32,
     pub height: i32,
@@ -51,8 +62,14 @@ pub struct RenderHooks {
     pub get_cursor_shape: Option<Arc<dyn Fn() -> CursorShape + Send + Sync>>,
     pub on_mouse: Option<MouseHook>,
     pub on_focus: Option<Arc<dyn Fn(bool) + Send + Sync>>,
-    /// Ctrl+Shift+V.
+    /// Ctrl+Shift+V (Cmd+V on macOS).
     pub on_paste: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Mouse selection on the grid (not reported to the app).
+    pub on_select: Option<Arc<dyn Fn(SelectEvent) + Send + Sync>>,
+    /// Ctrl+Shift+C (Cmd+C on macOS): copy the selection.
+    pub on_copy: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Middle click not taken by the app: paste the primary selection.
+    pub on_paste_primary: Option<Arc<dyn Fn() + Send + Sync>>,
     /// True while the app holds output (synchronized update, mode 2026).
     pub hold_frame: Option<ExitHook>,
     /// Window title (OSC 0/2).
@@ -78,20 +95,103 @@ pub struct RenderHooks {
     /// Receives a [`Waker`] that requests a redraw from any thread. The loop is
     /// event driven: without a wake-up or input it sleeps.
     pub set_waker: Option<Arc<dyn Fn(Waker) + Send + Sync>>,
+    /// Told the engine name whenever the window's engine changes (`"cpu"` for
+    /// the CPU renderer): the sidebar marks it active, and the session server
+    /// skips it if the UI process crashes (docs/engines.md §8).
+    pub on_engine: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    /// Told the window's inner size in physical pixels when it changes.
+    pub on_window_size: Option<Arc<dyn Fn(u32, u32) + Send + Sync>>,
 }
 
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// Test-only fault injection: `MOUSER_TEST_CRASH_ENGINE=skia:30` aborts the
+/// (UI) process on the 30th frame drawn by `skia`, like a native crash would.
+pub(crate) fn test_crash_engine() -> Option<(String, u32)> {
+    let v = std::env::var("MOUSER_TEST_CRASH_ENGINE").ok()?;
+    let (e, n) = v.split_once(':').unwrap_or((&v, "1"));
+    Some((e.to_string(), n.parse().unwrap_or(1).max(1)))
+}
+
+/// Selection input in view coordinates: `row` is a row of the view, which
+/// shows the live screen `scrolled_back` lines up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SelectEvent {
+    /// Left press: `clicks` 1 = characters, 2 = words, 3 = lines; `extend`
+    /// (Shift) moves the end of the current selection; `block` (Alt) selects a rectangle.
+    Press {
+        col: usize,
+        row: usize,
+        scrolled_back: usize,
+        clicks: u8,
+        extend: bool,
+        block: bool,
+    },
+    Drag {
+        col: usize,
+        row: usize,
+        scrolled_back: usize,
+    },
+    Release,
+    /// Input was typed: drop the selection.
+    Clear,
+}
+
+/// Counts consecutive clicks on the same cell (double/triple click).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClickCounter {
+    last: Option<(Instant, usize, usize, u8)>,
+}
+
+pub const MULTI_CLICK: Duration = Duration::from_millis(400);
+
+impl ClickCounter {
+    /// Register a press at (`col`, `row`) and return the click count (1..=3, then back to 1).
+    pub fn press(&mut self, now: Instant, col: usize, row: usize) -> u8 {
+        let n = match self.last {
+            Some((t, c, r, n)) if now.duration_since(t) <= MULTI_CLICK && c == col && r == row => n % 3 + 1,
+            _ => 1,
+        };
+        self.last = Some((now, col, row, n));
+        n
+    }
+}
+
+/// View cell under a window position for selection, clamped to the grid, and
+/// whether the pointer is above (-1) or below (1) it.
+pub fn select_cell(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), top: i32) -> (usize, usize, i8) {
+    let (x, y) = (px as i32 - PADDING, py as i32 - top);
+    let cols = grid.0.max(1);
+    let rows = grid.1.max(1);
+    let col = if x < 0 { 0 } else { ((x / cell.0.max(1)) as usize).min(cols - 1) };
+    if y < 0 {
+        return (col, 0, -1);
+    }
+    let row = (y / cell.1.max(1)) as usize;
+    if row >= rows { (col, rows - 1, 1) } else { (col, row, 0) }
+}
+
+/// Logs how long a frame took (`RUST_LOG=mouser_frame=debug`).
+struct FrameTimer(Instant);
+
+impl Drop for FrameTimer {
+    fn drop(&mut self) {
+        log::debug!(target: "mouser_frame", "frame {:.2} ms", self.0.elapsed().as_secs_f64() * 1e3);
+    }
+}
+
+const AUTOSCROLL_EVERY: Duration = Duration::from_millis(50);
+
 pub type ImagesHook = Arc<dyn Fn(usize, usize, (u32, u32)) -> Vec<ImageDraw> + Send + Sync>;
 
-pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput) + Send + Sync>;
+pub type KeyEventHook = Arc<dyn Fn(Option<Vec<u8>>, mouser_core::kitty::KeyInput, Option<mouser_core::fuzzball::KeyEvent>) + Send + Sync>;
 
 pub type ExitHook = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub type FontHook = Arc<dyn Fn() -> (f32, Option<String>) + Send + Sync>;
 
 /// Theme colours as 0xRRGGBB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Colors {
     pub bg: u32,
     pub fg: u32,
@@ -101,50 +201,130 @@ pub struct Colors {
 
 pub type StatusHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Renderer {
     pub cols: usize,
     pub rows: usize,
     pub font_size: f32,
     pub font_family: Option<String>,
+    /// Initial window title (default "Mouser").
+    pub title: Option<String>,
+    /// Wayland app_id / X11 WM_CLASS (default "Mouser").
+    pub app_id: Option<String>,
+    /// Initial inner size in physical pixels (a restarted UI keeps the old size).
+    pub size: Option<(u32, u32)>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None }
+        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, title: None, app_id: None, size: None }
     }
 }
 
 type CpuSurface = Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>;
 
-/// The active backend: wgpu when available, else softbuffer.
+/// The active backend: a GPU engine (docs/engines.md) when available, else softbuffer.
 enum Painter {
     Cpu(Box<CpuSurface>),
-    Gpu(Box<gpu::GpuPainter>, DisplayList),
+    Gpu { engine: Option<Box<dyn engine::Engine>>, list: DisplayList, window: Arc<winit::window::Window>, order: Vec<String> },
+}
+
+fn report(notes: &[String], using: &str) {
+    for why in notes {
+        log::warn!("{why}");
+        eprintln!("mouser: {why}");
+    }
+    if !notes.is_empty() {
+        set_notice(format!("{} (using {using})", notes.join(" | ")));
+    }
 }
 
 impl Painter {
-    /// GPU unless `MOUSER_RENDERER=cpu` or wgpu cannot get an adapter/surface.
+    /// The first GPU engine of the priority order that starts, unless
+    /// `MOUSER_RENDERER=cpu` or none can start (then softbuffer).
     fn pick(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self> {
         let want_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
-        if !want_cpu {
-            match gpu::GpuPainter::new(window.clone(), width, height) {
-                Ok(g) => {
-                    log::info!("renderer: gpu (wgpu, {})", g.description);
-                    eprintln!("mouser: renderer: gpu (wgpu, {})", g.description);
-                    return Ok(Painter::Gpu(Box::new(g), DisplayList::default()));
-                }
-                Err(e) => {
-                    log::warn!("wgpu unavailable ({e}); falling back to CPU");
-                    eprintln!("mouser: wgpu unavailable ({e}); falling back to CPU renderer");
-                }
+        if want_cpu {
+            return Self::cpu(window, width, height, " [MOUSER_RENDERER=cpu]");
+        }
+        Self::gpu(mouser_core::engines::priority(), window, width, height, Vec::new())
+    }
+
+    fn gpu(order: Vec<String>, window: Arc<winit::window::Window>, width: u32, height: u32, mut notes: Vec<String>) -> Result<Self> {
+        match engine::create(&order, &window, width, height) {
+            Ok((e, more)) => {
+                notes.extend(more);
+                report(&notes, e.name());
+                log::info!("renderer: gpu engine {} ({})", e.name(), e.description());
+                eprintln!("mouser: renderer: gpu engine {} ({})", e.name(), e.description());
+                Ok(Painter::Gpu { engine: Some(e), list: DisplayList::default(), window, order })
+            }
+            Err(e) => {
+                notes.push(format!("no GPU engine ({e:#}); using the CPU renderer"));
+                report(&notes, "cpu");
+                Self::cpu(window, width, height, "")
             }
         }
+    }
+
+    fn cpu(window: Arc<winit::window::Window>, width: u32, height: u32, why: &str) -> Result<Self> {
         let context = Context::new(window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
         let mut surface = Surface::new(&context, window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
         let _ = surface.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
         log::info!("renderer: cpu (softbuffer)");
-        eprintln!("mouser: renderer: cpu (softbuffer){}", if want_cpu { " [MOUSER_RENDERER=cpu]" } else { "" });
+        eprintln!("mouser: renderer: cpu (softbuffer){why}");
         Ok(Painter::Cpu(Box::new(surface)))
+    }
+
+    /// The engine this window uses (None on the CPU renderer).
+    fn engine_name(&self) -> Option<&str> {
+        match self {
+            Painter::Gpu { engine: Some(e), .. } => Some(e.name()),
+            _ => None,
+        }
+    }
+
+    /// Swap to a new priority order on the same window; sessions are untouched.
+    fn switch(&mut self, order: Vec<String>, width: u32, height: u32) {
+        let Painter::Gpu { engine, window, .. } = self else { return };
+        let window = window.clone();
+        let old = engine.as_ref().map(|e| e.name().to_string()).unwrap_or_default();
+        *engine = None; // release the old surface before the new engine takes the window
+        match Self::gpu(order, window, width, height, Vec::new()) {
+            Ok(p) => {
+                if let Some(n) = p.engine_name()
+                    && n != old
+                {
+                    set_notice(format!("engine: {old} -> {n}"));
+                }
+                *self = p;
+            }
+            Err(e) => log::error!("renderer switch failed: {e:#}"),
+        }
+    }
+
+    /// The current engine broke: mark it, move to the next one in the order.
+    fn fall_back(&mut self, name: &str, why: String, width: u32, height: u32) {
+        let Painter::Gpu { engine, window, order, .. } = self else { return };
+        let window = window.clone();
+        let next = if name == "mouser" { Vec::new() } else { engine::after(order, name) };
+        let order = order.clone();
+        *engine = None;
+        let p = if next.is_empty() {
+            report(&[why], "cpu");
+            Self::cpu(window, width, height, " [mouser engine failed]")
+        } else {
+            Self::gpu(next, window, width, height, vec![why]).map(|mut p| {
+                if let Painter::Gpu { order: o, .. } = &mut p {
+                    *o = order; // keep watching the full order
+                }
+                p
+            })
+        };
+        match p {
+            Ok(p) => *self = p,
+            Err(e) => log::error!("no renderer after engine failure: {e:#}"),
+        }
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -152,14 +332,15 @@ impl Painter {
             Painter::Cpu(s) => {
                 let _ = s.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
             }
-            Painter::Gpu(g, _) => g.resize(width, height),
+            Painter::Gpu { engine: Some(engine), .. } => engine.resize(width, height),
+            Painter::Gpu { .. } => {}
         }
     }
 
     /// Paint and present; false asks for another frame (surface was reset).
     fn paint(&mut self, fonts: &mut FontStack, frame: &Frame, width: u32, height: u32) -> bool {
         let (w, h) = (width as usize, height as usize);
-        match self {
+        let failure = match self {
             Painter::Cpu(surface) => {
                 let Ok(mut buf) = surface.buffer_mut() else { return true };
                 if buf.len() >= w * h {
@@ -167,16 +348,54 @@ impl Painter {
                     render_frame(&mut canvas, fonts, frame);
                 }
                 let _ = buf.present();
-                true
+                return true;
             }
-            Painter::Gpu(g, list) => {
+            Painter::Gpu { engine: None, .. } => return false,
+            Painter::Gpu { engine: Some(engine), list, .. } => {
                 list.width = w;
                 list.height = h;
                 render_frame(list, fonts, frame);
-                g.draw(list, fonts)
+                let name = engine.name().to_string();
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| engine.draw(list, fonts))) {
+                    Ok(Ok(done)) => return done,
+                    Err(p) => {
+                        let why = format!("engine {name} panicked while drawing: {}", engine::panic_text(&p));
+                        mouser_core::engines::mark_skipped(&name, &why);
+                        (name.clone(), format!("{why}; skipped until `{}`", engine::unskip_command(&name)))
+                    }
+                    Ok(Err(e)) if e.downcast_ref::<engine_host::EngineCrashed>().is_some() => {
+                        let why = format!("{e:#}");
+                        mouser_core::engines::mark_skipped(&name, &why);
+                        (name.clone(), format!("{why}; your shells are untouched; skipped until `{}`", engine::unskip_command(&name)))
+                    }
+                    Ok(Err(e)) if name != "mouser" => {
+                        mouser_core::engines::clear_sentinel(&name);
+                        (name.clone(), engine::fallback_message(&name, &format!("{e:#}"), "failed while drawing"))
+                    }
+                    Ok(Err(e)) => {
+                        log::warn!("frame failed: {e:#}");
+                        return false;
+                    }
+                }
             }
-        }
+        };
+        self.fall_back(&failure.0, failure.1, width, height);
+        false
     }
+}
+
+/// How long an engine fallback notice stays in the status bar.
+const NOTICE_TTL: Duration = Duration::from_secs(15);
+
+static NOTICE: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::new(None);
+
+pub(crate) fn set_notice(msg: String) {
+    *NOTICE.lock().unwrap() = Some((msg, Instant::now()));
+}
+
+/// The current engine fallback notice, if still fresh.
+fn notice() -> Option<String> {
+    NOTICE.lock().unwrap().as_ref().filter(|(_, at)| at.elapsed() < NOTICE_TTL).map(|(m, _)| m.clone())
 }
 
 /// Events delivered to the render loop from other threads.
@@ -185,6 +404,36 @@ enum UserEvent {
     Wake,
     /// A font stack finished loading off the UI thread.
     Fonts(u64, Box<FontStack>),
+    /// preferences.toml changed: the engine order may differ.
+    Engines,
+}
+
+/// Watch preferences.toml so `mouser engine use/priority/move/unskip` reach
+/// running windows (docs/engines.md §7). Not with a MOUSER_ENGINE override.
+fn watch_engine_prefs(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
+    if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) {
+        return;
+    }
+    let path = mouser_core::storage::preferences_path();
+    let engines_dir = mouser_core::engines::dir();
+    let stamp = move || {
+        let m = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let markers: Vec<_> = std::fs::read_dir(&engines_dir).map(|r| r.flatten().map(|e| e.file_name()).collect()).unwrap_or_default();
+        (m(&path), markers)
+    };
+    let _ = std::thread::Builder::new().name("engine-prefs".into()).spawn(move || {
+        let mut last = stamp();
+        loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let now = stamp();
+            if now != last {
+                last = now;
+                if proxy.send_event(UserEvent::Engines).is_err() {
+                    break;
+                }
+            }
+        }
+    });
 }
 
 /// Upper bound on frame rate while output streams in; redraws are coalesced
@@ -225,9 +474,24 @@ fn set_icon(window: &winit::window::Window) {
 
 pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
-    let attrs = winit::window::WindowAttributes::default().with_title("Mouser").with_inner_size(winit::dpi::LogicalSize::new(1100.0, 700.0));
+    let attrs = winit::window::WindowAttributes::default().with_title(renderer.title.clone().unwrap_or_else(|| "Mouser".into())).with_inner_size(
+        match renderer.size {
+            Some((w, h)) => winit::dpi::Size::Physical(winit::dpi::PhysicalSize::new(w, h)),
+            None => winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1100.0, 700.0)),
+        },
+    );
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut attrs = attrs;
+    #[cfg(all(unix, not(target_os = "macos")))]
+    if let Some(id) = &renderer.app_id {
+        use winit::platform::wayland::WindowAttributesExtWayland;
+        attrs = WindowAttributesExtWayland::with_name(attrs, id.clone(), id.clone());
+        use winit::platform::x11::WindowAttributesExtX11;
+        attrs = WindowAttributesExtX11::with_name(attrs, id.clone(), id.clone());
+    }
     let window = Arc::new(event_loop.create_window(attrs)?);
     set_icon(&window);
+    clipboard::init(&window);
     let proxy = event_loop.create_proxy();
     // Coalesce wakeups: at most one Wake event is queued at a time.
     let wake_pending = Arc::new(AtomicBool::new(false));
@@ -244,6 +508,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut height = window.inner_size().height.max(1);
     let mut scale = window.scale_factor();
     let mut painter = Painter::pick(window.clone(), width, height)?;
+    let mut reported_engine = String::new();
+    let crash_test = test_crash_engine();
+    let mut frames_on_engine = 0u32;
+    watch_engine_prefs(proxy.clone());
     let font_db = Arc::new(text::system_db());
     let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
     // Family switches load on a worker thread; `font_gen` drops stale results.
@@ -255,6 +523,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut modifiers = ModifiersState::empty();
     let mut grid = (0usize, 0usize);
     let mut dragging = false;
+    // Left button went down over a mode's view: moves and the release go to it.
+    let mut dock_press = false;
     let mut resize_cursor = false;
     let mut dirty = true;
     let mut last_frame: Option<Instant> = None;
@@ -262,14 +532,40 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut text_w = width as i32;
     let mut held_since: Option<Instant> = None;
     let mut title = String::new();
+    let default_title = renderer.title.clone().unwrap_or_else(|| "Mouser".into());
     let mut grid_top = PADDING;
     let mut tab_bar = ui::TabBar::default();
+    let mut selecting = false;
+    let mut clicks = ClickCounter::default();
+    let mut last_autoscroll = Instant::now();
+    // Keystroke -> first frame after the PTY answered (debug timing).
+    let mut key_at: Option<Instant> = None;
+    // Press on a sidebar engine row: a click or, once moved, a drag (reorder).
+    let mut engine_drag: Option<ui::EngineDrag> = None;
+    let mut echo_pending = false;
 
     event_loop.run(|event, elwt| {
         match event {
             Event::UserEvent(UserEvent::Wake) => {
                 wake_pending.store(false, Ordering::Release);
                 dirty = true;
+                echo_pending |= key_at.is_some();
+            }
+            Event::UserEvent(UserEvent::Engines) => {
+                // Switch when the engine this window would now pick differs.
+                if let Painter::Gpu { order, .. } = &painter {
+                    let new = mouser_core::engines::priority();
+                    let want = engine::first_usable(&new);
+                    if new != *order || want.as_deref() != painter.engine_name() {
+                        if want.as_deref() != painter.engine_name() {
+                            painter.switch(new, width, height);
+                        } else if let Painter::Gpu { order, .. } = &mut painter {
+                            *order = new;
+                        }
+                        window.request_redraw();
+                        dirty = true;
+                    }
+                }
             }
             Event::UserEvent(UserEvent::Fonts(generation, stack)) => {
                 if generation == font_gen {
@@ -279,15 +575,43 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
             }
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => elwt.exit(),
+                // Some compositors stop sending motion once the pointer leaves
+                // the surface mid-drag; park it past the nearer edge so the
+                // selection keeps auto-scrolling.
+                WindowEvent::CursorLeft { .. } if selecting => {
+                    if let Some(pos) = cursor_pos.as_mut() {
+                        pos.y = if pos.y < height as f64 / 2.0 { -1.0 } else { height as f64 + 1.0 };
+                    }
+                }
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
                     let (px, py) = (position.x.round() as i32, position.y.round() as i32);
+                    if let Some(on_act) = &hooks.on_ui_action
+                        && (dock_press || last_ui.as_ref().is_some_and(|l| l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(px, py))))
+                    {
+                        on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::commander::pack_xy(px, py) });
+                        dirty = true;
+                        if dock_press {
+                            return;
+                        }
+                    }
+                    if let Some(d) = engine_drag.as_mut() {
+                        d.moved(px, py);
+                        dirty |= d.active;
+                        return;
+                    }
                     if dragging && let Some(on_act) = &hooks.on_ui_action {
                         let w = ui::clamp_sidebar_width(width as i32 - px, width as i32, fonts.cell_w);
                         (on_act)(ui::UiAction::ResizeSidebar(w));
                         dirty = true;
                     }
+                    if selecting && let Some(on_select) = &hooks.on_select {
+                        let (col, row, _) = select_cell(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                        on_select(SelectEvent::Drag { col, row, scrolled_back });
+                        dirty = true;
+                    }
                     if !dragging
+                        && !selecting
                         && let (Some(on_mouse), Some(hit)) =
                             (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top))
                     {
@@ -302,6 +626,37 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if dock_press && button == winit::event::MouseButton::Left {
+                        dock_press = false;
+                        if let (Some(on_act), Some(p)) = (&hooks.on_ui_action, cursor_pos) {
+                            on_act(ui::UiAction::Mode { action: "pointer_up".into(), arg: modes::commander::pack_xy(p.x as i32, p.y as i32) });
+                        }
+                        mouse_down = None;
+                        dirty = true;
+                        return;
+                    }
+                    if button == winit::event::MouseButton::Left
+                        && let Some(d) = engine_drag.take()
+                    {
+                        if let (Some(on_act), Some(layout)) = (&hooks.on_ui_action, &last_ui) {
+                            match d.release(layout) {
+                                ui::EngineDrop::Click(name) => on_act(ui::UiAction::UseEngine(name)),
+                                ui::EngineDrop::Reorder(order) => on_act(ui::UiAction::ReorderEngines(order)),
+                                ui::EngineDrop::Cancel => {}
+                            }
+                        }
+                        dirty = true;
+                        return;
+                    }
+                    if selecting && button == winit::event::MouseButton::Left {
+                        selecting = false;
+                        mouse_down = None;
+                        if let Some(on_select) = &hooks.on_select {
+                            on_select(SelectEvent::Release);
+                        }
+                        dirty = true;
+                        return;
+                    }
                     if !dragging
                         && let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
                         && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
@@ -319,6 +674,17 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
                 WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                    // Over a mode's view: the mode sees the press (seek bar,
+                    // image pan); the item under it is clicked as usual below.
+                    if button == winit::event::MouseButton::Left
+                        && let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
+                        && let Some(acts) = ui::dock_press(l, pos.x.round() as i32, pos.y.round() as i32)
+                    {
+                        acts.into_iter().for_each(|a| on_act(a));
+                        dock_press = true;
+                        dirty = true;
+                        return;
+                    }
                     if let (Some(on_act), Some(pos)) = (&hooks.on_ui_action, cursor_pos)
                         && let Some(act) = ui::tab_hit(
                             &tab_bar,
@@ -344,10 +710,40 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             dirty = true;
                             return;
                         }
+                        if b == mouser_core::input::MouseButton::Left
+                            && let Some(on_select) = &hooks.on_select
+                        {
+                            let n = clicks.press(Instant::now(), hit.0, hit.1);
+                            on_select(SelectEvent::Press {
+                                col: hit.0,
+                                row: hit.1,
+                                scrolled_back,
+                                clicks: n,
+                                extend: modifiers.shift_key() && n == 1,
+                                block: modifiers.alt_key(),
+                            });
+                            selecting = true;
+                            dirty = true;
+                        }
+                        if b == mouser_core::input::MouseButton::Middle
+                            && let Some(paste) = &hooks.on_paste_primary
+                        {
+                            mouse_down = None;
+                            scrolled_back = 0;
+                            paste();
+                            dirty = true;
+                            return;
+                        }
                     }
                     if let (Some(on_act), Some(layout), Some(pos)) = (&hooks.on_ui_action, &last_ui, cursor_pos) {
                         if ui::on_resize_edge(layout, pos.x.round() as i32, pos.y.round() as i32) {
                             dragging = true;
+                            return;
+                        }
+                        if button == winit::event::MouseButton::Left
+                            && let Some(d) = ui::EngineDrag::press(layout, pos.x.round() as i32, pos.y.round() as i32)
+                        {
+                            engine_drag = Some(d);
                             return;
                         }
                         let act = ui::hit_test(layout, pos.x.round() as i32, pos.y.round() as i32);
@@ -356,7 +752,17 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::KeyboardInput { event: key_event, .. } => {
+                    if key_event.state == ElementState::Pressed && key_at.is_none() {
+                        key_at = Some(Instant::now());
+                    }
                     dirty = true;
+                    if engine_drag.is_some() {
+                        // Escape cancels an engine drag; other keys wait for the drop.
+                        if key_event.state == ElementState::Pressed && matches!(key_event.logical_key, Key::Named(NamedKey::Escape)) {
+                            engine_drag = None;
+                        }
+                        return;
+                    }
                     if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
                         (on_act)(ui::UiAction::FontSize(delta));
                         return;
@@ -366,29 +772,66 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         on_act(act);
                         return;
                     }
+                    // Ctrl+Shift+C/V, and Cmd+C/V on macOS.
+                    let clip_mods = (modifiers.control_key() && modifiers.shift_key())
+                        || (cfg!(target_os = "macos") && modifiers.super_key() && !modifiers.control_key());
                     if key_event.state == ElementState::Pressed
-                        && modifiers.control_key()
-                        && modifiers.shift_key()
-                        && let (Key::Character(c), Some(paste)) = (&key_event.logical_key, &hooks.on_paste)
-                        && c.eq_ignore_ascii_case("v")
+                        && clip_mods
+                        && let Key::Character(c) = &key_event.logical_key
                     {
-                        scrolled_back = 0;
-                        paste();
-                        return;
+                        if c.eq_ignore_ascii_case("v")
+                            && let Some(paste) = &hooks.on_paste
+                        {
+                            scrolled_back = 0;
+                            paste();
+                            return;
+                        }
+                        if c.eq_ignore_ascii_case("c")
+                            && let Some(copy) = &hooks.on_copy
+                        {
+                            copy();
+                            return;
+                        }
                     }
+                    // Shift+Insert: the primary selection on Linux (like xterm, foot,
+                    // alacritty), the clipboard elsewhere.
+                    if key_event.state == ElementState::Pressed
+                        && modifiers.shift_key()
+                        && !modifiers.control_key()
+                        && key_event.logical_key == Key::Named(NamedKey::Insert)
+                    {
+                        let hook = if cfg!(target_os = "linux") { hooks.on_paste_primary.as_ref() } else { hooks.on_paste.as_ref() };
+                        if let Some(paste) = hook {
+                            scrolled_back = 0;
+                            paste();
+                            return;
+                        }
+                    }
+                    let clear_selection = || {
+                        if key_event.state == ElementState::Pressed
+                            && let Some(on_select) = &hooks.on_select
+                        {
+                            on_select(SelectEvent::Clear);
+                        }
+                    };
                     if let Some(on_event) = &hooks.on_key_event {
                         let legacy = key_bytes(&key_event, modifiers);
                         if let Some(input) = keys::kitty_input(&key_event, modifiers) {
                             if key_event.state == ElementState::Pressed {
                                 scrolled_back = 0;
                             }
-                            on_event(legacy, input);
+                            if legacy.is_some() {
+                                clear_selection();
+                            }
+                            on_event(legacy, input, keys::fuzzball_event(&key_event, modifiers));
                         } else if let Some(seq) = legacy {
                             scrolled_back = 0;
+                            clear_selection();
                             (hooks.on_key_bytes)(seq);
                         }
                     } else if let Some(seq) = key_bytes(&key_event, modifiers) {
                         scrolled_back = 0;
+                        clear_selection();
                         (hooks.on_key_bytes)(seq);
                     }
                 }
@@ -402,6 +845,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     height = new_size.height.max(1);
                     painter.resize(width, height);
                     dirty = true;
+                    if let Some(h) = &hooks.on_window_size {
+                        h(width, height);
+                    }
                 }
                 WindowEvent::Focused(f) => {
                     if let Some(on_focus) = &hooks.on_focus {
@@ -416,6 +862,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         MouseScrollDelta::PixelDelta(p) => (p.y / fonts.cell_h as f64) as isize,
                     };
                     dirty = true;
+                    // Over a mode's view the wheel goes to the mode ("scroll").
+                    if let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
+                        && let Some(acts) = ui::dock_wheel(l, pos.x as i32, pos.y as i32, lines, modifiers.control_key())
+                    {
+                        acts.into_iter().for_each(|a| on_act(a));
+                        return;
+                    }
                     // Over a panel (e.g. the font list) the wheel scrolls the panel.
                     if let (Some(on_act), Some(true)) = (&hooks.on_ui_action, last_ui.as_ref().map(|l| l.panel.is_some())) {
                         if lines != 0 {
@@ -447,6 +900,24 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     elwt.exit();
                     return;
                 }
+                // Dragging a selection past the top or bottom edge scrolls the view.
+                let mut autoscroll_next = None;
+                if selecting && let (Some(on_select), Some(pos)) = (&hooks.on_select, cursor_pos) {
+                    let (col, row, edge) = select_cell(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                    if edge != 0 {
+                        autoscroll_next = Some(last_autoscroll + AUTOSCROLL_EVERY);
+                        if last_autoscroll.elapsed() >= AUTOSCROLL_EVERY {
+                            last_autoscroll = Instant::now();
+                            scrolled_back = if edge < 0 { scrolled_back.saturating_add(1) } else { scrolled_back.saturating_sub(1) };
+                            on_select(SelectEvent::Drag { col, row, scrolled_back });
+                            dirty = true;
+                        }
+                        if !dirty {
+                            elwt.set_control_flow(ControlFlow::WaitUntil(last_autoscroll + AUTOSCROLL_EVERY));
+                            return;
+                        }
+                    }
+                }
                 if !dirty {
                     // Nothing to do: sleep until an input event or a wake-up.
                     elwt.set_control_flow(ControlFlow::Wait);
@@ -470,7 +941,11 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 dirty = false;
                 last_frame = Some(Instant::now());
-                elwt.set_control_flow(ControlFlow::Wait);
+                let _frame_timer = FrameTimer(Instant::now());
+                elwt.set_control_flow(match autoscroll_next {
+                    Some(_) => ControlFlow::WaitUntil(last_autoscroll + AUTOSCROLL_EVERY),
+                    None => ControlFlow::Wait,
+                });
                 if let Some(get_font) = &hooks.get_font {
                     let (size, family) = get_font();
                     if family != renderer.font_family {
@@ -490,15 +965,21 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 let viewport = UiViewport { width: width as i32, height: height as i32, cell_w: fonts.cell_w, cell_h: fonts.cell_h };
-                let layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
+                let mut layout = hooks.get_ui_model.as_ref().and_then(|f| f(viewport));
+                if let Some(l) = layout.as_mut() {
+                    // A row dragged past the threshold; dropped on a vanished row: cancel.
+                    l.engine_drag = engine_drag.filter(|d| d.active && d.from < l.engines.len());
+                }
                 // The sidebar takes space from the terminal instead of covering it.
                 text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
                 if let Some(f) = &hooks.get_tabs {
                     tab_bar = f();
                 }
                 let tab_h = if tab_bar.titles.len() > 1 { ui::tab_bar_height(fonts.cell_h) } else { 0 };
-                grid_top = PADDING + tab_h;
-                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h);
+                // A mode's view docked above the prompt pushes the grid down.
+                let inset = layout.as_ref().and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset);
+                grid_top = PADDING + tab_h + inset;
+                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h - inset);
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;
@@ -517,13 +998,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 if let Some(t) = hooks.get_title.as_ref().and_then(|f| f())
                     && t != title
                 {
-                    window.set_title(if t.is_empty() { "Mouser" } else { &t });
+                    window.set_title(if t.is_empty() { &default_title } else { &t });
                     title = t;
                 }
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
-                let status = hooks.get_status.as_ref().and_then(|f| f());
+                let status = hooks.get_status.as_ref().and_then(|f| f()).or_else(notice);
                 let cell = (fonts.cell_w as u32, fonts.cell_h as u32);
                 let images = hooks.get_images.as_ref().map(|f| f(scrolled_back, renderer.rows, cell)).unwrap_or_default();
                 let frame = Frame {
@@ -541,8 +1022,31 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     cursor_shape: hooks.get_cursor_shape.as_ref().map(|f| f()).unwrap_or_default(),
                 };
                 last_ui = layout.clone();
-                if !painter.paint(&mut fonts, &frame, width, height) {
+                let paint_start = Instant::now();
+                let painted = painter.paint(&mut fonts, &frame, width, height);
+                log::debug!(target: "mouser_frame", "prepare {:.2} ms paint {:.2} ms", (paint_start - _frame_timer.0).as_secs_f64() * 1e3, paint_start.elapsed().as_secs_f64() * 1e3);
+                if !painted {
                     dirty = true;
+                }
+                let name = painter.engine_name().unwrap_or("cpu").to_string();
+                if name != reported_engine {
+                    frames_on_engine = 0;
+                    if let Some(h) = &hooks.on_engine {
+                        h(name.clone());
+                    }
+                    reported_engine = name;
+                }
+                frames_on_engine += 1;
+                if let Some((e, n)) = &crash_test
+                    && *e == reported_engine
+                    && frames_on_engine >= *n
+                {
+                    eprintln!("mouser: MOUSER_TEST_CRASH_ENGINE: aborting in engine {e} after {n} frames");
+                    std::process::abort();
+                }
+                if echo_pending && let Some(t) = key_at.take() {
+                    echo_pending = false;
+                    log::debug!(target: "mouser_frame", "key-to-frame {:.2} ms", t.elapsed().as_secs_f64() * 1e3);
                 }
             }
             _ => {}
@@ -601,6 +1105,8 @@ pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiA
         Key::Named(NamedKey::Tab) if ctrl && !alt => Some(ui::UiAction::CycleTab(if shift { -1 } else { 1 })),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("t") => Some(ui::UiAction::NewTab),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("w") => Some(ui::UiAction::CloseActiveTab),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("k") => Some(ui::UiAction::ShowKeymap),
+        Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("m") => Some(ui::UiAction::ShowModes),
         _ if alt && !ctrl && !shift => {
             // Use the physical digit row so layouts with shifted digits work.
             use winit::keyboard::{KeyCode, PhysicalKey};
@@ -657,7 +1163,9 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Named(NamedKey::Space) if mods.control_key() => vec![0],
         Key::Named(NamedKey::Space) => vec![b' '],
         Key::Named(NamedKey::Escape) => vec![0x1b],
+        Key::Named(NamedKey::Backspace) if mods.control_key() => vec![0x08],
         Key::Named(NamedKey::Backspace) => vec![0x7f],
+        Key::Named(NamedKey::ContextMenu) => b"\x1b[29~".to_vec(),
         Key::Named(NamedKey::Delete) => b"\x1b[3~".to_vec(),
         Key::Named(NamedKey::Insert) => b"\x1b[2~".to_vec(),
         Key::Named(NamedKey::Home) => b"\x1b[H".to_vec(),
@@ -681,15 +1189,24 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Named(NamedKey::ArrowUp) => b"\x1b[A".to_vec(),
         Key::Named(NamedKey::ArrowDown) => b"\x1b[B".to_vec(),
         Key::Character(s) if !s.is_empty() => {
+            // Kitty legacy text keys: Ctrl+Shift (or Super) combos have no
+            // legacy form and go out as `CSI code ; mods u`.
+            let base = match winit::platform::modifier_supplement::KeyEventExtModifierSupplement::key_without_modifiers(key_event) {
+                Key::Character(b) => b.chars().next(),
+                _ => None,
+            };
+            if let Some(b) = base.filter(|b| b.is_ascii_graphic() || *b == ' ')
+                && ((mods.control_key() && mods.shift_key()) || mods.super_key())
+            {
+                let m =
+                    1 + u8::from(mods.shift_key()) + 2 * u8::from(mods.alt_key()) + 4 * u8::from(mods.control_key()) + 8 * u8::from(mods.super_key());
+                return Some(format!("\x1b[{};{m}u", b.to_ascii_lowercase() as u32).into_bytes());
+            }
             let mut chars = s.chars();
             match (chars.next(), chars.next()) {
-                (Some(c), None) if mods.control_key() && c.is_ascii() => match c.to_ascii_lowercase() {
-                    l @ 'a'..='z' => vec![l as u8 - b'a' + 1],
-                    '[' => vec![0x1b],
-                    '\\' => vec![0x1c],
-                    ']' => vec![0x1d],
-                    '/' | '_' => vec![0x1f],
-                    _ => s.as_bytes().to_vec(),
+                (Some(c), None) if mods.control_key() && c.is_ascii() => match legacy_ctrl(base.unwrap_or(c)) {
+                    Some(b) => vec![b],
+                    None => s.as_bytes().to_vec(),
                 },
                 _ => s.as_bytes().to_vec(),
             }
@@ -710,6 +1227,21 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
     Some(seq)
 }
 
+/// Kitty's "legacy ctrl mapping of ASCII keys" table.
+pub fn legacy_ctrl(c: char) -> Option<u8> {
+    Some(match c.to_ascii_lowercase() {
+        ' ' | '2' | '@' => 0,
+        l @ 'a'..='z' => l as u8 - b'a' + 1,
+        '3' | '[' => 27,
+        '4' | '\\' => 28,
+        '5' | ']' => 29,
+        '6' | '^' | '~' => 30,
+        '7' | '/' | '_' => 31,
+        '8' | '?' => 127,
+        _ => return None,
+    })
+}
+
 /// xterm modifier encoding for cursor/edit/function keys: `CSI A` + Ctrl becomes
 /// `CSI 1;5A`, `CSI 3~` becomes `CSI 3;5~`, `SS3 P` becomes `CSI 1;5P`.
 pub fn modified_csi(seq: &[u8], mods: ModifiersState) -> Option<Vec<u8>> {
@@ -726,5 +1258,31 @@ pub fn modified_csi(seq: &[u8], mods: ModifiersState) -> Option<Vec<u8>> {
             Some(format!("\x1b[{num};{m}~").into_bytes())
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod select_tests {
+    use super::*;
+
+    #[test]
+    fn click_counter_counts_quick_clicks_on_one_cell() {
+        let t = Instant::now();
+        let mut c = ClickCounter::default();
+        assert_eq!(c.press(t, 1, 1), 1);
+        assert_eq!(c.press(t + Duration::from_millis(100), 1, 1), 2);
+        assert_eq!(c.press(t + Duration::from_millis(200), 1, 1), 3);
+        assert_eq!(c.press(t + Duration::from_millis(300), 1, 1), 1);
+        assert_eq!(c.press(t + Duration::from_millis(350), 2, 1), 1, "another cell");
+        assert_eq!(c.press(t + Duration::from_secs(2), 2, 1), 1, "too slow");
+    }
+
+    #[test]
+    fn select_cell_clamps_and_reports_edges() {
+        let cell = (10, 20);
+        let grid = (80, 24);
+        assert_eq!(select_cell(PADDING as f64 + 15.0, PADDING as f64 + 45.0, cell, grid, PADDING), (1, 2, 0));
+        assert_eq!(select_cell(5000.0, 0.0, cell, grid, PADDING + 30), (79, 0, -1));
+        assert_eq!(select_cell(0.0, 9000.0, cell, grid, PADDING), (0, 23, 1));
     }
 }

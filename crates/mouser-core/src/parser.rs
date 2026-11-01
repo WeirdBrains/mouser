@@ -1,8 +1,17 @@
-use crate::graphics::{self, Graphics};
+use crate::fuzzball::{self, Fuzzball};
+use crate::graphics;
 use crate::grid::{Color, CursorShape, Rgb, Screen, Style, attr};
 use crate::kitty::KeyboardProtocolState;
+use crate::kitty_graphics::{self, KittyGraphics};
 use crate::scrollback::Scrollback;
 use crate::types::Size;
+
+/// Newest scrollback rows re-wrapped together with the screen on a resize; older
+/// ones are re-wrapped in steps afterwards ([`TerminalParser::reflow_step`]).
+pub const REFLOW_SYNC_ROWS: usize = 2000;
+
+/// Rows per [`TerminalParser::reflow_step`] call that fit easily in a frame.
+pub const REFLOW_STEP_ROWS: usize = 8192;
 use log::trace;
 use std::collections::HashMap;
 use std::io::Write;
@@ -18,11 +27,17 @@ pub struct TerminalParser<W: Write> {
     /// vte state persists across reads so escape sequences split between
     /// PTY chunks are still recognised.
     vte: Parser,
-    apc: Apc,
-    /// Kitty graphics images and placements.
-    pub graphics: Graphics,
+    /// Fuzzball protocol state: images, placements, keyboard mode.
+    pub fuzzball: Fuzzball,
+    /// Kitty graphics (fallback; Fuzzball takes precedence).
+    pub kitty_gfx: KittyGraphics,
     /// Lines scrolled off the top so far (monotonic; anchors image rows).
     pub lines_scrolled: i64,
+    /// Scrollback lines (from the oldest) not yet re-wrapped for the current width.
+    reflow_stale: usize,
+    /// Newest scrollback rows re-wrapped with the screen on resize (default
+    /// [`REFLOW_SYNC_ROWS`]).
+    pub reflow_sync_rows: usize,
     /// Cell size in pixels (for image placement), set by the front end.
     pub cell_px: (u32, u32),
     /// Bumped when images change so the front end can redraw.
@@ -51,6 +66,7 @@ pub struct TerminalParser<W: Write> {
     saved_charsets: ([Charset; 2], usize),
     last_char: Option<char>,
     dcs: Option<Dcs>,
+    apc: Apc,
 }
 
 /// Character sets that can be designated into G0/G1.
@@ -198,13 +214,11 @@ enum DcsKind {
     Rqss,
     /// `DCS = F z …` Fuzzball
     Fuzzball,
+    /// A Fuzzball message longer than `fuzzball::MAX_MESSAGE` (dropped).
+    Overflow,
 }
 
-/// Name the terminal identifies as (XTVERSION, terminfo TN).
-pub const NAME: &str = "Mouser";
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-/// APC strings (`ESC _ ... ESC \`) are cut out before vte, which ignores them.
+/// APC strings (`ESC _ ... ESC \\`) are cut out before vte, which ignores them.
 #[derive(Default)]
 enum Apc {
     #[default]
@@ -212,10 +226,17 @@ enum Apc {
     Esc,
     Body(Vec<u8>),
     BodyEsc(Vec<u8>),
+    /// Over [`APC_MAX`]: skipped up to its terminator.
+    Skip,
+    SkipEsc,
 }
 
-/// Largest APC body kept (chunked images arrive in many smaller ones).
+/// Largest APC body kept (chunked Kitty images arrive in many smaller ones).
 const APC_MAX: usize = 16 * 1024 * 1024;
+
+/// Name the terminal identifies as (XTVERSION, terminfo TN).
+pub const NAME: &str = "Mouser";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl<W: Write> TerminalParser<W> {
     pub fn new(size: Size, scrollback: Arc<Scrollback>, writer: W) -> Self {
@@ -226,9 +247,11 @@ impl<W: Write> TerminalParser<W> {
             writer,
             style: Style::default(),
             vte: Parser::new(),
-            apc: Apc::Ground,
-            graphics: Graphics::default(),
+            fuzzball: Fuzzball::default(),
+            kitty_gfx: KittyGraphics::default(),
             lines_scrolled: 0,
+            reflow_stale: 0,
+            reflow_sync_rows: REFLOW_SYNC_ROWS,
             cell_px: (9, 18),
             graphics_generation: 0,
             modes: Modes { grapheme: true, ..Modes::default() },
@@ -246,6 +269,7 @@ impl<W: Write> TerminalParser<W> {
             saved_charsets: ([Charset::Ascii; 2], 0),
             last_char: None,
             dcs: None,
+            apc: Apc::Ground,
         }
     }
 
@@ -270,10 +294,12 @@ impl<W: Write> TerminalParser<W> {
                 }
                 Apc::Body(buf) if b == 0x1b => Apc::BodyEsc(buf),
                 Apc::Body(mut buf) => {
-                    if buf.len() < APC_MAX {
+                    if buf.len() >= APC_MAX {
+                        Apc::Skip
+                    } else {
                         buf.push(b);
+                        Apc::Body(buf)
                     }
-                    Apc::Body(buf)
                 }
                 Apc::BodyEsc(buf) if b == b'\\' => {
                     self.apc_dispatch(&buf);
@@ -283,48 +309,370 @@ impl<W: Write> TerminalParser<W> {
                     buf.extend_from_slice(&[0x1b, b]);
                     Apc::Body(buf)
                 }
+                Apc::Skip if b == 0x1b => Apc::SkipEsc,
+                Apc::Skip => Apc::Skip,
+                Apc::SkipEsc if b == b'\\' => Apc::Ground,
+                Apc::SkipEsc => Apc::Skip,
             };
         }
         self.vte = vte;
         self.flush_scrollback();
     }
 
-    pub fn resize(&mut self, size: Size) {
-        self.screen.resize(size);
-        self.flush_scrollback();
+    /// Whether a graphics timer is needed: a pending chunked upload in either
+    /// protocol or a running Kitty animation.
+    pub fn graphics_timers_pending(&self) -> bool {
+        self.fuzzball.upload_pending() || self.kitty_gfx.upload_pending() || self.kitty_gfx.next_tick().is_some()
     }
 
-    fn flush_scrollback(&mut self) {
-        for line in self.screen.take_scrolled_off() {
-            self.scrollback.push_line(line);
-            self.lines_scrolled += 1;
+    /// Run graphics timers at `now`: expire idle uploads and advance Kitty
+    /// animations (bumping `graphics_generation` when a frame changes).
+    /// Returns when to call again.
+    pub fn graphics_timers(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let a = self.fuzzball.expire_upload(now);
+        let b = self.kitty_gfx.expire_upload(now);
+        let (changed, c) = self.kitty_gfx.tick(now);
+        if changed {
+            self.graphics_generation += 1;
         }
+        [a, b, c].into_iter().flatten().min()
     }
 
+    /// Whether either graphics protocol has placements.
+    fn has_placements(&self) -> bool {
+        !self.fuzzball.gfx.placements.is_empty() || !self.kitty_gfx.gfx.placements.is_empty()
+    }
+
+    /// Palette for Kitty's indexed image formats.
+    fn kitty_palette(&self) -> kitty_graphics::Palette {
+        let rgb = |c: Rgb| (c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32;
+        let mut p = [0u32; 256];
+        for (i, v) in p.iter_mut().enumerate().take(248) {
+            *v = rgb(self.color_for(i as u16));
+        }
+        let (fg, bg, cur) = (rgb(self.color_for(256)), rgb(self.color_for(257)), rgb(self.color_for(258)));
+        p[248..].copy_from_slice(&[bg, fg, fg, bg, cur, bg, fg, fg]);
+        p
+    }
+
+    /// A Kitty graphics command (`ESC _ G ... ESC \\`); other APC strings are ignored.
     fn apc_dispatch(&mut self, body: &[u8]) {
-        let Some(rest) = body.strip_prefix(b"G") else { return };
+        if body.first() != Some(&b'G') {
+            return;
+        }
         self.flush_scrollback();
-        let top = self.lines_scrolled;
-        let cur = graphics::Cursor {
-            top,
-            abs_row: top + self.screen.cursor.y as i64,
-            col: self.screen.cursor.x as u32,
-            cell_w: self.cell_px.0,
-            cell_h: self.cell_px.1,
+        let alt = self.screen.in_alt_screen();
+        let col = self.screen.cursor.x as u32;
+        let palette = self.kitty_palette();
+        let ctx = kitty_graphics::Ctx {
+            abs_row: self.lines_scrolled + self.screen.cursor.y as i64,
+            col,
+            top: self.lines_scrolled,
+            rows: self.screen.size.rows,
+            cols: self.screen.size.cols,
+            cell: self.cell_px,
+            alt,
+            other_mem: self.fuzzball.gfx.mem_used(),
+            palette: &palette,
+            now: std::time::Instant::now(),
         };
-        let eff = self.graphics.command(rest, cur);
-        self.graphics_generation += 1;
+        let eff = self.kitty_gfx.handle(body, ctx);
+        if eff.changed {
+            self.graphics_generation += 1;
+        }
         if let Some(r) = eff.reply {
             self.reply(&r);
         }
         if let Some((dx, dy)) = eff.cursor {
-            for _ in 0..dy {
-                self.screen.linefeed();
+            self.move_after_image(col, dx, dy);
+        }
+    }
+
+    fn move_after_image(&mut self, col: u32, dx: u32, dy: u32) {
+        for _ in 0..dy {
+            self.screen.linefeed();
+        }
+        self.flush_scrollback();
+        let x = (col as usize + dx as usize).min(self.screen.size.cols.saturating_sub(1));
+        let y = self.screen.cursor.y;
+        self.screen.move_to(x, y);
+    }
+
+    pub fn resize(&mut self, size: Size) {
+        if size == self.screen.size {
+            return;
+        }
+        let alt = self.screen.in_alt_screen();
+        let shift = if size.rows > 0 && self.screen.cursor.y >= size.rows { self.screen.cursor.y + 1 - size.rows } else { 0 };
+        self.flush_scrollback();
+        if size.cols > 0 && size.rows > 0 && (size.cols != self.screen.size.cols || alt) {
+            self.reflow(size);
+        } else {
+            self.screen.resize(size);
+        }
+        self.flush_scrollback();
+        let shift = if alt { shift as i64 } else { 0 };
+        let mut changed = false;
+        let stale_below = self.lines_scrolled - (self.scrollback.total_lines() - self.reflow_stale.min(self.scrollback.total_lines())) as i64;
+        for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+            if !g.placements.is_empty() {
+                changed |= g.resize(alt, self.lines_scrolled, shift, size.rows, size.cols, stale_below);
             }
-            self.flush_scrollback();
-            let x = (cur.col as usize + dx as usize).min(self.screen.size.cols - 1);
-            let y = self.screen.cursor.y;
-            self.screen.move_to(x, y);
+        }
+        if changed {
+            self.graphics_generation += 1;
+        }
+    }
+
+    /// Re-wrap the main screen and the newest scrollback lines for `size` (the
+    /// alternate screen is only cut or padded). Older scrollback lines are left
+    /// for [`Self::reflow_step`], so a resize costs the same with any scrollback
+    /// size. Placements follow their logical line; ones that change height
+    /// (`fit=w`, overhang) get or give back the empty rows below them.
+    fn reflow(&mut self, size: Size) {
+        use crate::reflow::Phys;
+        let old = self.screen.size;
+        let total = self.scrollback.total_lines();
+        let first = self.lines_scrolled - total as i64;
+        let s = self.scrollback.line_start(total.saturating_sub(self.reflow_sync_rows));
+        let base = first + s as i64;
+        let (cells, cursor, pending) = self.screen.main_state();
+        // Screen rows up to the cursor, the last text and the last anchor.
+        let last_anchor = [&self.fuzzball.gfx, &self.kitty_gfx.gfx]
+            .iter()
+            .flat_map(|g| g.placements.iter().filter(|p| !p.alt && !p.virt).map(|p| p.row - self.lines_scrolled))
+            .filter(|&r| r >= 0 && (r as usize) < old.rows)
+            .max()
+            .map(|r| r as usize);
+        let last_text =
+            (0..old.rows).rev().find(|&y| cells[y * old.cols..(y + 1) * old.cols].iter().any(|c| c.ch != ' ' || c.style != Default::default()));
+        let keep = [Some(cursor.y), last_text, last_anchor].into_iter().flatten().max().unwrap_or(0).min(old.rows.saturating_sub(1));
+        let sb_rows = total - s;
+        let mut rows: Vec<Phys> = self.scrollback.lines_wrapped(s, total).into_iter().map(|(l, w)| Phys::from_scrollback(l, w)).collect();
+        rows.extend((0..=keep).map(|y| Phys::Cells(cells[y * old.cols..(y + 1) * old.cols].to_vec())));
+        let points = [(sb_rows + cursor.y, cursor.x + pending as usize, true), (sb_rows, 0, false)];
+        let (mut out, landed, moved) = self.rewrap_block(rows, base, &points, size.cols);
+        let mut c = landed[0];
+        c.col = c.col.min(size.cols - 1);
+        // The old screen's first row stays at the top unless the cursor would fall
+        // off the bottom; then the rows above go to the scrollback.
+        let top = landed[1].row.min(c.row).max((c.row + 1).saturating_sub(size.rows));
+        let screen_rows: Vec<Phys> = out.drain(top.min(out.len())..).collect();
+        let mut new_cells = Vec::with_capacity(size.cols * size.rows);
+        for r in screen_rows.into_iter().take(size.rows) {
+            new_cells.extend(r.into_cells(size.cols));
+        }
+        new_cells.resize(size.cols * size.rows, crate::grid::Cell::default());
+        let scrolled: Vec<(String, bool)> = out.into_iter().map(Phys::into_string).collect();
+        let n_sb = scrolled.len();
+        let dropped = self.scrollback.splice(s, total, scrolled);
+        // Older lines keep their absolute rows; the newest are re-laid from `base`.
+        self.lines_scrolled = base + n_sb as i64;
+        self.place_moved(moved, base, size.cols);
+        self.reflow_stale = s.saturating_sub(dropped);
+        self.graphics_generation += 1;
+        self.screen.finish_reflow(size, new_cells, crate::types::Point { x: c.col, y: c.row - top }, c.past_end);
+        if dropped > 0 {
+            self.evict_scrolled_placements();
+        }
+    }
+
+    /// Whether older scrollback lines still wait to be re-wrapped for the current width.
+    pub fn reflow_pending(&self) -> bool {
+        self.reflow_stale > 0
+    }
+
+    /// Re-wrap up to about `max_rows` of the not yet re-wrapped scrollback lines,
+    /// newest first. The screen and everything below them keep their absolute
+    /// rows (older lines shift). Returns whether more is left.
+    pub fn reflow_step(&mut self, max_rows: usize) -> bool {
+        use crate::reflow::Phys;
+        if self.reflow_stale == 0 {
+            return false;
+        }
+        let total = self.scrollback.total_lines();
+        let b = self.reflow_stale.min(total);
+        let a = self.scrollback.line_start(b.saturating_sub(max_rows.max(1)));
+        let first = self.lines_scrolled - total as i64;
+        let base = first + a as i64;
+        let rows: Vec<Phys> = self.scrollback.lines_wrapped(a, b).into_iter().map(|(l, w)| Phys::from_scrollback(l, w)).collect();
+        let n_old = rows.len();
+        let cols = self.screen.size.cols;
+        let (out, _, moved) = self.rewrap_block(rows, base, &[], cols);
+        let n_new = out.len();
+        let dropped = self.scrollback.splice(a, b, out.into_iter().map(Phys::into_string).collect());
+        // `lines_scrolled` is fixed: rows before `a` move by the change in length.
+        let _ = (n_new, n_old);
+        let new_first = self.lines_scrolled - self.scrollback.total_lines() as i64;
+        let new_base = new_first + a as i64 - dropped as i64;
+        for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+            for p in g.placements.iter_mut().filter(|p| !p.alt && !p.virt && p.row < base) {
+                p.row = new_first + (p.row - first) - dropped as i64;
+            }
+        }
+        self.place_moved(moved, new_base, cols);
+        self.reflow_stale = a.saturating_sub(dropped);
+        self.graphics_generation += 1;
+        if dropped > 0 {
+            self.evict_scrolled_placements();
+        }
+        self.reflow_stale > 0
+    }
+
+    /// Re-wrap `rows` (absolute row of the first: `base`) at `cols`. `points` are
+    /// tracked `(row, col, extend)`; main-screen placements anchored in the block
+    /// are moved (returned as `(gfx, index, new row, new col)`), and their height
+    /// changes make room below them.
+    #[allow(clippy::type_complexity)]
+    fn rewrap_block(
+        &self,
+        rows: Vec<crate::reflow::Phys>,
+        base: i64,
+        points: &[(usize, usize, bool)],
+        cols: usize,
+    ) -> (Vec<crate::reflow::Phys>, Vec<crate::reflow::Landed>, Vec<(usize, usize, usize, usize)>) {
+        use crate::reflow::Layout;
+        let n = rows.len() as i64;
+        let mut lay = Layout::build(rows);
+        let ids: Vec<usize> = points.iter().map(|&(r, c, e)| lay.add_point(r, c, e).expect("point row in block")).collect();
+        let mut anchors = Vec::new();
+        for (gi, g) in [&self.fuzzball.gfx, &self.kitty_gfx.gfx].into_iter().enumerate() {
+            for (pi, p) in g.placements.iter().enumerate() {
+                if p.alt || p.virt || p.row < base || p.row >= base + n {
+                    continue;
+                }
+                if let Some(id) = lay.add_point((p.row - base) as usize, p.req_col as usize, false) {
+                    anchors.push((gi, pi, id));
+                }
+            }
+        }
+        // Height changes, bottom line first so earlier lines keep their index.
+        let mut grow: Vec<(usize, i64)> = anchors
+            .iter()
+            .map(|&(gi, pi, id)| {
+                let g = if gi == 0 { &self.fuzzball.gfx } else { &self.kitty_gfx.gfx };
+                let mut p = g.placements[pi].clone();
+                let (line, off) = lay.point(id);
+                if !p.fixed {
+                    p.req_col = (off % cols) as u32;
+                    p.fit(cols);
+                }
+                (line, p.rows as i64 - g.placements[pi].rows as i64)
+            })
+            .filter(|g| g.1 != 0)
+            .collect();
+        grow.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.abs().cmp(&a.1.abs())));
+        grow.dedup_by_key(|g| g.0);
+        for (line, delta) in grow {
+            lay.adjust_after(line, delta);
+        }
+        let (out, landed) = lay.split(cols);
+        let pts = ids.iter().map(|&i| landed[i]).collect();
+        let moved = anchors.into_iter().map(|(gi, pi, id)| (gi, pi, landed[id].row, landed[id].col)).collect();
+        (out, pts, moved)
+    }
+
+    fn place_moved(&mut self, moved: Vec<(usize, usize, usize, usize)>, base: i64, cols: usize) {
+        let cols = cols.max(1);
+        for (gi, pi, row, col) in moved {
+            let g = if gi == 0 { &mut self.fuzzball.gfx } else { &mut self.kitty_gfx.gfx };
+            let p = &mut g.placements[pi];
+            p.row = base + row as i64;
+            if !p.fixed {
+                p.req_col = col as u32;
+                p.fit(cols);
+            }
+        }
+    }
+
+    fn flush_scrollback(&mut self) {
+        let events = self.screen.take_scroll_events();
+        if self.has_placements() {
+            let alt = self.screen.in_alt_screen();
+            let rows = self.screen.size.rows;
+            let mut changed = false;
+            for ev in events {
+                let base = self.lines_scrolled + ev.pushed_before as i64;
+                for g in [&mut self.fuzzball.gfx, &mut self.kitty_gfx.gfx] {
+                    changed |= g.scrolled(alt, base, ev, rows);
+                }
+            }
+            if changed {
+                self.graphics_generation += 1;
+            }
+        }
+        let mut pushed = false;
+        for (line, wrapped) in self.screen.take_scrolled_off_wrapped() {
+            self.scrollback.push_line_wrapped(line, wrapped);
+            self.lines_scrolled += 1;
+            pushed = true;
+        }
+        if pushed {
+            self.evict_scrolled_placements();
+        }
+    }
+
+    /// Placements whose anchor row left the scrollback are removed (graphics.md §4).
+    fn evict_scrolled_placements(&mut self) {
+        if !self.has_placements() {
+            return;
+        }
+        let first = self.lines_scrolled - self.scrollback.total_lines() as i64;
+        let a = self.fuzzball.gfx.evict_scrollback(first);
+        if self.kitty_gfx.gfx.evict_scrollback(first) | a {
+            self.graphics_generation += 1;
+        }
+    }
+
+    fn fuzzball_dispatch(&mut self, body: &[u8]) {
+        self.flush_scrollback();
+        let alt = self.screen.in_alt_screen();
+        let col = self.screen.cursor.x as u32;
+        let ctx = fuzzball::Ctx {
+            abs_row: self.lines_scrolled + self.screen.cursor.y as i64,
+            col,
+            cell_w: self.cell_px.0,
+            cell_h: self.cell_px.1,
+            alt,
+            screen_cols: self.screen.size.cols,
+        };
+        self.fuzzball.other_mem = self.kitty_gfx.mem_used();
+        let eff = self.fuzzball.handle(body, ctx);
+        if eff.changed {
+            self.graphics_generation += 1;
+        }
+        if let Some(r) = eff.reply {
+            self.reply(&r);
+        }
+        if let Some((dx, dy)) = eff.cursor {
+            self.move_after_image(col, dx, dy);
+        }
+    }
+
+    /// Erasing cells removes Fuzzball placements that cover them (graphics.md §4).
+    /// Kitty placements only go with a whole-screen clear (`clear`), as the
+    /// Kitty protocol asks.
+    fn erase_placements(&mut self, rows: std::ops::Range<usize>, cols: Option<(usize, usize)>, clear: bool) {
+        if !self.has_placements() {
+            return;
+        }
+        self.flush_scrollback();
+        let alt = self.screen.in_alt_screen();
+        let base = self.lines_scrolled;
+        let mut changed = false;
+        match cols {
+            None => changed |= self.fuzzball.gfx.erase_rows(alt, base + rows.start as i64, base + rows.end as i64),
+            Some((c0, c1)) => {
+                for r in rows.clone() {
+                    changed |= self.fuzzball.gfx.erase_cells(alt, base + r as i64, c0 as u32, c1 as u32);
+                }
+            }
+        }
+        if clear {
+            changed |= self.kitty_gfx.gfx.erase_rows(alt, base + rows.start as i64, base + rows.end as i64);
+        }
+        if changed {
+            self.graphics_generation += 1;
         }
     }
 
@@ -479,9 +827,18 @@ impl<W: Write> TerminalParser<W> {
             2027 => {}
             47 | 1047 => {
                 if set {
+                    self.flush_scrollback();
                     self.screen.enter_alt_screen();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 } else {
+                    self.flush_scrollback();
                     self.screen.leave_alt_screen();
+                    self.fuzzball.leave_alt();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 }
             }
             1048 => {
@@ -494,9 +851,18 @@ impl<W: Write> TerminalParser<W> {
             1049 => {
                 if set {
                     self.save_cursor();
+                    self.flush_scrollback();
                     self.screen.enter_alt_screen();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                 } else {
+                    self.flush_scrollback();
                     self.screen.leave_alt_screen();
+                    self.fuzzball.leave_alt();
+                    if self.kitty_gfx.gfx.leave_alt() {
+                        self.graphics_generation += 1;
+                    }
                     self.restore_cursor();
                 }
             }
@@ -553,7 +919,8 @@ impl<W: Write> TerminalParser<W> {
         self.style = Style::default();
         self.saved_style = Style::default();
         self.kitty_keyboard = KeyboardProtocolState::default();
-        self.graphics = Graphics::default();
+        self.fuzzball = Fuzzball::default();
+        self.kitty_gfx = KittyGraphics::default();
         self.graphics_generation += 1;
         self.modes = Modes { grapheme: true, ..Modes::default() };
         self.color_overrides.clear();
@@ -609,15 +976,8 @@ impl<W: Write> TerminalParser<W> {
                     None => self.reply("\x1bP0$r\x1b\\"),
                 }
             }
-            DcsKind::Fuzzball => {
-                // `DCS = F z c q ; id=N ST` capability query. The first byte
-                // after `F` is the rest of the family tag.
-                let Some(body) = text.strip_prefix('z') else { return };
-                if let Some(rest) = body.strip_prefix("cq") {
-                    let id = rest.trim_start_matches(';').split(',').find_map(|kv| kv.strip_prefix("id=")).unwrap_or("0");
-                    self.reply(&format!("\x1bP=Fzcr;id={id},v=0,sub=,ver={VERSION}\x1b\\"));
-                }
-            }
+            DcsKind::Fuzzball => self.fuzzball_dispatch(&d.data),
+            DcsKind::Overflow => {}
         }
     }
 
@@ -671,10 +1031,13 @@ impl<W: Write> Perform for TerminalParser<W> {
     }
 
     fn put(&mut self, byte: u8) {
-        if let Some(d) = &mut self.dcs
-            && d.data.len() < 4096
-        {
+        let Some(d) = &mut self.dcs else { return };
+        let cap = if d.kind == DcsKind::Fuzzball { fuzzball::MAX_MESSAGE } else { 4096 };
+        if d.data.len() < cap {
             d.data.push(byte);
+        } else if d.kind == DcsKind::Fuzzball {
+            d.kind = DcsKind::Overflow;
+            d.data = Vec::new();
         }
     }
 
@@ -822,9 +1185,40 @@ impl<W: Write> Perform for TerminalParser<W> {
                 };
                 self.screen.cursor_blink = v == 0 || v % 2 == 1;
             }
-            (None, 'J') => self.screen.erase_display(params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0)),
-            (None, 'K') => self.screen.erase_line(params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0)),
-            (None, 'X') => self.screen.erase_chars(n),
+            (None, 'J') => {
+                let mode = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
+                let (y, rows) = (self.screen.cursor.y, self.screen.size.rows);
+                match mode {
+                    0 => self.erase_placements(y..rows, None, false),
+                    1 => self.erase_placements(0..y + 1, None, false),
+                    // ED 3 (xterm): clear the scrollback only, not the screen.
+                    3 => {
+                        self.flush_scrollback();
+                        self.scrollback.clear();
+                        self.evict_scrolled_placements();
+                        return;
+                    }
+                    _ => self.erase_placements(0..rows, None, true),
+                }
+                self.screen.erase_display(mode)
+            }
+            (None, 'K') => {
+                let mode = params.iter().next().and_then(|p| p.first().copied()).unwrap_or(0);
+                let (x, y, cols) = (self.screen.cursor.x, self.screen.cursor.y, self.screen.size.cols);
+                let span = match mode {
+                    0 => (x, cols),
+                    1 => (0, x + 1),
+                    _ => (0, cols),
+                };
+                self.erase_placements(y..y + 1, Some(span), false);
+                self.screen.erase_line(mode)
+            }
+            (None, 'X') => {
+                let (x, y) = (self.screen.cursor.x, self.screen.cursor.y);
+                self.erase_placements(y..y + 1, Some((x, x + n)), false);
+                self.screen.erase_chars(n)
+            }
+
             (None, '@') => self.screen.insert_chars(n),
             (None, 'P') => self.screen.delete_chars(n),
             (None, 'L') => self.screen.insert_lines(n),
@@ -1049,6 +1443,8 @@ pub fn tcap(name: &str) -> Option<String> {
             "fd" => "\x1b[?1004l",
             "fe" => "\x1b[?1004h",
             "smxx" => "\x1b[9m",
+            // Fuzzball protocol version (docs/protocol/README.md §4).
+            "Fz" => "0",
             "rmxx" => "\x1b[29m",
             _ => return None,
         }

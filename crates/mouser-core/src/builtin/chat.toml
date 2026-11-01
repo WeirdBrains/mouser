@@ -1,0 +1,14 @@
+# Built-in mode plugin: the agent chat (docs/chat.md).
+name = "chat"
+version = "builtin"
+description = "agent chat mode: ask about the terminal, tools with approval cards (built in)"
+permissions = ["screen.read", "scrollback.read", "shell.type", "files.read", "files.write"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "builtin"
+
+[mode]
+hotkey = "a"

@@ -1,0 +1,19 @@
+# A model-provider plugin: Mouser talks to it over HTTP with the OpenAI-compatible
+# adapter. Ollama serves http://127.0.0.1:11434/v1 (llama-server: :8080/v1).
+#   mouser plugin install examples/plugins/ollama-model
+#   mouser model test ollama-model/llama3.2
+name = "ollama-model"
+version = "0.1.0"
+description = "Local models from Ollama (OpenAI-compatible URL)"
+
+[[provides]]
+kind = "model-provider"
+
+[run]
+transport = "http"
+
+[model]
+api = "openai"
+url = "http://127.0.0.1:11434/v1"
+default = "llama3.2"
+models = ["llama3.2", "qwen3"]

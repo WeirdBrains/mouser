@@ -80,7 +80,7 @@ pub fn cell_paint<W: std::io::Write>(c: &Cell, p: &TerminalParser<W>) -> CellPai
     if st.attrs & attr::OVERLINE != 0 {
         flags |= paint::OVERLINE;
     }
-    if st.attrs & (attr::HIDDEN | attr::WIDE_CONT) != 0 {
+    if st.attrs & (attr::HIDDEN | attr::WIDE_CONT) != 0 || c.ch == mouser_core::kitty_graphics::PLACEHOLDER {
         flags |= paint::NO_GLYPH;
     }
     if st.attrs & attr::WIDE != 0 {

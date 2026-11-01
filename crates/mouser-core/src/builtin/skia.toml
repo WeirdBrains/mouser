@@ -1,0 +1,14 @@
+# Built-in engine plugin: Skia (Ganesh GL), in builds with the `skia` feature.
+name = "skia"
+version = "builtin"
+description = "Skia GPU renderer (built in when the build has the skia feature)"
+
+[[provides]]
+kind = "engine"
+
+[run]
+transport = "builtin"
+
+[engine]
+abi = 1
+library = "(built in)"

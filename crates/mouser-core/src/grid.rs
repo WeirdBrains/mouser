@@ -39,6 +39,11 @@ pub mod attr {
     pub const WIDE: u16 = 256;
     /// Right half of a double-width character (no glyph of its own).
     pub const WIDE_CONT: u16 = 512;
+    /// On a row's last cell: the row continues on the next one (soft wrap).
+    pub const WRAPLINE: u16 = 1024;
+    /// Blank left at the end of a row when a wide character wrapped early; not
+    /// part of the text (dropped when the line is re-wrapped or copied).
+    pub const WRAP_PAD: u16 = 2048;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -57,14 +62,15 @@ pub struct Style {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
-    /// Up to two combining marks / ZWJ joiners attached to `ch` (`'\0'` = none).
-    pub comb: [char; 2],
+    /// Up to three combining marks / ZWJ joiners attached to `ch` (`'\0'` = none);
+    /// Kitty Unicode placeholders carry three diacritics.
+    pub comb: [char; 3],
     pub style: Style,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: ' ', comb: ['\0'; 2], style: Style::default() }
+        Self { ch: ' ', comb: ['\0'; 3], style: Style::default() }
     }
 }
 
@@ -84,6 +90,21 @@ pub fn char_width(c: char) -> usize {
         return 2;
     }
     c.width().unwrap_or(0).min(2)
+}
+
+/// A block of rows moved by a scroll, recorded so attached objects (Fuzzball
+/// placements) can follow their text. Rows are screen rows at the time of the scroll.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollEvent {
+    /// Lines already in `scrolled_off` when this scroll happened.
+    pub pushed_before: usize,
+    pub top: usize,
+    pub bottom: usize,
+    /// Rows moved: negative = up.
+    pub delta: isize,
+    /// The scrolled-out rows went to the scrollback (main screen, region at the top):
+    /// rows in the region keep their absolute row, rows below it gain `n`.
+    pub to_scrollback: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +151,9 @@ pub struct Screen {
     tabs: Vec<bool>,
     alt: Option<SavedScreen>,
     scrolled_off: Vec<String>,
+    /// Soft-wrap flag of each `scrolled_off` line.
+    scrolled_off_wrapped: Vec<bool>,
+    scroll_events: Vec<ScrollEvent>,
 }
 
 fn default_tabs(cols: usize) -> Vec<bool> {
@@ -158,6 +182,8 @@ impl Screen {
             tabs: default_tabs(size.cols),
             alt: None,
             scrolled_off: Vec::new(),
+            scrolled_off_wrapped: Vec::new(),
+            scroll_events: Vec::new(),
         }
     }
 
@@ -169,17 +195,22 @@ impl Screen {
         Cell::blank(self.erase_bg)
     }
 
-    /// Text of one row: wide characters once, combining marks attached.
-    pub fn row_string(&self, y: usize) -> String {
-        let mut s = String::new();
-        for c in self.row(y) {
-            if c.style.attrs & attr::WIDE_CONT != 0 {
-                continue;
-            }
-            s.push(c.ch);
-            s.extend(c.comb.iter().filter(|&&m| m != '\0'));
+    fn mark_wrapped(&mut self, y: usize) {
+        if self.size.cols > 0 {
+            let i = self.idx(self.size.cols - 1, y);
+            self.cells[i].style.attrs |= attr::WRAPLINE;
         }
-        s.trim_end().to_string()
+    }
+
+    /// The row continues on the next one (it was filled by autowrap).
+    pub fn row_wrapped(&self, y: usize) -> bool {
+        self.size.cols > 0 && y < self.size.rows && self.cells[self.idx(self.size.cols - 1, y)].style.attrs & attr::WRAPLINE != 0
+    }
+
+    /// Text of one row: wide characters once, combining marks attached.
+    /// Trailing blanks are kept on wrapped rows (they are part of the line).
+    pub fn row_string(&self, y: usize) -> String {
+        crate::reflow::cells_string(self.row(y), self.row_wrapped(y))
     }
 
     pub fn row(&self, y: usize) -> &[Cell] {
@@ -188,8 +219,20 @@ impl Screen {
     }
 
     /// Lines that scrolled off the top of the main screen since the last call.
+    /// Scrolls since the last call, oldest first.
+    pub fn take_scroll_events(&mut self) -> Vec<ScrollEvent> {
+        std::mem::take(&mut self.scroll_events)
+    }
+
     pub fn take_scrolled_off(&mut self) -> Vec<String> {
+        self.scrolled_off_wrapped.clear();
         std::mem::take(&mut self.scrolled_off)
+    }
+
+    /// Like `take_scrolled_off`, with each line's soft-wrap flag.
+    pub fn take_scrolled_off_wrapped(&mut self) -> Vec<(String, bool)> {
+        let w = std::mem::take(&mut self.scrolled_off_wrapped);
+        std::mem::take(&mut self.scrolled_off).into_iter().zip(w.into_iter().chain(std::iter::repeat(false))).collect()
     }
 
     pub fn clear(&mut self) {
@@ -237,6 +280,7 @@ impl Screen {
         if self.pending_wrap {
             self.pending_wrap = false;
             if self.autowrap {
+                self.mark_wrapped(self.cursor.y);
                 self.cursor.x = 0;
                 self.linefeed();
             }
@@ -249,6 +293,8 @@ impl Screen {
             if self.autowrap {
                 let i = self.idx(self.cursor.x, self.cursor.y);
                 self.cells[i] = self.blank();
+                self.cells[i].style.attrs |= attr::WRAP_PAD;
+                self.mark_wrapped(self.cursor.y);
                 self.cursor.x = 0;
                 self.linefeed();
             } else {
@@ -261,14 +307,18 @@ impl Screen {
         self.clear_wide_at(self.cursor.x);
         let i = self.idx(self.cursor.x, self.cursor.y);
         let mut st = style;
-        st.attrs &= !(attr::WIDE | attr::WIDE_CONT);
+        st.attrs &= !(attr::WIDE | attr::WIDE_CONT | attr::WRAPLINE);
+        // Rewriting a wrapped row's last cell keeps the row wrapped.
+        let keep_wrap = self.cells[self.idx(cols - 1, self.cursor.y)].style.attrs & attr::WRAPLINE;
         if w == 2 {
             self.clear_wide_at(self.cursor.x + 1);
-            self.cells[i] = Cell { ch, comb: ['\0'; 2], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
-            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; 2], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
+            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
+            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
         } else {
-            self.cells[i] = Cell { ch, comb: ['\0'; 2], style: st };
+            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: st };
         }
+        let last = self.idx(cols - 1, self.cursor.y);
+        self.cells[last].style.attrs |= keep_wrap;
         if self.cursor.x + w < cols {
             self.cursor.x += w;
         } else {
@@ -393,10 +443,14 @@ impl Screen {
         if n == 0 {
             return;
         }
-        if record && top == 0 && self.alt.is_none() {
+        let to_scrollback = record && top == 0 && self.alt.is_none();
+        self.scroll_events.push(ScrollEvent { pushed_before: self.scrolled_off.len(), top, bottom, delta: -(n as isize), to_scrollback });
+        if to_scrollback {
             for y in 0..n {
-                let line = self.row_string(y);
+                let line = crate::sbstyle::encode(self.row_string(y), self.row(y));
                 self.scrolled_off.push(line);
+                let w = self.row_wrapped(y);
+                self.scrolled_off_wrapped.push(w);
             }
         }
         let blank = self.blank();
@@ -412,6 +466,7 @@ impl Screen {
         if n == 0 {
             return;
         }
+        self.scroll_events.push(ScrollEvent { pushed_before: self.scrolled_off.len(), top, bottom, delta: n as isize, to_scrollback: false });
         let blank = self.blank();
         self.cells.copy_within(top * cols..(bottom + 1 - n) * cols, (top + n) * cols);
         self.cells[top * cols..(top + n) * cols].fill(blank);
@@ -580,18 +635,56 @@ impl Screen {
         self.alt.is_some()
     }
 
+    /// The main screen's cells, cursor and pending-wrap flag (the saved copy while
+    /// the alternate screen is active).
+    pub fn main_state(&self) -> (&[Cell], Point, bool) {
+        match &self.alt {
+            Some(s) => (&s.cells, s.cursor, false),
+            None => (&self.cells, self.cursor, self.pending_wrap),
+        }
+    }
+
+    /// Finish a re-wrapping resize: the main screen gets `cells` (`size.cols *
+    /// size.rows`) and `cursor`; an active alternate screen is resized without
+    /// re-wrapping.
+    pub fn finish_reflow(&mut self, size: Size, cells: Vec<Cell>, cursor: Point, pending: bool) {
+        debug_assert_eq!(cells.len(), size.cols * size.rows);
+        if let Some(mut saved) = self.alt.take() {
+            self.resize_grid(size, false);
+            saved.cells = cells;
+            saved.cursor = cursor;
+            self.alt = Some(saved);
+        } else {
+            self.resize_grid(size, false);
+            self.cells = cells;
+            self.cursor = cursor;
+            self.pending_wrap = pending;
+        }
+    }
+
+    /// Resize without re-wrapping (rows are cut or padded).
     pub fn resize(&mut self, size: Size) {
         if size == self.size {
             return;
         }
+        let saved = self.alt.is_some();
+        self.resize_grid(size, !saved);
+        if let Some(alt) = &mut self.alt {
+            alt.cells = vec![Cell::default(); size.cols * size.rows];
+        }
+    }
+
+    fn resize_grid(&mut self, size: Size, to_scrollback: bool) {
         // Keep the cursor row on screen: push rows above it into scrollback.
         let mut first = 0;
         if self.cursor.y >= size.rows && size.rows > 0 {
             first = self.cursor.y + 1 - size.rows;
-            if self.alt.is_none() {
+            if to_scrollback {
                 for y in 0..first {
-                    let line = self.row_string(y);
+                    let line = crate::sbstyle::encode(self.row_string(y), self.row(y));
                     self.scrolled_off.push(line);
+                    let w = self.row_wrapped(y);
+                    self.scrolled_off_wrapped.push(w);
                 }
             }
         }
@@ -615,9 +708,6 @@ impl Screen {
             }
         }
         self.cells = new_cells;
-        if let Some(alt) = &mut self.alt {
-            alt.cells = vec![Cell::default(); size.cols * size.rows];
-        }
         let mut tabs = default_tabs(size.cols);
         for (x, t) in self.tabs.iter().enumerate().take(size.cols) {
             tabs[x] = *t;

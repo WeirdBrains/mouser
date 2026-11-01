@@ -16,10 +16,19 @@ fn preferences_round_trip_including_sidebar() {
         sidebar_width: Some(340),
         sidebar_open: Some(true),
         sidebar_collapsed: Some(true),
+        engine: Some("skia".into()),
+        engines: None,
+        mcp: Some(mouser_core::storage::McpPrefs {
+            server: Some(mouser_core::storage::McpServerPrefs { enabled: true, https: true, ..Default::default() }),
+            servers: vec![],
+        }),
+        models: None,
+        chat: None,
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();
     assert!(text.contains("sidebar_width = 340"), "{text}");
+    assert!(text.contains("[mcp.server]") && text.contains("https_port = 7802"), "{text}");
     let back = load_preferences();
     assert_eq!(back.sidebar_width, Some(340));
     assert_eq!(back.sidebar_open, Some(true));

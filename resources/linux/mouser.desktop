@@ -7,4 +7,13 @@ Icon=mouser
 Terminal=false
 Categories=System;TerminalEmulator;
 StartupWMClass=Mouser
+X-TerminalArgExec=-e
+X-TerminalArgDir=--working-directory
+X-TerminalArgTitle=--title
+X-TerminalArgAppId=--class
+X-TerminalArgHold=--hold
+Actions=new-window;
 
+[Desktop Action new-window]
+Name=New Window
+Exec=mouser
