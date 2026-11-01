@@ -162,6 +162,44 @@ enum McpCommand {
         #[arg(long)]
         rotate: bool,
     },
+    /// MCP servers Mouser connects to (`[[mcp.servers]]`; tools in the sidebar).
+    Servers {
+        #[command(subcommand)]
+        action: McpServersCommand,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum McpServersCommand {
+    /// Add or update: `add NAME --url URL [--token-stdin] [--ca PEM]` or `add NAME -- COMMAND ARGS…`.
+    Add {
+        name: String,
+        #[arg(long)]
+        url: Option<String>,
+        /// Read a bearer token from stdin (stored in the OS keychain, never in preferences).
+        #[arg(long)]
+        token_stdin: bool,
+        /// PEM certificate/CA to trust for an https URL.
+        #[arg(long)]
+        ca: Option<String>,
+        /// Environment for a stdio server, K=V (V may be keychain:NAME); repeatable.
+        #[arg(long)]
+        env: Vec<String>,
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+    /// List configured servers and MCP plugins.
+    List,
+    /// Remove a server, its token and its permissions.
+    Remove { name: String },
+    /// Connect and list its tools; `--call TOOL [--args JSON]` calls one (asks first).
+    Test {
+        name: String,
+        #[arg(long)]
+        call: Option<String>,
+        #[arg(long, requires = "call")]
+        args: Option<String>,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -463,6 +501,25 @@ fn main() -> Result<()> {
             McpCommand::Status => Action::Status,
             McpCommand::Enable { https, port, https_port } => Action::Enable { https: *https, port: *port, https_port: *https_port },
             McpCommand::Disable => Action::Disable,
+            McpCommand::Servers { action: McpServersCommand::List } => Action::ServersList,
+            McpCommand::Servers { action: McpServersCommand::Remove { name } } => Action::ServersRemove(name.clone()),
+            McpCommand::Servers { action: McpServersCommand::Test { name, call, args } } => {
+                Action::ServersTest { name: name.clone(), call: call.clone(), args: args.clone() }
+            }
+            McpCommand::Servers { action: McpServersCommand::Add { name, url, token_stdin, ca, command, env } } => {
+                let token = if *token_stdin {
+                    let mut t = String::new();
+                    std::io::stdin().read_line(&mut t)?;
+                    if t.trim().is_empty() {
+                        eprintln!("mouser mcp servers add: no token on stdin");
+                        std::process::exit(2);
+                    }
+                    Some(t)
+                } else {
+                    None
+                };
+                Action::ServersAdd { name: name.clone(), command: command.clone(), env: env.clone(), url: url.clone(), token, ca: ca.clone() }
+            }
             McpCommand::Token { rotate: true, .. } => Action::TokenRotate,
             McpCommand::Token { show: true, .. } => Action::TokenShow,
             McpCommand::Token { .. } => {
@@ -746,6 +803,7 @@ fn main() -> Result<()> {
             if st.ssh.legacy > 0 {
                 ui::add_notice(&mut layout, &ui::Category::Ssh, &format!("Move {} saved to ~/.ssh/config…", st.ssh.legacy), vp.cell_h);
             }
+            ui::add_mcp(&mut layout, &mcp_rows(), vp.cell_h);
             ui::add_engines(&mut layout, &engine_rows(), vp.cell_h);
             layout.panel = panel;
             Some(layout)
@@ -768,6 +826,8 @@ fn main() -> Result<()> {
             ui::UiAction::OpenDeleteConfirm { category: ui::Category::Ssh, name } => app_state.lock().unwrap().ssh.open_delete(&name),
             ui::UiAction::Notice => app_state.lock().unwrap().ssh.open_migrate(),
             ui::UiAction::UseEngine(name) => use_engine(&name),
+            ui::UiAction::McpServer(id) => mcp_server_click(&id, &app_state),
+            ui::UiAction::McpTool(id, tool) => mcp_tool_click(&id, &tool, &app_state),
             ui::UiAction::ReorderEngines(order) => reorder_engines(&order),
             ui::UiAction::Connect { category, name } => {
                 let argv = {
@@ -882,6 +942,7 @@ fn main() -> Result<()> {
         })
     };
     let notes = mcp_tools::start(tabs.clone(), app_state.clone());
+    mcp_clients();
     if !notes.is_empty() {
         for n in &notes {
             eprintln!("{n}");
@@ -1334,6 +1395,183 @@ fn discover_font_families() {
     });
 }
 
+/// MCP client connections (`[[mcp.servers]]` and MCP plugins), started once.
+fn mcp_clients() -> &'static Arc<mouser_core::mcp_client::Manager> {
+    static M: std::sync::OnceLock<Arc<mouser_core::mcp_client::Manager>> = std::sync::OnceLock::new();
+    M.get_or_init(|| mouser_core::mcp_client::Manager::start(wake))
+}
+
+/// Servers whose tools are shown in the sidebar (click a connected server to toggle).
+fn mcp_open() -> std::sync::MutexGuard<'static, std::collections::HashSet<String>> {
+    static O: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    O.get_or_init(Default::default).lock().unwrap()
+}
+
+/// Sidebar MCP section: each server's state and (when opened) its tools.
+fn mcp_rows() -> Vec<ui::McpServerSpec> {
+    use mouser_core::mcp_client::Status;
+    let open = mcp_open().clone();
+    mcp_clients()
+        .snapshot()
+        .into_iter()
+        .map(|v| ui::McpServerSpec {
+            tools: if open.contains(&v.id) { v.tools.iter().map(|t| t.name.clone()).collect() } else { vec![] },
+            label: match (&v.status, v.tools.len()) {
+                (Status::Connected, n) => format!("{} {} ({n})", if open.contains(&v.id) { "▾" } else { "▸" }, v.id),
+                _ => v.id.clone(),
+            },
+            ok: v.status == Status::Connected,
+            bad: matches!(v.status, Status::Failed(..) | Status::Denied),
+            state: v.status.label().into(),
+            note: match &v.status {
+                Status::Failed(e, n) => Some(format!("{e} (retry in {n}s; click to retry now)")),
+                Status::NeedsApproval => Some("click to allow it to start".into()),
+                _ => None,
+            },
+            id: v.id,
+        })
+        .collect()
+}
+
+fn mcp_server_click(id: &str, app_state: &Arc<Mutex<AppState>>) {
+    use mouser_core::mcp_client::{Source, Status, broker_name};
+    let Some(v) = mcp_clients().snapshot().into_iter().find(|v| v.id == id) else { return };
+    let mut st = app_state.lock().unwrap();
+    if v.status == Status::NeedsApproval {
+        let runs = match &v.source {
+            Source::Plugin(_, argv) => argv.join(" "),
+            Source::Config(_) => String::new(),
+        };
+        st.approvals.push(approval_ui::Request::new(
+            &broker_name(id),
+            vec!["run".into()],
+            vec![format!("Start MCP plugin: {runs}")],
+            mouser_core::permissions::Scope::Installed,
+            approval_ui::Origin::McpRun { id: id.to_string() },
+        ));
+        wake();
+        return;
+    }
+    if v.status == Status::Connected {
+        let mut o = mcp_open();
+        if !o.remove(id) {
+            o.insert(id.to_string());
+        }
+        drop(o);
+        wake();
+        return;
+    }
+    st.look.say(format!("[mouser] reconnecting {id}"));
+    drop(st);
+    mcp_clients().reconnect(id);
+}
+
+/// `[mouser]` line: `mcp` (list), `mcp reconnect ID`, `mcp tools ID`, `mcp call ID TOOL [JSON]`.
+fn mcp_command(line: &str, app_state: &Arc<Mutex<AppState>>) {
+    let words: Vec<&str> = line.splitn(4, ' ').collect();
+    let say = |m: String| app_state.lock().unwrap().look.say(m);
+    match words.as_slice() {
+        ["mcp"] | ["mcp", "servers"] => {
+            let l: Vec<String> =
+                mcp_clients().snapshot().iter().map(|v| format!("{} {} ({} tools)", v.id, v.status.label(), v.tools.len())).collect();
+            say(if l.is_empty() { "[mouser] no MCP servers (mouser mcp servers add)".into() } else { format!("[mouser] MCP: {}", l.join(" · ")) });
+        }
+        ["mcp", "reconnect", id] => {
+            let waiting = mcp_clients().snapshot().iter().any(|v| v.id == *id && v.status == mouser_core::mcp_client::Status::NeedsApproval);
+            if waiting {
+                mcp_server_click(id, app_state);
+            } else {
+                say(format!("[mouser] reconnecting {id}"));
+                mcp_clients().reconnect(id);
+            }
+        }
+        ["mcp", "tools", id] => {
+            let v = mcp_clients().snapshot().into_iter().find(|v| v.id == *id);
+            match v {
+                Some(v) => {
+                    mcp_open().insert(v.id.clone());
+                    say(format!("[mouser] {id}: {}", v.tools.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")));
+                }
+                None => say(format!("[mouser] no MCP server {id}")),
+            }
+        }
+        ["mcp", "call", id, rest] => {
+            let (tool, args) = rest.split_once(' ').unwrap_or((rest, ""));
+            let args = if args.trim().is_empty() { None } else { Some(args.trim()) };
+            match args.map(serde_json::from_str::<serde_json::Value>).transpose() {
+                Ok(a) => mcp_call(id, tool, a, app_state),
+                Err(e) => say(format!("[mouser] mcp call: arguments must be JSON ({e})")),
+            }
+        }
+        ["mcp", "call", id] => say(format!("[mouser] usage: mcp call {id} TOOL [JSON]")),
+        _ => say("[mouser] mcp | mcp reconnect ID | mcp tools ID | mcp call ID TOOL [JSON]".into()),
+    }
+}
+
+/// A tool row click: call it (through the broker) when it takes no required arguments.
+fn mcp_tool_click(id: &str, tool: &str, app_state: &Arc<Mutex<AppState>>) {
+    mcp_call(id, tool, None, app_state);
+}
+
+/// Call a tool through the broker (asks with the popup); `args: None` means `{}`
+/// and is refused for tools with required arguments.
+fn mcp_call(id: &str, tool: &str, args: Option<serde_json::Value>, app_state: &Arc<Mutex<AppState>>) {
+    use mouser_core::mcp_client::{broker_name, check_tool, tool_cap};
+    use mouser_core::permissions::Check;
+    let desc = mcp_clients().tool_json(id, tool);
+    let required: Vec<String> = desc
+        .as_ref()
+        .and_then(|d| d["inputSchema"]["required"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.as_str().map(String::from))
+        .collect();
+    let about = desc.as_ref().and_then(|d| d["description"].as_str().map(String::from)).unwrap_or_default();
+    let mut st = app_state.lock().unwrap();
+    if desc.is_none() {
+        st.look.say(format!("[mouser] {id} has no tool {tool} (or is not connected)"));
+        return;
+    }
+    if args.is_none() && !required.is_empty() {
+        st.look.say(format!("[mouser] {id}: {tool} needs {}: {about}", required.join(", ")));
+        return;
+    }
+    match check_tool(id, tool) {
+        Check::Allow => {
+            drop(st);
+            spawn_mcp_call(id, tool, args, app_state);
+        }
+        Check::Deny => st.look.say(format!("[mouser] {id}: {tool} is set to never (mouser plugin permissions {})", broker_name(id))),
+        Check::Ask(_) => {
+            st.approvals.push(approval_ui::Request::new(
+                &broker_name(id),
+                vec![tool_cap(tool)],
+                vec![
+                    format!("Server: {id}"),
+                    format!("Tool: {tool} {}", args.as_ref().map(|a| a.to_string()).unwrap_or_default()).chars().take(200).collect(),
+                    about.chars().take(200).collect(),
+                ],
+                mouser_core::permissions::Scope::Installed,
+                approval_ui::Origin::McpTool { id: id.to_string(), tool: tool.to_string(), args },
+            ));
+            wake();
+        }
+    }
+}
+
+/// Call an allowed tool off the UI thread; the result becomes a notice.
+fn spawn_mcp_call(id: &str, tool: &str, args: Option<serde_json::Value>, app_state: &Arc<Mutex<AppState>>) {
+    let (id, tool, app_state) = (id.to_string(), tool.to_string(), app_state.clone());
+    std::thread::spawn(move || {
+        let msg = match mcp_clients().call(&id, &tool, args.unwrap_or_else(|| serde_json::json!({}))) {
+            Ok(t) => format!("[{id}] {tool}: {}", t.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(400).collect::<String>()),
+            Err(e) => format!("[{id}] {tool} failed: {e:#}"),
+        };
+        app_state.lock().unwrap().look.say(msg);
+        wake();
+    });
+}
+
 /// Sidebar Engines section: available engines in priority order with state.
 fn engine_rows() -> Vec<(String, ui::EngineState, Option<String>)> {
     use mouser_core::engines;
@@ -1498,6 +1736,8 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
         let mut st = app_state.lock().unwrap();
         let m = st.modes.switch(trimmed).unwrap_or_else(|e| e);
         st.look.say(m);
+    } else if trimmed == "mcp" || trimmed.starts_with("mcp ") {
+        mcp_command(trimmed, app_state);
     } else if trimmed == "open-sidebar" || trimmed == ":open-sidebar" {
         let mut st = app_state.lock().unwrap();
         st.sidebar_open = true;
@@ -1629,6 +1869,21 @@ fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core
         }
         approval_ui::Origin::Mcp { reply } => {
             let _ = reply.send(a.granted());
+        }
+        approval_ui::Origin::McpRun { id } => {
+            if a.granted() {
+                mcp_clients().approve_run(&id);
+            } else {
+                st.look.say(format!("[mouser] {id} was not allowed to run"));
+                mcp_clients().reconnect(&id);
+            }
+        }
+        approval_ui::Origin::McpTool { id, tool, args } => {
+            if a.granted() {
+                spawn_mcp_call(&id, &tool, args, app_state);
+            } else {
+                st.look.say(format!("[mouser] {id}: {tool} was not allowed"));
+            }
         }
         approval_ui::Origin::Command { line } => {
             if a.granted() {

@@ -487,6 +487,36 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
             let t: String = text.chars().take(max).collect();
             draw_button(canvas, fonts, *r, &t, mix(panel, accent, 0.12), fg);
         }
+        for m in &layout.mcp {
+            let r = m.rect;
+            let ty = r.y + (r.h - cell_h) / 2;
+            let max = |w: i32| ((w / fonts.cell_w).max(0)) as usize;
+            match &m.kind {
+                ui::McpRowKind::Title => canvas.draw_text(fonts, r.x, ty, ui::MCP_TITLE, fg),
+                ui::McpRowKind::Server { state, ok, bad } => {
+                    round_rect(canvas, r.x, r.y, r.w, r.h, RADIUS.min(r.h / 3), mix(panel, fg, 0.05), panel);
+                    let lw = state.chars().count() as i32 * fonts.cell_w;
+                    let name: String = m.text.chars().take(max(r.w - lw - 3 * ui::BUTTON_PAD)).collect();
+                    canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty, &name, fg);
+                    let col = if *ok {
+                        accent
+                    } else if *bad {
+                        mix(muted, 0xF7768E, 0.6)
+                    } else {
+                        muted
+                    };
+                    canvas.draw_text(fonts, r.x + r.w - ui::BUTTON_PAD - lw, ty, state, col);
+                }
+                ui::McpRowKind::Tool => {
+                    let t: String = format!("▸ {}", m.text).chars().take(max(r.w - ui::BUTTON_PAD)).collect();
+                    canvas.draw_text(fonts, r.x, ty, &t, mix(fg, accent, 0.35));
+                }
+                ui::McpRowKind::Note => {
+                    let t: String = m.text.chars().take(max(r.w)).collect();
+                    canvas.draw_text(fonts, r.x, ty, &t, muted);
+                }
+            }
+        }
         if !layout.engines.is_empty() {
             let t = layout.engines_title;
             canvas.draw_text(fonts, t.x, t.y + (t.h - cell_h) / 2, ui::ENGINES_TITLE, fg);

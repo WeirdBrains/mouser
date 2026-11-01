@@ -129,12 +129,19 @@ fn kinds(k: &[Kind]) -> String {
 }
 
 fn permissions(n: &str, sets: &[String], out: &mut dyn Write) -> Result<()> {
-    let requested: Vec<String> = match plugins::find(n) {
+    let mut requested: Vec<String> = match plugins::find(n) {
         Some(i) => i.manifest.permissions,
         None if n.starts_with("fuzzball:") || n.starts_with("ssh:") => plugins::CAPABILITIES.iter().map(|c| c.0.to_string()).collect(),
-        None => bail!("no plugin named {n} (Fuzzball plugins are named fuzzball:<name>)"),
+        // MCP servers: one `tool.<name>` capability per tool.
+        None if n.starts_with("mcp-server:") => vec![],
+        None => bail!("no plugin named {n} (Fuzzball plugins are named fuzzball:<name>, MCP servers mcp-server:<name>)"),
     };
     let mut st = Store::load();
+    for c in st.plugins.get(n).map(|m| m.keys().cloned().collect::<Vec<_>>()).unwrap_or_default() {
+        if !requested.contains(&c) {
+            requested.push(c);
+        }
+    }
     if !sets.is_empty() {
         for s in sets {
             let Some((cap, d)) = s.split_once('=') else { bail!("use cap=allow|ask|never") };

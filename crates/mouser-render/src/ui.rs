@@ -61,6 +61,9 @@ pub struct UiLayout {
     /// "Engines" section above the Appearance button ([`add_engines`]).
     pub engines: Vec<EngineRow>,
     pub engines_title: Rect,
+    /// "MCP" section: servers and their tools ([`add_mcp`]).
+    #[serde(default)]
+    pub mcp: Vec<McpRow>,
     /// Engine row being dragged (set by the window, not the model).
     #[serde(default)]
     pub engine_drag: Option<EngineDrag>,
@@ -229,6 +232,9 @@ pub fn add_engines(layout: &mut UiLayout, engines: &[(String, EngineState, Optio
     if let Some((r, _)) = &layout.notice {
         content_bottom = content_bottom.max(r.y + r.h);
     }
+    if let Some(r) = layout.mcp.last() {
+        content_bottom = content_bottom.max(r.rect.y + r.rect.h);
+    }
     let a = layout.appearance_rect;
     let top = (a.y - 12 - total).max(content_bottom + 12);
     let x = a.x;
@@ -243,6 +249,81 @@ pub fn add_engines(layout: &mut UiLayout, engines: &[(String, EngineState, Optio
             EngineRow { name: name.clone(), state: *state, note: note.clone(), rect: r }
         })
         .collect();
+    layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
+}
+
+pub const MCP_TITLE: &str = "MCP";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum McpRowKind {
+    Title,
+    /// A server; `ok` is connected, `bad` failed/denied (state label drawn right).
+    Server {
+        state: String,
+        ok: bool,
+        bad: bool,
+    },
+    /// A clickable tool under its server.
+    Tool,
+    /// A muted line (why it failed).
+    Note,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct McpRow {
+    pub kind: McpRowKind,
+    /// Server id the row belongs to.
+    pub server: String,
+    pub text: String,
+    pub rect: Rect,
+}
+
+/// One server for [`add_mcp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerSpec {
+    pub id: String,
+    /// What the row shows (`▸ id (3)`).
+    pub label: String,
+    pub state: String,
+    pub ok: bool,
+    pub bad: bool,
+    pub note: Option<String>,
+    pub tools: Vec<String>,
+}
+
+/// Place the MCP section below the connections (call before [`add_engines`]).
+pub fn add_mcp(layout: &mut UiLayout, servers: &[McpServerSpec], cell_h: i32) {
+    if layout.collapsed || layout.sidebar_rect.w == 0 || servers.is_empty() {
+        return;
+    }
+    let line_h = cell_h + 8;
+    let mut y = layout.collapse_rect.y + layout.collapse_rect.h;
+    for c in &layout.categories {
+        y = y.max(c.header_rect.y + c.header_rect.h);
+        for i in &c.items {
+            y = y.max(i.name_rect.y + i.name_rect.h);
+        }
+    }
+    if let Some((r, _)) = &layout.notice {
+        y = y.max(r.y + r.h);
+    }
+    y += 12;
+    let x = layout.appearance_rect.x;
+    let w = (layout.sidebar_rect.x + layout.sidebar_rect.w - SIDEBAR_MARGIN - x).max(0);
+    let mut push = |kind: McpRowKind, server: &str, text: &str, indent: i32, h: i32| {
+        layout.mcp.push(McpRow { kind, server: server.into(), text: text.into(), rect: Rect { x: x + indent, y, w: w - indent, h } });
+        y += h + 2;
+    };
+    push(McpRowKind::Title, "", MCP_TITLE, 0, line_h);
+    for s in servers {
+        push(McpRowKind::Server { state: s.state.clone(), ok: s.ok, bad: s.bad }, &s.id, &s.label, 0, line_h);
+        if let Some(n) = &s.note {
+            push(McpRowKind::Note, &s.id, n, 16, cell_h + 4);
+        }
+        for t in &s.tools {
+            push(McpRowKind::Tool, &s.id, t, 16, cell_h + 6);
+        }
+    }
     layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
 }
 
@@ -597,6 +678,10 @@ pub enum UiAction {
     CycleTab(i32),
     /// Engines section: make this engine first and switch to it (`mouser engine use`).
     UseEngine(String),
+    /// MCP server row: reconnect, or ask to start an MCP plugin.
+    McpServer(String),
+    /// MCP tool row: (server id, tool).
+    McpTool(String, String),
     /// Engines section drag-and-drop: save this priority order (`mouser engine priority`).
     ReorderEngines(Vec<String>),
     /// An action of the current mode (from a click in its view or windows):
@@ -712,6 +797,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             panel: None,
             notice: None,
             engines: Vec::new(),
+            mcp: Vec::new(),
             engines_title: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             engine_drag: None,
             dock: None,
@@ -763,6 +849,7 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
         panel: None,
         notice: None,
         engines: Vec::new(),
+        mcp: Vec::new(),
         engines_title: Rect { x: inner_x, y: 0, w: 0, h: 0 },
         engine_drag: None,
         dock: None,
@@ -784,6 +871,7 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         panel: None,
         notice: None,
         engines: Vec::new(),
+        mcp: Vec::new(),
         engines_title: empty,
         engine_drag: None,
         dock: None,
@@ -1030,6 +1118,13 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     }
     if layout.notice.as_ref().is_some_and(|(r, _)| r.contains(px, py)) {
         return UiAction::Notice;
+    }
+    if let Some(r) = layout.mcp.iter().find(|r| r.rect.contains(px, py)) {
+        match &r.kind {
+            McpRowKind::Server { .. } => return UiAction::McpServer(r.server.clone()),
+            McpRowKind::Tool => return UiAction::McpTool(r.server.clone(), r.text.clone()),
+            McpRowKind::Title | McpRowKind::Note => {}
+        }
     }
     if let Some(e) = layout.engines.iter().find(|e| e.rect.contains(px, py)) {
         return UiAction::UseEngine(e.name.clone());
