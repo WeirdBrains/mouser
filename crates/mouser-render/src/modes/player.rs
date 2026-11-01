@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(out, [0.0; 4], "silence while gated");
         assert_eq!(s.audio.lock().unwrap().len(), 8, "audio kept for when the picture arrives");
         // The first video frame opens the gate.
-        let frame = vec![0u8; 4];
+        let frame = [0u8; 4];
         std::thread::scope(|sc| {
             sc.spawn(|| read_video(&frame[..], s.clone(), 0, 1.0, 1, 1, 25.0));
         });
