@@ -7,6 +7,7 @@
 //! plain data in and out (key ids, paths, panels, pixels), so modes loaded
 //! from libraries or helper processes can implement it later, like engines.
 
+pub mod chat;
 pub mod commander;
 pub mod player;
 
@@ -141,6 +142,13 @@ impl Host {
     /// The modes built into Mouser: commander (default).
     pub fn builtin() -> Self {
         Self::new(vec![Box::new(commander::CommanderMode::new())])
+    }
+
+    /// Register another mode (not active until switched to).
+    pub fn push(&mut self, m: Box<dyn Mode>) {
+        let (k, note) = Keymap::load(m.name(), m.bindings());
+        self.notes.extend(note);
+        self.modes.push((m, k));
     }
 
     pub fn set_waker(&mut self, w: Waker) {
