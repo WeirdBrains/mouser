@@ -1337,8 +1337,20 @@ fn view_rows(p: &tabs::Parser, scrolled_back: usize, rows: usize, fg: u32) -> (V
     let mut out = Vec::with_capacity(rows);
     let mut paint = Vec::with_capacity(rows);
     if start < sb_total {
-        for l in sb.get_lines(start, end.min(sb_total) - start) {
-            let (text, pt) = select::scrollback_view(&l, fg);
+        for l in sb.get_raw_lines(start, end.min(sb_total) - start) {
+            let (text, mut pt) = select::scrollback_view(mouser_core::sbstyle::text(&l), fg);
+            // Styled lines keep their colours and attributes.
+            if mouser_core::sbstyle::is_styled(&l) {
+                for (c, st) in pt.iter_mut().zip(mouser_core::sbstyle::cell_styles(&l, text.chars().count())) {
+                    if st != Default::default() {
+                        let keep = c.flags & (mouser_render::frame::paint::NO_GLYPH | mouser_render::frame::paint::WIDE);
+                        let comb = c.comb;
+                        *c = term_view::cell_paint(&mouser_core::grid::Cell { ch: ' ', comb, style: st }, p);
+                        c.flags |= keep;
+                        c.comb = comb;
+                    }
+                }
+            }
             out.push(text);
             paint.push(pt);
         }

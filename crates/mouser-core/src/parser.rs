@@ -448,7 +448,7 @@ impl<W: Write> TerminalParser<W> {
             (0..old.rows).rev().find(|&y| cells[y * old.cols..(y + 1) * old.cols].iter().any(|c| c.ch != ' ' || c.style != Default::default()));
         let keep = [Some(cursor.y), last_text, last_anchor].into_iter().flatten().max().unwrap_or(0).min(old.rows.saturating_sub(1));
         let sb_rows = total - s;
-        let mut rows: Vec<Phys> = self.scrollback.lines_wrapped(s, total).into_iter().map(|(l, w)| Phys::Str(l, w)).collect();
+        let mut rows: Vec<Phys> = self.scrollback.lines_wrapped(s, total).into_iter().map(|(l, w)| Phys::from_scrollback(l, w)).collect();
         rows.extend((0..=keep).map(|y| Phys::Cells(cells[y * old.cols..(y + 1) * old.cols].to_vec())));
         let points = [(sb_rows + cursor.y, cursor.x + pending as usize, true), (sb_rows, 0, false)];
         let (mut out, landed, moved) = self.rewrap_block(rows, base, &points, size.cols);
@@ -495,7 +495,7 @@ impl<W: Write> TerminalParser<W> {
         let a = self.scrollback.line_start(b.saturating_sub(max_rows.max(1)));
         let first = self.lines_scrolled - total as i64;
         let base = first + a as i64;
-        let rows: Vec<Phys> = self.scrollback.lines_wrapped(a, b).into_iter().map(|(l, w)| Phys::Str(l, w)).collect();
+        let rows: Vec<Phys> = self.scrollback.lines_wrapped(a, b).into_iter().map(|(l, w)| Phys::from_scrollback(l, w)).collect();
         let n_old = rows.len();
         let cols = self.screen.size.cols;
         let (out, _, moved) = self.rewrap_block(rows, base, &[], cols);

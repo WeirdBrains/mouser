@@ -121,7 +121,7 @@ stays unless the maintainer decides otherwise.
   early. Tests: `mouser-core/tests/reflow_tests.rs` (perf: `--release -- --ignored`).
   Fuzzball spec: `g_fit=w`, `g_reflow=1` in the capability reply; graphics.md §2.2/§3/§4,
   README §10 #12/#13/#20/#21.
-  Edge cases left: scrollback keeps plain text only (attributes/links lost there, as before);
+  Edge cases left: the scrollback keeps colours and attributes (`sbstyle`, 1.0) but not OSC 8 links;
   a line longer than the scrollback limit after narrowing drops oldest lines; an anchor
   in the blanks before the cursor moves with the cursor's padding; Kitty placeholder text
   is re-wrapped as text (an image wider than the new width breaks into rows); rows-only

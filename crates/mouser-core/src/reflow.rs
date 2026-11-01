@@ -30,9 +30,15 @@ impl Phys {
             Phys::Str(s, w) => (s, w),
             Phys::Cells(c) => {
                 let w = c.last().is_some_and(|c| c.style.attrs & attr::WRAPLINE != 0);
-                (cells_string(&c, w), w)
+                (crate::sbstyle::encode(cells_string(&c, w), &c), w)
             }
         }
+    }
+
+    /// A scrollback line (text, maybe with style runs) for re-wrapping: styled
+    /// lines go through cells so their colours survive.
+    pub fn from_scrollback(line: String, wrapped: bool) -> Self {
+        if crate::sbstyle::is_styled(&line) { Phys::Cells(crate::sbstyle::to_cells(&line, wrapped)) } else { Phys::Str(line, wrapped) }
     }
 
     /// Screen cells `cols` wide (padded with blanks; the wrap flag on the last cell).

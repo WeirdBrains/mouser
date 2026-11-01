@@ -379,3 +379,48 @@ fn perf_large_scrollback() {
         "settled at the final width"
     );
 }
+
+/// Colours and attributes survive scrolling into the scrollback and re-wrapping
+/// there; text readers (search, copy, MCP) still get plain text.
+#[test]
+fn scrollback_keeps_styles_through_scroll_and_reflow() {
+    use mouser_core::grid::{Color, attr as a};
+    use mouser_core::sbstyle;
+    let mut t = term(10, 3);
+    t.feed(b"\x1b[31mred\x1b[0m \x1b[1;44mbold-blue\x1b[0m end\r\nplain\r\n\x1b[4:3;58;5;200mcurly\x1b[0m\r\nx\r\ny\r\nz");
+    while t.reflow_step(1000) {}
+    let sb = &t.scrollback;
+    let n = sb.total_lines();
+    let text = sb.get_lines(0, n);
+    assert!(text.concat().replace(' ', "").contains("redbold-blueend"), "{text:?}");
+    assert!(text.iter().all(|l| !l.contains('\0')), "plain readers never see runs: {text:?}");
+    let raw = sb.get_raw_lines(0, n);
+    let st0 = sbstyle::cell_styles(&raw[0], 10);
+    assert_eq!(st0[0].fg, Color::Indexed(1));
+    assert_eq!(st0[3].fg, Color::Default);
+    assert!(st0[4].attrs & a::BOLD != 0 && st0[4].bg == Color::Indexed(4));
+    assert!(!sbstyle::is_styled(raw.iter().find(|l| l.starts_with("plain")).unwrap()));
+    let curly = raw.iter().find(|l| sbstyle::text(l).starts_with("curly")).unwrap();
+    let cs = sbstyle::cell_styles(curly, 5);
+    assert_eq!((cs[0].underline, cs[0].ul_color), (3, Color::Indexed(200)));
+    // Re-wrap narrower and wider: the colours move with their characters.
+    for cols in [6, 20] {
+        t.resize(Size { cols, rows: 3 });
+        while t.reflow_step(1000) {}
+        let sb = &t.scrollback;
+        let raw = sb.get_raw_lines(0, sb.total_lines());
+        let mut seen_red = false;
+        let mut seen_blue = false;
+        for l in &raw {
+            let txt: Vec<char> = sbstyle::text(l).chars().collect();
+            for (i, s) in sbstyle::cell_styles(l, txt.len()).iter().enumerate() {
+                match txt[i] {
+                    'r' | 'e' | 'd' if s.fg == Color::Indexed(1) => seen_red = true,
+                    'b' | 'o' | 'l' | 'u' if s.bg == Color::Indexed(4) => seen_blue = true,
+                    _ => {}
+                }
+            }
+        }
+        assert!(seen_red && seen_blue, "cols {cols}: {raw:?}");
+    }
+}
