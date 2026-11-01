@@ -1,7 +1,7 @@
 //! Commander's views drawn on the CPU canvas: list, grid and carousel with
 //! their image previews. `MOUSER_TEST_PNG_DIR=dir` saves the frames.
 
-use mouser_render::modes::{Context, Host, ModeImage};
+use mouser_render::modes::{Context, Effect, Host, ModeImage};
 use mouser_render::ui::{self, Rect};
 use mouser_render::{Canvas, FontStack, Frame, ImageDraw, PADDING, UiViewport, render_frame};
 
@@ -110,4 +110,70 @@ fn list_grid_and_carousel_draw_with_previews() {
     let centre = imgs.iter().max_by_key(|m| m.rect.w).unwrap();
     assert!(has_color(&buf, centre.rect, COLORS[1]), "focused item in the middle");
     assert!(imgs.iter().filter(|m| m.src.2 < m.width).count() == 2, "two partial neighbours");
+}
+
+/// Mouse input as the window routes it (`ui::dock_press`/`dock_wheel`, the
+/// same calls the event loop makes): click a row to select it, click a
+/// selected folder to open it, click the back button, wheel over the view.
+#[test]
+fn mouse_clicks_and_wheel_drive_commander() {
+    let t = demo();
+    let mut h = Host::builtin();
+    h.set_cwd(Some(t.path().to_path_buf()));
+    let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
+    let ctx = Context { viewport: vp, area: Rect { x: 0, y: PADDING, w: 1100, h: 760 - PADDING } };
+    let layout = |h: &mut Host| {
+        let mut l = ui::without_sidebar(1100, 760);
+        let dock = h.view(&ctx).dock.unwrap();
+        l.dock = Some(ui::Dock { inset: dock.rect.h + 8, panel: dock });
+        l
+    };
+    let find = |l: &ui::UiLayout, s: &str| {
+        l.dock.as_ref().unwrap().panel.items.iter().find(|i| i.text.contains(s)).cloned().unwrap_or_else(|| panic!("no {s}"))
+    };
+    let click = |h: &mut Host, s: &str| {
+        let l = layout(h);
+        let r = find(&l, s).rect;
+        let (x, y) = (r.x + r.w / 2, r.y + r.h / 2);
+        let acts = ui::dock_press(&l, x, y).expect("over the view");
+        assert!(matches!(&acts[0], ui::UiAction::Mode { action, .. } if action == "pointer_down"));
+        let mut last = None;
+        for a in acts {
+            if let ui::UiAction::Mode { action, arg } = a {
+                last = Some(h.action(&action, arg));
+            }
+        }
+        h.action("pointer_up", mouser_render::modes::commander::pack_xy(x, y));
+        last.unwrap()
+    };
+    let selected = |h: &mut Host| {
+        let l = layout(h);
+        l.dock.unwrap().panel.items.into_iter().find(|i| i.style == ui::PanelStyle::Row { selected: true }).map(|i| i.text).unwrap_or_default()
+    };
+    assert!(selected(&mut h).contains("clip.mp4"));
+    click(&mut h, "README.md");
+    assert!(selected(&mut h).contains("README.md"), "a click selects the row");
+    click(&mut h, "photos/");
+    assert!(selected(&mut h).contains("photos/"));
+    // A quick second click opens the folder: commander cds the shell.
+    let e = click(&mut h, "photos/");
+    assert!(matches!(&e, Effect::Run(c) if c.starts_with("cd ") && c.contains("photos")), "{e:?}");
+    h.set_cwd(Some(t.path().join("photos")));
+    assert!(find(&layout(&mut h), "0 items").text.contains("0 items"));
+    let e = click(&mut h, "‹ back");
+    assert!(matches!(&e, Effect::Run(c) if c.starts_with("cd ")), "the back button: {e:?}");
+    h.set_cwd(Some(t.path().to_path_buf()));
+    // The wheel: over the view it scrolls the mode; outside the view it doesn't.
+    let l = layout(&mut h);
+    let row = find(&l, "shot0").rect;
+    assert_eq!(ui::dock_wheel(&l, row.x + 5, row.y + 5, -3, false), Some(vec![ui::UiAction::Mode { action: "scroll".into(), arg: 1 }]));
+    let z = ui::dock_wheel(&l, row.x + 5, row.y + 5, 3, true).unwrap();
+    assert!(matches!(&z[1], ui::UiAction::Mode { action, arg: 1 } if action == "zoom_wheel"));
+    assert_eq!(ui::dock_wheel(&l, 5, 755, -3, false), None, "below the view");
+    assert_eq!(ui::dock_press(&l, 5, 755), None);
+    for a in ui::dock_wheel(&l, row.x + 5, row.y + 5, -3, false).unwrap() {
+        if let ui::UiAction::Mode { action, arg } = a {
+            h.action(&action, arg);
+        }
+    }
 }
