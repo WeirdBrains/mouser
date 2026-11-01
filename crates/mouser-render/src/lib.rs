@@ -678,11 +678,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     // image pan); the item under it is clicked as usual below.
                     if button == winit::event::MouseButton::Left
                         && let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
-                        && l.panel.is_none()
-                        && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(pos.x as i32, pos.y as i32))
+                        && let Some(acts) = ui::dock_press(l, pos.x.round() as i32, pos.y.round() as i32)
                     {
-                        on_act(ui::UiAction::Mode { action: "pointer_down".into(), arg: modes::commander::pack_xy(pos.x as i32, pos.y as i32) });
-                        on_act(ui::hit_test(l, pos.x.round() as i32, pos.y.round() as i32));
+                        acts.into_iter().for_each(|a| on_act(a));
                         dock_press = true;
                         dirty = true;
                         return;
@@ -865,17 +863,10 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     };
                     dirty = true;
                     // Over a mode's view the wheel goes to the mode ("scroll").
-                    if let (Some(on_act), Some(pos), Some(d)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref().and_then(|l| l.dock.as_ref()))
-                        && last_ui.as_ref().is_some_and(|l| l.panel.is_none())
-                        && d.panel.rect.contains(pos.x as i32, pos.y as i32)
+                    if let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
+                        && let Some(acts) = ui::dock_wheel(l, pos.x as i32, pos.y as i32, lines, modifiers.control_key())
                     {
-                        if lines != 0 && modifiers.control_key() {
-                            // Ctrl+wheel zooms the image around the pointer.
-                            on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::commander::pack_xy(pos.x as i32, pos.y as i32) });
-                            on_act(ui::UiAction::Mode { action: "zoom_wheel".into(), arg: lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32 });
-                        } else if lines != 0 {
-                            (on_act)(ui::UiAction::Mode { action: "scroll".into(), arg: -lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32 });
-                        }
+                        acts.into_iter().for_each(|a| on_act(a));
                         return;
                     }
                     // Over a panel (e.g. the font list) the wheel scrolls the panel.

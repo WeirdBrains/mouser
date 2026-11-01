@@ -1072,6 +1072,33 @@ pub fn category_title(c: &Category) -> &'static str {
     }
 }
 
+fn over_dock(l: &UiLayout, x: i32, y: i32) -> bool {
+    l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(x, y))
+}
+
+/// A left press over a mode's view: the mode sees the press (seek bar, image
+/// pan), then the item under it is clicked. `None`: not over the view.
+pub fn dock_press(l: &UiLayout, x: i32, y: i32) -> Option<Vec<UiAction>> {
+    over_dock(l, x, y).then(|| vec![UiAction::Mode { action: "pointer_down".into(), arg: crate::modes::commander::pack_xy(x, y) }, hit_test(l, x, y)])
+}
+
+/// The wheel over a mode's view (`lines` > 0 is up): "scroll", or with Ctrl
+/// a zoom about the pointer. `None`: not over the view.
+pub fn dock_wheel(l: &UiLayout, x: i32, y: i32, lines: isize, ctrl: bool) -> Option<Vec<UiAction>> {
+    if !over_dock(l, x, y) {
+        return None;
+    }
+    let n = lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32;
+    Some(match (lines, ctrl) {
+        (0, _) => vec![],
+        (_, true) => vec![
+            UiAction::Mode { action: "pointer_move".into(), arg: crate::modes::commander::pack_xy(x, y) },
+            UiAction::Mode { action: "zoom_wheel".into(), arg: n },
+        ],
+        _ => vec![UiAction::Mode { action: "scroll".into(), arg: -n }],
+    })
+}
+
 pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     if let Some(panel) = &layout.panel {
         // Topmost item first; a popup may hang below the panel and swallows
