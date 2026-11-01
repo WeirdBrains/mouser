@@ -65,7 +65,7 @@ fn capability_query_then_da1() {
     t.feed(b"\x1bP=Fzcq;id=1\x1b\\\x1b[c");
     let r = out.take();
     let (fz, da) = r.split_at(r.find("\x1b[?").unwrap());
-    assert!(fz.starts_with("\x1bP=Fzcr;id=1,v=0,sub=gk,raw=0,max_chunk=65536,"), "{fz}");
+    assert!(fz.starts_with("\x1bP=Fzcr;id=1,v=0,sub=gkp,raw=0,max_chunk=65536,"), "{fz}");
     for k in
         ["g_mem=335544320", "g_max_dim=10000", "g_fmt=rgba:rgb:png", "g_max_place=4096", "g_fit=w", "g_reflow=1", "k=1", "k_ime=0", "k_release=1"]
     {
@@ -435,4 +435,44 @@ fn tmux_unwrapped_message_is_identical() {
     let direct = out.take();
     t.feed(b"\x1bP=Fzcq;id=1\x1b\\");
     assert_eq!(out.take(), direct);
+}
+
+// `p`: plugin handshake. The terminal only queues it; nothing is granted
+// until the app (the user) answers, and junk is refused at once.
+#[test]
+fn plugin_handshake_queues_and_never_self_grants() {
+    let (mut t, out) = term();
+    t.feed(&msg("zph;id=7,name=hello-fz,kind=tool-provider,caps=notify+screen.read"));
+    assert_eq!(out.take(), "", "no reply before the user answers");
+    let h = std::mem::take(&mut t.fuzzball.plugin_hellos);
+    assert_eq!(h.len(), 1);
+    assert_eq!((h[0].id, h[0].name.as_str(), h[0].caps.clone()), (7, "hello-fz", vec!["notify".to_string(), "screen.read".to_string()]));
+    t.feed(&msg("zpq;id=8,name=hello-fz"));
+    assert_eq!(out.take(), "\x1bP=Fzpr;id=8,ok=1,granted=\x1b\\");
+    assert_eq!(fuzzball::plugin_reply(7, None), "\x1bP=Fzpr;id=7,ok=0,err=EPERM,msg=denied by the user\x1b\\");
+    assert_eq!(fuzzball::plugin_reply(7, Some(&["notify".into()])), "\x1bP=Fzpr;id=7,ok=1,granted=notify\x1b\\");
+    for bad in ["zph;id=1,name=Bad Name", "zph;id=1,name=x,caps=root", "zph;id=1,name=x,kind=engine", "zph;id=1,name=x,v=9"] {
+        t.feed(&msg(bad));
+        assert!(out.take().contains("ok=0"), "{bad}");
+    }
+    // Without an id there is nowhere to answer: dropped silently.
+    t.feed(&msg("zph;name=x"));
+    assert_eq!(out.take(), "");
+    assert!(t.fuzzball.plugin_hellos.is_empty());
+    for i in 0..6 {
+        t.feed(&msg(&format!("zph;id={},name=x{i}", i + 1)));
+    }
+    assert_eq!(t.fuzzball.plugin_hellos.len(), fuzzball::MAX_HELLOS);
+    assert!(out.take().contains("err=EPERM"));
+    // Fuzzed bodies never panic or grant.
+    let mut seed = 1u32;
+    for _ in 0..2000 {
+        let mut b = b"zp".to_vec();
+        for _ in 0..(seed % 40) {
+            seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            b.push(b" ;=,:hqbidnamecapsx0179"[(seed >> 16) as usize % 23]);
+        }
+        t.feed(&msg(&String::from_utf8_lossy(&b)));
+    }
+    assert!(t.fuzzball.plugin_grants.is_empty());
 }

@@ -20,7 +20,7 @@ pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capability reply body (after `id=N,`).
 pub fn capabilities() -> String {
     format!(
-        "v={VERSION},sub=gk,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1",
+        "v={VERSION},sub=gkp,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1",
         graphics::MAX_BYTES,
         graphics::MAX_DIM,
         graphics::MAX_PLACEMENTS
@@ -76,6 +76,30 @@ pub struct Fuzzball {
     keyboard: [bool; 2],
     /// Bytes the Kitty graphics store holds of the shared quota.
     pub other_mem: usize,
+    /// `p h` handshakes waiting for the user (the app answers with [`plugin_reply`]).
+    pub plugin_hellos: Vec<PluginHello>,
+    /// Plugins this tab granted, with their capabilities (gone with the tab).
+    pub plugin_grants: HashMap<String, Vec<String>>,
+}
+
+/// A program in the tab asks to act as a plugin (`DCS = F z p h ; id=N,name=…,caps=a+b ST`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginHello {
+    pub id: u32,
+    pub name: String,
+    pub kind: String,
+    pub caps: Vec<String>,
+}
+
+/// Most handshakes queued per tab (more are refused with EBUSY-like EPERM).
+pub const MAX_HELLOS: usize = 4;
+
+/// The reply to a handshake once the user answered.
+pub fn plugin_reply(id: u32, granted: Option<&[String]>) -> String {
+    match granted {
+        Some(c) => format!("\x1bP=Fzpr;id={id},ok=1,granted={}\x1b\\", c.join("+")),
+        None => format!("\x1bP=Fzpr;id={id},ok=0,err=EPERM,msg=denied by the user\x1b\\"),
+    }
 }
 
 /// Error codes (README §5).
@@ -175,17 +199,57 @@ impl Fuzzball {
             )),
             ('k', 's') => self.keyboard_set(&p, ctx.alt),
             ('k', 'q') => Ok(format!("ok=1,on={}", u8::from(self.keyboard(ctx.alt)))),
+            ('p', 'h') => self.plugin_hello(&p, id),
+            ('p', 'q') => match p.get("name") {
+                Some(n) => Ok(match self.plugin_grants.get(n) {
+                    Some(c) => format!("ok=1,granted={}", c.join("+")),
+                    None => "ok=1,granted=".to_string(),
+                }),
+                None => Err((Error::Inval, "name is required")),
+            },
+            ('p', 'b') => match p.get("name") {
+                Some(n) => {
+                    self.plugin_grants.remove(n);
+                    Ok("ok=1".into())
+                }
+                None => Err((Error::Inval, "name is required")),
+            },
             _ => Err((Error::NotSup, "unknown subsystem or verb")),
         };
         // Continuation chunks with more=1 stay silent.
         let silent = matches!(&res, Ok(s) if s.is_empty());
-        let reply_sub = if matches!(sub, 'c' | 'g' | 'k') { sub } else { 'c' };
+        let reply_sub = if matches!(sub, 'c' | 'g' | 'k' | 'p') { sub } else { 'c' };
         eff.reply = match (id, res) {
             (Some(id), Ok(s)) if !silent && quiet == 0 => Some(format!("\x1bP=Fz{reply_sub}r;id={id},{s}\x1b\\")),
             (Some(id), Err((e, msg))) if quiet < 2 => Some(format!("\x1bP=Fz{reply_sub}r;id={id},ok=0,err={},msg={msg}\x1b\\", e.code())),
             _ => None,
         };
         eff
+    }
+
+    /// Queue a handshake for the user; the reply comes later (silent now).
+    fn plugin_hello(&mut self, p: &Params, id: Option<u32>) -> Res {
+        let Some(id) = id else { return Err((Error::Inval, "id is required")) };
+        if num(p, "v").is_some_and(|v| v != VERSION) {
+            return Err((Error::Version, "version not available"));
+        }
+        let name = p.get("name").cloned().unwrap_or_default();
+        if !crate::engines::valid_name(&name) {
+            return Err((Error::Inval, "name must be a-z, 0-9, - or _"));
+        }
+        let kind = p.get("kind").cloned().unwrap_or_else(|| "tool-provider".into());
+        if !matches!(kind.as_str(), "mode" | "model-provider" | "tool-provider" | "command") {
+            return Err((Error::Inval, "unknown kind"));
+        }
+        let caps: Vec<String> = p.get("caps").map(|c| c.split('+').filter(|c| !c.is_empty()).map(str::to_string).collect()).unwrap_or_default();
+        if caps.len() > 9 || caps.iter().any(|c| !crate::plugins::known_capability(c)) {
+            return Err((Error::Inval, "unknown capability"));
+        }
+        if self.plugin_hellos.len() >= MAX_HELLOS {
+            return Err((Error::Perm, "too many pending requests"));
+        }
+        self.plugin_hellos.push(PluginHello { id, name, kind, caps });
+        Ok(String::new())
     }
 
     fn keyboard_set(&mut self, p: &Params, alt: bool) -> Res {
