@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Added (t198u): the plugin system (phase 1 of docs/plans/mcp-agent.md)
+
+- `plugin.toml` manifests in `$MOUSER_HOME/plugins/<name>/`, and a registry by kind: mode, engine, model-provider, tool-provider, command. Commander and the engines are listed as built-ins.
+- `mouser plugin list | install | uninstall | enable | disable | priority | move | permissions | probe`. It mirrors `mouser engine`, which stays as is; an engine directory given to `plugin install` goes to the engine installer.
+- A permission broker: allow / ask / never per plugin and capability, saved in `plugins/permissions.toml`.
+- The approval popup is drawn by Mouser above the terminal. While open it takes all input, ignores answers for 400 ms, and names local vs REMOTE requests. Terminal output can't draw or answer it.
+- Three transports:
+  - **command** plugins add words to the `[mouser]` line (an executable; JSON on stdin and stdout; 10 s limit; scrubbed environment);
+  - **MCP** plugins over stdio (handshake, `tools/list`, `tools/call`; `mouser plugin probe`);
+  - **Fuzzball `p`** (`p h` hello, `p q` query, `p b` bye; docs/protocol/plugins.md). Grants last for one tab; over ssh it is untrusted and asks every time. The capability reply now says `sub=gkp`.
+- Example plugins for each transport in examples/plugins; the docs are in docs/plugins.md.
+
 ### Added (t183u-t186u): remote files like local ones
 
 - Commander in SSH sessions shows thumbnails, opens the viewer (zoom included) and plays video/audio with seek, instead of a notice.
