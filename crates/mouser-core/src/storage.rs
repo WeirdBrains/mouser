@@ -50,6 +50,9 @@ pub struct Preferences {
     /// `[mcp.server]`: Mouser's own MCP server (docs/mcp.md); off unless set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<McpPrefs>,
+    /// `[models]`: model providers and the default model (docs/models.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<crate::models::ModelsPrefs>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

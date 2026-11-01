@@ -1,0 +1,16 @@
+# The local model provider (P4b, docs/plans/mcp-agent.md §6). STUB: nothing is
+# built or downloaded yet; that waits for Michael's OK (llama.cpp build deps and
+# the model download). It declares its models so `mouser model` can list and
+# select them.
+name = "gemma-local"
+version = "0.0.0-stub"
+description = "Gemma 4 on llama.cpp, built into Mouser (not built yet: P4b)"
+provides = [{ kind = "model-provider" }]
+run = { transport = "builtin" }
+permissions = ["models.download"]
+
+[model]
+api = "llama.cpp"
+default = "gemma-4-e2b"      # Michael's decision 4: E2B by default
+models = ["gemma-4-e2b", "gemma-4-e4b"]
+# Switch: mouser model default gemma-local/gemma-4-e4b

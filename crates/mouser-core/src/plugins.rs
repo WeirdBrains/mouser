@@ -55,6 +55,8 @@ pub enum Transport {
     Fuzzball,
     /// An executable run once per `[mouser]` command: JSON in, JSON out.
     Command,
+    /// A model provider Mouser talks to over HTTP (`[model]` table, docs/models.md).
+    Http,
 }
 
 impl Transport {
@@ -64,6 +66,7 @@ impl Transport {
             Transport::Mcp => "mcp",
             Transport::Fuzzball => "fuzzball",
             Transport::Command => "command",
+            Transport::Http => "http",
         }
     }
 }
@@ -125,6 +128,9 @@ pub struct Manifest {
     /// Requested capabilities (see [`CAPABILITIES`]).
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// `[model]`: a model-provider plugin served over HTTP (docs/models.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<crate::models::ModelSection>,
 }
 
 fn api_default() -> u32 {
@@ -165,6 +171,7 @@ impl Manifest {
                 bail!("run.command is required for transport {:?}", self.run.transport.name())
             }
             Transport::Fuzzball if !self.run.command.is_empty() => bail!("a Fuzzball plugin runs in the terminal; it has no run.command"),
+            Transport::Http if self.model.is_none() => bail!("transport \"http\" is for model providers with a [model] table"),
             _ => {}
         }
         let has_cmd_kind = self.provides.iter().any(|p| p.kind == Kind::Command);
@@ -215,7 +222,16 @@ pub const RESERVED_COMMANDS: [&str; 16] = [
 ];
 
 /// Built-in providers, listed so the registry already has the P6 shape.
-pub const BUILTINS: [(&str, Kind, &str); 1] = [("commander", Kind::Mode, "file commander mode (built in)")];
+pub const BUILTINS: [(&str, Kind, &str); 8] = [
+    ("commander", Kind::Mode, "file commander mode (built in)"),
+    ("openai", Kind::ModelProvider, "OpenAI (built in; mouser model add openai)"),
+    ("xai", Kind::ModelProvider, "xAI Grok (built in, OpenAI-compatible)"),
+    ("openrouter", Kind::ModelProvider, "OpenRouter (built in, OpenAI-compatible)"),
+    ("moonshot", Kind::ModelProvider, "Moonshot Kimi (built in, OpenAI-compatible)"),
+    ("anthropic", Kind::ModelProvider, "Anthropic Messages (built in)"),
+    ("google", Kind::ModelProvider, "Google Gemini (built in)"),
+    ("gemma-local", Kind::ModelProvider, "Gemma 4 E2B/E4B on llama.cpp (stub; P4b)"),
+];
 
 pub fn dir() -> PathBuf {
     storage::resolve_home().join("plugins")
@@ -663,14 +679,14 @@ commands = ["hello"]
         install(&plugin(t.path(), "beta", &["yo"])).unwrap();
         assert!(install(&plugin(t.path(), "gamma", &["hi"])).unwrap_err().to_string().contains("already provided"));
         // Installed plugins go first (in install order); built-ins follow until placed.
-        assert_eq!(priority(), vec!["alpha", "beta", "commander"]);
+        assert_eq!(priority()[..3], ["alpha", "beta", "commander"]);
         let r = Registry::load();
         assert_eq!(r.command("hi").unwrap().name, "alpha");
         assert!(r.providers(Kind::Engine).iter().any(|e| e.name == "mouser"));
         assert_eq!(r.providers(Kind::Mode)[0].name, "commander");
-        assert_eq!(move_to("beta", 0).unwrap(), vec!["beta", "alpha", "commander"]);
-        assert_eq!(move_to("commander", 0).unwrap(), vec!["commander", "beta", "alpha"]);
-        assert_eq!(move_by("alpha", -1).unwrap(), vec!["commander", "alpha", "beta"]);
+        assert_eq!(move_to("beta", 0).unwrap()[..3], ["beta", "alpha", "commander"]);
+        assert_eq!(move_to("commander", 0).unwrap()[..3], ["commander", "beta", "alpha"]);
+        assert_eq!(move_by("alpha", -1).unwrap()[..3], ["commander", "alpha", "beta"]);
         set_enabled("alpha", false).unwrap();
         assert!(!is_enabled("alpha"));
         assert!(Registry::load().command("hi").is_none());
