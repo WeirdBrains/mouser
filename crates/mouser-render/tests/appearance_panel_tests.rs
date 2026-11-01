@@ -103,3 +103,24 @@ fn form_and_confirm_panels() {
     let c = ui::confirm_panel(1200, 800, 9, 18, "Delete Host prod?", "Delete");
     assert!(c.items.iter().any(|i| i.action == UiAction::SavePanel && i.text == "Delete"));
 }
+
+#[test]
+fn approval_popup_buttons_arm_and_remote_has_no_always() {
+    let lines = vec!["  • show notices  (notify)".to_string()];
+    let buttons = |p: &ui::Panel| p.items.iter().filter(|i| matches!(i.style, PanelStyle::Button { .. })).cloned().collect::<Vec<_>>();
+    let p = ui::approval_panel(1200, 800, 9, 18, "Mouser approval — Plugin \"x\" asks to:", &lines, true, true);
+    let b = buttons(&p);
+    assert_eq!(b.iter().map(|i| i.action.clone()).collect::<Vec<_>>(), (0..4).map(UiAction::Approve).collect::<Vec<_>>());
+    let layout = ui::UiLayout { panel: Some(p.clone()), ..ui::without_sidebar(1200, 800) };
+    let r = b[1].rect;
+    assert_eq!(ui::hit_test(&layout, r.x + 2, r.y + 2), UiAction::Approve(1));
+    // Not armed yet: the buttons do nothing.
+    let p0 = ui::approval_panel(1200, 800, 9, 18, "t", &lines, true, false);
+    assert!(buttons(&p0).iter().all(|i| i.action == UiAction::None));
+    // Remote: Allow once and Deny only.
+    let pr = ui::approval_panel(1200, 800, 9, 18, "t", &lines, false, true);
+    assert_eq!(buttons(&pr).iter().map(|i| i.action.clone()).collect::<Vec<_>>(), vec![UiAction::Approve(0), UiAction::Approve(2)]);
+    // Fits in a small window.
+    let ps = ui::approval_panel(400, 300, 9, 18, "t", &lines, true, true);
+    assert!(ps.rect.x >= 0 && ps.rect.x + ps.rect.w <= 400);
+}
