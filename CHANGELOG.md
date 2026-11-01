@@ -1,5 +1,24 @@
 ## [Unreleased]
 
+### Changed (P6): modes and engines are plugins (docs/plugins.md)
+
+- commander, chat and the mouser/skia engines are compiled-in plugins with their
+  own `plugin.toml`. The mode switcher, `mouser plugin list`, `mouser engine list`
+  and the sidebar's engine list all come from the plugin registry.
+- `mouser engine …` is now an alias of `mouser plugin … --kind engine`. `--kind`
+  works on every plugin command, and `mouser engine enable|disable` are new.
+- Built-ins can be disabled (`mouser plugin disable commander`, `… skia`),
+  except the `mouser` engine. With every mode off, Mouser is a plain terminal.
+  Disabled engines are passed over at start and in the sidebar.
+- Engines may use `plugin.toml` (`kind = "engine"`, `transport = "library"`,
+  `[engine] abi/library`); `engine.toml` still works and is read as the same
+  manifest. The engine C ABI is unchanged.
+- Mode plugins: `kind = "mode"` over the command transport with `[mode] hotkey`
+  and `[[mode.keys]]`, drawn in the dock from the program's JSON replies. They are
+  gated by the `run` and `files.read` permissions. Example:
+  `examples/plugins/hello-mode`.
+- Installing a mode plugin keeps commander as the default mode.
+
 ### Added (P5): chat mode, the agent (docs/chat.md)
 
 - New mode plugin `chat` (`esc :a`). It swaps commander out and docks above the prompt with a transcript, an input and Cancel. Keys are in `modes.toml` `[chat.keys]`.
