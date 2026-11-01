@@ -260,3 +260,27 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Live: the test sshd (`sshd -f /tmp/mx/sshd/sshd_config`, port 22422, stopped afterwards); the window was started with `hl.dsp.exec_cmd(cmd, {float=true, no_initial_focus=true})` so it never steals focus. A script with `set -m` (so ssh is the tab's foreground) connects twice: the first shows the REMOTE popup, `a` is pressed, and the second is granted with no prompt. Shot: ~/.cache/mouser-shots/p1-ssh-sheet.png (popup | reconnect).
 - CI green on b83c7a7 (3 OSes). Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r90.gb83c7a7-1-x86_64.pkg.tar.zst.
 - Next: P2, Mouser's MCP server (stdio, loopback HTTP, HTTPS option), per docs/plans/mcp-agent.md.
+
+### P2: Mouser's MCP server (docs/mcp.md)
+- 7006d97 (core):
+  - `mcp_server.rs`: JSON-RPC MCP over Streamable HTTP. It is written on std (no tokio; rmcp not needed), with JSON replies and no SSE; sessions are keyed by `Mcp-Session-Id`, so the server knows each client's name. Checks: Bearer token compared in constant time, Host/Origin loopback, 4 MiB body cap, 32 connections at most.
+  - TLS is rustls with ring (no aws-lc, so no cmake). The self-signed cert is made by rcgen in `$MOUSER_HOME/mcp/{cert,key}.pem` (key 0600), or the user's PEM pair is used. `stdio_bridge` and the `post`/`client_tls` test client are here too.
+  - `secrets.rs`: keyring 3 (Keychain / Credential Manager / Secret Service over zbus, so no libdbus). The account is `name@hash(MOUSER_HOME)`. Fallback is a `$MOUSER_HOME/secrets/<name>` 0600 file; `MOUSER_SECRET_STORE=file` forces it, and every test uses that.
+  - `fileops.rs`: list, read, mkdir, copy, move, trash (to `$MOUSER_HOME/trash`).
+  - `storage::McpServerPrefs` holds `[mcp.server]`.
+- f872e56 (app):
+  - `mcp_tools.rs`: `AppTools` with 11 tools. Reads need only the token, but a saved `never` still blocks them. Mutating tools call `ask()`: the broker key is `mcp:<client>`, a popup is shown with `Origin::Mcp{reply}`, and the call blocks up to 5 min. `start()` runs at launch when enabled.
+  - `mcp_cli.rs`: `mouser mcp serve --stdio | status | enable [--https] | disable | token --show|--rotate`.
+- Live (temp HOME/MOUSER_HOME, file secret store, ports 17801/17802; a stdlib Python MCP client covered all three transports):
+  - initialize, tools/list (11), tabs_list and screen_read worked over stdio/HTTP/HTTPS; a bad token gets 401.
+  - shell_run over HTTP showed the popup; `y` was sent with `hl.dsp.send_shortcut({key="y", window="address:…"})`, which needs **no focus**, and his active window stayed the same. MCP-WAS-HERE then appeared in screen_read.
+  - files_mkdir over HTTPS showed the popup; `n` gave "the user denied it" and no folder was made.
+  - The window was opened with `hl.dsp.exec_cmd(cmd, {float=true, no_initial_focus=true, ...})`, and it was checked that it was not focused.
+  - Shots: ~/.cache/mouser-shots/p2-sheet.png (shell popup | ran | files popup).
+- CI green on f872e56 (3 OSes). Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r93.gf872e56-1-x86_64.pkg.tar.zst.
+- Open:
+  - No SSE/streaming (JSON only) and no `notifications/*` from the server.
+  - Not tried live: the real OS keychain. That was deliberate, to keep test entries out of his keychain; the CLI shows the store in use.
+  - The server starts only at launch (restart after `enable`).
+  - Client names are self-declared (the token is the trust boundary).
+  - The stdio bridge needs the HTTP listener (it is always on when enabled).
