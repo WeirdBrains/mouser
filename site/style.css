@@ -21,6 +21,7 @@ h1{font-size:clamp(1.8rem,4vw,2.8rem);line-height:1.2;margin:.4rem 0 1rem}h1 spa
 h2{font-size:1.6rem;margin:0 0 1.5rem}h2::before{content:"# ";color:var(--cyan)}
 h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 .lede{color:var(--dim)}
+.release{font-size:.9rem;color:var(--dim)}.release a{color:var(--cyan)}
 .btn{display:inline-block;padding:.65rem 1.2rem;background:var(--cyan);color:var(--bg);text-decoration:none;font-weight:700;margin-right:.6rem}
 .btn.ghost{background:none;color:var(--cyan);border:1px solid var(--cyan)}
 .shot{margin:0}.shot img{width:100%;height:auto;border:1px solid var(--line);box-shadow:0 0 40px rgba(63,216,232,.12)}
