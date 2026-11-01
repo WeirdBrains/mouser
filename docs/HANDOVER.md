@@ -227,7 +227,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Host::set_remote(.., ssh); Mode::remote_ssh.
 - measure: `MX_REMOTE_DIR=/tmp/mx/rmedia MX_SSH_DEST=fakehost MOUSER_SSH_CONFIG=/tmp/mx/sshd/ssh_config [MOUSER_SSH_BIN=/tmp/mx/slow-ssh MOUSER_REMOTE_BACKEND=cat] cargo test -p mouser-render --lib --release measure_remote -- --ignored --nocapture`.
 - Live: inside the window, `ssh -F /tmp/mx/sshd/ssh_config -t fakehost bash --rcfile /tmp/mx/sshd/rc -i` (a plain ssh hits Michael's zsh/omz update prompt).
-- Open: post-seek A/V catch-up spike on slow links (up to ~570 ms for a few frames); first grid load sometimes slow to appear; sync not built.
+- Fixed: post-seek A/V catch-up spike on slow links (was up to ~570 ms): audio now holds after a seek until the first video frame is queued (`Shared::gate`, max 3 s). Open: first grid load sometimes slow to appear; sync not built.
 
 ### t198u: P1 plugin system (docs/plans/mcp-agent.md, docs/plugins.md)
 - 8368b48: the plan records Michael's decisions (t196u-t197u): MCP + Fuzzball + command transports, no native libs in v1; MCP server stdio + loopback HTTP + HTTPS option (P2); llama.cpp built in + OpenAI/Anthropic-compatible URL; Gemma 4 E2B default with an E4B switch; any model is a `model-provider` plugin.
