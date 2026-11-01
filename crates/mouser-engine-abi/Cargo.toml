@@ -2,7 +2,7 @@
 name = "mouser-engine-abi"
 edition = "2024"
 version = "1.0.0"
-license = "MIT"
+license = "BSD-3-Clause"
 description = "Stable C ABI (v1) for Mouser custom rendering engines"
 repository = ""
 

@@ -3,6 +3,7 @@ name = "icon-tools"
 edition = "2024"
 version = "0.1.0"
 publish = false
+license = "BSD-3-Clause"
 
 [dependencies]
 usvg = { version = "0.41", default-features = false, features = ["text"] }

@@ -2,7 +2,7 @@
 name = "mouser-engine-example"
 edition = "2024"
 version = "0.1.0"
-license = "MIT"
+license = "BSD-3-Clause"
 description = "Example custom Mouser rendering engine (\"flat\"): CPU raster presented with softbuffer"
 repository = ""
 publish = false

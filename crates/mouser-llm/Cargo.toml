@@ -3,7 +3,7 @@ name = "mouser-llm"
 description = "Mouser's built-in local model: llama.cpp (Vulkan/Metal) behind the local-llm feature"
 version = "0.7.2"
 edition = "2024"
-license = "MIT"
+license = "BSD-3-Clause"
 publish = false
 
 [dependencies]
