@@ -18,7 +18,7 @@ pub struct Binding {
     /// Action id the mode receives (also the `modes.toml` key).
     pub id: &'static str,
     /// A character, or `up`, `down`, `left`, `right`, `enter`, `pageup`,
-    /// `pagedown`, `home`, `end`, `space`.
+    /// `pagedown`, `home`, `end`, `space`, `backspace`.
     pub key: &'static str,
     pub describe: &'static str,
 }
@@ -122,6 +122,7 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         "home" => vec![b"\x1b[1;3H".to_vec(), b"\x1b\x1b[H".to_vec(), b"\x1b\x1b[1~".to_vec()],
         "end" => vec![b"\x1b[1;3F".to_vec(), b"\x1b\x1b[F".to_vec(), b"\x1b\x1b[4~".to_vec()],
         "space" => vec![b"\x1b ".to_vec()],
+        "backspace" => vec![b"\x1b\x7f".to_vec(), b"\x1b\x08".to_vec()],
         _ => {
             let mut c = k.chars();
             let ch = c.next()?;

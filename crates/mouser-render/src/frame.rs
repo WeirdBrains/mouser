@@ -329,6 +329,8 @@ fn draw_ui(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, bg: 
 #[allow(clippy::too_many_arguments)]
 fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let r = p.rect;
+    // Drop shadow, then border and an opaque body.
+    canvas.fill_rect(r.x + 3, r.y + 5, r.w + 2, r.h + 2, mix(bg, 0x000000, 0.55));
     canvas.fill_rect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, border);
     canvas.fill_rect(r.x, r.y, r.w, r.h, panel);
     canvas.fill_rect(r.x, r.y, r.w, 2, accent);
