@@ -231,7 +231,7 @@ fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
         i += 1;
         let state = if e.enabled { "" } else { " [disabled]" };
         let cmds = match &e.hotkey {
-            Some(h) => format!("; hotkey ctrl+shift+m {h}"),
+            Some(h) => format!("; switch: esc :{h}"),
             None if e.commands.is_empty() => String::new(),
             None => format!("; commands: {}", e.commands.join(", ")),
         };

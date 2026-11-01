@@ -134,7 +134,7 @@ fn engines_and_modes_through_the_plugin_cli() {
     assert_eq!(kind(Action::List, Some("engine")).unwrap(), engine_list());
     // Built-in modes: listed with their hotkeys, and can be turned off.
     let l = kind(Action::List, Some("mode")).unwrap();
-    assert!(l.contains("commander") && l.contains("hotkey ctrl+shift+m c") && l.contains("chat") && !l.contains("openai"), "{l}");
+    assert!(l.contains("commander") && l.contains("switch: esc :c") && l.contains("chat") && !l.contains("openai"), "{l}");
     cli(Action::Disable("commander".into())).unwrap();
     cli(Action::Disable("chat".into())).unwrap();
     let l = cli(Action::List).unwrap();
@@ -144,7 +144,7 @@ fn engines_and_modes_through_the_plugin_cli() {
     // A mode plugin installs like any plugin.
     let o = cli(Action::Install(examples().join("hello-mode").display().to_string())).unwrap();
     assert!(o.contains("installed hello-mode 0.1.0 (mode)") && o.contains("run"), "{o}");
-    assert!(kind(Action::List, Some("mode")).unwrap().contains("hotkey ctrl+shift+m h"));
+    assert!(kind(Action::List, Some("mode")).unwrap().contains("switch: esc :h"));
     assert!(kind(Action::Use("hello-mode".into()), None).is_err());
     unsafe { std::env::remove_var("MOUSER_HOME") };
 }

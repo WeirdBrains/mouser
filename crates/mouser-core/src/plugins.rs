@@ -160,7 +160,7 @@ pub struct EngineSection {
 /// `[mode]` in plugin.toml.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModeSection {
-    /// The key after `ctrl+shift+m` that switches to this mode (one letter or digit).
+    /// `esc :<hotkey>` switches to this mode (one letter or digit; also listed in `ctrl+shift+m`).
     pub hotkey: String,
     /// Keys the mode handles while its dock has focus (`[[mode.keys]]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -619,7 +619,7 @@ pub struct Entry {
     pub dir: Option<PathBuf>,
     pub commands: Vec<String>,
     pub permissions: Vec<String>,
-    /// A mode's hotkey (after `ctrl+shift+m`).
+    /// A mode's hotkey (`esc :<hotkey>`).
     pub hotkey: Option<String>,
 }
 
