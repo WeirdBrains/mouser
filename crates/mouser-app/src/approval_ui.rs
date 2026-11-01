@@ -22,6 +22,10 @@ pub enum Origin {
     Command { line: String },
     /// An MCP tool call waiting for the answer.
     Mcp { reply: std::sync::mpsc::Sender<bool> },
+    /// Let an MCP plugin start (sidebar MCP section).
+    McpRun { id: String },
+    /// Call this tool on an MCP server after a grant.
+    McpTool { id: String, tool: String, args: Option<serde_json::Value> },
 }
 
 pub struct Request {
