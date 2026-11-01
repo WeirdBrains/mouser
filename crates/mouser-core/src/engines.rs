@@ -88,9 +88,29 @@ pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
     out
 }
 
+/// An engine directory's manifest: `plugin.toml` (kind = "engine") if present,
+/// else the older `engine.toml` (read as the same plugin manifest).
 fn read_dir_manifest(d: &Path) -> Result<Manifest> {
+    let p = d.join("plugin.toml");
+    if p.is_file() {
+        let m = crate::plugins::Manifest::parse(&fs::read_to_string(&p).with_context(|| format!("reading {}", p.display()))?)?;
+        let Some(e) = m.to_engine() else { bail!("{} is not an engine plugin (kind = \"engine\")", p.display()) };
+        e.check()?;
+        return Ok(e);
+    }
     let s = fs::read_to_string(d.join("engine.toml")).with_context(|| format!("reading {}", d.join("engine.toml").display()))?;
     Manifest::parse(&s)
+}
+
+/// Whether a directory holds an engine (engine.toml, or plugin.toml of kind engine).
+pub fn is_engine_dir(d: &Path) -> bool {
+    if d.join("plugin.toml").is_file() {
+        return fs::read_to_string(d.join("plugin.toml"))
+            .ok()
+            .and_then(|s| toml::from_str::<crate::plugins::Manifest>(&s).ok())
+            .is_some_and(|m| m.engine.is_some());
+    }
+    d.join("engine.toml").is_file()
 }
 
 pub fn find(name: &str) -> Option<Installed> {
@@ -167,14 +187,17 @@ pub fn saved_priority() -> Vec<String> {
     normalize(p.engines.or_else(|| p.engine.map(|e| vec![e])).unwrap_or_default())
 }
 
-/// The order this run walks: `MOUSER_ENGINE=a,b,c` overrides the saved one.
+/// The order this run walks: `MOUSER_ENGINE=a,b,c` overrides the saved one
+/// (as given, for testing); otherwise disabled engines (`mouser engine disable`)
+/// are left out. `mouser` is always last.
 pub fn priority() -> Vec<String> {
     if let Ok(v) = std::env::var("MOUSER_ENGINE")
         && !v.trim().is_empty()
     {
         return normalize(v.split(',').map(str::to_string));
     }
-    saved_priority()
+    let st = crate::plugins::State::load();
+    saved_priority().into_iter().filter(|n| n == DEFAULT || !st.disabled.contains(n)).collect()
 }
 
 fn save_priority(list: Vec<String>) -> Result<()> {
@@ -222,6 +245,9 @@ pub fn move_by(name: &str, delta: isize) -> Result<Vec<String>> {
 /// Put an engine first (and unskip it).
 pub fn select(name: &str) -> Result<()> {
     known(name)?;
+    if !crate::plugins::is_enabled(name) {
+        bail!("{name} is disabled; turn it on with `mouser engine enable {name}`");
+    }
     clear_sentinel(name);
     clear_failure(name);
     move_to(name, 0)?;

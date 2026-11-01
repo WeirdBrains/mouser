@@ -2,8 +2,14 @@
 //! directory, enable/disable and priority state, the registry by kind, and the
 //! command transport (an executable behind `[mouser]` line commands).
 //!
-//! Engines keep `engine.toml` and their own loader (`crate::engines`); the
-//! registry lists them as `engine` providers so P6 can move them here.
+//! Everything is a plugin (P6): the built-in modes (commander, chat) and
+//! engines (mouser, skia) are compiled-in plugins with their own `plugin.toml`
+//! ([`BUILTIN_MANIFESTS`], `transport = "builtin"`). Engines may be described
+//! by `plugin.toml` (`kind = "engine"`, `transport = "library"`, `[engine]`) or
+//! the older `engine.toml`, which is read as the same manifest
+//! ([`Manifest::from_engine`]); their C ABI and loader stay in
+//! `crate::engines`. Built-ins can be disabled, except the `mouser` engine (the
+//! permanent fallback); with every mode off Mouser is a plain terminal.
 
 use crate::storage;
 use anyhow::{Context, Result, bail};
@@ -43,7 +49,7 @@ impl Kind {
     }
 }
 
-/// How Mouser reaches a plugin. No native libraries in v1 (engines keep their ABI).
+/// How Mouser reaches a plugin. Native libraries are only for engines (their C ABI).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Transport {
@@ -57,6 +63,8 @@ pub enum Transport {
     Command,
     /// A model provider Mouser talks to over HTTP (`[model]` table, docs/models.md).
     Http,
+    /// A native engine library over the engine C ABI (`[engine]` table, docs/engines.md).
+    Library,
 }
 
 impl Transport {
@@ -67,6 +75,7 @@ impl Transport {
             Transport::Fuzzball => "fuzzball",
             Transport::Command => "command",
             Transport::Http => "http",
+            Transport::Library => "library",
         }
     }
 }
@@ -131,6 +140,40 @@ pub struct Manifest {
     /// `[model]`: a model-provider plugin served over HTTP (docs/models.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::models::ModelSection>,
+    /// `[engine]`: an engine plugin (`kind = "engine"`, `transport = "library"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<EngineSection>,
+    /// `[mode]`: a mode plugin's hotkey and keys (docs/modes.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ModeSection>,
+}
+
+/// `[engine]` in plugin.toml: the same fields engine.toml has.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EngineSection {
+    /// Engine C ABI version (see `crate::engines::ABI`).
+    pub abi: u32,
+    /// The shared library, relative to the plugin directory.
+    pub library: String,
+}
+
+/// `[mode]` in plugin.toml.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeSection {
+    /// The key after `ctrl+shift+m` that switches to this mode (one letter or digit).
+    pub hotkey: String,
+    /// Keys the mode handles while its dock has focus (`[[mode.keys]]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<ModeKey>,
+}
+
+/// One `[[mode.keys]]` entry: the plugin gets `id` when `key` is pressed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeKey {
+    pub id: String,
+    pub key: String,
+    #[serde(default)]
+    pub describe: String,
 }
 
 fn api_default() -> u32 {
@@ -157,8 +200,35 @@ impl Manifest {
         if self.provides.is_empty() {
             bail!("plugin {} provides nothing (add [[provides]] kind = ...)", self.name);
         }
-        if self.provides.iter().any(|p| p.kind == Kind::Engine) {
-            bail!("engines are installed with engine.toml (`mouser engine install`)");
+        let is_engine = self.provides.iter().any(|p| p.kind == Kind::Engine);
+        if is_engine {
+            let Some(e) = &self.engine else { bail!("an engine plugin needs an [engine] table (abi, library)") };
+            if self.run.transport != Transport::Library {
+                bail!("an engine plugin uses transport = \"library\"");
+            }
+            if self.provides.iter().any(|p| p.kind != Kind::Engine) {
+                bail!("an engine plugin provides only kind = \"engine\"");
+            }
+            if e.abi != crate::engines::ABI {
+                bail!("engine ABI {} is not supported (this Mouser speaks {})", e.abi, crate::engines::ABI);
+            }
+            if e.library.is_empty() || e.library.contains("..") || Path::new(&e.library).is_absolute() {
+                bail!("[engine] library must be a file name inside the plugin directory");
+            }
+        } else if self.engine.is_some() || self.run.transport == Transport::Library {
+            bail!("[engine] and transport \"library\" are only for kind = \"engine\"");
+        }
+        let is_mode = self.provides.iter().any(|p| p.kind == Kind::Mode);
+        if is_mode {
+            let Some(m) = &self.mode else { bail!("a mode plugin needs a [mode] table with a hotkey") };
+            check_mode(&self.name, m)?;
+            match self.run.transport {
+                Transport::Command => {}
+                Transport::Mcp => bail!("mode plugins over MCP are not supported yet; use transport = \"command\""),
+                t => bail!("a mode plugin uses transport = \"command\" (not {:?})", t.name()),
+            }
+        } else if self.mode.is_some() {
+            bail!("[mode] is only for kind = \"mode\"");
         }
         for c in &self.permissions {
             if !known_capability(c) {
@@ -176,8 +246,8 @@ impl Manifest {
         }
         let has_cmd_kind = self.provides.iter().any(|p| p.kind == Kind::Command);
         if self.run.transport == Transport::Command {
-            if self.run.commands.is_empty() || !has_cmd_kind {
-                bail!("a command plugin lists run.commands and provides kind = \"command\"");
+            if has_cmd_kind != !self.run.commands.is_empty() || (!has_cmd_kind && !is_mode) {
+                bail!("a command plugin lists run.commands and provides kind = \"command\" (or provides a mode)");
             }
             for c in &self.run.commands {
                 if !valid_command(c) {
@@ -190,10 +260,73 @@ impl Manifest {
         Ok(())
     }
 
+    /// engine.toml read as plugin.toml: the same engine as a kind-engine manifest.
+    pub fn from_engine(e: &crate::engines::Manifest) -> Self {
+        Manifest {
+            name: e.name.clone(),
+            version: e.version.clone(),
+            api: API,
+            description: e.description.clone(),
+            provides: vec![Provide { kind: Kind::Engine, id: String::new() }],
+            run: Run { transport: Transport::Library, command: vec![], commands: vec![] },
+            permissions: vec![],
+            model: None,
+            engine: Some(EngineSection { abi: e.abi, library: e.library.clone() }),
+            mode: None,
+        }
+    }
+
+    /// A kind-engine manifest as the engine loader's manifest.
+    pub fn to_engine(&self) -> Option<crate::engines::Manifest> {
+        let e = self.engine.as_ref()?;
+        Some(crate::engines::Manifest {
+            name: self.name.clone(),
+            version: self.version.clone(),
+            abi: e.abi,
+            library: e.library.clone(),
+            description: self.description.clone(),
+        })
+    }
+
     pub fn kinds(&self) -> Vec<Kind> {
         let s: BTreeSet<Kind> = self.provides.iter().map(|p| p.kind).collect();
         s.into_iter().collect()
     }
+}
+
+/// Hotkeys the built-in modes use (a plugin mode can't take them).
+fn builtin_hotkeys() -> Vec<String> {
+    BUILTIN_MANIFESTS.iter().filter_map(|(_, s)| builtin_parse(s).mode.map(|m| m.hotkey)).collect()
+}
+
+fn valid_key(k: &str) -> bool {
+    let mut c = k.chars();
+    matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        || matches!(k, "up" | "down" | "left" | "right" | "enter" | "pageup" | "pagedown" | "home" | "end" | "tab")
+}
+
+fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
+    let mut c = m.hotkey.chars();
+    if !matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit()) {
+        bail!("[mode] hotkey must be one lowercase letter or digit, not {:?}", m.hotkey);
+    }
+    // `p` toggles the mode picker; built-in modes keep theirs.
+    if m.hotkey == "p" || builtin_hotkeys().contains(&m.hotkey) {
+        bail!("[mode] hotkey {:?} is taken by Mouser (built-ins use {})", m.hotkey, builtin_hotkeys().join(", "));
+    }
+    let mut ids = BTreeSet::new();
+    for k in &m.keys {
+        if !valid_command(&k.id) && !crate::engines::valid_name(&k.id) {
+            bail!("[[mode.keys]] id {:?} is not a valid name", k.id);
+        }
+        if !valid_key(&k.key) || k.key == "esc" {
+            bail!("[[mode.keys]] key {:?} for {} is not a single letter/digit or arrow/enter/page key", k.key, k.id);
+        }
+        if !ids.insert(&k.id) {
+            bail!("[[mode.keys]] id {:?} appears twice in {name}", k.id);
+        }
+    }
+    Ok(())
 }
 
 /// A `[mouser]` line command a plugin may claim: lowercase word, not a Mouser command.
@@ -221,9 +354,32 @@ pub const RESERVED_COMMANDS: [&str; 16] = [
     "c",
 ];
 
-/// Built-in providers, listed so the registry already has the P6 shape.
-pub const BUILTINS: [(&str, Kind, &str); 8] = [
+/// The compiled-in plugins that have a full manifest (modes and engines).
+pub const BUILTIN_MANIFESTS: [(&str, &str); 4] = [
+    ("commander", include_str!("builtin/commander.toml")),
+    ("chat", include_str!("builtin/chat.toml")),
+    ("mouser", include_str!("builtin/mouser.toml")),
+    ("skia", include_str!("builtin/skia.toml")),
+];
+
+fn builtin_parse(s: &str) -> Manifest {
+    toml::from_str(s).expect("built-in plugin.toml")
+}
+
+/// The compiled-in manifest of a built-in mode or engine.
+pub fn builtin_manifest(name: &str) -> Option<Manifest> {
+    BUILTIN_MANIFESTS.iter().find(|(n, _)| *n == name).map(|(_, s)| builtin_parse(s))
+}
+
+/// The one plugin that can't be disabled: the permanent engine fallback.
+pub fn can_disable(name: &str) -> bool {
+    name != crate::engines::DEFAULT
+}
+
+/// Built-in providers that are not engines, in their default order (modes first).
+pub const BUILTINS: [(&str, Kind, &str); 9] = [
     ("commander", Kind::Mode, "file commander mode (built in)"),
+    ("chat", Kind::Mode, "agent chat mode (built in)"),
     ("openai", Kind::ModelProvider, "OpenAI (built in; mouser model add openai)"),
     ("xai", Kind::ModelProvider, "xAI Grok (built in, OpenAI-compatible)"),
     ("openrouter", Kind::ModelProvider, "OpenRouter (built in, OpenAI-compatible)"),
@@ -303,6 +459,15 @@ pub fn install(src: &Path) -> Result<Installed> {
     fs::rename(&tmp, &dest)?;
     let mut st = State::load();
     if !st.priority.contains(&m.name) {
+        // A new mode goes after the built-in modes, so the default mode (the
+        // first) stays commander until the user moves it.
+        if m.provides.iter().any(|p| p.kind == Kind::Mode) {
+            for (b, k, _) in BUILTINS {
+                if k == Kind::Mode && !st.priority.iter().any(|n| n == b) {
+                    st.priority.push(b.to_string());
+                }
+            }
+        }
         st.priority.push(m.name.clone());
         st.save()?;
     }
@@ -366,16 +531,23 @@ impl State {
 }
 
 fn known(name: &str) -> Result<()> {
-    if find(name).is_none() && !BUILTINS.iter().any(|b| b.0 == name) {
+    if find(name).is_none() && !BUILTINS.iter().any(|b| b.0 == name) && !is_engine(name) {
         bail!("no plugin named {name} (see `mouser plugin list`)");
     }
     Ok(())
 }
 
+/// A built-in or installed engine (engines are plugins of kind `engine`).
+pub fn is_engine(name: &str) -> bool {
+    crate::engines::is_builtin(name) || crate::engines::find(name).is_some()
+}
+
+/// Turn a plugin (built-in or installed, engines included) on or off. The
+/// `mouser` engine is the permanent fallback and can't be turned off.
 pub fn set_enabled(name: &str, on: bool) -> Result<()> {
     known(name)?;
-    if BUILTINS.iter().any(|b| b.0 == name) {
-        bail!("{name} is built in; turning built-ins off comes with P6 (for modes: `esc :c` switches commander off)");
+    if !on && !can_disable(name) {
+        bail!("{name} is the permanent engine (the last fallback); it can't be disabled. Move others before it with `mouser engine priority`");
     }
     let mut st = State::load();
     st.disabled.retain(|n| n != name);
@@ -447,6 +619,8 @@ pub struct Entry {
     pub dir: Option<PathBuf>,
     pub commands: Vec<String>,
     pub permissions: Vec<String>,
+    /// A mode's hotkey (after `ctrl+shift+m`).
+    pub hotkey: Option<String>,
 }
 
 /// Every plugin and engine, by priority; [`Registry::providers`] answers "who provides kind K".
@@ -463,16 +637,18 @@ impl Registry {
         let on = |n: &str| !st.disabled.iter().any(|d| d == n);
         let mut entries = Vec::new();
         for (n, k, d) in BUILTINS {
+            let m = builtin_manifest(n);
             entries.push(Entry {
                 name: n.into(),
                 version: "built-in".into(),
-                description: d.into(),
+                description: m.as_ref().map_or(d.to_string(), |m| m.description.clone()),
                 kinds: vec![k],
                 transport: Transport::Builtin,
                 enabled: on(n),
                 dir: None,
                 commands: vec![],
-                permissions: vec![],
+                permissions: m.as_ref().map(|m| m.permissions.clone()).unwrap_or_default(),
+                hotkey: m.and_then(|m| m.mode).map(|m| m.hotkey),
             });
         }
         let mut broken = Vec::new();
@@ -488,45 +664,65 @@ impl Registry {
                     dir: Some(i.dir.clone()),
                     commands: i.manifest.run.commands.clone(),
                     permissions: i.manifest.permissions.clone(),
+                    hotkey: i.manifest.mode.as_ref().map(|m| m.hotkey.clone()),
                 }),
                 Err(b) => broken.push(b),
             }
         }
         let order = priority();
         entries.sort_by_key(|e| order.iter().position(|o| *o == e.name).unwrap_or(usize::MAX));
-        // Engines have their own order (`mouser engine priority`); listed after.
+        // Engines have their own order (`mouser engine priority`, the saved
+        // `engines` preference); listed after, in that order.
+        let mut engs = Vec::new();
         for n in crate::engines::BUILTINS {
-            entries.push(Entry {
+            let m = builtin_manifest(n).expect("built-in engine manifest");
+            engs.push(Entry {
                 name: n.into(),
                 version: "built-in".into(),
-                description: "rendering engine (built in)".into(),
+                description: m.description,
                 kinds: vec![Kind::Engine],
                 transport: Transport::Builtin,
-                enabled: true,
+                enabled: !can_disable(n) || on(n),
                 dir: None,
                 commands: vec![],
                 permissions: vec![],
+                hotkey: None,
             });
         }
         for e in crate::engines::installed().into_iter().flatten() {
-            entries.push(Entry {
-                name: e.manifest.name.clone(),
-                version: e.manifest.version.clone(),
-                description: e.manifest.description.clone(),
+            let m = Manifest::from_engine(&e.manifest);
+            engs.push(Entry {
+                name: m.name.clone(),
+                version: m.version.clone(),
+                description: m.description.clone(),
                 kinds: vec![Kind::Engine],
-                transport: Transport::Builtin,
-                enabled: true,
+                transport: m.run.transport,
+                enabled: on(&m.name),
                 dir: Some(e.dir.clone()),
                 commands: vec![],
                 permissions: vec![],
+                hotkey: None,
             });
         }
+        let eorder = crate::engines::saved_priority();
+        engs.sort_by_key(|e| eorder.iter().position(|o| *o == e.name).unwrap_or(usize::MAX));
+        entries.extend(engs);
         Registry { entries, broken }
     }
 
     /// Enabled providers of `kind`, best first.
     pub fn providers(&self, kind: Kind) -> Vec<&Entry> {
         self.entries.iter().filter(|e| e.enabled && e.kinds.contains(&kind)).collect()
+    }
+
+    /// Enabled modes, best first: what the mode switcher offers.
+    pub fn modes(&self) -> Vec<&Entry> {
+        self.providers(Kind::Mode)
+    }
+
+    /// Enabled engines in walk order (`mouser` is always among them).
+    pub fn engines(&self) -> Vec<&Entry> {
+        self.providers(Kind::Engine)
     }
 
     /// The enabled command plugin that owns `[mouser]` command `word`.
@@ -553,6 +749,12 @@ pub struct CommandReply {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Mode plugins: the dock's lines (replaces what it showed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lines: Vec<String>,
+    /// Mode plugins: the dock title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
 }
 
 /// Longest a command plugin may run.
@@ -693,7 +895,11 @@ commands = ["hello"]
         set_enabled("alpha", true).unwrap();
         assert!(Registry::load().command("hi").is_some());
         assert!(set_enabled("nope", false).is_err());
-        assert!(set_enabled("commander", false).is_err());
+        // P6: built-ins can be turned off, except the permanent engine.
+        set_enabled("commander", false).unwrap();
+        assert!(Registry::load().modes().iter().all(|e| e.name != "commander"));
+        set_enabled("commander", true).unwrap();
+        assert!(set_enabled("mouser", false).unwrap_err().to_string().contains("permanent"));
         // A broken manifest is listed, not fatal.
         fs::create_dir_all(dir().join("broken")).unwrap();
         fs::write(dir().join("broken/plugin.toml"), "name = 1").unwrap();
@@ -701,6 +907,119 @@ commands = ["hello"]
         uninstall("alpha").unwrap();
         assert!(find("alpha").is_none());
         assert!(!State::load().priority.contains(&"alpha".to_string()));
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    fn builtin_manifests_are_plugin_toml() {
+        for (n, _) in BUILTIN_MANIFESTS {
+            let m = builtin_manifest(n).unwrap();
+            assert_eq!(m.name, n);
+            assert_eq!(m.run.transport, Transport::Builtin);
+            assert!(m.permissions.iter().all(|c| known_capability(c)), "{n}");
+        }
+        assert_eq!(builtin_manifest("commander").unwrap().mode.unwrap().hotkey, "c");
+        assert_eq!(builtin_manifest("chat").unwrap().mode.unwrap().hotkey, "a");
+        let e = builtin_manifest("mouser").unwrap();
+        assert_eq!(e.kinds(), [Kind::Engine]);
+        assert_eq!(e.engine.unwrap().abi, crate::engines::ABI);
+        assert!(builtin_manifest("skia").unwrap().engine.is_some());
+        // A plugin can't reuse a built-in name.
+        assert!(Manifest::parse(&MODE.replace("\"shout\"", "\"chat\"")).unwrap_err().to_string().contains("built-in"));
+    }
+
+    const MODE: &str = r#"
+name = "shout"
+version = "0.1.0"
+provides = [{ kind = "mode" }]
+[run]
+transport = "command"
+command = ["./run"]
+[mode]
+hotkey = "s"
+keys = [{ id = "again", key = "r", describe = "ask again" }]
+"#;
+
+    #[test]
+    fn mode_and_engine_manifest_checks() {
+        let m = Manifest::parse(MODE).unwrap();
+        assert_eq!(m.mode.as_ref().unwrap().keys[0].id, "again");
+        let bad = |s: String, why: &str| {
+            let e = Manifest::parse(&s).unwrap_err().to_string();
+            assert!(e.contains(why), "{e}");
+        };
+        bad(MODE.replace("hotkey = \"s\"", "hotkey = \"c\""), "taken");
+        bad(MODE.replace("hotkey = \"s\"", "hotkey = \"p\""), "taken");
+        bad(MODE.replace("hotkey = \"s\"", "hotkey = \"Sx\""), "one lowercase");
+        bad(MODE.replace("transport = \"command\"", "transport = \"mcp\""), "not supported yet");
+        bad(MODE.replace("key = \"r\"", "key = \"ctrl+r\""), "not a single");
+        bad(MODE.replace("[mode]\nhotkey = \"s\"\nkeys = [{ id = \"again\", key = \"r\", describe = \"ask again\" }]", ""), "needs a [mode]");
+        let eng = r#"
+name = "fancy"
+version = "1.0"
+description = "a test engine"
+provides = [{ kind = "engine" }]
+[run]
+transport = "library"
+[engine]
+abi = 1
+library = "libfancy.so"
+"#;
+        let m = Manifest::parse(eng).unwrap();
+        let e = m.to_engine().unwrap();
+        assert_eq!((e.name.as_str(), e.abi, e.library.as_str()), ("fancy", 1, "libfancy.so"));
+        // engine.toml read as plugin.toml gives the same manifest back.
+        assert_eq!(Manifest::from_engine(&e), Manifest { description: "a test engine".into(), ..m.clone() });
+        bad(eng.replace("abi = 1", "abi = 9"), "ABI");
+        bad(eng.replace("transport = \"library\"", "transport = \"command\"\ncommand = [\"x\"]"), "library");
+        bad(eng.replace("libfancy.so", "../x.so"), "inside");
+        bad(MODE.replace("[mode]", "[engine]\nabi = 1\nlibrary = \"x\"\n[mode]"), "only for kind");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn engines_are_plugins_disable_and_migrate() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path().join("home")) };
+        unsafe { std::env::remove_var("MOUSER_ENGINE") };
+        // Old prefs: `engine = "skia"` (pre-priority) migrates to skia > mouser,
+        // and the registry lists the engines in that order.
+        storage::update_preferences(|p| p.engine = Some("skia".into())).unwrap();
+        assert_eq!(crate::engines::priority(), ["skia", "mouser"]);
+        let names = |r: &Registry| r.engines().iter().map(|e| e.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&Registry::load()), ["skia", "mouser"]);
+        // An installed engine described by plugin.toml (no engine.toml).
+        let d = crate::engines::dir().join("fancy");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(
+            d.join("plugin.toml"),
+            "name = \"fancy\"\nversion = \"2\"\nprovides = [{ kind = \"engine\" }]\n[run]\ntransport = \"library\"\n[engine]\nabi = 1\nlibrary = \"libfancy.so\"\n",
+        )
+        .unwrap();
+        assert!(crate::engines::is_engine_dir(&d));
+        assert_eq!(crate::engines::find("fancy").unwrap().manifest.version, "2");
+        crate::engines::select("fancy").unwrap();
+        assert_eq!(crate::engines::priority(), ["fancy", "skia", "mouser"]);
+        let r = Registry::load();
+        assert_eq!(names(&r), ["fancy", "skia", "mouser"]);
+        assert_eq!(r.engines()[0].transport, Transport::Library);
+        // Disabling drops an engine from the walk but keeps its place.
+        set_enabled("skia", false).unwrap();
+        assert_eq!(crate::engines::priority(), ["fancy", "mouser"]);
+        assert!(crate::engines::select("skia").unwrap_err().to_string().contains("disabled"));
+        assert_eq!(names(&Registry::load()), ["fancy", "mouser"]);
+        set_enabled("skia", true).unwrap();
+        assert_eq!(crate::engines::priority(), ["fancy", "skia", "mouser"]);
+        // MOUSER_ENGINE still overrides for one run, as given.
+        set_enabled("fancy", false).unwrap();
+        unsafe { std::env::set_var("MOUSER_ENGINE", "fancy") };
+        assert_eq!(crate::engines::priority(), ["fancy", "mouser"]);
+        unsafe { std::env::remove_var("MOUSER_ENGINE") };
+        assert!(set_enabled("mouser", false).is_err());
+        // Every mode off: no modes (Mouser falls back to the plain terminal).
+        set_enabled("commander", false).unwrap();
+        set_enabled("chat", false).unwrap();
+        assert!(Registry::load().modes().is_empty());
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 
