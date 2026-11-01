@@ -213,7 +213,16 @@ struct Shared {
     video_eof: AtomicBool,
     /// Late frames dropped (diagnostics).
     dropped: AtomicU64,
+    /// After a seek with video: audio holds (silence, the clock stays at the
+    /// seek point) until the first video frame is queued, so audio that
+    /// arrives first over a slow link doesn't run the clock ahead of the
+    /// picture (the post-seek catch-up spike). Released by the first frame,
+    /// video EOF or `GATE_MAX`.
+    gate: AtomicBool,
 }
+
+/// Longest the audio waits for the first video frame after a seek.
+const GATE_MAX: Duration = Duration::from_secs(3);
 
 /// Output device format.
 #[derive(Debug, Clone, Copy)]
@@ -328,6 +337,9 @@ impl Player {
 
     /// Called every drawn frame: pick the frame for the clock, notice the end.
     pub fn tick(&mut self) {
+        if self.seek_at.is_some_and(|s| s.elapsed() > GATE_MAX) {
+            self.s.gate.store(false, Ordering::SeqCst);
+        }
         let t = self.position();
         let dur = 1.0 / self.info.fps.max(1.0);
         let lead = if self.playing() { self.lead.tick(Instant::now(), dur) } else { 0.0 };
@@ -382,6 +394,7 @@ impl Player {
         *self.s.anchor.lock().unwrap() = None;
         self.s.audio_eof.store(false, Ordering::SeqCst);
         self.s.video_eof.store(false, Ordering::SeqCst);
+        self.s.gate.store(self.info.video && self.out.is_some(), Ordering::SeqCst);
         let epoch = self.s.epoch.load(Ordering::SeqCst);
         let ss = format!("{:.3}", self.start);
         if self.info.video {
@@ -510,9 +523,11 @@ fn read_video(mut out: impl Read, s: Arc<Shared>, epoch: u64, start: f64, w: u32
             return;
         }
         q.push_back(f);
+        s.gate.store(false, Ordering::SeqCst);
     }
     if s.epoch.load(Ordering::SeqCst) == epoch {
         s.video_eof.store(true, Ordering::SeqCst);
+        s.gate.store(false, Ordering::SeqCst);
     }
 }
 
@@ -544,7 +559,7 @@ fn read_audio(mut out: impl Read, s: Arc<Shared>, epoch: u64, cap: usize) {
 
 /// Fill `data` (interleaved, `ch` channels) from the queue; returns frames taken.
 fn fill(data: &mut [f32], ch: usize, s: &Shared) -> u64 {
-    if s.paused.load(Ordering::Relaxed) {
+    if s.paused.load(Ordering::Relaxed) || s.gate.load(Ordering::Relaxed) {
         data.fill(0.0);
         return 0;
     }
@@ -626,6 +641,26 @@ mod tests {
         assert_eq!(parse_probe(r#"{"streams":[],"format":{}}"#), None);
         assert_eq!(clock(83.9), "1:23");
         assert_eq!(clock(3725.0), "1:02:05");
+    }
+
+    #[test]
+    fn audio_waits_for_the_first_video_frame_after_a_seek() {
+        let s = Arc::new(Shared::default());
+        s.volume.store(1f32.to_bits(), Ordering::Relaxed);
+        s.audio.lock().unwrap().extend([0.5f32; 8]);
+        s.gate.store(true, Ordering::SeqCst);
+        let mut out = [1.0f32; 4];
+        assert_eq!(fill(&mut out, 2, &s), 0, "gated: no frames taken, the clock stays at the seek point");
+        assert_eq!(out, [0.0; 4], "silence while gated");
+        assert_eq!(s.audio.lock().unwrap().len(), 8, "audio kept for when the picture arrives");
+        // The first video frame opens the gate.
+        let frame = vec![0u8; 4];
+        std::thread::scope(|sc| {
+            sc.spawn(|| read_video(&frame[..], s.clone(), 0, 1.0, 1, 1, 25.0));
+        });
+        assert!(!s.gate.load(Ordering::SeqCst));
+        assert_eq!(fill(&mut out, 2, &s), 2);
+        assert_eq!(out, [0.5; 4]);
     }
 
     #[test]
