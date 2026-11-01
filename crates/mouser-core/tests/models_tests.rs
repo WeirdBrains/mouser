@@ -304,16 +304,15 @@ mod local_model {
                         range = v.trim().trim_end_matches('-').parse::<usize>().ok();
                     }
                 }
+                // Write errors are expected: a cancelled download hangs up mid-body.
                 let mut w = s;
-                if first.contains("/start") {
-                    write!(w, "HTTP/1.1 302 Found\r\nLocation: /file.gguf\r\nContent-Length: 0\r\n\r\n").unwrap();
+                let _ = if first.contains("/start") {
+                    write!(w, "HTTP/1.1 302 Found\r\nLocation: /file.gguf\r\nContent-Length: 0\r\n\r\n")
                 } else if let Some(from) = range {
-                    write!(w, "HTTP/1.1 206 Partial\r\nContent-Length: {}\r\n\r\n", data.len() - from).unwrap();
-                    w.write_all(&data[from..]).unwrap();
+                    write!(w, "HTTP/1.1 206 Partial\r\nContent-Length: {}\r\n\r\n", data.len() - from).and_then(|_| w.write_all(&data[from..]))
                 } else {
-                    write!(w, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", data.len()).unwrap();
-                    w.write_all(&data).unwrap();
-                }
+                    write!(w, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", data.len()).and_then(|_| w.write_all(&data))
+                };
             }
         });
         format!("http://127.0.0.1:{port}/start")
