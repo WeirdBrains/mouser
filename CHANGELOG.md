@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+### Added (t181u/t182u)
+
+- Commander image view zoom: alt+= / alt+- (same keys as player volume; each view takes its own), alt+0 fit, alt+1 100%; ctrl+wheel zooms about the pointer; pan by drag, alt+arrows or the wheel; zoom % in the header; full-resolution decode past the 2048 px preview; clipped to the view.
+- Interactive player: clickable « 10s / play-pause / 10s » buttons, a seek bar (click seeks, drag scrubs, hover shows the time), a volume bar (click, drag or wheel). Video and audio.
+- Every box (panels, popups, options/key/mode lists, search field, buttons, tiles, sidebar rows, tabs) has 8 px rounded corners and a soft, theme-aware drop shadow (unified with the old popup shadow). Drawn from plain rects, so all renderers (wgpu, skia, CPU, engine plugins) get it.
+- Narrow commander header: buttons that do not fit (after the path shortens) collapse progressively into a ••• menu at the upper right (click or alt+i); rounded, shadowed dropdown; Esc closes it.
+
 Fixed:
 - Player sync: smooth audio clock between callbacks and a half-redraw lead; measured mean -0.2 ms, p95 9.5 ms, 0 drops (was +20 ms, 6 % dropped)
 - The first key after closing a viewer with a double Esc was eaten (Esc glued to it as meta-key)
