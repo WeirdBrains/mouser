@@ -128,6 +128,11 @@ enum Command {
         #[command(subcommand)]
         action: McpCommand,
     },
+    /// Model providers (OpenAI-compatible, Anthropic, Google, local); see docs/models.md.
+    Model {
+        #[command(subcommand)]
+        action: ModelCommand,
+    },
     /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
         #[command(subcommand)]
@@ -167,6 +172,42 @@ enum McpCommand {
         #[command(subcommand)]
         action: McpServersCommand,
     },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum ModelCommand {
+    /// List providers (built-in, configured, plugins) and their models; * marks the default.
+    List,
+    /// Add or update: `add openai --key-stdin`, or `add NAME --api openai|anthropic|google --url URL [--model M]…`.
+    Add {
+        name: String,
+        #[arg(long)]
+        api: Option<String>,
+        #[arg(long)]
+        url: Option<String>,
+        /// Read the API key from stdin (stored in the OS keychain, never in preferences).
+        #[arg(long)]
+        key_stdin: bool,
+        /// Models it offers, first is its default (repeatable).
+        #[arg(long = "model")]
+        models: Vec<String>,
+        /// PEM certificate/CA to trust for an https URL.
+        #[arg(long)]
+        ca: Option<String>,
+    },
+    /// Remove a configured provider and its key.
+    Remove { name: String },
+    /// Stream one reply from PROVIDER[/MODEL] (default: the default model).
+    Test {
+        spec: Option<String>,
+        #[arg(long, default_value = "Say hello in five words.")]
+        prompt: String,
+        /// Offer a demo tool (get_time) and require a call.
+        #[arg(long)]
+        tool: bool,
+    },
+    /// Set the default model: PROVIDER[/MODEL].
+    Default { spec: String },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -529,6 +570,34 @@ fn main() -> Result<()> {
         };
         if let Err(e) = mouser_app::mcp_cli::run(&a, &mut std::io::stdout()) {
             eprintln!("mouser mcp: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if let Some(Command::Model { action }) = &cli.command {
+        use mouser_app::model_cli::Action;
+        let a = match action {
+            ModelCommand::List => Action::List,
+            ModelCommand::Remove { name } => Action::Remove(name.clone()),
+            ModelCommand::Default { spec } => Action::Default(spec.clone()),
+            ModelCommand::Test { spec, prompt, tool } => Action::Test { spec: spec.clone(), prompt: prompt.clone(), tool: *tool },
+            ModelCommand::Add { name, api, url, key_stdin, models, ca } => {
+                let key = if *key_stdin {
+                    let mut t = String::new();
+                    std::io::stdin().read_line(&mut t)?;
+                    if t.trim().is_empty() {
+                        eprintln!("mouser model add: no key on stdin");
+                        std::process::exit(2);
+                    }
+                    Some(t)
+                } else {
+                    None
+                };
+                Action::Add { name: name.clone(), api: api.clone(), url: url.clone(), key, models: models.clone(), ca: ca.clone() }
+            }
+        };
+        if let Err(e) = mouser_app::model_cli::run(&a, &mut std::io::stdout()) {
+            eprintln!("mouser model: {e:#}");
             std::process::exit(1);
         }
         return Ok(());
