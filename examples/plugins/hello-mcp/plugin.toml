@@ -1,0 +1,12 @@
+# An MCP plugin: a stdio MCP server offering one tool. `mouser plugin probe hello-mcp`.
+name = "hello-mcp"
+version = "0.1.0"
+description = "MCP server with a greet tool"
+permissions = ["run"]
+
+[[provides]]
+kind = "tool-provider"
+
+[run]
+transport = "mcp"
+command = ["python3", "./server.py"]
