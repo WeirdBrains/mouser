@@ -83,7 +83,7 @@ pub fn parse_probe(json: &str) -> Option<Info> {
     (i.video || i.audio).then_some(i)
 }
 
-fn probe(p: &Path) -> Option<Info> {
+pub fn probe(p: &Path) -> Option<Info> {
     let out = Command::new("ffprobe")
         .args([
             "-v",
@@ -108,24 +108,61 @@ pub fn clock(t: f64) -> String {
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
 }
 
+/// Smooth audio clock. The callback hands the device whole buffers, so
+/// `consumed` moves in steps of one buffer (~10-20 ms); between callbacks
+/// the clock runs on from the last one: at callback time the device was
+/// `latency` away from playing frame `anchor`, so `elapsed` later it plays
+/// `anchor + (elapsed - latency) * rate`, never past what it was given
+/// (`total`).
+pub fn audio_clock_at(start: f64, anchor: u64, elapsed: f64, latency: f64, rate: u32, total: u64) -> f64 {
+    let rate = rate.max(1) as f64;
+    let played = (anchor as f64 + (elapsed - latency) * rate).clamp(0.0, total as f64);
+    start + played / rate
+}
+
 /// Audio clock: `start + consumed / rate - latency`, never before `start`.
 pub fn audio_clock(start: f64, consumed_frames: u64, rate: u32, latency: f64) -> f64 {
     start + (consumed_frames as f64 / rate.max(1) as f64 - latency).max(0.0)
 }
 
-/// The frame to show at clock `t`: pops every frame that is due and returns
-/// the newest of them with how many older due frames were dropped (late).
-/// Frames still in the future stay queued (held).
-pub fn pick<T>(queue: &mut VecDeque<T>, t: f64, pts: impl Fn(&T) -> f64) -> (Option<T>, usize) {
-    let mut shown = None;
+/// The frame to show at clock `t` (already including the refresh lead, see
+/// [`RefreshLead`]) for frames `dur` seconds long. Among due frames
+/// (`pts <= t`) the oldest one that is less than a whole frame late is shown,
+/// so a refresh that comes a little late shows the frame it missed instead of
+/// skipping it; frames `dur` or more behind are dropped. Future frames are
+/// held. Returns the frame (if a new one is due) and how many were dropped.
+pub fn pick<T>(queue: &mut VecDeque<T>, t: f64, dur: f64, pts: impl Fn(&T) -> f64) -> (Option<T>, usize) {
+    let due = |f: &T| pts(f) <= t;
     let mut dropped = 0;
-    while queue.front().is_some_and(|f| pts(f) <= t) {
-        if shown.is_some() {
-            dropped += 1;
-        }
-        shown = queue.pop_front();
+    while queue.len() > 1 && queue.front().is_some_and(|f| t >= pts(f) + dur) && queue.get(1).is_some_and(due) {
+        queue.pop_front();
+        dropped += 1;
     }
-    (shown, dropped)
+    if queue.front().is_some_and(due) { (queue.pop_front(), dropped) } else { (None, dropped) }
+}
+
+/// Frames can only appear when the UI refreshes, so each is shown up to one
+/// refresh interval after it is due; on average half an interval late. The
+/// lead is half the measured interval (moving average, capped at half a
+/// frame), added to the clock when picking, which centres the error on zero.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RefreshLead {
+    last: Option<Instant>,
+    avg: f64,
+}
+
+impl RefreshLead {
+    pub fn tick(&mut self, now: Instant, dur: f64) -> f64 {
+        if let Some(l) = self.last {
+            let i = (now - l).as_secs_f64();
+            // Long gaps (pause, hidden view) are not refreshes.
+            if i < 4.0 * dur {
+                self.avg = if self.avg == 0.0 { i } else { self.avg * 0.9 + i * 0.1 };
+            }
+        }
+        self.last = Some(now);
+        (self.avg / 2.0).min(dur / 2.0)
+    }
 }
 
 /// Wall clock for files without audio: runs while playing, frozen while paused.
@@ -164,6 +201,8 @@ struct Shared {
     volume: AtomicU32,
     /// Audio frames the device has taken since the last seek.
     consumed: AtomicU64,
+    /// Last callback that played something: when, and `consumed` before it.
+    anchor: Mutex<Option<(Instant, u64)>>,
     /// Device output latency, ns.
     latency_ns: AtomicU64,
     audio: Mutex<VecDeque<f32>>,
@@ -194,6 +233,7 @@ pub struct Player {
     wall: WallClock,
     procs: Vec<Child>,
     shown: Option<Frame>,
+    lead: RefreshLead,
     size: (u32, u32),
     waker: Option<Waker>,
     pub error: Option<String>,
@@ -220,6 +260,7 @@ impl Player {
             wall: WallClock::new(0.0),
             procs: Vec::new(),
             shown: None,
+            lead: RefreshLead::default(),
             size: (0, 0),
             waker,
             error: info.is_none().then(|| "ffprobe found no audio or video".to_string()),
@@ -254,7 +295,12 @@ impl Player {
     pub fn position(&self) -> f64 {
         let t = match self.out {
             Some(o) => {
-                audio_clock(self.start, self.s.consumed.load(Ordering::Relaxed), o.rate, self.s.latency_ns.load(Ordering::Relaxed) as f64 / 1e9)
+                let lat = self.s.latency_ns.load(Ordering::Relaxed) as f64 / 1e9;
+                let total = self.s.consumed.load(Ordering::Relaxed);
+                match *self.s.anchor.lock().unwrap() {
+                    Some((at, c)) if self.playing() => audio_clock_at(self.start, c, at.elapsed().as_secs_f64(), lat, o.rate, total),
+                    _ => audio_clock(self.start, total, o.rate, lat),
+                }
             }
             None => self.wall.at(Instant::now()),
         };
@@ -272,9 +318,11 @@ impl Player {
     /// Called every drawn frame: pick the frame for the clock, notice the end.
     pub fn tick(&mut self) {
         let t = self.position();
+        let dur = 1.0 / self.info.fps.max(1.0);
+        let lead = if self.playing() { self.lead.tick(Instant::now(), dur) } else { 0.0 };
         let (f, dropped) = {
             let mut q = self.s.video.lock().unwrap();
-            pick(&mut q, t, |f: &Frame| f.pts)
+            pick(&mut q, t + lead, dur, |f: &Frame| f.pts)
         };
         if let Some(f) = f {
             self.s.dropped.fetch_add(dropped as u64, Ordering::Relaxed);
@@ -320,6 +368,7 @@ impl Player {
         self.s.audio.lock().unwrap().clear();
         self.s.video.lock().unwrap().clear();
         self.s.consumed.store(0, Ordering::SeqCst);
+        *self.s.anchor.lock().unwrap() = None;
         self.s.audio_eof.store(false, Ordering::SeqCst);
         self.s.video_eof.store(false, Ordering::SeqCst);
         let epoch = self.s.epoch.load(Ordering::SeqCst);
@@ -395,6 +444,8 @@ impl Player {
 
     pub fn pause(&mut self) {
         self.s.paused.store(true, Ordering::SeqCst);
+        // Resume starts from the stepped clock until the next callback.
+        *self.s.anchor.lock().unwrap() = None;
         self.wall.stop(Instant::now());
     }
 
@@ -519,8 +570,12 @@ fn start_output(s: Arc<Shared>) -> Result<Out, String> {
                         if let Some(l) = ts.playback.duration_since(&ts.callback) {
                             s2.latency_ns.store(l.as_nanos() as u64, Ordering::Relaxed);
                         }
+                        let now = Instant::now();
                         let n = fill(data, ch, &s2);
-                        s2.consumed.fetch_add(n, Ordering::Relaxed);
+                        let before = s2.consumed.fetch_add(n, Ordering::Relaxed);
+                        if n > 0 {
+                            *s2.anchor.lock().unwrap() = Some((now, before));
+                        }
                     },
                     |_| {},
                     None,
@@ -571,12 +626,59 @@ mod tests {
 
     #[test]
     fn picks_due_frames_drops_late_holds_early() {
-        let mut q: VecDeque<f64> = [1.0, 1.04, 1.08, 1.12].into();
-        assert_eq!(pick(&mut q, 0.99, |f| *f), (None, 0), "early: held");
-        assert_eq!(q.len(), 4);
-        assert_eq!(pick(&mut q, 1.0, |f| *f), (Some(1.0), 0));
-        assert_eq!(pick(&mut q, 1.10, |f| *f), (Some(1.08), 1), "1.04 was late: dropped");
-        assert_eq!(q, [1.12]);
+        let d = 0.04;
+        let mut q: VecDeque<f64> = [1.0, 1.04, 1.08, 1.12, 1.16].into();
+        assert_eq!(pick(&mut q, 0.99, d, |f| *f), (None, 0), "early: held");
+        assert_eq!(q.len(), 5);
+        assert_eq!(pick(&mut q, 1.0, d, |f| *f), (Some(1.0), 0));
+        // 1.04 and 1.08 both due, 1.04 is 0.035 late, under a frame: shown.
+        assert_eq!(pick(&mut q, 1.075, d, |f| *f), (Some(1.04), 0));
+        assert_eq!(pick(&mut q, 1.085, d, |f| *f), (Some(1.08), 0), "next refresh catches up");
+        // 1.12 is a whole frame late and 1.16 is due: 1.12 is dropped.
+        assert_eq!(pick(&mut q, 1.17, d, |f| *f), (Some(1.16), 1));
+        assert!(q.is_empty());
+    }
+
+    #[test]
+    fn audio_clock_runs_smoothly_between_callbacks() {
+        // 48 kHz, 960-frame buffers (20 ms), 30 ms latency.
+        let at = |anchor, e| audio_clock_at(0.0, anchor, e, 0.03, 48_000, anchor + 960);
+        assert!((at(48_000, 0.03) - 1.0).abs() < 1e-9, "plays the anchor frame after the latency");
+        assert!((at(48_000, 0.04) - 1.01).abs() < 1e-9, "10 ms later, 10 ms on");
+        assert!((at(48_000, 0.5) - (48_960.0 / 48_000.0)).abs() < 1e-9, "never past what it was given");
+        assert_eq!(audio_clock_at(2.0, 0, 0.0, 0.03, 48_000, 0), 2.0, "not before the start");
+    }
+
+    #[test]
+    fn refresh_lead_centres_the_offset() {
+        // 25 fps frames, UI refreshing every ~37 ms with jitter (like a busy
+        // window): without the lead frames are ~half a refresh late; with it
+        // the mean is near 0, and nothing is dropped.
+        let d = 0.04;
+        let run = |use_lead: bool| {
+            let mut q: VecDeque<f64> = (0..500).map(|i| i as f64 * d).collect();
+            let mut lead = RefreshLead::default();
+            let t0 = Instant::now();
+            let (mut sum, mut n, mut drops, mut k) = (0.0, 0, 0, 0u32);
+            let mut t = 0.0;
+            while !q.is_empty() {
+                k += 1;
+                t += 0.031 + 0.012 * ((k * 7919) % 13) as f64 / 12.0;
+                let l = lead.tick(t0 + Duration::from_secs_f64(t), d);
+                let (f, dr) = pick(&mut q, t + if use_lead { l } else { 0.0 }, d, |f| *f);
+                drops += dr;
+                if let Some(p) = f {
+                    sum += t - p;
+                    n += 1;
+                }
+            }
+            (sum / n as f64, drops)
+        };
+        let (late, _) = run(false);
+        let (mean, drops) = run(true);
+        assert!(late > 0.012, "without lead {late}");
+        assert!(mean.abs() < 0.008, "with lead {mean}");
+        assert!(drops < 25, "drops {drops} of 500");
     }
 
     #[test]

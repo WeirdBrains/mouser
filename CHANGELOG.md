@@ -1,8 +1,19 @@
 ## [Unreleased]
 
+Fixed:
+- Player sync: smooth audio clock between callbacks and a half-redraw lead; measured mean -0.2 ms, p95 9.5 ms, 0 drops (was +20 ms, 6 % dropped)
+- The first key after closing a viewer with a double Esc was eaten (Esc glued to it as meta-key)
+- Options window: previews no longer show through it; popups get a drop shadow
+- Viewer images and player frames are clipped to the view (never over the prompt)
+- Player: alt+p (back) closes the player instead of changing folder under it
+
 Added:
 - Mode plugins and the commander mode (MODES.md Phase 1, docs/modes.md): one mode at a time, commander on at start; `esc :c` (Enter) switches modes / turns the current one off (a lone Esc reaches the shell after 500 ms; nothing is taken in full-screen apps); `ctrl+shift+k` key mappings, `ctrl+shift+m` modes; keys remappable in `~/.mouser/modes.toml`. Commander docks a listing of the shell's directory above the prompt as a list (`ls -lah` columns), grid (previews by type, tile sizes) or carousel (focused item plus two partial neighbours), with search, an options window (view, `-a`, `-h`, sort, reverse), a manual, and open (cd into folders, desktop opener for video/audio, full-width image/text view); previews load lazily for what is on screen only. Navigation in every view: alt+arrows, PgUp/PgDn, Home/End, alt+p parent folder, alt+q / Esc closes the file view, click selects, double-click opens, wheel moves; multi-select (alt+space mark, alt+* all) and alt+| pipe (types `printf '%s\n' <quoted paths> | <cmd>` into the shell). Modes implement the `mouser_render::modes::Mode` trait; loading third-party modes is future work
 - Commander's media player: video (ffmpeg frames through the image path, fitted to the width) and audio (played in-process through cpal; the audio device's sample clock drives the video frames by PTS, late frames dropped; pause, volume and seek without restarts except a seek re-starting both ffmpeg readers at the target) with play/pause, seek, volume and close keys (alt+k, alt+j/l, alt+-/=, alt+q); stops when the viewer closes or the selection changes; the desktop opener is only the fallback without ffmpeg
+- Commander: back control in the header (`‹ back`, alt+p, alt+Backspace; clickable path segments; disabled at /); `.` and `..` are no longer listed; going up selects the folder you came from
+- Commander: video thumbnails in grid and carousel (ffmpeg frame at 10 %, cached in `$MOUSER_HOME/cache/thumbs`), quieter placeholders, focused carousel item loads first
+- Commander: search shows the query, the match count or "no matches", and its focus
+- `[mouser]` command line: a line that is not a Mouser command runs in the tab's shell (`!` forces the shell)
 - Commander's cd and pipe keep what you have typed (cut to the kill ring and yanked back when the prompt returns; bash, zsh, fish in emacs mode)
 - Image previews read JPEG, GIF, WebP and BMP as well as PNG
 - Session server / UI split (Linux, macOS): the window and its engine run in a child `mouser __ui` process; sessions, PTYs, scrollback, tabs and images stay in the process you started. A native crash in any engine (built-in too) restarts the window on the next engine in the priority order with everything kept; the crashed engine is marked skipped with the signal; a crash in `mouser` restarts on the CPU renderer; a UI killed from outside restarts on the same engine. `MOUSER_PROC_FORK=0` keeps one process; Windows is unchanged (docs/engines.md §8)

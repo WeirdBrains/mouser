@@ -41,6 +41,8 @@ struct AppState {
     /// A lone Esc waiting to see whether `:` follows (generation).
     esc_pending: Option<u64>,
     esc_gen: u64,
+    /// When an Esc last closed a mode window or viewer.
+    esc_closed_at: Option<std::time::Instant>,
 }
 use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
@@ -420,6 +422,7 @@ fn main() -> Result<()> {
         mode_images: (Vec::new(), 0),
         esc_pending: None,
         esc_gen: 0,
+        esc_closed_at: None,
     }));
     {
         let mut st = app_state.lock().unwrap();
@@ -1319,9 +1322,35 @@ fn category_of(kind: &ConnectionKind) -> ui::Category {
 
 // no proxy needed; master is stored separately
 
+/// A `[mouser]` command line that is not a Mouser command runs in the tab's
+/// shell; a leading `!` forces the shell even when the name is a Mouser
+/// command. `None`: nothing to run.
+fn forced_shell(line: &str) -> Option<&str> {
+    line.strip_prefix('!').map(str::trim).filter(|c| !c.is_empty())
+}
+
+/// Type `cmd` into the active tab's shell, keeping what was typed (like
+/// commander's cd and pipe). Refused with a notice when another program owns
+/// the terminal (it would get the keystrokes).
+fn run_in_shell(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) {
+    let session = writer.0.lock().unwrap().active();
+    let mut st = app_state.lock().unwrap();
+    if session.as_ref().and_then(|s| s.shell_in_foreground()) == Some(false) {
+        st.look.say("[mouser] the shell is busy (another program is running); not typing the command");
+        return;
+    }
+    apply_mode_effect(&mut st, mouser_render::modes::Effect::Run(cmd.to_string()), writer);
+}
+
 fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) {
     let trimmed = cmd.trim();
-    if app_state.lock().unwrap().modes.has(trimmed) {
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Some(c) = forced_shell(trimmed) {
+        run_in_shell(c, writer, app_state);
+    } else if trimmed == "!" {
+    } else if app_state.lock().unwrap().modes.has(trimmed) {
         // `esc :c` / `:commander`: switch modes.
         let mut st = app_state.lock().unwrap();
         let m = st.modes.switch(trimmed).unwrap_or_else(|e| e);
@@ -1389,8 +1418,8 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
         let mut w = writer.clone();
         let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
     } else {
-        let mut w = writer.clone();
-        let _ = w.write_all(format!("\r\n[mouser] unknown command: {trimmed}\r\n").as_bytes());
+        // Not a Mouser command: the shell's.
+        run_in_shell(trimmed, writer, app_state);
     }
 }
 
@@ -1459,6 +1488,13 @@ fn set_x11(x: &mut X11Connection, k: &str, v: &str) {
     }
 }
 
+/// Esc pressed within [`REPEAT_CLOSE`] of an Esc that closed something.
+const REPEAT_CLOSE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+fn repeat_close_esc(closed_at: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    closed_at.is_some_and(|t| now.saturating_duration_since(t) < REPEAT_CLOSE)
+}
+
 /// Mode keys in the shell (not in full-screen apps): `esc :` opens the
 /// command line (a lone Esc goes to the shell after 500 ms), Esc closes the
 /// mode's windows, and the current mode's bound keys go to it. True if taken.
@@ -1481,7 +1517,16 @@ fn mode_key(st: &mut AppState, bytes: &[u8], parser: &ActiveParser, writer: &tab
         return true;
     }
     if bytes == b"\x1b" {
+        let now = std::time::Instant::now();
         if st.modes.escape() {
+            st.esc_closed_at = Some(now);
+            return true;
+        }
+        // A second Esc right after one closed the viewer is the same "close"
+        // gesture; held as a lone Esc it would reach the shell glued to the
+        // next key (Esc c = readline's meta-c), swallowing the "c" of "cd".
+        if repeat_close_esc(st.esc_closed_at, now) {
+            st.esc_closed_at = Some(now);
             return true;
         }
         st.esc_gen += 1;
@@ -1622,6 +1667,22 @@ fn mode_image_draw(m: &mouser_render::modes::ModeImage, top: i32) -> mouser_rend
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn esc_after_closing_the_viewer_is_not_held_for_the_shell() {
+        let t = std::time::Instant::now();
+        assert!(repeat_close_esc(Some(t), t + std::time::Duration::from_millis(400)));
+        assert!(!repeat_close_esc(Some(t), t + std::time::Duration::from_secs(2)), "later Esc: the shell's (vi mode)");
+        assert!(!repeat_close_esc(None, t));
+    }
+
+    #[test]
+    fn bang_forces_the_shell() {
+        assert_eq!(forced_shell("!echo hi"), Some("echo hi"));
+        assert_eq!(forced_shell("! theme dark"), Some("theme dark"));
+        assert_eq!(forced_shell("!"), None);
+        assert_eq!(forced_shell("theme dark"), None);
+    }
 
     #[test]
     fn sidebar_restores_saved_state_env_forces_open() {

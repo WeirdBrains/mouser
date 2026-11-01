@@ -140,7 +140,8 @@ fn entry(name: String, path: PathBuf) -> Entry {
     }
 }
 
-/// The directory's entries like `ls` with `flags` (`.` and `..` first with `-a`).
+/// The directory's entries like `ls` with `flags`. `.` and `..` are never
+/// listed: going up is the back control (alt+p, alt+Backspace, the header).
 pub fn list_dir(dir: &Path, flags: &Flags) -> std::io::Result<Vec<Entry>> {
     let mut v: Vec<Entry> = std::fs::read_dir(dir)?
         .flatten()
@@ -155,15 +156,6 @@ pub fn list_dir(dir: &Path, flags: &Flags) -> std::io::Result<Vec<Entry>> {
     }
     if flags.reverse {
         v.reverse();
-    }
-    if flags.all {
-        let parent = dir.parent().unwrap_or(dir).to_path_buf();
-        v.insert(0, entry("..".into(), parent));
-        v.insert(0, entry(".".into(), dir.to_path_buf()));
-        v[0].name = ".".into();
-        v[1].name = "..".into();
-        v[0].kind = Kind::Dir;
-        v[1].kind = Kind::Dir;
     }
     Ok(v)
 }
@@ -285,7 +277,8 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("page_down", "pagedown", "page down"),
     b("first", "home", "first item"),
     b("last", "end", "last item"),
-    b("parent", "p", "parent folder (cd ..)"),
+    b("parent", "p", "back: parent folder (cd ..)"),
+    b("back", "backspace", "back: parent folder (cd ..)"),
     b("close", "q", "close the file view / window"),
     b("mark", "space", "mark / unmark the item (for pipe)"),
     b("mark_all", "*", "mark all / clear marks"),
@@ -320,7 +313,7 @@ impl Action {
             "page_down" => Action::PageDown,
             "first" => Action::First,
             "last" => Action::Last,
-            "parent" => Action::Parent,
+            "parent" | "back" => Action::Parent,
             "close" => Action::Close,
             "mark" => Action::Mark,
             "mark_all" => Action::MarkAll,
@@ -402,6 +395,10 @@ impl Commander {
         if self.stamp.as_ref() == Some(&stamp) {
             return;
         }
+        let came_from =
+            self.cwd.as_ref().filter(|old| **old != dir).and_then(|old| {
+                old.strip_prefix(&dir).ok().and_then(|r| r.components().next()).map(|c| c.as_os_str().to_string_lossy().into_owned())
+            });
         if self.cwd.as_ref() != Some(&dir) {
             self.selected = 0;
             self.scroll = 0;
@@ -417,6 +414,12 @@ impl Commander {
                 self.entries.clear();
                 self.error = Some(format!("{}: {e}", dir.display()));
             }
+        }
+        // Going up selects the folder you came from.
+        if let Some(name) = came_from
+            && let Some(i) = self.visible().iter().position(|e| e.name == name)
+        {
+            self.selected = i;
         }
         self.cwd = Some(dir);
         self.stamp = Some(stamp);
@@ -553,7 +556,7 @@ impl Commander {
                 self.piping = false;
             }
             Action::Mark => {
-                if let Some(e) = self.selected_entry().filter(|e| e.name != "." && e.name != "..").map(|e| e.path.clone())
+                if let Some(e) = self.selected_entry().map(|e| e.path.clone())
                     && !self.marks.remove(&e)
                 {
                     self.marks.insert(e);
@@ -564,7 +567,7 @@ impl Commander {
             }
             Action::MarkAll => {
                 if self.marks.is_empty() {
-                    let all: Vec<PathBuf> = self.visible().iter().filter(|e| e.name != "." && e.name != "..").map(|e| e.path.clone()).collect();
+                    let all: Vec<PathBuf> = self.visible().iter().map(|e| e.path.clone()).collect();
                     self.marks.extend(all);
                 } else {
                     self.marks.clear();
@@ -686,10 +689,10 @@ mod tests {
         let t = tree();
         let v = list_dir(t.path(), &Flags::default()).unwrap();
         let names: Vec<_> = v.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, [".", "..", ".hidden", "a.txt", "b.png", "clip.mp4", "sub"]);
-        assert_eq!(v[6].kind, Kind::Dir);
-        assert!(v[6].mode.starts_with('d'));
-        assert_eq!((v[4].kind, v[5].kind, v[3].kind), (Kind::Image, Kind::Video, Kind::Text));
+        assert_eq!(names, [".hidden", "a.txt", "b.png", "clip.mp4", "sub"], "no . or .. even with -a");
+        assert_eq!(v[4].kind, Kind::Dir);
+        assert!(v[4].mode.starts_with('d'));
+        assert_eq!((v[2].kind, v[3].kind, v[1].kind), (Kind::Image, Kind::Video, Kind::Text));
         let no_dot = list_dir(t.path(), &Flags { all: false, ..Default::default() }).unwrap();
         assert!(no_dot.iter().all(|e| !e.name.starts_with('.')));
         let by_size = list_dir(t.path(), &Flags { all: false, sort: Sort::Size, ..Default::default() }).unwrap();
@@ -705,7 +708,7 @@ mod tests {
         let t = tree();
         let mut c = Commander::new();
         c.set_cwd(Some(t.path().to_path_buf()));
-        assert_eq!(c.visible().len(), 7);
+        assert_eq!(c.visible().len(), 5);
         c.searching = true;
         for b in [&b"p"[..], b"n", b"g"] {
             assert!(c.search_key(b));
@@ -718,22 +721,24 @@ mod tests {
         assert!(!c.searching && !c.search_key(b"q"));
         c.filter.clear();
         c.apply(Action::Down, 1);
-        c.apply(Action::Down, 1);
-        assert_eq!(c.selected, 2);
+        assert_eq!(c.selected, 1);
         c.view = View::Grid;
         c.apply(Action::Down, 3);
-        assert_eq!(c.selected, 5);
+        assert_eq!(c.selected, 4);
         c.apply(Action::Down, 3);
-        assert_eq!(c.selected, 5, "no row below");
+        assert_eq!(c.selected, 4, "no row below");
         c.apply(Action::Up, 3);
-        assert_eq!(c.selected, 2);
+        assert_eq!(c.selected, 1);
         c.apply(Action::SwitchView, 1);
         assert_eq!(c.view, View::Carousel);
         c.apply(Action::SwitchView, 1);
         assert_eq!(c.view, View::List);
         // A new directory re-lists and resets the selection.
         c.set_cwd(Some(t.path().join("sub")));
-        assert_eq!((c.selected, c.visible().len()), (0, 2));
+        assert_eq!((c.selected, c.visible().len()), (0, 0), "empty folder: no . or ..");
+        std::fs::write(t.path().join("sub/.dot"), b"").unwrap();
+        c.set_cwd(Some(t.path().join("sub")));
+        assert_eq!(c.visible().len(), 1);
         c.apply(Action::Hidden, 1);
         c.set_cwd(Some(t.path().join("sub")));
         assert_eq!(c.visible().len(), 0);
@@ -792,27 +797,30 @@ mod tests {
         c.apply(Action::PageDown, 1);
         assert_eq!(c.selected, 3);
         c.apply(Action::Last, 1);
-        assert_eq!(c.selected, 6);
+        assert_eq!(c.selected, 4);
         c.apply(Action::PageUp, 1);
-        assert_eq!(c.selected, 3);
+        assert_eq!(c.selected, 1);
         c.apply(Action::First, 1);
         assert_eq!(c.selected, 0);
         assert_eq!(c.apply(Action::Parent, 1), Effect::Cd(t.path().parent().unwrap().to_path_buf()));
         // No marks: the selection is piped.
-        c.selected = 3;
+        c.selected = 1;
         c.apply(Action::Pipe, 1);
         for b in [&b"w"[..], b"c", b" ", b"-", b"l"] {
             c.pipe_key(b);
         }
         let Some(Effect::Run(line)) = c.pipe_key(b"\r") else { panic!() };
         assert_eq!(line, format!("printf '%s\\n' '{}' | wc -l", t.path().join("a.txt").display()));
-        // Marks: several files, in listing order; . and .. are never marked.
+        // Marks: several files, in listing order (no . or .. to skip any more).
+        c.selected = 0;
+        c.apply(Action::Mark, 1);
+        assert_eq!(c.marks.len(), 1, "the first entry is a real file");
         c.selected = 0;
         c.apply(Action::Mark, 1);
         assert!(c.marks.is_empty());
-        c.selected = 4;
+        c.selected = 2;
         c.apply(Action::Mark, 1);
-        c.selected = 3;
+        c.selected = 1;
         c.apply(Action::Mark, 1);
         assert_eq!(c.pipe_paths(), [t.path().join("a.txt"), t.path().join("b.png")]);
         c.apply(Action::MarkAll, 1);
@@ -826,6 +834,31 @@ mod tests {
         assert!(!c.piping && c.pipe_cmd.is_empty());
         c.set_cwd(Some(t.path().join("sub")));
         assert!(c.marks.is_empty(), "marks are per folder");
+    }
+
+    #[test]
+    fn back_selects_the_folder_you_came_from() {
+        let t = tree();
+        std::fs::create_dir_all(t.path().join("sub/deep/er")).unwrap();
+        let mut c = Commander::new();
+        c.set_cwd(Some(t.path().join("sub/deep/er")));
+        assert_eq!(c.apply(Action::Parent, 1), Effect::Cd(t.path().join("sub/deep")));
+        // The shell went up: the folder we left is selected.
+        c.set_cwd(Some(t.path().join("sub")));
+        assert_eq!(c.selected_entry().unwrap().name, "deep");
+        c.set_cwd(Some(t.path().to_path_buf()));
+        assert_eq!(c.selected_entry().unwrap().name, "sub");
+        // Going down starts at the top.
+        c.set_cwd(Some(t.path().join("sub")));
+        assert_eq!(c.selected, 0);
+        // alt+p and alt+Backspace are both back, both remappable.
+        let k = crate::modes::Keymap::new(BINDINGS);
+        assert!(manual(&k).iter().any(|l| l.contains("alt+backspace") && l.contains("back")), "{:?}", manual(&k));
+        assert_eq!(Action::from_id("back"), Some(Action::Parent));
+        assert_eq!(crate::modes::key_bytes("backspace").unwrap()[0], b"\x1b\x7f");
+        // At / there is no parent.
+        c.set_cwd(Some(PathBuf::from("/")));
+        assert_eq!(c.apply(Action::Parent, 1), Effect::None);
     }
 
     #[test]

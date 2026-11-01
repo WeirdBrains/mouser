@@ -120,10 +120,69 @@ fn worker(s: &(Mutex<Shared>, Condvar)) {
 }
 
 fn decode(p: &Path, max: u32) -> Option<Thumb> {
-    let img = image::ImageReader::open(p).ok()?.with_guessed_format().ok()?.decode().ok()?;
+    let img = if cmdr::kind_of(&p.to_string_lossy()) == Kind::Video {
+        video_thumb(p, max)?
+    } else {
+        image::ImageReader::open(p).ok()?.with_guessed_format().ok()?.decode().ok()?
+    };
     let img = if img.width() > max || img.height() > max { img.thumbnail(max, max) } else { img };
     let rgba = img.to_rgba8();
     Some(Thumb { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), w: rgba.width(), h: rgba.height(), rgba: Arc::new(rgba.into_raw()) })
+}
+
+/// Where a video's thumbnail is cached: `$MOUSER_HOME/cache/thumbs/<hash>.png`,
+/// the hash over path, mtime, size and the requested size (a changed file
+/// gets a new entry).
+pub fn thumb_cache_path(p: &Path, max: u32) -> Option<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let m = std::fs::metadata(p).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (p, m.modified().ok(), m.len(), max).hash(&mut h);
+    Some(mouser_core::storage::resolve_home().join("cache/thumbs").join(format!("{:016x}.png", h.finish())))
+}
+
+/// A representative frame: at 10 % of the duration (at most 30 s in, 1 s for
+/// clips without a duration), scaled so the longest side is `max`. Cached on
+/// disk; `None` without ffmpeg or for files it cannot read.
+fn video_thumb(p: &Path, max: u32) -> Option<image::DynamicImage> {
+    let cache = thumb_cache_path(p, max);
+    if let Some(c) = &cache
+        && let Ok(i) = image::open(c)
+    {
+        return Some(i);
+    }
+    let dur = super::player::probe(p).map(|i| i.duration).unwrap_or(0.0);
+    let at = if dur > 0.0 { (dur * 0.1).min(30.0) } else { 1.0 };
+    let scale = format!("scale='if(gt(iw,ih),{max},-2)':'if(gt(iw,ih),-2,{max})'");
+    let run = |t: f64| {
+        std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-ss", &format!("{t:.3}"), "-i"])
+            .arg(p)
+            .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "pipe:1"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success() && !o.stdout.is_empty())
+    };
+    let out = run(at).or_else(|| run(0.0))?;
+    let img = image::load_from_memory(&out.stdout).ok()?;
+    if let Some(c) = &cache {
+        let _ = std::fs::create_dir_all(c.parent()?);
+        let _ = std::fs::write(c, &out.stdout);
+    }
+    Some(img)
+}
+
+/// What a tile shows while its preview loads or when there is none.
+fn kind_label(k: Kind) -> &'static str {
+    match k {
+        Kind::Dir => "folder",
+        Kind::Video => "▶ video",
+        Kind::Audio => "♪ audio",
+        Kind::Image => "image",
+        _ => "file",
+    }
 }
 
 pub struct CommanderMode {
@@ -224,7 +283,7 @@ impl CommanderMode {
     /// The preview of `e` inside `full` (visible part `clip`).
     fn content(&mut self, e: &Entry, (full, clip): (Rect, Rect), max: u32, (cw, ch): (i32, i32), o: &mut Out) {
         match e.kind {
-            Kind::Image => {
+            Kind::Image | Kind::Video => {
                 o.slots.push(((e.path.clone(), max), full, clip));
             }
             Kind::Text => {
@@ -237,12 +296,7 @@ impl CommanderMode {
                 }
             }
             k => {
-                let label = match k {
-                    Kind::Dir => "folder",
-                    Kind::Video => "video",
-                    Kind::Audio => "audio",
-                    _ => "file",
-                };
+                let label = kind_label(k);
                 let w = label.chars().count() as i32 * cw;
                 let r = Rect { x: clip.x + (clip.w - w).max(0) / 2, y: clip.y + (clip.h - ch) / 2, w: w.min(clip.w), h: ch };
                 o.items.push(item(r, label, if k == Kind::Dir { PanelStyle::Label } else { PanelStyle::Hint }, UiAction::None));
@@ -307,6 +361,7 @@ impl CommanderMode {
         self.c.page = 5;
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
         let Some(e) = vis.get(self.c.selected).cloned() else { return };
+        let slots_from = o.slots.len();
         let label_h = ch + 6;
         let ih = (body.h - label_h - 6).max(ch);
         let w = (body.w * 55 / 100).max(cw * 10);
@@ -329,7 +384,13 @@ impl CommanderMode {
         }
         o.items.push(item(center, "", PanelStyle::Tile { selected: true }, act("item", self.c.selected as i32)));
         let inner = Rect { x: center.x + 6, y: center.y + 6, w: w - 12, h: ih - 12 };
+        let before = o.slots.len();
         self.content(&e, (inner, inner), 1024, (cw, ch), o);
+        // The focused item loads first, then its neighbours.
+        if o.slots.len() > before {
+            let c = o.slots.pop().unwrap();
+            o.slots.insert(slots_from, c);
+        }
         let t = e.modified.map(cmdr::format_time).unwrap_or_default();
         let mk = if self.c.marks.contains(&e.path) { "* " } else { "" };
         let label = format!("{mk}{}   {}   {}   ({}/{})", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
@@ -574,6 +635,18 @@ impl Mode for CommanderMode {
             "sort" => self.c.flags.sort = [Sort::Name, Sort::Modified, Sort::Size][arg.clamp(0, 2) as usize],
             "close" => self.c.overlay = None,
             "keys" => return Effect::ShowKeys,
+            "up_to" => {
+                let mut d = self.c.cwd.clone();
+                for _ in 0..arg.max(0) {
+                    d = d.and_then(|d| d.parent().map(Path::to_path_buf));
+                }
+                return d.map_or(Effect::None, |d| Effect::Run(cd_line(&d)));
+            }
+            // In the file view (and the player) back closes the view first.
+            "parent" | "back" if previewing => {
+                self.c.overlay = None;
+                return Effect::None;
+            }
             "scroll" => {
                 if reading {
                     self.c.overlay_scroll = (self.c.overlay_scroll as i64 + arg as i64 * 3).max(0) as usize;
@@ -659,20 +732,56 @@ impl Mode for CommanderMode {
             Some(r) => format!("~/{}", r.display()),
             None => p.display().to_string(),
         };
-        let title = match (&file, &self.c.cwd) {
-            (Some(p), _) => format!("commander · {}", show(p)),
-            (None, Some(d)) => {
-                let marks = if self.c.marks.is_empty() { String::new() } else { format!(" · {} marked", self.c.marks.len()) };
-                format!("commander · {}   {} items{marks} · ls {}", show(d), self.c.visible().len(), self.c.flags.ls())
-            }
-            (None, None) => "commander".into(),
-        };
+        // Back control: goes to the parent folder (or closes the file view);
+        // disabled at /.
+        let can_back = file.is_some() || self.c.cwd.as_ref().is_some_and(|d| d.parent().is_some());
+        let back =
+            if (x0 + w - bx) / cw.max(1) + 40 < w / cw.max(1) { format!("‹ back ({})", keys.label("parent")) } else { "‹ back".to_string() };
+        let back_w = (back.chars().count() as i32 + 2) * cw;
         o.items.push(item(
-            Rect { x: x0, y: y0, w: (bx - x0 - cw).max(0), h: row_h },
-            clip_text(&title, (bx - x0) / cw - 1),
-            PanelStyle::Title,
-            UiAction::None,
+            Rect { x: x0, y: y0, w: back_w, h: row_h - 2 },
+            back,
+            if can_back { PanelStyle::Button { primary: false } } else { PanelStyle::Hint },
+            if can_back { act("parent", 0) } else { UiAction::None },
         ));
+        let mut tx = x0 + back_w + cw;
+        let room = |tx: i32| ((bx - tx) / cw - 1).max(0);
+        match (&file, &self.c.cwd) {
+            (Some(p), _) => {
+                let t = clip_text(&show(p), room(tx));
+                o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, t, PanelStyle::Title, UiAction::None));
+            }
+            (None, Some(d)) => {
+                // Path segments: a click goes to that folder. Too long: the
+                // leading ones give way to "…".
+                let mut segs = path_segments(&show(d));
+                let width = |v: &[(String, usize)]| v.iter().map(|s| s.0.chars().count() as i32).sum::<i32>();
+                if width(&segs) > room(tx) {
+                    while segs.len() > 1 && width(&segs) + 1 > room(tx) {
+                        segs.remove(0);
+                    }
+                    o.items.push(item(Rect { x: tx, y: y0, w: cw, h: row_h }, "…", PanelStyle::Hint, UiAction::None));
+                    tx += cw;
+                }
+                for (label, depth) in segs {
+                    let n = (label.chars().count() as i32).min(room(tx));
+                    let label = clip_text(&label, n);
+                    let up = depth;
+                    let a = if up > 0 { act("up_to", up as i32) } else { UiAction::None };
+                    o.items.push(item(Rect { x: tx, y: y0, w: n * cw, h: row_h }, label, PanelStyle::Title, a));
+                    tx += n * cw;
+                }
+                let marks = if self.c.marks.is_empty() { String::new() } else { format!(" · {} marked", self.c.marks.len()) };
+                let rest = format!("   {} items{marks} · ls {}", self.c.visible().len(), self.c.flags.ls());
+                o.items.push(item(
+                    Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h },
+                    clip_text(&rest, room(tx)),
+                    PanelStyle::Hint,
+                    UiAction::None,
+                ));
+            }
+            (None, None) => o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, "commander", PanelStyle::Title, UiAction::None)),
+        }
         let mut body = Rect { x: x0, y: y0 + row_h + 6, w, h: rect.y + h - (y0 + row_h + 6) - 8 };
         self.body_w = body.w;
         self.player_keys = format!(
@@ -715,6 +824,28 @@ impl Mode for CommanderMode {
                         act("search", 0),
                     ));
                 }
+                // Feedback: what is filtered, how many match, and that typing goes here.
+                let n = self.c.visible().len();
+                let fb = match (self.c.searching, self.c.filter.is_empty()) {
+                    (true, true) => "searching · type to filter · Enter keeps · Esc cancels".to_string(),
+                    (s, false) => {
+                        let m = if n == 0 {
+                            format!("no matches for \"{}\"", self.c.filter)
+                        } else {
+                            format!("{n} match{} for \"{}\"", if n == 1 { "" } else { "es" }, self.c.filter)
+                        };
+                        if s { format!("{m} · Enter keeps · Esc clears") } else { format!("{m} · {} to edit", keys.label("search")) }
+                    }
+                    (false, true) => String::new(),
+                };
+                if !fb.is_empty() {
+                    o.items.push(item(
+                        Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
+                        clip_text(&fb, (w - fr.w - cw) / cw),
+                        if n == 0 { PanelStyle::Error } else { PanelStyle::Hint },
+                        UiAction::None,
+                    ));
+                }
             }
             body.y += row_h + 8;
             body.h -= row_h + 8;
@@ -744,8 +875,14 @@ impl Mode for CommanderMode {
                     let r = fit(*full, t.w, t.h);
                     images.push((ModeImage { key: t.key, rgba: t.rgba.clone(), width: t.w, height: t.h, src: (0, 0, t.w, t.h), rect: r }, *clip));
                 }
-                Some(None) => o.items.push(item(Rect { x: clip.x, y: clip.y, w: clip.w, h: ch }, "(no preview)", PanelStyle::Hint, UiAction::None)),
-                None => o.items.push(item(Rect { x: clip.x, y: clip.y, w: clip.w, h: ch }, "loading…", PanelStyle::Hint, UiAction::None)),
+                // Loading or no preview: the item's kind, centred and dim
+                // (a video without ffmpeg stays "▶ video").
+                _ => {
+                    let label = kind_label(cmdr::kind_of(&want.0.to_string_lossy()));
+                    let lw = (label.chars().count() as i32 * cw).min(clip.w);
+                    let r = Rect { x: clip.x + (clip.w - lw).max(0) / 2, y: clip.y + (clip.h - ch).max(0) / 2, w: lw, h: ch };
+                    o.items.push(item(r, label, PanelStyle::Hint, UiAction::None));
+                }
             }
         }
         let panel = match self.c.overlay {
@@ -753,10 +890,17 @@ impl Mode for CommanderMode {
             Some(Overlay::Man) => Some(self.man_panel(ctx, keys)),
             _ => None,
         };
+        // Images are drawn as a layer above text; under a popup window they
+        // would show through it, so they are left out while one is open.
+        if let Some(p) = &panel {
+            images.retain(|(i, _)| !overlaps(i.rect, p.rect));
+        }
+        // Never outside the view (e.g. over the prompt below it).
+        let images: Vec<(ModeImage, Rect)> = images.into_iter().map(|(i, c)| (i, intersect(c, rect))).collect();
         View {
             dock: Some(Panel { rect, items: o.items }),
             panel,
-            images: images.into_iter().filter_map(|(i, clip)| crop(i, clip)).chain(o.frames).collect(),
+            images: images.into_iter().chain(o.frames.into_iter().map(|f| (f, rect))).filter_map(|(i, clip)| crop(i, clip)).collect(),
         }
     }
 }
@@ -777,6 +921,34 @@ impl CommanderMode {
             cmdr::Effect::Run(s) => Effect::Run(s),
         }
     }
+}
+
+/// The header's path split into clickable pieces: (text, how many levels up
+/// it is). `~/a/b` gives `~`, `/a`, `/b` with 2, 1, 0; `/x` gives `/`, `x`.
+pub fn path_segments(shown: &str) -> Vec<(String, usize)> {
+    let parts: Vec<&str> = shown.split('/').collect();
+    let mut out: Vec<String> = Vec::new();
+    for (i, p) in parts.iter().enumerate() {
+        match (i, p.is_empty()) {
+            (0, true) => out.push("/".into()),
+            (_, true) => {}
+            (0, false) => out.push(p.to_string()),
+            _ if out.last().is_some_and(|l| l == "/") && out.len() == 1 => out.push(p.to_string()),
+            _ => out.push(format!("/{p}")),
+        }
+    }
+    let n = out.len();
+    out.into_iter().enumerate().map(|(i, t)| (t, n - 1 - i)).collect()
+}
+
+fn overlaps(a: Rect, b: Rect) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+fn intersect(a: Rect, b: Rect) -> Rect {
+    let (l, t) = (a.x.max(b.x), a.y.max(b.y));
+    let (r, bt) = ((a.x + a.w).min(b.x + b.w), (a.y + a.h).min(b.y + b.h));
+    Rect { x: l, y: t, w: (r - l).max(0), h: (bt - t).max(0) }
 }
 
 /// Cut an image drawn at `i.rect` to the visible part `clip` (carousel
@@ -962,5 +1134,137 @@ mod tests {
         assert!(m.escape());
         m.view(&ctx(), &k);
         assert!(m.player.is_none(), "closing the viewer stops playback");
+    }
+
+    #[test]
+    fn back_control_segments_and_no_dot_entries() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(t.path().join("a/b")).unwrap();
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        m.cwd_changed(&t.path().join("a/b"));
+        let d = m.view(&ctx(), &k).dock.unwrap();
+        let back = d.items.iter().find(|i| i.text.starts_with("‹ back")).expect("back control");
+        assert_eq!(back.text, "‹ back (alt+p)");
+        assert_eq!(back.action, act("parent", 0));
+        assert!(!d.items.iter().any(|i| i.text.contains(" ..") || i.text.ends_with(" .")), "no . or ..");
+        // The parent's segment jumps one level up; the current one is not a link.
+        assert!(d.items.iter().any(|i| i.text == "/a" && i.action == act("up_to", 1)));
+        assert!(d.items.iter().any(|i| i.text == "/b" && i.action == UiAction::None));
+        assert_eq!(m.action("up_to", 2), Effect::Run(cd_line(t.path())));
+        assert_eq!(m.action("parent", 0), Effect::Run(cd_line(&t.path().join("a"))));
+        // Coming back up selects the folder we left.
+        m.cwd_changed(&t.path().join("a"));
+        assert_eq!(m.c.selected_entry().unwrap().name, "b");
+        // At / the control is disabled.
+        m.cwd_changed(Path::new("/"));
+        let d = m.view(&ctx(), &k).dock.unwrap();
+        let back = d.items.iter().find(|i| i.text.starts_with("‹ back")).unwrap();
+        assert_eq!((back.style, back.action.clone()), (PanelStyle::Hint, UiAction::None));
+        assert_eq!(path_segments("~/x/y"), [("~".to_string(), 2), ("/x".into(), 1), ("/y".into(), 0)]);
+        assert_eq!(path_segments("/"), [("/".to_string(), 0)]);
+        assert_eq!(path_segments("/usr/lib"), [("/".to_string(), 2), ("usr".into(), 1), ("/lib".into(), 0)]);
+    }
+
+    #[test]
+    fn search_shows_query_and_count() {
+        let t = tempfile::tempdir().unwrap();
+        for n in ["apple.txt", "apricot.txt", "banana.txt"] {
+            std::fs::write(t.path().join(n), "x").unwrap();
+        }
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        m.cwd_changed(t.path());
+        let texts = |m: &mut CommanderMode| m.view(&ctx(), &k).dock.unwrap().items.into_iter().map(|i| i.text).collect::<Vec<_>>();
+        assert!(!texts(&mut m).iter().any(|t| t.contains("searching")), "not focused until invoked");
+        m.action("search", 0);
+        assert!(texts(&mut m).iter().any(|t| t.starts_with("searching")));
+        m.text(b"a");
+        m.text(b"p");
+        assert!(texts(&mut m).iter().any(|t| t.starts_with("2 matches for \"ap\"")), "{:?}", texts(&mut m));
+        m.text(b"z");
+        assert!(texts(&mut m).iter().any(|t| t.starts_with("no matches for \"apz\"")));
+    }
+
+    #[test]
+    fn popups_hide_images_beneath_and_images_stay_in_the_view() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..6 {
+            png(&t.path().join(format!("p{i}.png")));
+        }
+        let mut m = CommanderMode::new();
+        m.cwd_changed(t.path());
+        m.action("view", 1);
+        let v = wait_loaded(&mut m, 6);
+        let dock = v.dock.unwrap().rect;
+        assert!(!v.images.is_empty());
+        assert!(v.images.iter().all(|i| i.rect.y >= dock.y && i.rect.y + i.rect.h <= dock.y + dock.h), "never over the prompt");
+        m.action("options", 0);
+        let v = m.view(&ctx(), &Keymap::new(cmdr::BINDINGS));
+        let p = v.panel.unwrap().rect;
+        assert!(v.images.iter().all(|i| !overlaps(i.rect, p)), "nothing shows through the options window");
+    }
+
+    #[test]
+    fn video_tiles_get_a_cached_thumbnail() {
+        let t = tempfile::tempdir().unwrap();
+        // SAFETY: only this test reads MOUSER_HOME in this binary.
+        unsafe { std::env::set_var("MOUSER_HOME", t.path().join("home")) };
+        let media = t.path().join("m");
+        std::fs::create_dir(&media).unwrap();
+        let v = media.join("clip.mp4");
+        let ok = super::super::player::available()
+            && std::process::Command::new("ffmpeg")
+                .args(["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10:duration=3", "-pix_fmt", "yuv420p"])
+                .arg(&v)
+                .status()
+                .is_ok_and(|s| s.success());
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        if !ok {
+            // Without ffmpeg the tile says what it is.
+            std::fs::write(&v, b"not really").unwrap();
+            m.cwd_changed(&media);
+            m.action("view", 1);
+            let _ = wait_loaded(&mut m, 1);
+            assert!(m.view(&ctx(), &k).dock.unwrap().items.iter().any(|i| i.text == "▶ video"));
+            return;
+        }
+        m.cwd_changed(&media);
+        m.action("view", 1);
+        let view = wait_loaded(&mut m, 1);
+        assert_eq!(view.images.len(), 1, "the video tile has a picture");
+        let (w, want) = (view.images[0].width, m.previews().decoded()[0].clone());
+        assert!(w <= want.1 && w > 0);
+        assert!(thumb_cache_path(&v, want.1).unwrap().exists(), "cached on disk by path+mtime+size");
+        assert!(thumb_cache_path(&v, want.1).unwrap().starts_with(t.path().join("home/cache/thumbs")));
+        // Carousel also shows it.
+        m.action("view", 2);
+        assert_eq!(wait_loaded(&mut m, 1).images.len(), 1);
+    }
+
+    #[test]
+    fn plain_keys_reach_the_shell_with_the_viewer_or_player_open() {
+        let t = tempfile::tempdir().unwrap();
+        png(&t.path().join("a.png"));
+        std::fs::write(t.path().join("b.mp4"), b"x").unwrap();
+        let mut h = super::super::Host::new(vec![Box::new(CommanderMode::new())]);
+        h.set_cwd(Some(t.path().to_path_buf()));
+        // Viewer: open a.png (alt+Enter), then type.
+        assert!(h.key(b"\x1b\r").is_some());
+        for open in ["viewer", "player"] {
+            let mut pty = Vec::new();
+            for b in b"cd x" {
+                let k = [*b];
+                if !h.takes(&k) && h.key(&k).is_none() {
+                    pty.push(*b);
+                }
+            }
+            assert_eq!(pty, b"cd x", "{open}: every plain key goes to the shell, none dropped");
+            // Next: the player (or its fallback view) for b.mp4.
+            h.escape();
+            h.key(b"\x1b[1;3B");
+            h.key(b"\x1b\r");
+        }
     }
 }

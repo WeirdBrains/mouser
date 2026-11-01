@@ -44,7 +44,12 @@ mode, **commander**. Switching replaces the current mode; there is no stacking.
   `esc :c` again turns commander back on. `:c` / `:commander` work from F10 too.
 - A lone Esc waits 500 ms for the `:`; without it the Esc goes to the shell
   unchanged (so `esc` keeps working in readline/vi-mode shells, just 500 ms later).
-  `alt+:` opens the command line at once. Esc first closes an open mode window or
+  `alt+:` opens the command line at once. A line whose first word is not a Mouser
+  command runs in the tab's shell (typed like commander's cd: what you had typed is
+  kept and comes back), so `echo "hello, world!"` just works; in an SSH tab it runs
+  remotely. Mouser commands win on a name clash; a leading `!` forces the shell
+  (`!theme` runs a program called theme). If another program owns the terminal the
+  line is not typed and a notice says so. Esc first closes an open mode window or
   search.
 - Full-screen programs (the alternate screen: vim, less, htop ...) get the whole
   window: the mode's view is hidden and no key is taken, Esc included.
@@ -83,7 +88,7 @@ buttons; a search field filters the folder as you type.
 | ← / → | previous / next item | previous / next tile | previous / next item |
 | PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
 | Home / End | first / last | first / last | first / last |
-| p | parent folder (`cd ..`) | same | same |
+| p, Backspace | back: parent folder (`cd ..`); in the file view / player it closes the view | same | same |
 | Enter | open: a folder is `cd`'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
 | q (or Esc) | close the file view / window | same | same |
 | s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
@@ -111,15 +116,20 @@ they go to the shell):
 How it stays in sync: two `ffmpeg` readers of the same file start at the same seek point,
 one for video (`-an`, RGBA at the file's frame rate, each frame stamped with its PTS =
 start + n/fps) and one for audio (`-vn`, f32 at the device rate). The audio output
-callback counts the samples it hands to the device; the clock is start + consumed / rate
-minus the device latency the backend reports. Each drawn frame shows the newest video
-frame whose PTS the clock has reached; late frames are dropped, early ones held. Files
-without audio use a wall clock. Pause silences the output and freezes the clock (the
-readers just wait, nothing restarts); volume is applied to the samples in-process. A seek
-flushes both queues and restarts both readers with `-ss` at the target, so audio and
-video start together. Measured (Linux, 25 fps test file, 70 s plus 7 seeks): video shows
-a frame 20 ms after its PTS on average (half a frame period; max 39 ms after the first
-frame), no drift over the run, about 80 ms from a seek key to the first new frame.
+callback counts the samples it hands to the device and notes when each buffer was
+handed over; the clock is the frame being played now: that buffer's first frame plus the
+time since, minus the device latency the backend reports (so it moves smoothly instead of
+in buffer-sized steps), never past what the device was given. Frames can only appear
+when the window redraws, so the clock is read half a redraw interval ahead (measured as
+a moving average): the error is centred on zero. A due frame is shown unless it is
+already a whole frame late and the next one is due too; only then is it dropped; early
+frames are held. Files without audio use a wall clock. Pause silences the output and
+freezes the clock (the readers just wait, nothing restarts); volume is applied to the
+samples in-process. A seek flushes both queues and restarts both readers with `-ss` at
+the target, so audio and video start together. Measured (Linux, 25 fps test file with a
+flash and a beep each second, 64 s of play plus 7 seeks, 2350 frames): video vs the
+audio clock mean -0.2 ms, p95 9.5 ms, max 24.7 ms, 0 frames dropped, no drift
+(first 10 s +0.5 ms, last 10 s -2.9 ms); 61-76 ms from a seek key to the first new frame.
 `MOUSER_PLAYER_LOG=<file>` writes `clock pts` per shown frame and the seek gaps.
 
 Nothing is started until a file is opened; playback stops (the readers are killed) when
@@ -154,16 +164,40 @@ The defaults avoid readline's alt keys except `alt+t` (transpose-words, from
 MODES.md), which commander takes while it is on. Clicks: a click selects an item, a
 second click opens it; the wheel over the view moves the selection.
 
+`.` and `..` are never listed. Going up is the **back** control in the header
+(`‹ back (alt+p)`, `‹ back` when narrow; greyed out at `/`), `alt+p` or
+`alt+Backspace` (both remappable, both in `ctrl+shift+k`; alt+Backspace shadows
+readline's backward-kill-word while commander is on). Going up selects the folder you
+came from. The header path is clickable: each segment goes to that folder (long paths
+lose their leading segments to `…`).
+
+Search (`alt+s` or a click on the field) is the only thing that takes plain keys,
+and only while it is focused (bright field, "searching · type to filter" hint). It
+filters as you type and shows `N matches for "q"` or `no matches for "q"`; Enter
+keeps the filter, Esc cancels. Everything else you type, viewer or player open or not,
+goes straight to the shell. An Esc right after an Esc that closed a viewer or window
+(within 1.5 s) is swallowed instead of being held for the shell: held, it reached the
+shell glued to the next key (Esc c is readline's meta-c), which ate the first letter of
+what you typed next.
+
 - **List**: `ls -lah` columns (attributes, size, name, last modified).
-- **Grid**: tiles with a preview by type (images scaled, the first lines of text
-  files, a label for folders, video and audio) and the name below.
+- **Grid**: tiles with a preview by type (images scaled, a frame of each video, the
+  first lines of text files, a label for folders and audio) and the name below.
 - **Carousel**: the focused item large in the middle and its two neighbours cut
   off at the edges.
 
 Previews load lazily on a worker thread: only what is on screen is requested
 (grid: the visible tiles; carousel: the focused item and its two neighbours) and
-the queue is replaced as you move, so off-screen items are skipped. Formats: PNG,
-JPEG, GIF, WebP, BMP.
+the queue is replaced as you move, so off-screen items are skipped. They load in
+order: grid tiles top-left first, the carousel's focused item before its
+neighbours. Until one is ready the tile shows its kind dimly (`image`, `▶ video`).
+Formats: PNG, JPEG, GIF, WebP, BMP. Video thumbnails: one `ffmpeg` frame at 10 % of
+the duration (at most 30 s in; 1 s if unknown; the first frame if that fails), scaled
+to the tile, cached in memory and on disk in `$MOUSER_HOME/cache/thumbs/` keyed by
+path, mtime, size and tile size. Without ffmpeg the tile says `▶ video`.
+
+Previews and player frames are clipped to the view (never over the prompt), and are
+left out under the options and manual windows so nothing shows through them.
 
 ### Plugin API (`mouser_render::modes`)
 
