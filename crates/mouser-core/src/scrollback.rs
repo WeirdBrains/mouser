@@ -79,9 +79,9 @@ impl Scrollback {
         }
     }
 
-    /// Every saved line with its soft-wrap flag, oldest first.
+    /// Every saved line (with its style runs, `crate::sbstyle`) and its soft-wrap flag, oldest first.
     pub fn all_lines_wrapped(&self) -> Vec<(String, bool)> {
-        let lines = self.get_lines(0, self.total_lines());
+        let lines = self.get_raw_lines(0, self.total_lines());
         let w = self.wrapped.read();
         lines.into_iter().enumerate().map(|(i, l)| (l, w.get(i).copied().unwrap_or(false))).collect()
     }
@@ -96,9 +96,9 @@ impl Scrollback {
         i
     }
 
-    /// Lines `a..b` with their soft-wrap flags.
+    /// Lines `a..b` (with style runs) and their soft-wrap flags.
     pub fn lines_wrapped(&self, a: usize, b: usize) -> Vec<(String, bool)> {
-        let lines = self.get_lines(a, b.saturating_sub(a));
+        let lines = self.get_raw_lines(a, b.saturating_sub(a));
         let w = self.wrapped.read();
         lines.into_iter().enumerate().map(|(i, l)| (l, w.get(a + i).copied().unwrap_or(false))).collect()
     }
@@ -211,7 +211,13 @@ impl Scrollback {
         }
     }
 
+    /// Text of lines `start..start+count` (style runs removed).
     pub fn get_lines(&self, start: usize, count: usize) -> Vec<String> {
+        self.get_raw_lines(start, count).into_iter().map(crate::sbstyle::strip).collect()
+    }
+
+    /// Lines as stored: text, then `\0` and style runs on styled lines (`crate::sbstyle`).
+    pub fn get_raw_lines(&self, start: usize, count: usize) -> Vec<String> {
         // Materialize a range across chunks + tail.
         let mut out = Vec::with_capacity(count);
         let mut remaining = count;

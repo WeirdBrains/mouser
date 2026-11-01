@@ -447,7 +447,7 @@ impl Screen {
         self.scroll_events.push(ScrollEvent { pushed_before: self.scrolled_off.len(), top, bottom, delta: -(n as isize), to_scrollback });
         if to_scrollback {
             for y in 0..n {
-                let line = self.row_string(y);
+                let line = crate::sbstyle::encode(self.row_string(y), self.row(y));
                 self.scrolled_off.push(line);
                 let w = self.row_wrapped(y);
                 self.scrolled_off_wrapped.push(w);
@@ -681,7 +681,7 @@ impl Screen {
             first = self.cursor.y + 1 - size.rows;
             if to_scrollback {
                 for y in 0..first {
-                    let line = self.row_string(y);
+                    let line = crate::sbstyle::encode(self.row_string(y), self.row(y));
                     self.scrolled_off.push(line);
                     let w = self.row_wrapped(y);
                     self.scrolled_off_wrapped.push(w);

@@ -23,6 +23,7 @@ pub mod permissions;
 pub mod plugins;
 pub mod reflow;
 pub mod remote;
+pub mod sbstyle;
 pub mod scrollback;
 pub mod search;
 pub mod secrets;
