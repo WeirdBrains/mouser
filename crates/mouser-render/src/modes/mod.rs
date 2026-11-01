@@ -77,6 +77,9 @@ pub trait Mode: Send {
     /// Leaving the mode: drop transient state (search, windows).
     fn deactivate(&mut self) {}
     fn cwd_changed(&mut self, _dir: &Path) {}
+    /// The shell is on another host (`label` = user@host) in `dir` (`None`:
+    /// unknown), listed over ssh (`None`: loading). Called every frame.
+    fn remote_changed(&mut self, _label: &str, _dir: Option<&Path>, _listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {}
     /// A bound key (`id` from [`Mode::bindings`]) or a click in the mode's
     /// view or window (`id`, `arg` from its `UiAction::Mode` items).
     fn action(&mut self, id: &str, arg: i32) -> Effect;
@@ -225,6 +228,14 @@ impl Host {
 
     pub fn close_window(&mut self) -> bool {
         self.window.take().is_some()
+    }
+
+    /// The shell is remote (see [`Mode::remote_changed`]).
+    pub fn set_remote(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {
+        self.cwd = None;
+        if let Some((m, _)) = self.mode() {
+            m.remote_changed(label, dir, listing);
+        }
     }
 
     /// The shell's working directory (called every frame; cheap when unchanged).

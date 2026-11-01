@@ -1,4 +1,5 @@
 mod appearance_ui;
+mod remote_list;
 mod select;
 mod ssh_ui;
 mod tabs;
@@ -41,6 +42,7 @@ struct AppState {
     /// A lone Esc waiting to see whether `:` follows (generation).
     esc_pending: Option<u64>,
     esc_gen: u64,
+    remote: remote_list::RemoteLister,
     /// When an Esc last closed a mode window or viewer.
     esc_closed_at: Option<std::time::Instant>,
 }
@@ -422,6 +424,7 @@ fn main() -> Result<()> {
         mode_images: (Vec::new(), 0),
         esc_pending: None,
         esc_gen: 0,
+        remote: Default::default(),
         esc_closed_at: None,
     }));
     {
@@ -573,10 +576,10 @@ fn main() -> Result<()> {
                 (t.active(), if t.bar().titles.len() > 1 { ui::tab_bar_height(vp.cell_h) } else { 0 })
             };
             let alt = session.as_ref().is_some_and(|s| s.parser.lock().unwrap().screen.in_alt_screen());
-            let cwd = session.as_ref().and_then(|s| s.cwd_now());
+            let place = session.as_ref().and_then(|s| s.place());
             let mut st = app_state.lock().unwrap();
             let layout = ui_layout(&mut st, vp);
-            attach_mode_view(&mut st, layout, vp, tab_h, alt, cwd)
+            attach_mode_view(&mut st, layout, vp, tab_h, alt, place)
         })
     };
     fn ui_layout(st: &mut AppState, vp: mouser_render::UiViewport) -> Option<ui::UiLayout> {
@@ -1620,10 +1623,25 @@ fn attach_mode_view(
     vp: mouser_render::UiViewport,
     tab_h: i32,
     alt: bool,
-    cwd: Option<PathBuf>,
+    place: Option<mouser_core::remote::Place>,
 ) -> Option<ui::UiLayout> {
+    use mouser_core::remote::Place;
     use mouser_render::frame::PADDING;
-    st.modes.set_cwd(cwd);
+    match place {
+        Some(Place::Local(d)) => st.modes.set_cwd(Some(d)),
+        Some(Place::Remote { label, dir, ssh }) => {
+            let listing = match (&dir, &ssh) {
+                (Some(d), Some(t)) => st.remote.get(t, d, wake),
+                // A remote folder but no ssh to ask: say so (never local files).
+                (Some(_), None) => {
+                    Some(Err("remote: no ssh side channel for this session (only ssh is supported); the folder cannot be listed".into()))
+                }
+                _ => None,
+            };
+            st.modes.set_remote(&label, dir.as_deref(), listing);
+        }
+        None => {}
+    }
     if alt {
         st.mode_images.0.clear();
         return layout;

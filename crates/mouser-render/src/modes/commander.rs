@@ -185,6 +185,70 @@ fn kind_label(k: Kind) -> &'static str {
     }
 }
 
+/// Carousel slide: eases the shown position from where it was to the
+/// selection over [`Slide::DUR`]; a new target mid-slide starts from the
+/// current position and speed is continuous enough (ease-in-out).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Slide {
+    from: f64,
+    to: f64,
+    start: Option<std::time::Instant>,
+    /// A redraw ticker is running for this slide.
+    ticking: bool,
+}
+
+impl Slide {
+    pub const DUR: std::time::Duration = std::time::Duration::from_millis(180);
+
+    /// Ease-in-out (cubic): slow start, fast middle, slow stop.
+    pub fn ease(t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
+    }
+
+    fn value(&self, now: std::time::Instant) -> f64 {
+        match self.start {
+            Some(s) => {
+                let t = now.saturating_duration_since(s).as_secs_f64() / Self::DUR.as_secs_f64();
+                self.from + (self.to - self.from) * Self::ease(t)
+            }
+            None => self.to,
+        }
+    }
+
+    /// The position to draw for `target` at `now` (retargets smoothly).
+    pub fn at(&mut self, target: f64, now: std::time::Instant) -> f64 {
+        if self.start.is_none() && self.from == 0.0 && self.to == 0.0 {
+            self.to = target;
+            self.from = target;
+        }
+        if target != self.to {
+            let cur = self.value(now);
+            // Far jumps (Home/End, search) don't fly past every item.
+            self.from = if (target - cur).abs() > 3.0 { target - (target - cur).signum() * 1.0 } else { cur };
+            self.to = target;
+            self.start = Some(now);
+            self.ticking = false;
+        }
+        let v = self.value(now);
+        if self.start.is_some_and(|s| now.saturating_duration_since(s) >= Self::DUR) {
+            self.start = None;
+            self.from = self.to;
+            self.ticking = false;
+            return self.to;
+        }
+        v
+    }
+
+    pub fn moving(&self) -> bool {
+        self.start.is_some()
+    }
+
+    fn end(&self) -> std::time::Instant {
+        self.start.map_or_else(std::time::Instant::now, |s| s + Self::DUR)
+    }
+}
+
 pub struct CommanderMode {
     pub c: Commander,
     per_row: usize,
@@ -202,6 +266,7 @@ pub struct CommanderMode {
     body_w: i32,
     /// The player's key hints, from the current keymap.
     player_keys: String,
+    slide: Slide,
 }
 
 impl Default for CommanderMode {
@@ -257,6 +322,7 @@ impl CommanderMode {
             waker: None,
             body_w: 0,
             player_keys: String::new(),
+            slide: Slide::default(),
         }
     }
 
@@ -282,6 +348,14 @@ impl CommanderMode {
 
     /// The preview of `e` inside `full` (visible part `clip`).
     fn content(&mut self, e: &Entry, (full, clip): (Rect, Rect), max: u32, (cw, ch): (i32, i32), o: &mut Out) {
+        // Remote files are not fetched: their kind and a badge.
+        if self.c.remote.is_some() {
+            let label = if e.kind == Kind::Dir { "folder".to_string() } else { format!("{} · remote", kind_label(e.kind)) };
+            let w = (label.chars().count() as i32 * cw).min(clip.w);
+            let r = Rect { x: clip.x + (clip.w - w).max(0) / 2, y: clip.y + (clip.h - ch) / 2, w, h: ch };
+            o.items.push(item(r, label, if e.kind == Kind::Dir { PanelStyle::Label } else { PanelStyle::Hint }, UiAction::None));
+            return;
+        }
         match e.kind {
             Kind::Image | Kind::Video => {
                 o.slots.push(((e.path.clone(), max), full, clip));
@@ -361,35 +435,40 @@ impl CommanderMode {
         self.c.page = 5;
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
         let Some(e) = vis.get(self.c.selected).cloned() else { return };
-        let slots_from = o.slots.len();
+        let pos = self.slide.at(self.c.selected as f64, std::time::Instant::now());
+        if self.slide.moving() {
+            self.keep_redrawing();
+        }
         let label_h = ch + 6;
         let ih = (body.h - label_h - 6).max(ch);
         let w = (body.w * 55 / 100).max(cw * 10);
         let gap = 14;
-        let center = Rect { x: body.x + (body.w - w) / 2, y: body.y, w, h: ih };
-        // The neighbours are the same size, cut off by the edges (partial).
-        let sides =
-            [(self.c.selected.checked_sub(1), center.x - gap - w), (Some(self.c.selected + 1).filter(|i| *i < vis.len()), center.x + w + gap)];
-        for (i, x) in sides {
-            let Some(i) = i else { continue };
-            let full = Rect { x, y: center.y, w, h: ih };
+        let x_mid = body.x + (body.w - w) / 2;
+        // Items sit on a strip; `pos` (fractional while sliding) is in the middle.
+        // Neighbours are the same size, cut off by the edges (partial).
+        // What is on the strip now, plus the selection's neighbours (the
+        // incoming item while sliding).
+        let sel = self.c.selected as i64;
+        let lo = (pos.floor() as i64 - 1).min(sel - 1).max(0) as usize;
+        let hi = ((pos.ceil() as i64 + 1).max(sel + 1).max(0) as usize).min(vis.len().saturating_sub(1));
+        let mut order: Vec<usize> = (lo..=hi).collect();
+        // The one nearest the middle loads (and draws its frame) first.
+        order.sort_by(|a, b| (*a as f64 - pos).abs().total_cmp(&(*b as f64 - pos).abs()));
+        for &i in &order {
+            let x = x_mid + ((i as f64 - pos) * (w + gap) as f64).round() as i32;
+            let full = Rect { x, y: body.y, w, h: ih };
             let (l, r) = (full.x.max(body.x), (full.x + w).min(body.x + body.w));
             if r - l < 8 {
+                // Off the strip still: load it so it is ready when it slides in.
+                if matches!(vis[i].kind, Kind::Image | Kind::Video) {
+                    o.slots.push(((vis[i].path.clone(), 1024), full, Rect { w: 0, h: 0, ..full }));
+                }
                 continue;
             }
             let clip = Rect { x: l, y: full.y, w: r - l, h: ih };
-            o.items.push(item(clip, "", PanelStyle::Tile { selected: false }, act("item", i as i32)));
+            o.items.push(item(clip, "", PanelStyle::Tile { selected: i == self.c.selected }, act("item", i as i32)));
             let inner = |r: Rect| Rect { x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 };
             self.content(&vis[i], (inner(full), inner(clip)), 1024, (cw, ch), o);
-        }
-        o.items.push(item(center, "", PanelStyle::Tile { selected: true }, act("item", self.c.selected as i32)));
-        let inner = Rect { x: center.x + 6, y: center.y + 6, w: w - 12, h: ih - 12 };
-        let before = o.slots.len();
-        self.content(&e, (inner, inner), 1024, (cw, ch), o);
-        // The focused item loads first, then its neighbours.
-        if o.slots.len() > before {
-            let c = o.slots.pop().unwrap();
-            o.slots.insert(slots_from, c);
         }
         let t = e.modified.map(cmdr::format_time).unwrap_or_default();
         let mk = if self.c.marks.contains(&e.path) { "* " } else { "" };
@@ -401,6 +480,22 @@ impl CommanderMode {
             PanelStyle::Label,
             UiAction::None,
         ));
+    }
+
+    /// Wake the UI every ~8 ms until the carousel stops (only while it moves).
+    fn keep_redrawing(&mut self) {
+        if self.slide.ticking {
+            return;
+        }
+        let Some(w) = self.waker.clone() else { return };
+        self.slide.ticking = true;
+        let until = self.slide.end();
+        let _ = std::thread::Builder::new().name("carousel-anim".into()).spawn(move || {
+            while std::time::Instant::now() < until + std::time::Duration::from_millis(10) {
+                std::thread::sleep(std::time::Duration::from_millis(8));
+                w();
+            }
+        });
     }
 
     /// The full-width view of a file.
@@ -562,6 +657,10 @@ impl Mode for CommanderMode {
         self.c.set_cwd(Some(dir.to_path_buf()));
     }
 
+    fn remote_changed(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<Entry>, String>>) {
+        self.c.set_remote(label.to_string(), dir.map(Path::to_path_buf), listing);
+    }
+
     fn set_waker(&mut self, w: Waker) {
         self.waker = Some(w.clone());
         self.previews.set_waker(w);
@@ -679,14 +778,12 @@ impl Mode for CommanderMode {
                     }
                 }
                 // `hidden` changes the listing.
-                let cwd = self.c.cwd.clone();
-                self.c.set_cwd(cwd);
+                self.c.relist();
                 return self.effect(e);
             }
         }
         // Flags changed: re-list.
-        let cwd = self.c.cwd.clone();
-        self.c.set_cwd(cwd);
+        self.c.relist();
         Effect::None
     }
 
@@ -752,9 +849,16 @@ impl Mode for CommanderMode {
                 o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, t, PanelStyle::Title, UiAction::None));
             }
             (None, Some(d)) => {
+                if let Some(r) = &self.c.remote {
+                    let t = format!("{r}:");
+                    let n = (t.chars().count() as i32).min(room(tx));
+                    o.items.push(item(Rect { x: tx, y: y0, w: n * cw, h: row_h }, clip_text(&t, n), PanelStyle::Title, UiAction::None));
+                    tx += n * cw;
+                }
                 // Path segments: a click goes to that folder. Too long: the
                 // leading ones give way to "…".
-                let mut segs = path_segments(&show(d));
+                let shown = if self.c.remote.is_some() { d.display().to_string() } else { show(d) };
+                let mut segs = path_segments(&shown);
                 let width = |v: &[(String, usize)]| v.iter().map(|s| s.0.chars().count() as i32).sum::<i32>();
                 if width(&segs) > room(tx) {
                     while segs.len() > 1 && width(&segs) + 1 > room(tx) {
@@ -780,7 +884,10 @@ impl Mode for CommanderMode {
                     UiAction::None,
                 ));
             }
-            (None, None) => o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, "commander", PanelStyle::Title, UiAction::None)),
+            (None, None) => {
+                let t = self.c.remote.as_ref().map_or("commander".to_string(), |r| format!("{r}: (remote, folder unknown)"));
+                o.items.push(item(Rect { x: tx, y: y0, w: (bx - tx).max(0), h: row_h }, clip_text(&t, room(tx)), PanelStyle::Title, UiAction::None))
+            }
         }
         let mut body = Rect { x: x0, y: y0 + row_h + 6, w, h: rect.y + h - (y0 + row_h + 6) - 8 };
         self.body_w = body.w;
@@ -836,7 +943,7 @@ impl Mode for CommanderMode {
                         };
                         if s { format!("{m} · Enter keeps · Esc clears") } else { format!("{m} · {} to edit", keys.label("search")) }
                     }
-                    (false, true) => String::new(),
+                    (false, true) => self.c.notice.clone().unwrap_or_default(),
                 };
                 if !fb.is_empty() {
                     o.items.push(item(
@@ -1015,7 +1122,12 @@ mod tests {
         let side = v.images.iter().min_by_key(|i| i.rect.x).unwrap();
         assert!(side.src.2 < side.width, "left neighbour is partial");
         m.action("right", 0);
-        wait_loaded(&mut m, 3);
+        for _ in 0..200 {
+            wait_loaded(&mut m, 3);
+            if m.previews().decoded().iter().any(|w| w.0.ends_with("p5.png")) {
+                break;
+            }
+        }
         assert!(m.previews().decoded().iter().any(|w| w.0.ends_with("p5.png")), "the next one loads as it moves");
         assert!(!m.previews().decoded().iter().any(|w| w.0.ends_with("p6.png")));
     }
@@ -1136,6 +1248,8 @@ mod tests {
         assert!(m.player.is_none(), "closing the viewer stops playback");
     }
 
+    // POSIX paths in the header (Windows paths are one segment).
+    #[cfg(unix)]
     #[test]
     fn back_control_segments_and_no_dot_entries() {
         let t = tempfile::tempdir().unwrap();
@@ -1266,5 +1380,83 @@ mod tests {
             h.key(b"\x1b[1;3B");
             h.key(b"\x1b\r");
         }
+    }
+
+    #[test]
+    fn carousel_slide_eases_and_retargets_smoothly() {
+        use std::time::{Duration, Instant};
+        assert_eq!((Slide::ease(0.0), Slide::ease(1.0)), (0.0, 1.0));
+        assert!(Slide::ease(0.1) < 0.1 && Slide::ease(0.9) > 0.9, "slow at both ends");
+        let t0 = Instant::now();
+        let mut s = Slide::default();
+        assert_eq!(s.at(3.0, t0), 3.0, "first frame: no slide");
+        assert!(!s.moving());
+        assert_eq!(s.at(4.0, t0), 3.0, "starts where it was");
+        let mid = s.at(4.0, t0 + Duration::from_millis(90));
+        assert!((mid - 3.5).abs() < 0.01, "{mid}");
+        // A second key mid-slide: continues from the current position.
+        let again = s.at(5.0, t0 + Duration::from_millis(90));
+        assert!((again - mid).abs() < 1e-9, "no jump on retarget");
+        assert_eq!(s.at(5.0, t0 + Duration::from_millis(90) + Slide::DUR), 5.0);
+        assert!(!s.moving(), "stops: no more redraws");
+        // Far jumps only slide the last item.
+        s.at(40.0, t0 + Duration::from_secs(1));
+        assert!((s.at(40.0, t0 + Duration::from_secs(1)) - 39.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn carousel_slide_loads_the_incoming_item_too() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..8 {
+            png(&t.path().join(format!("p{i}.png")));
+        }
+        let mut m = CommanderMode::new();
+        m.c.flags.all = false;
+        m.cwd_changed(t.path());
+        m.action("view", 2);
+        m.c.selected = 3;
+        wait_loaded(&mut m, 3);
+        m.action("right", 0);
+        let k = Keymap::new(cmdr::BINDINGS);
+        let v = m.view(&ctx(), &k);
+        assert!(m.slide.moving());
+        let _ = v;
+        std::thread::sleep(Slide::DUR / 2);
+        let v = m.view(&ctx(), &k);
+        let tiles = v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count();
+        assert!(tiles >= 2, "mid-slide: two halves on the strip");
+        assert!(m.previews.s.0.lock().unwrap().want.iter().any(|w| w.0.ends_with("p5.png")), "the incoming one is wanted");
+        assert!(!m.previews.s.0.lock().unwrap().want.iter().any(|w| w.0.ends_with("p6.png")));
+        std::thread::sleep(Slide::DUR + std::time::Duration::from_millis(20));
+        let v = m.view(&ctx(), &k);
+        assert!(!m.slide.moving());
+        assert_eq!(v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count(), 3);
+    }
+
+    #[test]
+    fn remote_header_badges_and_unknown_state() {
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        let ent = |n: &str, dir: bool| Entry {
+            name: n.into(),
+            path: PathBuf::from(format!("/srv/{n}")),
+            kind: if dir { Kind::Dir } else { cmdr::kind_of(n) },
+            mode: "-rw-r--r--".into(),
+            size: 3,
+            modified: None,
+        };
+        m.remote_changed("me@web1", None, None);
+        let d = m.view(&ctx(), &k).dock.unwrap();
+        assert!(d.items.iter().any(|i| i.text.contains("no directory info")), "clear unknown state");
+        assert!(d.items.iter().any(|i| i.text.starts_with("me@web1:")));
+        m.remote_changed("me@web1", Some(Path::new("/srv")), Some(Ok(vec![ent("a.png", false), ent("app", true)])));
+        m.action("view", 1);
+        let d = m.view(&ctx(), &k).dock.unwrap();
+        assert!(d.items.iter().any(|i| i.text == "me@web1:"));
+        assert!(d.items.iter().any(|i| i.text == "/srv" || i.text == "/"), "{:?}", d.items.iter().map(|i| &i.text).collect::<Vec<_>>());
+        assert!(d.items.iter().any(|i| i.text == "image · remote"), "remote badge, nothing fetched");
+        assert!(m.previews().decoded().is_empty());
+        m.c.selected = 1;
+        assert_eq!(m.action("open", 0), Effect::Run("cd -- '/srv/app'".into()), "cd over the PTY");
     }
 }

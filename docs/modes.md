@@ -199,6 +199,37 @@ path, mtime, size and tile size. Without ffmpeg the tile says `▶ video`.
 Previews and player frames are clipped to the view (never over the prompt), and are
 left out under the options and manual windows so nothing shows through them.
 
+**Carousel motion.** Moving between items slides the strip (the focused item and the
+partial neighbours together) over 180 ms with an ease-in-out curve (cubic; ease-in alone
+looked like it lurched at the stop). A key during a slide retargets from where the strip
+is, without a jump; jumps of more than 3 items only slide the last one. Redraws are
+requested only while it moves (a ticker every 8 ms, stopped at the end). Measured
+(Linux, release, 655 px window): 50 fps while sliding (frame p50 19.8 ms, p95 20.0,
+max 38.6), idle frames only on other events. Loading stays lazy: what is on the strip
+plus the selection's neighbours, so the incoming item loads during the slide.
+
+**SSH sessions.** When the tab's shell is on another host commander lists that host:
+
+- Remote when the terminal's foreground process is `ssh` (typed, or the sidebar's
+  launcher), or when an OSC 7 `file://host/path` names a host other than this one while
+  the local shell is not in the foreground. Folder: the remote shell's OSC 7 (the
+  remote shell must send it, e.g. `PROMPT_COMMAND='printf "\033]7;file://%s%s\007"
+  "$HOSTNAME" "$PWD"'`).
+- Listing: `ls -la` on the host through a side channel: `ssh` with the running
+  command's own connection options (`-p -l -i -F -J -o -4 -6`; `-F $MOUSER_SSH_CONFIG`
+  if the command has none), `BatchMode=yes` (never prompts), multiplexed with
+  `ControlMaster=auto`, `ControlPath=$MOUSER_HOME/cache/ssh/%C`, `ControlPersist=120`.
+  Fetched on a thread, refreshed every 5 s while shown.
+- Header: `user@host:/path` (clickable segments, back works); `cd`, back and pipe are
+  typed into the PTY, so they run remotely.
+- Previews are not fetched: tiles show their kind with a `· remote` badge. Opening a
+  remote file (viewer or player) is not supported: a notice says so (pipe it into a
+  command instead).
+- No OSC 7 yet: `remote (host): no directory info ...` with a hint; no side channel
+  (mosh, a nested ssh): `remote: no ssh side channel ...`; the side channel failing
+  (password-only host): ssh's error and a hint. Local files are never shown for a
+  remote shell. After `exit` the local shell is back and so is its folder.
+
 ### Plugin API (`mouser_render::modes`)
 
 A mode implements the `Mode` trait and is registered with `Host::new` (the first
