@@ -224,9 +224,13 @@ fn registry_presets_stub_and_default() {
     }
     let g = find("gemma-local").unwrap();
     assert_eq!(g.entry.models, vec!["gemma-4-e2b", "gemma-4-e4b"]);
-    assert_eq!(g.origin, Origin::Stub);
-    let e = open("gemma-local").err().unwrap().to_string();
-    assert!(e.contains("P4b") && e.contains("gemma-4-e2b"), "{e}");
+    assert_eq!(g.origin, Origin::Local);
+    let e = open("gemma-local")
+        .unwrap()
+        .chat(&ChatRequest { model: "gemma-4-e2b".into(), ..Default::default() }, &mut Collect::default())
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("not downloaded") && e.contains("2.84 GB") && e.contains("mouser model local download gemma-4-e2b"), "{e}");
     assert!(open("anthropic").err().unwrap().to_string().contains("--key-stdin"));
     assert!(default_choice().is_none());
     let mut m = ModelsPrefs::default();
@@ -269,4 +273,180 @@ fn a_model_provider_plugin_is_a_provider() {
     let names: Vec<&str> = r.providers(mouser_core::plugins::Kind::ModelProvider).iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"anthropic") && names.contains(&"gemma-local") && names.contains(&"ollama-model"), "{names:?}");
     unsafe { std::env::remove_var("MOUSER_HOME") };
+}
+
+mod local_model {
+    use super::*;
+    use mouser_core::models::local::*;
+
+    fn fake(size: u64, sha: &'static str) -> Weights {
+        Weights { id: "gemma-4-e2b", label: "test weights", repo: "test/repo", file: "test.gguf", size, sha256: sha }
+    }
+
+    /// Serves `data` (honouring Range) after one redirect; returns the URL.
+    fn file_server(data: Vec<u8>, conns: usize) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..conns {
+                let (s, _) = l.accept().unwrap();
+                let mut r = BufReader::new(s.try_clone().unwrap());
+                let mut first = String::new();
+                r.read_line(&mut first).unwrap();
+                let mut range = None;
+                loop {
+                    let mut h = String::new();
+                    r.read_line(&mut h).unwrap();
+                    if h == "\r\n" {
+                        break;
+                    }
+                    if let Some(v) = h.to_ascii_lowercase().strip_prefix("range: bytes=") {
+                        range = v.trim().trim_end_matches('-').parse::<usize>().ok();
+                    }
+                }
+                let mut w = s;
+                if first.contains("/start") {
+                    write!(w, "HTTP/1.1 302 Found\r\nLocation: /file.gguf\r\nContent-Length: 0\r\n\r\n").unwrap();
+                } else if let Some(from) = range {
+                    write!(w, "HTTP/1.1 206 Partial\r\nContent-Length: {}\r\n\r\n", data.len() - from).unwrap();
+                    w.write_all(&data[from..]).unwrap();
+                } else {
+                    write!(w, "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", data.len()).unwrap();
+                    w.write_all(&data).unwrap();
+                }
+            }
+        });
+        format!("http://127.0.0.1:{port}/start")
+    }
+
+    fn sha(d: &[u8]) -> &'static str {
+        use sha2::Digest;
+        Box::leak(sha2::Sha256::digest(d).iter().map(|b| format!("{b:02x}")).collect::<String>().into_boxed_str())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn download_needs_consent_follows_redirects_resumes_and_verifies() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        let data: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        let w = fake(data.len() as u64, sha(&data));
+        assert!(!w.installed());
+        assert!(w.consent_text()[0].contains("3.0 MB") && w.consent_text()[2].contains("test.gguf"));
+        // Cancel part-way (the .part stays), then resume with Range.
+        let url = file_server(data.clone(), 4);
+        let mut seen = 0;
+        let e = download(Consent::given(&w), &url, &mut |d, _| {
+            seen = d;
+            d < 1_000_000
+        })
+        .unwrap_err();
+        assert!(e.to_string().contains("cancelled"), "{e}");
+        let part = w.path().with_extension("gguf.part");
+        assert!(std::fs::metadata(&part).unwrap().len() >= 1_000_000);
+        let mut last = (0, 0);
+        let p = download(Consent::given(&w), &url, &mut |d, n| {
+            last = (d, n);
+            true
+        })
+        .unwrap();
+        assert_eq!(last, (data.len() as u64, data.len() as u64));
+        assert_eq!(std::fs::read(&p).unwrap(), data);
+        assert!(w.installed() && !part.exists());
+        assert!(remove(&w) && !w.installed());
+        // A wrong checksum deletes the file.
+        let bad = fake(data.len() as u64, "00");
+        let e = download(Consent::given(&bad), &file_server(data.clone(), 2), &mut |_, _| true).unwrap_err();
+        assert!(e.to_string().contains("checksum mismatch") && !bad.path().exists() && !part.exists(), "{e}");
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    fn catalog_is_gemma_e2b_default_and_e4b() {
+        let (d, all) = gemma_models();
+        assert_eq!((d.as_str(), all), ("gemma-4-e2b", vec!["gemma-4-e2b".to_string(), "gemma-4-e4b".to_string()]));
+        let e2b = weights("gemma-4-e2b").unwrap();
+        assert_eq!((human(e2b.size), e2b.sha256.len()), ("2.84 GB".to_string(), 64));
+        assert_eq!(e2b.url(), "https://huggingface.co/ggml-org/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q4_0.gguf");
+        assert_eq!(human(weights("gemma-4-e4b").unwrap().size), "4.59 GB");
+    }
+
+    #[test]
+    fn prompts_render_with_the_model_template() {
+        let req = ChatRequest {
+            model: "gemma-4-e2b".into(),
+            system: Some("be brief".into()),
+            messages: vec![
+                Message::user("time in Oslo?"),
+                Message {
+                    role: Role::Assistant,
+                    parts: vec![Part::ToolCall { id: "c".into(), name: "get_time".into(), args: json!({"city": "Oslo"}) }],
+                },
+                Message {
+                    role: Role::User,
+                    parts: vec![Part::ToolResult { id: "c".into(), name: "get_time".into(), content: "12:00".into(), is_error: false }],
+                },
+            ],
+            tools: vec![ToolSpec { name: "get_time".into(), description: "time".into(), schema: json!({"type": "object"}) }],
+            tool_choice: ToolChoice::Required,
+            ..Default::default()
+        };
+        let t = turns(&req);
+        assert_eq!(t[0].0, "system");
+        assert!(t[0].1.contains("be brief") && t[0].1.contains("<tool_call>") && t[0].1.contains("must call a tool"), "{}", t[0].1);
+        assert_eq!(t[2].1, "<tool_call>{\"arguments\":{\"city\":\"Oslo\"},\"name\":\"get_time\"}</tool_call>");
+        assert!(t[3].1.starts_with("<tool_result name=\"get_time\">12:00"));
+        // A Gemma-style Jinja template (system folded into the first user turn).
+        let tmpl = "{{ bos_token }}{% if messages[0]['role'] == 'system' %}{% set sys = messages[0]['content'] + '\n\n' %}{% set msgs = messages[1:] %}{% else %}{% set sys = '' %}{% set msgs = messages %}{% endif %}{% for m in msgs %}{% set role = 'model' if m['role'] == 'assistant' else m['role'] %}<start_of_turn>{{ role }}\n{% if loop.first %}{{ sys }}{% endif %}{{ m['content'] | trim }}<end_of_turn>\n{% endfor %}{% if add_generation_prompt %}<start_of_turn>model\n{% endif %}";
+        let p = render(tmpl, &t, "<bos>").unwrap();
+        assert!(
+            p.starts_with("<bos><start_of_turn>user\nbe brief")
+                && p.ends_with("<start_of_turn>model\n")
+                && p.contains("<start_of_turn>model\n<tool_call>"),
+            "{p}"
+        );
+        assert!(render("{{ raise_exception('no') }}", &t, "").is_err());
+        let f = render_fallback(&t);
+        assert!(f.starts_with("<start_of_turn>user\nbe brief") && f.ends_with("<start_of_turn>model\n"), "{f}");
+    }
+
+    #[test]
+    fn tool_calls_are_lifted_from_streamed_text() {
+        let mut c = Collect::default();
+        let mut p = ToolParser::default();
+        for piece in ["Let me check", ". <tool", "_call>{\"name\": \"get_", "time\", \"arguments\": {\"city\": \"Oslo\"}}</tool_", "call> done"] {
+            p.feed(piece, &mut c);
+        }
+        p.finish(&mut c);
+        assert_eq!(c.text, "Let me check.  done");
+        assert_eq!(c.calls, vec![("call_0".into(), "get_time".into(), "{\"city\":\"Oslo\"}".into())]);
+        // Text that only looks like the start of a tag is passed through.
+        let mut c = Collect::default();
+        let mut p = ToolParser::default();
+        p.feed("a <to", &mut c);
+        p.feed("p> b <", &mut c);
+        p.finish(&mut c);
+        assert_eq!((c.text.as_str(), c.calls.len()), ("a <top> b <", 0));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn local_url_uses_a_compatible_server_instead() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        let (url, rx) = mock(200, "data: {\"choices\":[{\"delta\":{\"content\":\"from llama-server\"}}]}\n\ndata: [DONE]\n\n".into(), false);
+        let mut m = mouser_core::models::prefs();
+        m.local = Some(LocalPrefs { url: Some(format!("{url}/v1")), model: Some("served-name".into()), ..Default::default() });
+        save(&m).unwrap();
+        let mut c = Collect::default();
+        open("gemma-local")
+            .unwrap()
+            .chat(&ChatRequest { model: "gemma-4-e4b".into(), messages: vec![Message::user("hi")], ..Default::default() }, &mut c)
+            .unwrap();
+        assert_eq!(c.text, "from llama-server");
+        let (head, b) = rx.recv().unwrap();
+        assert!(head.starts_with("POST /v1/chat/completions "));
+        assert_eq!(b["model"], "served-name");
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
 }

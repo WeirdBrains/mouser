@@ -35,6 +35,8 @@ rustls-pemfile = "2"
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 sha2 = "0.10"
 webpki-roots = "1"
+minijinja = { version = "3", features = ["json", "loop_controls"] }
+minijinja-contrib = { version = "3", features = ["pycompat"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
