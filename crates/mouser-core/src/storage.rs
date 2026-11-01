@@ -47,6 +47,48 @@ pub struct Preferences {
     /// always in it, last unless moved. Replaces `engine`, which is still read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engines: Option<Vec<String>>,
+    /// `[mcp.server]`: Mouser's own MCP server (docs/mcp.md); off unless set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpPrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpPrefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<McpServerPrefs>,
+}
+
+/// `[mcp.server]` in preferences.toml.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerPrefs {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Loopback HTTP port (also what `mouser mcp serve --stdio` connects to).
+    #[serde(default = "default_http_port")]
+    pub port: u16,
+    /// Also serve HTTPS on `https_port`.
+    #[serde(default)]
+    pub https: bool,
+    #[serde(default = "default_https_port")]
+    pub https_port: u16,
+    /// PEM certificate chain and key; unset: a self-signed pair in $MOUSER_HOME/mcp/.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+fn default_http_port() -> u16 {
+    7801
+}
+fn default_https_port() -> u16 {
+    7802
+}
+
+impl Default for McpServerPrefs {
+    fn default() -> Self {
+        McpServerPrefs { enabled: false, port: default_http_port(), https: false, https_port: default_https_port(), cert: None, key: None }
+    }
 }
 
 /// Load preferences, apply `f`, and save them back (keeps unrelated fields).
