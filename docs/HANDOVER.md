@@ -318,3 +318,53 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - Screenshots: `~/.cache/mouser-shots/p3-b.png` and `p3-sheet.png` / `p3-combo.png`.
 - Deferred: resources, prompts, list-changed, OAuth, project-local config, sidebar enable toggles, and live reload of prefs (applies on the next start).
 - Next: P4 (model providers). It needs Michael's go-ahead, and it hits the hard stops (llama.cpp deps, model downloads).
+
+### P4: model providers as plugins (docs/models.md)
+- Commits:
+  - a350df0 core;
+  - 3c891ca app;
+  - 9b4089f docs.
+- CI: run 41342521462, green on Linux, macOS and Windows.
+- Package: `~/.cache/mouser-pkg/mouser-git-0.7.2.r101.g9b4089f-1-x86_64.pkg.tar.zst` (not installed).
+- Core (`crates/mouser-core/src/models/`):
+  - `mod.rs`: `ModelProvider`, `ChatRequest`/`Message`/`Part`/`ToolSpec`/`ToolChoice`, `Event` (Text, ToolStart, ToolArgs, Usage, Done), `ChatSink` with `cancelled()`, the `Collect` sink, `PRESETS`, `[models]` prefs and the registry (`all`/`find`/`open`).
+  - `http.rs`: a std + rustls client with chunked and SSE line streaming. Plain http goes to loopback only.
+  - Adapters:
+    - `openai.rs`: Chat Completions, including the Kimi K2 quirks.
+    - `anthropic.rs`: Messages, version 2023-06-01.
+    - `google.rs`: `streamGenerateContent?alt=sse`.
+  - Plugins: the `model-provider` kind gets the `http` transport plus a `[model]` table. BUILTINS has 8 entries (six presets, gemma-local and the others).
+  - Keys are `keychain:model-NAME` refs; preferences.toml never holds a key.
+- App: `model_cli.rs` provides `mouser model list | add | remove | test | default`. `add` takes `--key-stdin`, `--api`, `--url`, `--model` and `--ca`.
+- Tests: mock HTTP servers only (streaming, tool deltas, chunked bodies, errors, cancel, Kimi quirks, registry). A live binary smoke test ran against a Python mock for all three adapters. No real keys were used.
+- Deferred: the Responses API, images, retries, `/models` listing and the plugin `network` grant.
+
+### P4b: the built-in local model (docs/models.md §The local model)
+- Core (`models/local.rs`):
+  - The weights catalog has E2B and E4B Q4_0 from ggml-org, with pinned sizes and SHA256.
+  - `dir()`: `MOUSER_MODELS_DIR`, then `[models.local] dir`, then `$MOUSER_HOME/models`.
+  - `download(Consent, url, progress)` resumes the `.part`, verifies size and SHA256, and needs a `Consent` value.
+  - `LocalBackend` registry, `LocalPrefs`, and the `Local` provider: a url delegates to the openai/anthropic adapter; otherwise the weights and the backend are required.
+  - `render()` runs the GGUF Jinja template through minijinja (with pycompat); `render_fallback()` produces the Gemma format.
+  - Tools: `tool_prompt` plus the `ToolParser` for `<tool_call>` tags.
+  - `http.rs` gained `request`/`get` with redirects.
+- `crates/mouser-llm`: llama-cpp-2 0.1.160 (Vulkan; Metal on macOS) implementing `LocalBackend`.
+  - The model stays cached, and all layers go on the GPU by default.
+  - Context 8192, prompt batches of 512.
+  - Sampling: top_k 64, top_p 0.95, temp 1.0, or greedy at temperature 0.
+  - Output is UTF-8 safe and streams through the ToolParser, with cancel checks. `MOUSER_LLM_TIMINGS=1` prints speeds.
+  - The crate is in the workspace `exclude` list, so `--workspace` builds and CI never compile llama.cpp. mouser-app's feature `local-llm` = `dep:mouser-llm`, and main registers it at startup.
+- App:
+  - `mouser model local [status] | download [ID] [--yes] | delete ID | url URL [--api] [--model] [--key-stdin] / --clear | dir PATH / --clear`.
+  - `[mouser] model download [ID]` opens a once-only approval popup (`approval_ui::Request::once`, never passed to the broker) and then downloads in the background with 10% notices.
+  - `mouser model test --tool` does a full round trip with a demo tool result.
+- Packaging: `MOUSER_LOCAL_LLM=1 makepkg` adds `--features local-llm`. Default deps are unchanged; the variant also needs cmake, clang, vulkan-headers, shaderc and spirv-headers.
+- No CI job for the feature, because it needs Vulkan headers and shaderc that the runners don't have. Instead it was build-checked locally: release build plus `clippy --features local-llm -D warnings`.
+- Live check (Michael OK'd the E2B download, t206u):
+  - The weights were downloaded with Mouser's own downloader into `/mnt/ext1/home/m3talsmith/Projects/.models/gemma/` and verified against the published SHA256.
+  - Run with a temp HOME/MOUSER_HOME and `MOUSER_MODELS_DIR` pointing there.
+  - RTX 3060 via Vulkan: load about 0.9 s warm, prompt 2,800-5,500 t/s, generation about 90-110 t/s.
+  - The `get_time {"city":"Oslo"}` call → demo result → "The current time in Oslo is 14:05."
+  - The first long prompt is slow once, while the NVIDIA driver compiles shaders.
+  - In-app popup: screenshots `~/.cache/mouser-shots/p4b-popup.png` and `p4b-denied.png`. Deny downloads nothing and saves no permission.
+- Deferred: E4B not downloaded; no GPU selection or KV-cache reuse across turns; the popup can't cancel a running download; chat mode is P5.
