@@ -1,6 +1,6 @@
 # Plan: plugins, MCP and the agent chat mode (t187u-t189u)
 
-Status: **P1-P5 done** (P5 open questions 12-14 answered with the plan's proposals: `chat` on `a`, screen + 200 lines, transcripts kept; Michael may change them) (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
+Status: **P1-P6 done** (P5 open questions 12-14 answered with the plan's proposals: `chat` on `a`, screen + 200 lines, transcripts kept; P6 questions 15-16 left open: the `mouser engine` alias stays, skia stays in the package; Michael may change them) (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
 2026-10-31 after Phase 1 (commander) closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
 install approval), security model, tests, rough size and open questions. Section 9
 lists the sources behind the facts in it.
@@ -511,6 +511,26 @@ plus a migration test for old preferences.
 - Questions:
   15. Should the `mouser engine` CLI stay as an alias for good?
   16. Should skia move out of the main package once it is a plugin?
+
+### As built (P6)
+- Compiled-in manifests for commander, chat, mouser and skia
+  (`crates/mouser-core/src/builtin/*.toml`). `flat` is the example external
+  engine, not a built-in.
+- `plugin.toml` gained `[engine]` (kind engine, transport `library`) and `[mode]`.
+  `engine.toml` is parsed into the same manifest (`Manifest::from_engine`), and an
+  engine directory may hold either.
+- One CLI parser: `mouser engine X` = `mouser plugin X --kind engine` (a test
+  compares the parsed actions; another compares the list output).
+- Built-ins can be disabled except the `mouser` engine. With every mode off, the
+  plain terminal is the mode-less fallback.
+- Disabled engines leave `engines::priority()` but keep their place; `select`
+  refuses them, and `MOUSER_ENGINE` still overrides as given.
+- The engine order stays in the `engines` preference (with the old `engine` key
+  migrated, tested). It did not move to `plugins.order.engine`: one source of
+  truth, and old configs keep working.
+- `Host::from_registry` builds the switcher. Command-transport mode plugins are
+  supported (dock lines and keys; `run` and `files.read` gated). MCP-transport
+  modes are rejected with a clear message: left for later.
 
 ## 9. Sources (checked 2026-10-31)
 

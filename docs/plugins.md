@@ -4,7 +4,10 @@ Mouser plugins add modes, tools, model providers and `[mouser]` line commands.
 This is phase 1 of docs/plans/mcp-agent.md: the manifest, registry, CLI,
 permission broker with approval popups, and the three transports. Mouser's MCP
 server (P2), the MCP client in the sidebar (P3), model providers (P4) and the chat
-mode (P5) build on it. Built-in modes and engines become plugins in P6.
+mode (P5) build on it. Since P6 everything is a plugin: the built-in modes
+(commander, chat) and engines (mouser, skia) are compiled-in plugins with their
+own `plugin.toml` (§Built-in plugins), and engines install, list and switch through
+the same registry.
 
 ## Transports
 
@@ -14,9 +17,11 @@ mode (P5) build on it. Built-in modes and engines become plugins in P6.
 | `fuzzball` | a program running *in* a tab, over Fuzzball `p` (docs/protocol/plugins.md) | while it runs, that tab only | untrusted; over ssh it asks every time |
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
+| `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
+| `builtin` | compiled into Mouser (commander, chat, the mouser and skia engines, the model adapters); reserved | always there | part of Mouser |
 
-There are no native-library plugins in v1. Engines keep their own ABI
-(docs/engines.md) and show up in the registry as kind `engine`.
+Native libraries are only for engines (kind `engine`, transport `library`); their
+C ABI is unchanged (docs/engines.md).
 
 ## The manifest: `plugin.toml`
 
@@ -28,7 +33,7 @@ description = "says hello from the [mouser] line"
 permissions = ["run", "notify"] # what it may ask for (below)
 
 [[provides]]                    # one or more
-kind = "command"                # mode | model-provider | tool-provider | command
+kind = "command"                # mode | engine | model-provider | tool-provider | command
 id = "hello"                    # optional; defaults to the name
 
 [run]
@@ -37,8 +42,19 @@ command = ["sh", "./hello.sh"]  # ./ is the plugin's directory; other names come
 commands = ["hello"]            # command plugins only
 ```
 
-`kind = "engine"` isn't allowed here: engines install from `engine.toml`, and
-`mouser plugin install` hands an engine directory to the engine installer.
+A mode plugin adds `[mode]` (hotkey and keys, §Mode plugins). An engine plugin
+provides only `kind = "engine"`, uses `transport = "library"` and adds
+
+```toml
+[engine]
+abi = 1                         # engine C ABI version
+library = "libmouser_engine_flat.so"   # a file in the plugin directory
+```
+
+The older `engine.toml` (`name`, `version`, `abi`, `library`, `description`) is
+read as the same manifest, so existing engines keep working; an engine directory
+may hold either. `mouser plugin install` hands an engine directory to the engine
+installer (it lands in `$MOUSER_HOME/engines/<name>`).
 Bringing in a model is a plugin of kind `model-provider`. The llama.cpp/Gemma
 plugin (P4b) and the hosted adapters (P4) are the first of these, and anyone can
 add another.
@@ -58,9 +74,56 @@ mouser plugin permissions '<key>' revoke  # forget it; it asks again
 mouser plugin probe <name>               # MCP: handshake and list its tools
 ```
 
-`mouser engine …` is still there and does the same for engines. Installing from
-a URL isn't supported. State lives in `$MOUSER_HOME/plugins/`: one directory per
-plugin, `state.toml` (priority, disabled) and `permissions.toml`.
+`--kind mode|engine|model-provider|tool-provider|command` limits any of these to
+one kind. **`mouser engine X` is `mouser plugin X --kind engine`**: the same
+parser and code (`mouser engine list` and `mouser plugin list --kind engine` print
+the same thing). Engines also have `use <name>` (put first, unskip) and
+`unskip <name>|--all`; without `--kind`, `enable`/`disable`/`use`/`unskip` with an
+engine's name reach the engine. Installing from a URL isn't supported. State lives
+in `$MOUSER_HOME/plugins/`: one directory per plugin, `state.toml` (priority,
+disabled; engines' disabled flags too) and `permissions.toml`. The engine order
+stays in the `engines` preference (`mouser engine priority`), not in `state.toml`.
+
+### Built-in plugins
+
+| name | kind | hotkey | can be disabled |
+|---|---|---|---|
+| `commander` | mode | `c` | yes |
+| `chat` | mode | `a` | yes |
+| `mouser` | engine (wgpu, CPU fallback) | | **no**: the permanent last fallback |
+| `skia` | engine (in builds with the `skia` feature) | | yes |
+| `openai`, `xai`, `openrouter`, `moonshot`, `anthropic`, `google`, `gemma-local` | model-provider | | yes |
+
+Their manifests are compiled in (`crates/mouser-core/src/builtin/*.toml`,
+`transport = "builtin"`; no dynamic loading of Mouser's own code). Disabling
+commander and chat leaves no mode: Mouser is then a plain terminal (the mode-less
+fallback), and `mouser plugin list` says so. A disabled engine is passed over when
+a window picks its engine and is hidden from the sidebar; `MOUSER_ENGINE=a,b`
+still forces an order for one run, as given.
+
+### Mode plugins
+
+A mode plugin is a `plugin.toml` with `kind = "mode"`, `transport = "command"` and
+a `[mode]` table (example: `examples/plugins/hello-mode`):
+
+```toml
+[mode]
+hotkey = "h"                    # one letter/digit; not c, a (built-ins) or p
+keys = [{ id = "time", key = "t", describe = "show the time" }]
+```
+
+It joins the mode switcher (`ctrl+shift+m`, `esc :h`) after the built-in modes and
+docks above the prompt like them. Mouser runs its program once per event, off the
+UI thread, with the command-plugin contract (10 s limit, scrubbed environment):
+`{"api":1,"command":"mode","args":[EVENT,ID],"cwd":...}` with EVENT `activate`,
+`key` (ID = a `[[mode.keys]]` id, remappable in `modes.toml`) or `cwd`; the reply
+`{"title":..., "lines":[...], "text":...}` sets the dock (40 lines at most) and its
+status. It runs only once `run` is allowed (`mouser plugin permissions NAME
+run=allow`; until then the dock says how), and the shell's directory is sent only
+with `files.read` allowed. A mode plugin shows text and reacts to keys; it can't type
+into the shell or read the screen. Mode plugins over MCP are not supported yet
+(the manifest check says so); two plugins with the same hotkey: the later one is
+left out with a notice.
 
 ## Permissions
 
@@ -139,6 +202,7 @@ optional; it only lists the plugin.
 - `hello-command`: `hello [name]` on the `[mouser]` line (POSIX sh).
 - `hello-mcp`: a stdio MCP server with a `greet` tool (python3, stdlib only).
 - `hello-fuzzball`: `./hello-fuzzball.sh` asks for `notify` + `screen.read` and prints the answer.
+- `hello-mode`: a mode on `h` that shows the directory and the time (POSIX sh).
 
 ```
 mouser plugin install examples/plugins/hello-command
@@ -146,10 +210,14 @@ mouser plugin install examples/plugins/hello-mcp && mouser plugin probe hello-mc
 sh examples/plugins/hello-fuzzball/hello-fuzzball.sh   # inside a Mouser tab
 ```
 
-## Designed for P6
+## How it fits together (P6)
 
-- The registry already lists the built-ins: commander as a `mode` and the
-  wgpu/skia engines as `engine`. Commander shares the plugins' priority list.
-  Built-ins can't be disabled yet; that comes with P6.
-- P6 moves their creation behind the registry (`Registry::providers(kind)`)
-  without changing the `Mode` trait or the engine ABI.
+- `mouser_core::plugins::Registry::load()` lists every plugin: built-ins (from
+  their compiled-in manifests), installed plugins by priority, then engines in the
+  engine order. `modes()` and `engines()` are the enabled ones, best first.
+- The app builds the mode switcher with `Host::from_registry` (commander, chat,
+  command-transport mode plugins), and the sidebar's engine list and
+  `mouser engine list` come from `Registry::engines()`. Engine selection
+  (`engines::priority()`, crash sentinels, live switching) is unchanged apart from
+  passing over disabled engines.
+- The `Mode` trait and the engine C ABI did not change.

@@ -160,10 +160,15 @@ that rule; tests point `MOUSER_HOME` (and `HOME`) at a temporary directory.
 
 ## 5. Installing
 
-Installed engines live in **`$MOUSER_HOME/engines/<name>/`** (default
-`~/.mouser/engines`), following Mouser's fixed storage rule (all state under
-`~/.mouser`, `MOUSER_HOME` override; tests always use a temporary `MOUSER_HOME`). Each
-holds an `engine.toml` manifest and the library:
+Engines are plugins of kind `engine` (P6, docs/plugins.md): the built-in
+`mouser` and `skia` have compiled-in manifests, and `mouser engine …` is the same
+command as `mouser plugin … --kind engine`. Installed engines live in
+**`$MOUSER_HOME/engines/<name>/`** (default `~/.mouser/engines`), following
+Mouser's fixed storage rule (all state under `~/.mouser`, `MOUSER_HOME` override;
+tests always use a temporary `MOUSER_HOME`). Each holds the library and a manifest:
+a `plugin.toml` with `kind = "engine"`, `transport = "library"` and an `[engine]`
+table (`abi`, `library`), or the older `engine.toml`, which is read as the same
+plugin manifest:
 
 ```toml
 name = "flat"
@@ -184,6 +189,9 @@ CLI (thin adapters over `mouser_core::engines`):
 | `mouser engine priority <a> <b> ...` | sets the whole order (`mouser` appended if missing) |
 | `mouser engine move <name> first\|last\|up\|down\|<n>` | moves one engine (1 = first) |
 | `mouser engine unskip <name>\|--all` (alias `restore`) | clears skip/failure records, order unchanged |
+| `mouser engine disable\|enable <name>` | takes an engine out of (or back into) the walk, keeping its place; `mouser` can't be disabled; `use` refuses a disabled engine |
+
+Each of these is also `mouser plugin <same> --kind engine`.
 
 Installing from a URL is not supported in v1: download the engine yourself and install
 the directory (no network access from the terminal, no unsigned code fetched for you).
