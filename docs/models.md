@@ -12,7 +12,7 @@ calls. Every model is a plugin of kind `model-provider` (decision 5):
 | `moonshot` (Kimi) | built in | OpenAI-compatible | `https://api.moonshot.ai/v1` |
 | `anthropic` | built in | Anthropic Messages | `https://api.anthropic.com` |
 | `google` | built in | Gemini `streamGenerateContent` | `https://generativelanguage.googleapis.com` |
-| `gemma-local` | built in, **stub** | llama.cpp (P4b) | — |
+| `gemma-local` | built in (feature `local-llm`) | llama.cpp, or a compatible URL | — |
 | any name | `[[models.providers]]` | openai / anthropic / google | yours |
 | any name | installed plugin with `[model]` | openai / anthropic / google | the plugin's |
 
@@ -101,12 +101,65 @@ default = "llama3.2"
 models = ["llama3.2", "qwen3"]
 ```
 
-## The local model (P4b, not built yet)
+## The local model (`gemma-local`)
 
-`gemma-local` is declared (crates/mouser-core/src/models/gemma-local.toml) with
-**Gemma 4 E2B as the default** and **E4B** as the switch
-(`mouser model default gemma-local/gemma-4-e4b`). Building llama.cpp and
-downloading the weights wait for Michael's OK; until then using it explains that.
+`gemma-local` is Mouser's own model: **Gemma 4 E2B** by default and **E4B** as the
+switch (`mouser model default gemma-local/gemma-4-e4b`). It runs on llama.cpp built
+into Mouser (Vulkan on Linux/Windows, Metal on macOS) or, instead, on any
+OpenAI/Anthropic-compatible server you name.
+
+| Weights | File (ggml-org on Hugging Face) | Size |
+|---|---|---|
+| `gemma-4-e2b` (default) | `gemma-4-E2B-it-Q4_0.gguf` | 2.84 GB |
+| `gemma-4-e4b` | `gemma-4-E4B-it-Q4_0.gguf` | 4.59 GB |
+
+```sh
+mouser model local                 # engine, server, models dir, what is downloaded
+mouser model local download        # shows the size and asks; --yes skips the question
+mouser model local download gemma-4-e4b
+mouser model local delete gemma-4-e2b
+mouser model local dir /mnt/big/models   # or MOUSER_MODELS_DIR=…; --clear for the default
+mouser model local url http://127.0.0.1:8080/v1 [--api anthropic] [--model NAME] [--key-stdin]
+mouser model local url --clear     # back to the built-in engine
+mouser model test gemma-local --tool     # a tool call, a demo result and the reply
+```
+
+In the app, the `[mouser]` line `model download [gemma-4-e4b]` opens an approval popup
+with the size, source and destination. It offers only **Allow once** or **Deny**,
+asks every time and is never saved as a permission. The download then runs in the
+background with progress notices.
+
+- **Nothing downloads without consent.** `local::download` needs a `Consent` that only the prompt
+  or popup creates. The `.part` file resumes; size and SHA256 (pinned per file) are checked,
+  and a mismatch deletes it.
+- **Models dir:** `$MOUSER_MODELS_DIR`, else `[models.local] dir`, else `$MOUSER_HOME/models`.
+- **`[models.local]`:** `dir`, `url`, `api`, `key` (a `keychain:` ref), `model`,
+  `gpu_layers` (default all) and `context` (default 8192).
+- **Prompting:** the GGUF's own chat template (Jinja, rendered with minijinja), with a
+  Gemma-format fallback. Tools are described in the system turn, and the model answers
+  with `<tool_call>{"name":…,"arguments":…}</tool_call>`, which becomes the usual
+  ToolStart/ToolArgs events.
+- **Timings:** set `MOUSER_LLM_TIMINGS=1` to print load/prompt/generation speed to stderr.
+
+### Building it
+
+The default build has no llama.cpp. Build the feature with:
+
+```sh
+cargo build --release -p mouser-app --features local-llm
+# Arch: MOUSER_LOCAL_LLM=1 makepkg   (packaging/arch/mouser-git)
+```
+
+It needs cmake and clang, plus Vulkan headers, shaderc and spirv-headers on Linux
+(Arch: `cmake clang vulkan-headers shaderc spirv-headers`), and a Vulkan driver at run
+time (`vulkan-icd-loader` + the GPU's ICD). `crates/mouser-llm` is excluded from the
+workspace, so `cargo build/test --workspace` and CI never compile llama.cpp. Without the
+feature, `gemma-local` explains this and still works through `mouser model local url`.
+
+Measured on an RTX 3060 (Vulkan, E2B Q4_0, warm cache): about 0.9 s to load, about
+2,800-5,500 tokens/s on the prompt and about 90-110 tokens/s generating. The NVIDIA
+driver compiles shaders on first use, so the very first long prompt can take
+several seconds.
 
 ## Not yet
 

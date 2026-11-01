@@ -37,7 +37,9 @@ build() {
   cd "${_pkgname}"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  cargo build --frozen --release -p mouser-app
+  # Opt-in built-in local model (docs/models.md): MOUSER_LOCAL_LLM=1 makepkg
+  # (also needs cmake clang vulkan-headers shaderc spirv-headers to build).
+  cargo build --frozen --release -p mouser-app ${MOUSER_LOCAL_LLM:+--features local-llm}
   mkdir -p terminfo
   tic -x -o terminfo extra/mouser.terminfo
 }

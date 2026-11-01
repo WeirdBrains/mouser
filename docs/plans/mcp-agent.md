@@ -1,6 +1,6 @@
 # Plan: plugins, MCP and the agent chat mode (t187u-t189u)
 
-Status: **P1-P4 done** (P4b waits for Michael's OK) (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
+Status: **P1-P4b done** (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
 2026-10-31 after Phase 1 (commander) closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
 install approval), security model, tests, rough size and open questions. Section 9
 lists the sources behind the facts in it.
