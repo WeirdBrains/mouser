@@ -13,6 +13,7 @@ mode (P5) build on it. Built-in modes and engines become plugins in P6.
 | `mcp` | a program speaking MCP over stdio (`run.command`) | started on demand | installed: asks, then remembers what you choose |
 | `fuzzball` | a program running *in* a tab, over Fuzzball `p` (docs/protocol/plugins.md) | while it runs, that tab only | untrusted; over ssh it asks every time |
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
+| `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 
 There are no native-library plugins in v1. Engines keep their own ABI
 (docs/engines.md) and show up in the registry as kind `engine`.
