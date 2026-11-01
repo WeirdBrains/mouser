@@ -213,3 +213,5 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Open: A/V sync is by common start (no drift correction); pause/seek restart helpers (brief gap); no ffmpeg on CI macOS/Windows means the decode tests skip there. (superseded by a3a960d below)
 
 - a3a960d: player rewritten: no ffplay; cpal audio sample clock (minus device latency) drives video frames by PTS (late dropped), wall clock without audio; pause/volume in-process; seek restarts both ffmpeg readers at -ss. Measured on Linux: A/V offset mean 20 ms (half a 25 fps frame), no drift over 66 s, seek gap ~80 ms. Needs alsa-lib (libasound2-dev on CI).
+
+- 3f44c83 / c33f5cf: Phase 1 follow-ups. Player sync centred (mean -0.2 ms, p95 9.5 ms, 0 drops); back control (‹ back, alt+p, alt+Backspace, clickable path, no . / ..); video thumbnails (cached in $MOUSER_HOME/cache/thumbs); search feedback; popups opaque over previews; `[mouser]` line runs non-Mouser commands in the shell (`!` forces); double-Esc after closing a viewer no longer eats the next key; commander follows SSH sessions (OSC 7 + ssh side channel); carousel slides (180 ms ease-in-out).
