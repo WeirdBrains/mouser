@@ -10,6 +10,7 @@ use crate::Waker;
 use crate::frame::PADDING;
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use mouser_core::commander::{self as cmdr, Action, Commander, Entry, Kind, Overlay, Sort, TILE_SIZES, View as Layout};
+use mouser_core::fetch;
 use mouser_core::modes::{Binding, Keymap};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,28 @@ struct Shared {
     quit: bool,
     /// Decodes done (tests).
     decoded: Vec<Want>,
+    /// Being decoded.
+    busy: Vec<Want>,
+    /// Remote listing: paths are on this host (size, mtime per path).
+    remote: Option<RemoteCtx>,
 }
+
+/// What the preview workers need to fetch remote files.
+#[derive(Clone)]
+pub struct RemoteCtx {
+    pub remote: fetch::Remote,
+    pub meta: Arc<HashMap<PathBuf, (u64, i64)>>,
+}
+
+impl RemoteCtx {
+    pub fn file(&self, p: &Path) -> Option<fetch::RemoteFile> {
+        let &(size, mtime) = self.meta.get(p)?;
+        Some(fetch::RemoteFile { remote: self.remote.clone(), path: p.to_path_buf(), size, mtime })
+    }
+}
+
+/// Preview workers (each remote one may be fetching a file).
+const WORKERS: usize = fetch::CONCURRENT_FILES;
 
 /// The preview loader.
 #[derive(Default)]
@@ -67,8 +89,19 @@ impl Previews {
         cv.notify_all();
         if !self.started {
             self.started = true;
-            let s = self.s.clone();
-            let _ = std::thread::Builder::new().name("commander-previews".into()).spawn(move || worker(&s));
+            for _ in 0..WORKERS {
+                let s = self.s.clone();
+                let _ = std::thread::Builder::new().name("commander-previews".into()).spawn(move || worker(&s));
+            }
+        }
+    }
+
+    /// Remote listing context (`None`: local files).
+    pub fn set_remote(&self, r: Option<RemoteCtx>) {
+        let mut s = self.s.0.lock().unwrap();
+        if s.remote.as_ref().map(|r| (&r.remote, r.meta.clone())) != r.as_ref().map(|r| (&r.remote, r.meta.clone())) {
+            s.remote = r;
+            s.done.clear();
         }
     }
 
@@ -102,14 +135,42 @@ fn worker(s: &(Mutex<Shared>, Condvar)) {
                 if g.quit {
                     return;
                 }
-                if let Some(w) = g.want.iter().find(|w| !g.done.contains_key(*w)).cloned() {
-                    break w;
+                if let Some(w) = g.want.iter().find(|w| !g.done.contains_key(*w) && !g.busy.contains(w)).cloned() {
+                    g.busy.push(w.clone());
+                    break (w, g.remote.clone());
                 }
                 g = cv.wait(g).unwrap();
             }
         };
-        let thumb = decode(&job.0, job.1);
+        let (job, remote) = job;
+        let thumb = match remote.as_ref().and_then(|r| r.file(&job.0)) {
+            Some(f) => {
+                // A low-resolution first look while the rest is fetched.
+                let early = |img: image::DynamicImage| {
+                    let t = to_thumb(img, job.1);
+                    let mut g = m.lock().unwrap();
+                    g.done.insert(job.clone(), Some(t));
+                    if let Some(w) = g.waker.clone() {
+                        drop(g);
+                        w();
+                    }
+                };
+                let cancel = || {
+                    let g = m.lock().unwrap();
+                    g.quit || !g.want.contains(&job)
+                };
+                let had = m.lock().unwrap().done.get(&job).cloned().flatten();
+                decode_remote(&f, job.1, &early, &cancel).map(|i| to_thumb(i, job.1)).or(had)
+            }
+            None => decode(&job.0, job.1),
+        };
         let mut g = m.lock().unwrap();
+        g.busy.retain(|w| *w != job);
+        // Still the same listing (local / remote)?
+        if g.remote.as_ref().map(|r| r.remote.clone()) != remote.map(|r| r.remote) {
+            continue;
+        }
+        let thumb = thumb.or_else(|| g.done.get(&job).cloned().flatten());
         g.decoded.push(job.clone());
         g.done.insert(job, thumb);
         if let Some(w) = g.waker.clone() {
@@ -125,9 +186,134 @@ fn decode(p: &Path, max: u32) -> Option<Thumb> {
     } else {
         image::ImageReader::open(p).ok()?.with_guessed_format().ok()?.decode().ok()?
     };
+    Some(to_thumb(img, max))
+}
+
+fn to_thumb(img: image::DynamicImage, max: u32) -> Thumb {
     let img = if img.width() > max || img.height() > max { img.thumbnail(max, max) } else { img };
     let rgba = img.to_rgba8();
-    Some(Thumb { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), w: rgba.width(), h: rgba.height(), rgba: Arc::new(rgba.into_raw()) })
+    Thumb { key: NEXT_KEY.fetch_add(1, Ordering::Relaxed), w: rgba.width(), h: rgba.height(), rgba: Arc::new(rgba.into_raw()) }
+}
+
+/// Largest remote file fetched whole just for a tile.
+const TILE_FETCH_MAX: u64 = 64 << 20;
+
+/// Cached thumbnail of a remote file (key: host, path, size, mtime) at `max`.
+fn remote_thumb_path(f: &fetch::RemoteFile, max: u32) -> PathBuf {
+    mouser_core::storage::resolve_home().join("cache/thumbs").join(format!("r{}-{max}.png", f.key()))
+}
+
+/// A frame (video: at 10 % of the duration, at most 30 s) scaled to `max`,
+/// made by the host's ffmpeg: only the PNG comes over the wire.
+fn remote_ffmpeg_png(f: &fetch::RemoteFile, max: u32) -> Option<Vec<u8>> {
+    let q = cmdr::shell_quote(&f.path.to_string_lossy());
+    let scale = format!("scale=w={max}:h={max}:force_original_aspect_ratio=decrease");
+    let cmd = if cmdr::kind_of(&f.path.to_string_lossy()) == Kind::Video {
+        format!(
+            "d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 {q} 2>/dev/null); \
+             t=$(awk -v d=\"$d\" 'BEGIN{{t=d*0.1; if(t>30)t=30; if(t<=0)t=1; printf \"%.3f\", t}}'); \
+             ffmpeg -v error -nostdin -ss \"$t\" -i {q} -frames:v 1 -vf {scale} -f image2pipe -c:v png pipe:1 || \
+             ffmpeg -v error -nostdin -i {q} -frames:v 1 -vf {scale} -f image2pipe -c:v png pipe:1"
+        )
+    } else {
+        format!("ffmpeg -v error -nostdin -i {q} -frames:v 1 -vf {scale} -f image2pipe -c:v png pipe:1")
+    };
+    f.remote.run(&cmd).ok().filter(|v| v.starts_with(b"\x89PNG"))
+}
+
+fn save_thumb(path: &Path, png: &[u8]) {
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(path, png);
+}
+
+/// A remote file's preview: cached thumbnails first; tiles from the host's
+/// ffmpeg when it has one (else a fetch: whole image, or ranged reads of a
+/// video through the local ffmpeg); the viewer gets a quick low-resolution
+/// look (`early`) and then the full image once fetched.
+fn decode_remote(f: &fetch::RemoteFile, max: u32, early: &dyn Fn(image::DynamicImage), cancel: &dyn Fn() -> bool) -> Option<image::DynamicImage> {
+    let tp = remote_thumb_path(f, max.min(1024));
+    let kind = cmdr::kind_of(&f.path.to_string_lossy());
+    let cached = || image::open(&tp).ok();
+    let tools = f.remote.tools();
+    let small = |m: u32| -> Option<image::DynamicImage> {
+        let tp = remote_thumb_path(f, m);
+        if let Ok(i) = image::open(&tp) {
+            return Some(i);
+        }
+        let png = remote_ffmpeg_png(f, m)?;
+        save_thumb(&tp, &png);
+        image::load_from_memory(&png).ok()
+    };
+    let whole = || -> Option<image::DynamicImage> {
+        let h = fetch::open(f, None);
+        if !h.wait(0, f.size, std::time::Duration::from_secs(600), cancel) {
+            return None;
+        }
+        image::ImageReader::open(h.cache_path()).ok()?.with_guessed_format().ok()?.decode().ok()
+    };
+    match kind {
+        Kind::Video => {
+            if let Some(i) = cached() {
+                return Some(i);
+            }
+            if tools.ffmpeg {
+                return small(max.min(1024));
+            }
+            let h = fetch::open(f, Some(fetch::HEAD));
+            let url = h.url();
+            let png = ffmpeg_frame(Path::new(&url), max.min(1024))?;
+            save_thumb(&tp, &png);
+            image::load_from_memory(&png).ok()
+        }
+        Kind::Image if max <= 1024 => {
+            if let Some(i) = cached() {
+                return Some(i);
+            }
+            if tools.ffmpeg
+                && let Some(i) = small(max)
+            {
+                return Some(i);
+            }
+            if f.size > TILE_FETCH_MAX {
+                return None;
+            }
+            let i = whole()?;
+            let mut png = Vec::new();
+            if i.thumbnail(max, max).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok() {
+                save_thumb(&tp, &png);
+            }
+            Some(i)
+        }
+        Kind::Image => {
+            let first = image::open(remote_thumb_path(f, 1024)).ok().or_else(|| if tools.ffmpeg { small(1024) } else { None });
+            if let Some(i) = first.clone() {
+                early(i);
+            }
+            whole().or(first)
+        }
+        _ => None,
+    }
+}
+
+/// One frame of `input` (a path or URL ffmpeg reads) at 10 % in, as PNG.
+fn ffmpeg_frame(input: &Path, max: u32) -> Option<Vec<u8>> {
+    let dur = super::player::probe(input).map(|i| i.duration).unwrap_or(0.0);
+    let at = if dur > 0.0 { (dur * 0.1).min(30.0) } else { 1.0 };
+    let scale = format!("scale='if(gt(iw,ih),{max},-2)':'if(gt(iw,ih),-2,{max})'");
+    let run = |t: f64| {
+        std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-ss", &format!("{t:.3}"), "-i"])
+            .arg(input)
+            .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "pipe:1"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success() && !o.stdout.is_empty())
+    };
+    Some(run(at).or_else(|| run(0.0))?.stdout)
 }
 
 /// Where a video's thumbnail is cached: `$MOUSER_HOME/cache/thumbs/<hash>.png`,
@@ -278,6 +464,15 @@ pub struct CommanderMode {
     /// Header overflow (•••) dropdown open.
     menu_open: bool,
     last_scrub: Option<std::time::Instant>,
+    /// The ssh side channel while the listing is remote.
+    ssh: Option<fetch::Remote>,
+    remote_meta: Arc<HashMap<PathBuf, (u64, i64)>>,
+    /// The remote file open in the viewer (or player).
+    open_remote: Option<(PathBuf, fetch::Handle)>,
+    /// Heads of remote text files on screen (tile snippets).
+    heads: HashMap<PathBuf, fetch::Handle>,
+    /// Bytes of the open remote text shown so far.
+    remote_text_at: u64,
 }
 
 /// Zoom of the image in the file view: scale (1.0 = actual pixels) and the
@@ -288,6 +483,8 @@ pub struct Zoom {
     pub scale: f64,
     pub cx: f64,
     pub cy: f64,
+    /// Fit to the width (follows the window); false once zoomed.
+    pub fit: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -320,12 +517,13 @@ fn unpack_xy(a: i32) -> (i32, i32) {
     (a & 0x7fff, (a >> 15) & 0x7fff)
 }
 
-/// Fit scale of a `nat` image in `body`.
-fn fit_scale(body: Rect, nat: (u32, u32)) -> f64 {
+/// Fit scale of a `nat` image in `body`: images fit the WIDTH (a tall one
+/// scrolls / pans vertically).
+pub fn fit_scale(body: Rect, nat: (u32, u32)) -> f64 {
     if nat.0 == 0 || nat.1 == 0 {
         return 1.0;
     }
-    (body.w as f64 / nat.0 as f64).min(body.h as f64 / nat.1 as f64)
+    body.w as f64 / nat.0 as f64
 }
 
 /// Where a zoomed image goes: centred when smaller than the body, else
@@ -442,6 +640,11 @@ impl CommanderMode {
             hits: Hits::default(),
             menu_open: false,
             last_scrub: None,
+            ssh: None,
+            remote_meta: Arc::new(HashMap::new()),
+            open_remote: None,
+            heads: HashMap::new(),
+            remote_text_at: 0,
         }
     }
 
@@ -454,6 +657,30 @@ impl CommanderMode {
     }
 
     fn text_lines(&mut self, p: &Path) -> &[String] {
+        if self.c.remote.is_some() && !self.texts.contains_key(p) {
+            // Remote: the first 4 KB, fetched in the background.
+            static LOADING: Vec<String> = Vec::new();
+            let Some(f) = self.remote_file(p) else { return &LOADING };
+            let waker = self.waker.clone();
+            let h = self.heads.entry(p.to_path_buf()).or_insert_with(|| {
+                let mut h = fetch::open(&f, Some(4096));
+                if let Some(w) = waker {
+                    h.on_progress(w);
+                }
+                h
+            });
+            let n = 4096.min(f.size);
+            if h.map().prefix() < n {
+                return &LOADING;
+            }
+            let buf = h.read(0, n, std::time::Duration::ZERO).unwrap_or_default();
+            let lines = if buf.contains(&0) {
+                vec!["(binary)".into()]
+            } else {
+                String::from_utf8_lossy(&buf).lines().take(40).map(|l| l.replace('\t', "  ")).collect()
+            };
+            return self.texts.entry(p.to_path_buf()).or_insert(lines);
+        }
         self.texts.entry(p.to_path_buf()).or_insert_with(|| {
             let mut buf = vec![0; 4096];
             let n = std::fs::File::open(p).and_then(|mut f| std::io::Read::read(&mut f, &mut buf)).unwrap_or(0);
@@ -467,8 +694,8 @@ impl CommanderMode {
 
     /// The preview of `e` inside `full` (visible part `clip`).
     fn content(&mut self, e: &Entry, (full, clip): (Rect, Rect), max: u32, (cw, ch): (i32, i32), o: &mut Out) {
-        // Remote files are not fetched: their kind and a badge.
-        if self.c.remote.is_some() {
+        // Remote without a side channel: never read a local file of that name.
+        if self.c.remote.is_some() && self.ssh.is_none() {
             let label = if e.kind == Kind::Dir { "folder".to_string() } else { format!("{} · remote", kind_label(e.kind)) };
             let w = (label.chars().count() as i32 * cw).min(clip.w);
             let r = Rect { x: clip.x + (clip.w - w).max(0) / 2, y: clip.y + (clip.h - ch) / 2, w, h: ch };
@@ -625,6 +852,16 @@ impl CommanderMode {
         if cmdr::kind_of(&p.to_string_lossy()) == Kind::Image {
             self.hits.image = body;
             let nat = self.natural(p);
+            if let Some(nat) = nat {
+                let fitw = fit_scale(body, nat);
+                if self.zoom.as_ref().is_none_or(|z| z.path != p) {
+                    self.zoom = Some(Zoom { path: p.to_path_buf(), scale: fitw, cx: 0.5, cy: 0.0, fit: true });
+                }
+                if let Some(z) = self.zoom.as_mut().filter(|z| z.fit) {
+                    z.scale = fitw;
+                }
+            }
+            self.remote_status(body, ch, o);
             let zoomed = self.zoom.as_ref().is_some_and(|z| z.path == p);
             match (nat, zoomed) {
                 (Some(nat), true) => {
@@ -645,7 +882,21 @@ impl CommanderMode {
             }
             return;
         }
-        if self.full_text.as_ref().is_none_or(|t| t.0 != p) {
+        if let Some((_, h)) = self.open_remote.as_ref().filter(|r| r.0 == p) {
+            // Remote: what has arrived from the start; grows as it loads.
+            let size = h.file().size;
+            let have = h.map().prefix().min(1 << 20);
+            if self.full_text.as_ref().is_none_or(|t| t.0 != p) || have != self.remote_text_at {
+                self.remote_text_at = have;
+                let b = h.read(0, have, std::time::Duration::ZERO).unwrap_or_default();
+                let (l, e) = cmdr::text_from_bytes(&b, have >= (1 << 20), &p.display().to_string());
+                self.full_text = Some((p.to_path_buf(), l, e));
+            }
+            if have < size.min(1 << 20) {
+                h.prioritize(have);
+            }
+            self.remote_status(body, ch, o);
+        } else if self.full_text.as_ref().is_none_or(|t| t.0 != p) {
             let (l, e) = cmdr::text_preview(p);
             self.full_text = Some((p.to_path_buf(), l, e));
         }
@@ -667,13 +918,68 @@ impl CommanderMode {
         }
     }
 
-    /// Natural size of an image (cached for the open file).
+    /// Natural size of an image (cached for the open file). Remote: from
+    /// the header once the first read is in, else the quick preview's shape.
     fn natural(&mut self, p: &Path) -> Option<(u32, u32)> {
         if self.nat.as_ref().is_none_or(|n| n.0 != p) {
-            let d = image::image_dimensions(p).ok()?;
+            let d = match self.open_remote.as_ref().filter(|r| r.0 == p) {
+                Some((_, h)) => {
+                    let m = h.map();
+                    let header = (m.prefix() >= fetch::HEAD.min(h.file().size))
+                        .then(|| image::ImageReader::open(h.cache_path()).ok()?.with_guessed_format().ok()?.into_dimensions().ok())
+                        .flatten();
+                    match header {
+                        Some(d) => d,
+                        None => {
+                            // Not cached: a provisional shape, asked again next frame.
+                            let t = self.previews.get(&(p.to_path_buf(), 2048)).flatten()?;
+                            return Some((t.w, t.h));
+                        }
+                    }
+                }
+                None if self.c.remote.is_some() => return None,
+                None => image::image_dimensions(p).ok()?,
+            };
             self.nat = Some((p.to_path_buf(), d));
         }
         self.nat.as_ref().map(|n| n.1)
+    }
+
+    /// Remote file in the view: how much has arrived, or why it failed.
+    fn remote_status(&self, body: Rect, ch: i32, o: &mut Out) {
+        let Some((_, h)) = &self.open_remote else { return };
+        let r = Rect { x: body.x, y: body.y + body.h - ch, w: body.w, h: ch };
+        if let Some(e) = h.error() {
+            o.items.push(item(r, format!("remote fetch failed: {e}"), PanelStyle::Error, UiAction::None));
+        } else if !h.complete() {
+            let mb = |b: u64| b as f64 / 1048576.0;
+            let t =
+                format!("fetching from {} · {:.1} / {:.1} MB", self.c.remote.as_deref().unwrap_or("remote"), mb(h.map().filled()), mb(h.file().size));
+            o.items.push(item(r, t, PanelStyle::Hint, UiAction::None));
+        }
+    }
+
+    /// The remote file behind `p` (listing metadata).
+    fn remote_file(&self, p: &Path) -> Option<fetch::RemoteFile> {
+        let r = self.ssh.clone()?;
+        self.c.remote.as_ref()?;
+        RemoteCtx { remote: r, meta: self.remote_meta.clone() }.file(p)
+    }
+
+    /// Keep a transfer of the remote file open in the viewer / player.
+    fn ensure_open_remote(&mut self, p: &Path) {
+        if self.open_remote.as_ref().is_some_and(|r| r.0 == p) {
+            return;
+        }
+        self.open_remote = None;
+        let Some(f) = self.remote_file(p) else { return };
+        let mut h = fetch::open(&f, None);
+        if let Some(w) = self.waker.clone() {
+            h.on_progress(w);
+        }
+        self.nat = None;
+        self.remote_text_at = u64::MAX;
+        self.open_remote = Some((p.to_path_buf(), h));
     }
 
     /// Zoom label for the header ("fit 37%", "200%").
@@ -681,6 +987,7 @@ impl CommanderMode {
         let body = self.hits.image;
         let nat = self.natural(p)?;
         Some(match self.zoom.as_ref().filter(|z| z.path == p) {
+            Some(z) if z.fit => format!("fit {:.0}%", z.scale * 100.0),
             Some(z) => format!("{:.0}%", z.scale * 100.0),
             None => format!("fit {:.0}%", fit_scale(body, nat) * 100.0),
         })
@@ -695,11 +1002,11 @@ impl CommanderMode {
         let Some(nat) = self.natural(&p) else { return true };
         let body = self.hits.image;
         let fit = fit_scale(body, nat);
-        let mut z = self.zoom.clone().filter(|z| z.path == p).unwrap_or(Zoom { path: p.clone(), scale: fit, cx: 0.5, cy: 0.5 });
+        let mut z = self.zoom.clone().filter(|z| z.path == p).unwrap_or(Zoom { path: p.clone(), scale: fit, cx: 0.5, cy: 0.0, fit: true });
         let centre = (body.x + body.w / 2, body.y + body.h / 2);
         match factor {
             None => {
-                self.zoom = None;
+                self.zoom = Some(Zoom { path: p, scale: fit, cx: 0.5, cy: 0.0, fit: true });
                 return true;
             }
             Some(0.0) => {
@@ -708,7 +1015,8 @@ impl CommanderMode {
             }
             Some(f) => zoom_about(body, nat, &mut z, f, anchor.unwrap_or(centre)),
         }
-        self.zoom = if (z.scale - fit).abs() < 1e-3 { None } else { Some(z) };
+        z.fit = (z.scale - fit).abs() < 1e-3;
+        self.zoom = Some(z);
         true
     }
 
@@ -716,10 +1024,11 @@ impl CommanderMode {
     fn pan(&mut self, dx: i32, dy: i32) -> bool {
         let Some(nat) = self.nat.as_ref().map(|n| n.1) else { return false };
         let Some(z) = self.zoom.as_mut().filter(|z| matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == z.path)) else { return false };
+        let before = zoom_rect(self.hits.image, nat, z);
         z.cx += dx as f64 / (nat.0 as f64 * z.scale);
         z.cy += dy as f64 / (nat.1 as f64 * z.scale);
-        zoom_rect(self.hits.image, nat, z);
-        true
+        // Moved at all (else: left/right step to the next file, as unzoomed).
+        zoom_rect(self.hits.image, nat, z) != before
     }
 
     fn pointer(&mut self, id: &str, at: (i32, i32)) {
@@ -937,11 +1246,37 @@ impl Mode for CommanderMode {
     }
 
     fn cwd_changed(&mut self, dir: &Path) {
+        if self.ssh.take().is_some() {
+            self.previews.set_remote(None);
+            self.open_remote = None;
+            self.heads.clear();
+            self.texts.clear();
+        }
         self.c.set_cwd(Some(dir.to_path_buf()));
     }
 
+    fn remote_ssh(&mut self, ssh: Option<&mouser_core::remote::SshTarget>) {
+        let r = ssh.cloned().map(fetch::Remote::new);
+        if r != self.ssh {
+            self.ssh = r;
+            self.open_remote = None;
+            self.heads.clear();
+            self.texts.clear();
+        }
+    }
+
     fn remote_changed(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<Entry>, String>>) {
+        let fresh = listing.as_ref().is_some_and(|l| l.is_ok());
         self.c.set_remote(label.to_string(), dir.map(Path::to_path_buf), listing);
+        if fresh {
+            let secs =
+                |t: Option<std::time::SystemTime>| t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
+            let meta: HashMap<PathBuf, (u64, i64)> = self.c.entries.iter().map(|e| (e.path.clone(), (e.size, secs(e.modified)))).collect();
+            if *self.remote_meta != meta {
+                self.remote_meta = Arc::new(meta);
+            }
+        }
+        self.previews.set_remote(self.ssh.clone().map(|remote| RemoteCtx { remote, meta: self.remote_meta.clone() }));
     }
 
     fn set_waker(&mut self, w: Waker) {
@@ -1136,6 +1471,14 @@ impl Mode for CommanderMode {
         let max_h = (a.h - ch * 8).max(ch * 4);
         let h = (a.h / 2).max(ch * 10).min(max_h);
         let rect = Rect { x: a.x + PADDING, y: a.y, w: a.w - 2 * PADDING, h };
+        // A remote file in the viewer: its transfer (dropped when it closes).
+        match &self.c.overlay {
+            Some(Overlay::Preview(p)) if self.c.remote.is_some() => {
+                let p = p.clone();
+                self.ensure_open_remote(&p);
+            }
+            _ => self.open_remote = None,
+        }
         // Playback stops when the viewer closes or shows another file.
         if self.player.as_ref().is_some_and(|pl| !matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == pl.path)) {
             self.player = None;
@@ -1349,6 +1692,8 @@ impl Mode for CommanderMode {
         // Only what is on screen loads; text snippets of files that left are dropped.
         self.previews.want(o.slots.iter().map(|s| s.0.clone()).chain(o.extra.iter().cloned()).collect());
         self.texts.retain(|p, _| o.texts.contains(p));
+        // Off screen: their transfers stop.
+        self.heads.retain(|p, _| o.texts.contains(p));
         let mut images = Vec::new();
         for (want, full, clip) in &o.slots {
             match self.previews.get(want) {
@@ -1400,6 +1745,26 @@ impl CommanderMode {
             cmdr::Effect::None => Effect::None,
             cmdr::Effect::Cd(p) => Effect::Run(cd_line(&p)),
             // The in-app player; the desktop opener only without ffmpeg.
+            // Remote media: ffmpeg reads it through the fetch layer's local
+            // HTTP server (seeks become prioritised ranged reads).
+            cmdr::Effect::External(p) if self.c.remote.is_some() => {
+                if !super::player::available() {
+                    self.c.notice = Some("playing remote media needs ffmpeg here".into());
+                    return Effect::None;
+                }
+                self.c.overlay = Some(Overlay::Preview(p.clone()));
+                self.c.overlay_scroll = 0;
+                self.ensure_open_remote(&p);
+                let Some((_, h)) = &self.open_remote else {
+                    self.c.notice = Some(format!("{}: no ssh side channel to fetch it", p.display()));
+                    return Effect::None;
+                };
+                let url = h.url();
+                let mut pl = super::player::Player::open_input(&p, Path::new(&url), self.body_w.max(320) as u32, self.waker.clone());
+                pl.keep = Some(Box::new(h.clone()));
+                self.player = Some(pl);
+                Effect::None
+            }
             cmdr::Effect::External(p) if super::player::available() => {
                 self.player = Some(super::player::Player::open(&p, self.body_w.max(320) as u32, self.waker.clone()));
                 self.c.overlay = Some(Overlay::Preview(p));
@@ -1462,6 +1827,9 @@ fn crop(mut i: ModeImage, clip: Rect) -> Option<ModeImage> {
 mod tests {
     use super::*;
     use crate::UiViewport;
+
+    /// Tests that set MOUSER_HOME / MOUSER_SSH_BIN run one at a time.
+    static ENV: Mutex<()> = Mutex::new(());
 
     fn ctx() -> Context {
         let viewport = UiViewport { width: 1200, height: 900, cell_w: 9, cell_h: 18 };
@@ -1703,6 +2071,7 @@ mod tests {
 
     #[test]
     fn video_tiles_get_a_cached_thumbnail() {
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
         let t = tempfile::tempdir().unwrap();
         // SAFETY: only this test reads MOUSER_HOME in this binary.
         unsafe { std::env::set_var("MOUSER_HOME", t.path().join("home")) };
@@ -1836,7 +2205,7 @@ mod tests {
         let d = m.view(&ctx(), &k).dock.unwrap();
         assert!(d.items.iter().any(|i| i.text == "me@web1:"));
         assert!(d.items.iter().any(|i| i.text == "/srv" || i.text == "/"), "{:?}", d.items.iter().map(|i| &i.text).collect::<Vec<_>>());
-        assert!(d.items.iter().any(|i| i.text == "image · remote"), "remote badge, nothing fetched");
+        assert!(d.items.iter().any(|i| i.text == "image · remote"), "no side channel: a badge, nothing read");
         assert!(m.previews().decoded().is_empty());
         m.c.selected = 1;
         assert_eq!(m.action("open", 0), Effect::Run("cd -- '/srv/app'".into()), "cd over the PTY");
@@ -1879,9 +2248,12 @@ mod tests {
         assert!(m.zoom.as_ref().unwrap().cx < c0 + 0.2);
         // Ctrl+wheel zooms about the pointer: the image point under it stays put.
         m.action("zoom_fit", 0);
-        assert!(m.zoom.is_none());
+        assert!(m.zoom.as_ref().unwrap().fit);
+        // Fit is to the WIDTH.
+        let v = m.view(&ctx(), &k);
+        assert!((v.images[0].rect.w - body.w).abs() <= 1, "fills the width");
         let nat = (400, 200);
-        let mut z = Zoom { path: "x".into(), scale: fit_scale(body, nat), cx: 0.5, cy: 0.5 };
+        let mut z = Zoom { path: "x".into(), scale: fit_scale(body, nat), cx: 0.5, cy: 0.5, fit: true };
         let a = (body.x + body.w / 4, body.y + body.h / 2);
         let r0 = zoom_rect(body, nat, &mut z);
         let u0 = (a.0 - r0.x) as f64 / r0.w as f64;
@@ -1934,5 +2306,194 @@ mod tests {
         m.action("pointer_up", pack_xy(150, 15));
         assert!(m.press.is_none());
         assert_eq!(unpack_xy(pack_xy(1234, 987)), (1234, 987));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_files_preview_view_and_text_over_fake_ssh() {
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let ssh = t.path().join("fake-ssh");
+        std::fs::write(
+            &ssh,
+            "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o|-F|-p|-l|-i|-J) shift 2;; -*) shift;; *) break;; esac; done\nshift\n[ \"$1\" = -- ] && shift\nPATH=/nonexistent:/usr/bin:/bin exec sh -c \"$*\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        unsafe {
+            std::env::set_var("MOUSER_HOME", t.path().join("home"));
+            std::env::set_var("MOUSER_SSH_BIN", &ssh);
+            std::env::set_var("MOUSER_REMOTE_BACKEND", "cat");
+        }
+        // The "remote" files live here; the listing says they are on fakehost.
+        let srv = t.path().join("srv");
+        std::fs::create_dir(&srv).unwrap();
+        image::RgbaImage::from_pixel(300, 100, image::Rgba([0, 200, 0, 255])).save(srv.join("r.png")).unwrap();
+        std::fs::write(srv.join("notes.txt"), "line one\nline two\n").unwrap();
+        let ent = |n: &str| {
+            let p = srv.join(n);
+            let m = std::fs::metadata(&p).unwrap();
+            Entry { name: n.into(), path: p, kind: cmdr::kind_of(n), mode: "-rw-r--r--".into(), size: m.len(), modified: m.modified().ok() }
+        };
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        let target = mouser_core::remote::SshTarget { opts: vec![], dest: "fakehost".into() };
+        m.remote_ssh(Some(&target));
+        m.remote_changed("fakehost", Some(&srv), Some(Ok(vec![ent("notes.txt"), ent("r.png")])));
+        m.action("view", 1);
+        // Grid: the image tile and the text snippet come over "ssh".
+        let mut ok = (false, false);
+        for _ in 0..300 {
+            let v = m.view(&ctx(), &k);
+            ok.0 |= !v.images.is_empty();
+            ok.1 |= v.dock.as_ref().unwrap().items.iter().any(|i| i.text == "line one");
+            if ok == (true, true) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(ok, (true, true), "remote tile preview and text snippet");
+        // Viewer: fit to width, zoom works, header shows the size from the header bytes.
+        m.c.selected = m.c.visible().iter().position(|e| e.name == "r.png").unwrap();
+        m.action("open", 0);
+        assert_eq!(m.c.overlay, Some(Overlay::Preview(srv.join("r.png"))));
+        let mut v = m.view(&ctx(), &k);
+        for _ in 0..300 {
+            v = m.view(&ctx(), &k);
+            if !v.images.is_empty() && m.nat.as_ref().is_some_and(|n| n.1 == (300, 100)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(m.nat.as_ref().map(|n| n.1), Some((300, 100)));
+        assert!((v.images[0].rect.w - m.hits.image.w).abs() <= 1);
+        assert_eq!(m.action("zoom_actual", 0), Effect::None);
+        assert!(m.open_remote.as_ref().unwrap().1.complete());
+        // Text in the viewer.
+        m.c.overlay = Some(Overlay::Preview(srv.join("notes.txt")));
+        let mut found = false;
+        for _ in 0..300 {
+            let v = m.view(&ctx(), &k);
+            if v.dock.unwrap().items.iter().any(|i| i.text == "line two") {
+                found = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(found, "remote text in the viewer");
+        // Closing drops the transfer.
+        m.c.overlay = None;
+        m.view(&ctx(), &k);
+        assert!(m.open_remote.is_none());
+    }
+
+    /// Timing over a real sshd: `MX_REMOTE_DIR=/dir MX_SSH_DEST=host
+    /// MOUSER_SSH_CONFIG=cfg cargo test -p mouser-render --lib measure_remote -- --ignored --nocapture`
+    /// (files: big.jpg, big.mp4 in the dir).
+    #[test]
+    #[ignore]
+    fn measure_remote() {
+        let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = PathBuf::from(std::env::var("MX_REMOTE_DIR").unwrap());
+        let dest = std::env::var("MX_SSH_DEST").unwrap();
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+        let ent = |n: &str| {
+            let p = dir.join(n);
+            let m = std::fs::metadata(&p).unwrap();
+            Entry { name: n.into(), path: p, kind: cmdr::kind_of(n), mode: "-rw-r--r--".into(), size: m.len(), modified: m.modified().ok() }
+        };
+        let k = Keymap::new(cmdr::BINDINGS);
+        let ms = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1000.0;
+        let target = mouser_core::remote::SshTarget { opts: vec![], dest: dest.clone() };
+        let tools = fetch::Remote::new(target.clone()).tools();
+        println!("backend {:?} remote tools {tools:?}", fetch::backend(&fetch::Remote::new(target.clone())));
+        // Image: tile, first look, full.
+        let mut m = CommanderMode::new();
+        m.remote_ssh(Some(&target));
+        m.remote_changed(&dest, Some(&dir), Some(Ok(vec![ent("big.jpg"), ent("big.mp4")])));
+        m.action("view", 1);
+        let t0 = std::time::Instant::now();
+        let mut tiles = 0;
+        while tiles < 2 && t0.elapsed().as_secs() < 120 {
+            tiles = m.view(&ctx(), &k).images.len();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        println!("grid: both tiles {:.0} ms", ms(t0));
+        let big = |m: &CommanderMode, n: &str| m.c.visible().iter().position(|e| e.name == n).unwrap();
+        m.c.selected = big(&m, "big.jpg");
+        let t0 = std::time::Instant::now();
+        m.action("open", 0);
+        let (mut first, mut header) = (None, None);
+        loop {
+            let v = m.view(&ctx(), &k);
+            if first.is_none() && !v.images.is_empty() {
+                first = Some(ms(t0));
+            }
+            if header.is_none() && m.nat.as_ref().is_some_and(|n| n.1 == (8000, 6000)) {
+                header = Some(ms(t0));
+            }
+            let done = m.previews.get(&(dir.join("big.jpg"), 2048)).flatten().is_some_and(|t| t.w == 2048)
+                && m.open_remote.as_ref().is_some_and(|r| r.1.complete());
+            if done || t0.elapsed().as_secs() > 300 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        println!("image 33 MB: first preview {first:?} ms, header {header:?} ms, full + decoded {:.0} ms", ms(t0));
+        // Video: first frame, seek, full.
+        m.c.overlay = None;
+        m.view(&ctx(), &k);
+        m.c.selected = big(&m, "big.mp4");
+        let t0 = std::time::Instant::now();
+        m.action("open", 0);
+        let mut ff = None;
+        while t0.elapsed().as_secs() < 120 {
+            m.view(&ctx(), &k);
+            if m.player.as_ref().is_some_and(|p| p.frame().is_some()) {
+                ff = Some(ms(t0));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        println!("video 153 MB (moov at end): first frame after {ff:?} ms; err {:?}", m.player.as_ref().and_then(|p| p.error.clone()));
+        let mut full: Option<f64> = None;
+        let mut run = |m: &mut CommanderMode, secs: u64| {
+            let t = std::time::Instant::now();
+            while t.elapsed().as_secs() < secs {
+                m.view(&ctx(), &k);
+                if full.is_none() && m.open_remote.as_ref().is_some_and(|r| r.1.complete()) {
+                    full = Some(ms(t0));
+                    println!("video: all {} MB here after {:.0} ms", m.open_remote.as_ref().unwrap().1.file().size >> 20, ms(t0));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
+        };
+        run(&mut m, 6);
+        let t1 = std::time::Instant::now();
+        m.player.as_mut().unwrap().seek_to(90.0);
+        let mut sk = None;
+        while t1.elapsed().as_secs() < 60 {
+            m.view(&ctx(), &k);
+            if m.player.as_ref().is_some_and(|p| p.last_seek_gap.is_some()) {
+                sk = Some(ms(t1));
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        println!("seek to 90 s (not fetched yet): playing again after {sk:?} ms; gap {:?}", m.player.as_ref().unwrap().last_seek_gap);
+        run(&mut m, 6);
+        println!("dropped frames {}", m.player.as_ref().unwrap().dropped());
+        let h = m.open_remote.as_ref().unwrap().1.clone();
+        println!("at close: {:.1} of {:.1} MB here", h.map().filled() as f64 / 1048576.0, h.file().size as f64 / 1048576.0);
+        m.c.overlay = None;
+        m.view(&ctx(), &k);
+        // Full transfer (on its own; the player is gone).
+        let t2 = std::time::Instant::now();
+        let g = fetch::open(h.file(), None);
+        drop(h);
+        g.wait(0, g.file().size, std::time::Duration::from_secs(600), &|| false);
+        println!("video rest fetched in {:.0} ms more ({:?}, complete {})", ms(t2), g.error(), g.complete());
     }
 }

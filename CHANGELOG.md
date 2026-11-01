@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Added (t183u-t186u): remote files like local ones
+
+- Commander in SSH sessions shows thumbnails, opens the viewer (zoom included) and plays video/audio with seek, instead of a notice.
+- New `mouser_core::fetch` layer (reusable for a later sync): ranged, parallel reads (3 segments per file, 3 files at once) over the session's ControlMaster side channel into a sparse cache (`$MOUSER_HOME/cache/remote`, key host+path+size+mtime, filled-range map, LRU cap `MOUSER_REMOTE_CACHE_MB`, default 2048). The first read is the 256 KB head; seeks and scrolls prioritise their range; off-screen / closed transfers stop, small ones (`MOUSER_REMOTE_COMPLETE_MB`, default 64) finish into the cache with rsync (both ends) or scp, else ranged reads.
+- Remote video plays through a local HTTP range server backed by the fetch layer (ffmpeg seeks become prioritised reads); thumbnails come from the host's ffmpeg when it has one, else a ranged read decoded locally.
+
+### Changed
+
+- The image viewer's fit (default and alt+0) fits the WIDTH; tall images scroll/pan.
+
 ### Added (t181u/t182u)
 
 - Commander image view zoom: alt+= / alt+- (same keys as player volume; each view takes its own), alt+0 fit, alt+1 100%; ctrl+wheel zooms about the pointer; pan by drag, alt+arrows or the wheel; zoom % in the header; full-resolution decode past the 2048 px preview; clipped to the view.

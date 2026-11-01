@@ -1638,7 +1638,7 @@ fn attach_mode_view(
                 }
                 _ => None,
             };
-            st.modes.set_remote(&label, dir.as_deref(), listing);
+            st.modes.set_remote(&label, dir.as_deref(), listing, ssh.as_ref());
         }
         None => {}
     }

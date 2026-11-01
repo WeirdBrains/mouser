@@ -27,24 +27,17 @@ pub struct RemoteLister {
 /// Refresh what is shown this often.
 const STALE: Duration = Duration::from_secs(5);
 
-/// The ssh binary (`MOUSER_SSH_BIN` overrides it, for tests).
 fn ssh_bin() -> std::ffi::OsString {
-    std::env::var_os("MOUSER_SSH_BIN").unwrap_or_else(|| "ssh".into())
+    mouser_core::fetch::ssh_bin()
 }
 
 fn control_dir() -> PathBuf {
-    mouser_core::storage::resolve_home().join("cache/ssh")
+    mouser_core::fetch::control_dir()
 }
 
 /// Run the listing; the error is ssh's last stderr line.
 pub fn fetch(t: &SshTarget, dir: &Path) -> Result<Vec<Entry>, String> {
     let cd = control_dir();
-    let _ = std::fs::create_dir_all(&cd);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&cd, std::fs::Permissions::from_mode(0o700));
-    }
     let mut cmd = std::process::Command::new(ssh_bin());
     // The config Mouser manages (tests: a temp one), as the launcher uses it.
     if let Some(cfg) = std::env::var_os("MOUSER_SSH_CONFIG")

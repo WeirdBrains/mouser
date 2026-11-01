@@ -80,6 +80,8 @@ pub trait Mode: Send {
     /// The shell is on another host (`label` = user@host) in `dir` (`None`:
     /// unknown), listed over ssh (`None`: loading). Called every frame.
     fn remote_changed(&mut self, _label: &str, _dir: Option<&Path>, _listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {}
+    /// The ssh side channel to the remote shell's host (`None`: none / local).
+    fn remote_ssh(&mut self, _ssh: Option<&mouser_core::remote::SshTarget>) {}
     /// A bound key (`id` from [`Mode::bindings`]) or a click in the mode's
     /// view or window (`id`, `arg` from its `UiAction::Mode` items).
     fn action(&mut self, id: &str, arg: i32) -> Effect;
@@ -231,9 +233,16 @@ impl Host {
     }
 
     /// The shell is remote (see [`Mode::remote_changed`]).
-    pub fn set_remote(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {
+    pub fn set_remote(
+        &mut self,
+        label: &str,
+        dir: Option<&Path>,
+        listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>,
+        ssh: Option<&mouser_core::remote::SshTarget>,
+    ) {
         self.cwd = None;
         if let Some((m, _)) = self.mode() {
+            m.remote_ssh(ssh);
             m.remote_changed(label, dir, listing);
         }
     }

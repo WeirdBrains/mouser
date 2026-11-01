@@ -654,15 +654,7 @@ impl Commander {
         let Some(e) = self.selected_entry().cloned() else { return Effect::None };
         match e.kind {
             Kind::Dir => Effect::Cd(e.path),
-            // Remote files are not fetched: open them with a command instead.
-            _ if self.remote.is_some() => {
-                self.notice = Some(format!(
-                    "{} is on {}: no preview or player for remote files (pipe it into a command)",
-                    e.name,
-                    self.remote.as_deref().unwrap_or("")
-                ));
-                Effect::None
-            }
+            // Remote files open like local ones (fetched by `fetch`).
             Kind::Video | Kind::Audio => Effect::External(e.path),
             _ => {
                 self.overlay = Some(Overlay::Preview(e.path));
@@ -727,6 +719,18 @@ pub fn manual(k: &crate::modes::Keymap) -> Vec<String> {
 
 /// A text file for the full-width view: up to 5000 lines of the first
 /// 1 MiB; `(lines, error)`.
+/// Lines of `b` for the file view (`more`: there is more after it).
+pub fn text_from_bytes(b: &[u8], more: bool, name: &str) -> (Vec<String>, Option<String>) {
+    if b.contains(&0) {
+        return (Vec::new(), Some(format!("{name}: binary file")));
+    }
+    let mut v: Vec<String> = String::from_utf8_lossy(b).lines().take(5000).map(String::from).collect();
+    if more || v.len() == 5000 {
+        v.push("[…]".into());
+    }
+    (v, None)
+}
+
 pub fn text_preview(p: &Path) -> (Vec<String>, Option<String>) {
     const MAX: u64 = 1 << 20;
     let read = std::fs::File::open(p).and_then(|f| {
@@ -1000,12 +1004,13 @@ mod remote_tests {
         c.flags.all = false;
         c.relist();
         assert_eq!(c.visible().len(), 2, "flags re-sort the remote listing, no local read");
-        // Folders cd (over the PTY), files say why they don't open.
+        // Folders cd (over the PTY), files open in the viewer like local ones.
         c.selected = 0;
         assert_eq!(c.open_selected(), Effect::Cd("/srv/app".into()));
         c.selected = 1;
         assert_eq!(c.open_selected(), Effect::None);
-        assert!(c.overlay.is_none() && c.notice.as_deref().unwrap().contains("remote"));
+        assert_eq!(c.overlay, Some(Overlay::Preview("/srv/b.png".into())));
+        c.overlay = None;
         // Up on the remote side selects where we came from.
         c.set_remote("me@web1".into(), Some("/srv/app/x".into()), Some(Ok(vec![])));
         c.set_remote("me@web1".into(), Some("/srv/app".into()), None);
