@@ -17,7 +17,7 @@
     <a href="#features">Features</a>
     <a href="#install">Install</a>
     <a href="#start">Quick start</a>
-    <a href="https://github.com/m3talsmith/mouser">GitHub</a>
+    <a href="https://github.com/WeirdBrains/mouser">GitHub</a>
   </nav>
 </header>
 <main id="main">
@@ -25,10 +25,11 @@
   <div class="hero-text">
     <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
-    <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. Linux first.</p>
+    <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. A file commander, a media player and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
+    <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.0.0">Version 1.0.0</a> · BSD-3-Clause</p>
     <p class="cta">
       <a class="btn" href="#install">Install</a>
-      <a class="btn ghost" href="https://github.com/m3talsmith/mouser">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/WeirdBrains/mouser">View on GitHub</a>
     </p>
   </div>
   <figure class="shot">
@@ -39,14 +40,16 @@
 <section id="features" aria-labelledby="f-h">
   <h2 id="f-h">Features</h2>
   <ul class="grid">
-    <li><h3>GPU rendering</h3><p>wgpu renderer with a CPU fallback (<code>MOUSER_RENDERER=cpu</code>).</p></li>
-    <li><h3>Tabs</h3><p>Each tab has its own PTY, screen, scrollback and title. Connections open in new tabs.</p></li>
-    <li><h3>Connection manager</h3><p>Sidebar for SSH hosts from your ssh config, plus Waypipe, tunnels and X11.</p></li>
-    <li><h3>Compressed scrollback</h3><p>Chunked history compressed with Zstd or LZ4 when idle, searchable across compressed chunks.</p></li>
-    <li><h3>Fuzzball protocol</h3><p>Mouser's own open graphics and keyboard protocol. Read the <a href="https://github.com/m3talsmith/mouser/tree/main/docs/protocol">spec</a>. Fallback: Kitty keyboard only.</p></li>
+    <li><h3>GPU engines</h3><p>Render engines are plugins: <code>mouser</code> (wgpu), Skia, the CPU renderer, or your own via a C ABI. Switch live with <code>mouser engine use</code>.</p></li>
+    <li><h3>Crash-proof windows</h3><p>On Linux and macOS the shells live in a session process; a GPU driver or engine crash restarts only the window, with your shells, scrollback and tabs intact.</p></li>
+    <li><h3>Commander</h3><p>A file manager docked above the prompt: list, grid and carousel views, image and text previews, and a video and audio player, local or over SSH.</p></li>
+    <li><h3>Chat and MCP</h3><p>An optional agent (<code>esc :a</code>) that sees your screen and acts through tools, with an approval card for every command. Mouser is also an MCP server and client.</p></li>
+    <li><h3>Your models</h3><p>OpenAI, Anthropic, Gemini, xAI, OpenRouter, Kimi or any compatible server, or an optional built-in local Gemma model. Keys stay in the OS keychain.</p></li>
+    <li><h3>Tabs and connections</h3><p>Each tab has its own PTY, screen, scrollback and title. A sidebar for SSH hosts from your ssh config, plus Waypipe, tunnels and X11.</p></li>
+    <li><h3>Compressed scrollback</h3><p>Chunked history compressed with Zstd or LZ4 when idle, keeping colours, and searchable across compressed chunks.</p></li>
+    <li><h3>Fuzzball protocol</h3><p>Mouser's own open graphics and keyboard protocol. Read the <a href="https://github.com/WeirdBrains/mouser/tree/main/docs/protocol">spec</a>. Fallbacks: Kitty keyboard and Kitty graphics.</p></li>
     <li><h3>Modern xterm</h3><p>Truecolour, curly and coloured underlines, wide characters, mouse, focus, bracketed paste, OSC 8 links and OSC 52.</p></li>
-    <li><h3>Red Star theme</h3><p>Dark and light Red Star themes by default, following the system mode.</p></li>
-    <li><h3>TOML config</h3><p>Font, colours, scrollback size, compression algorithm and level, and idle thresholds.</p></li>
+    <li><h3>Plugins</h3><p>Modes, engines, model providers and MCP tools install as plugins with explicit permissions: <code>mouser plugin list</code>.</p></li>
   </ul>
 </section>
 
@@ -56,19 +59,27 @@
     <div>
       <h3>Homebrew (macOS)</h3>
 <pre><code># CLI
-brew install --formula https://raw.githubusercontent.com/m3talsmith/mouser/main/Formula/mouser.rb
+brew install --formula https://raw.githubusercontent.com/WeirdBrains/mouser/main/Formula/mouser.rb
 # App
-brew install --cask https://raw.githubusercontent.com/m3talsmith/mouser/main/Casks/mouser.rb</code></pre>
+brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Casks/mouser.rb</code></pre>
+    </div>
+    <div>
+      <h3>Arch Linux</h3>
+<pre><code># Prebuilt release
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.0.0/mouser-bin-1.0.0-1-x86_64.pkg.tar.zst
+# Or build main from source
+git clone https://github.com/WeirdBrains/mouser
+cd mouser/packaging/arch/mouser-git &amp;&amp; makepkg -si</code></pre>
     </div>
     <div>
       <h3>From source with cargo</h3>
-<pre><code>git clone https://github.com/m3talsmith/mouser
+<pre><code>git clone https://github.com/WeirdBrains/mouser
 cd mouser
 cargo run -p mouser-app --release</code></pre>
     </div>
     <div>
       <h3>GitHub Releases</h3>
-      <p>Each <a href="https://github.com/m3talsmith/mouser/releases">release</a> ships:</p>
+      <p>Each <a href="https://github.com/WeirdBrains/mouser/releases">release</a> ships:</p>
       <ul class="list">
         <li>Linux: <code>.deb</code>, <code>.rpm</code>, Arch <code>mouser-bin</code></li>
         <li>macOS: <code>Mouser.app</code> <code>.dmg</code></li>
@@ -99,7 +110,7 @@ cargo run -p mouser-app --release</code></pre>
 </section>
 </main>
 <footer class="light">
-  <p><a href="https://github.com/m3talsmith/mouser">GitHub</a> · <a href="https://github.com/m3talsmith/mouser/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/m3talsmith/mouser/blob/main/docs/terminal.md">Terminal docs</a></p>
+  <p><a href="https://github.com/WeirdBrains/mouser">GitHub</a> · <a href="https://github.com/WeirdBrains/mouser/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/terminal.md">Terminal docs</a> · <a href="https://github.com/WeirdBrains/mouser/blob/main/LICENSE">BSD-3-Clause</a> · © 2026 Weird Brains</p>
 </footer>
 <script src="main.js"></script>
 </body>
