@@ -1,0 +1,13 @@
+# A command plugin: adds `hello` to the [mouser] command line (F10, then `hello Michael`).
+name = "hello-command"
+version = "0.1.0"
+description = "says hello from the [mouser] line"
+permissions = ["run", "notify"]
+
+[[provides]]
+kind = "command"
+
+[run]
+transport = "command"
+command = ["sh", "./hello.sh"]
+commands = ["hello"]

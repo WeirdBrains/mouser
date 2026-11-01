@@ -1,36 +1,28 @@
-# Kitty Protocol Compliance — Mouser
+# Kitty keyboard protocol compliance — Mouser
 
-Tracking status of Kitty protocol extensions per https://sw.kovidgoyal.net/kitty/protocol-extensions/
+Mouser supports **only** the Kitty keyboard protocol, as a fallback for applications that do
+not use [Fuzzball keyboard mode](protocol/keyboard.md). Fuzzball wins when both are active.
+Kitty graphics is supported as a separate fallback (see `docs/protocol/graphics.md` §7). iTerm2 `OSC 1337` images and the `xterm-kitty` TERM fallback are not supported.
 
-Legend: [x] Implemented, [~] Partial, [ ] Not yet
+Spec: <https://sw.kovidgoyal.net/kitty/keyboard-protocol/>. Tests, one per spec section:
+`crates/mouser-core/tests/kitty_keyboard_spec_tests.rs` (plus `kitty_keyboard_tests.rs`).
 
-## Keyboard protocol
+Legend: ✅ compliant · 🟡 partial · ➖ not applicable
 
-- [x] Negotiation: recognize enable/disable and query commands; respond as supported
-- [~] Reporting: `CSI u` extended key reports with modifiers for common keys (ASCII, arrows, Home/End, PgUp/PgDn, Function keys)
-- [ ] Progressive enhancement flags coverage for all key classes
-- [ ] IME pre-edit and compose sequences mapped to extended reports
-
-## Graphics protocol
-
-- [~] Direct transmission: parse Kitty graphics data stream; PNG/JPEG payloads supported; basic placement and deletion
-- [~] File-based transmission: parse iTerm2-compatible `OSC 1337` File=... for compatibility
-- [ ] Temp file and shared memory transports
-- [ ] Z-index, animation, multi-frame images
-- [ ] Unicode placeholders and alt-text fallbacks
-- [ ] Memory management policies for large image lifetimes
-
-## Other commonly used extensions
-
-- [~] Styled/colored underlines (SGR 4.x variants)
-- [~] OSC 8 hyperlinks — parse and render underlined clickable regions (rendering limited)
-- [~] OSC 52 clipboard — copy/paste integration (copy implemented; paste gated by security prompt; rendering limited)
-- [~] Synchronized output (Mode 2026) — coalesced paint during sync windows
-- [ ] OSC 99 desktop notifications
-
-## Notes
-
-- Parser coverage is validated by unit tests in `mouser-core/tests/kitty_*_tests.rs`.
-- Rendering behavior for graphics is intentionally conservative to avoid excessive memory use; lifetimes and eviction will improve over time.
-- If an application misbehaves, please capture the escape stream (e.g., with `script -f`) and open an issue.
-
+| Spec section | Status | Notes |
+|---|---|---|
+| Progressive enhancement: `CSI > flags u` push, `CSI < n u` pop, `CSI = flags ; mode u` set/or/clear, `CSI ? u` query | ✅ | Stack per screen (main/alt), bounded; pop beyond empty resets to 0; RIS clears both. |
+| Flag 1 — disambiguate escape codes | ✅ | Esc, Alt/Ctrl+keys, F13+, media, keypad nav keys as `CSI u`; Enter/Tab/Backspace stay legacy. |
+| Flag 2 — report event types | ✅ | `:2` repeat, `:3` release; Enter/Tab/Backspace releases only with flag 8. |
+| Flag 4 — report alternate keys | ✅ | Shifted key and base-layout key fields. |
+| Flag 8 — report all keys as escape codes | ✅ | Text keys, Enter/Tab/Backspace, modifier keys (57441…) reported; lock bits kept. |
+| Flag 16 — report associated text | ✅ | Text codepoints as third field; omitted on release. |
+| Key event encoding `CSI code;mods:event;text u` | ✅ | Unicode codepoint of the unshifted key; trailing defaults omitted. |
+| Modifiers (1 + bits: shift 1, alt 2, ctrl 4, super 8) | ✅ | |
+| Modifiers hyper 16, meta 32 | 🟡 | winit does not expose Hyper/Meta; never set. |
+| Lock modifiers caps 64, num 128 | 🟡 | Encoding supported; winit does not report lock state, so not set from the window. |
+| Functional key definitions (PUA 57344+, legacy `CSI ~` / `SS3` forms) | ✅ | Full table incl. keypad (57399…), media (57428…), modifiers (57441…). |
+| Legacy mode (flags 0) keys | ✅ | xterm encoding; Ctrl+Backspace 0x08, Ctrl+Shift/Super+text as `CSI u`; F13+ not sent (optional). |
+| Disambiguation of Alt+Esc, Ctrl+Tab etc. | 🟡 | Some combinations are reserved by Mouser's own shortcuts and are not delivered. |
+| Detection (`CSI ? u` answered before DA1) | ✅ | |
+| IME / compose | ➖ | Committed text is sent as text; the spec defines no pre-edit encoding. |

@@ -3,7 +3,7 @@
 
 use crate::parser::{Modes, MouseMode};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MouseButton {
     Left,
     Middle,
@@ -14,14 +14,14 @@ pub enum MouseButton {
     None,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MouseKind {
     Press,
     Release,
     Motion,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MouseEvent {
     pub kind: MouseKind,
     pub button: MouseButton,
@@ -90,9 +90,12 @@ pub fn encode_focus(focused: bool, modes: &Modes) -> Option<&'static [u8]> {
 }
 
 /// Wrap pasted text in 200~/201~ when bracketed paste is on. Embedded end
-/// markers are stripped so pasted text can't break out of the bracket.
+/// markers are stripped so pasted text can't break out of the bracket, and
+/// control characters other than tab, newline and carriage return (C0, DEL,
+/// C1) are dropped, as kitty and foot do, so a paste can't send escape
+/// sequences or signals (Ctrl+C) to the program.
 pub fn paste_bytes(text: &str, modes: &Modes) -> Vec<u8> {
-    let clean = text.replace("\x1b[201~", "");
+    let clean: String = text.replace("\x1b[201~", "").chars().filter(|&c| matches!(c, '\t' | '\n' | '\r') || !(c.is_control())).collect();
     if modes.bracketed_paste {
         format!("\x1b[200~{clean}\x1b[201~").into_bytes()
     } else {

@@ -80,7 +80,7 @@ pub mod mods {
     pub const NUM_LOCK: u8 = 128;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyEventType {
     Press = 1,
     Repeat = 2,
@@ -88,7 +88,7 @@ pub enum KeyEventType {
 }
 
 /// Non-text keys, with the protocol's functional key codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Func {
     Escape,
     Enter,
@@ -167,24 +167,13 @@ impl Func {
         }
     }
 
-    /// Keys that only exist as escape codes under "report all keys".
+    /// Modifier and lock keys: reported only under "report all keys".
     fn all_keys_only(self) -> bool {
-        matches!(
-            self,
-            Func::CapsLock
-                | Func::ScrollLock
-                | Func::NumLock
-                | Func::PrintScreen
-                | Func::Pause
-                | Func::Menu
-                | Func::Keypad(_)
-                | Func::Media(_)
-                | Func::Modifier(_)
-        ) || matches!(self, Func::F(n) if n > 12)
+        matches!(self, Func::CapsLock | Func::ScrollLock | Func::NumLock | Func::Modifier(_))
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum KeyCode {
     /// A text key, as its unshifted character.
     Char(char),
@@ -192,7 +181,7 @@ pub enum KeyCode {
 }
 
 /// A key event in toolkit-neutral form.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct KeyInput {
     pub key: KeyCode,
     /// The shifted character, when shift is held and it differs.
@@ -249,7 +238,9 @@ pub fn encode_key(k: &KeyInput, f: u32) -> Encoded {
             if !all && f & flags::DISAMBIGUATE == 0 {
                 return if release { Encoded::Nothing } else { Encoded::Legacy };
             }
-            Encoded::Bytes(csi_u(k, lower(*c) as u32, f).into_bytes())
+            // Lock modifiers are not reported for text keys unless all keys are escapes.
+            let k = if all { k.clone() } else { KeyInput { mods: active, ..k.clone() } };
+            Encoded::Bytes(csi_u(&k, lower(*c) as u32, f).into_bytes())
         }
         KeyCode::Func(func) => {
             let func = *func;
@@ -257,7 +248,18 @@ pub fn encode_key(k: &KeyInput, f: u32) -> Encoded {
                 if func.all_keys_only() {
                     return if release { Encoded::Nothing } else { Encoded::Legacy };
                 }
-                if matches!(func, Func::Enter | Func::Tab | Func::Backspace) && (active == 0 || f & flags::DISAMBIGUATE == 0) {
+                if matches!(func, Func::Enter | Func::Tab | Func::Backspace) {
+                    // No release events for these without "report all keys", so
+                    // `reset` stays typeable after a crashed program.
+                    if release {
+                        return Encoded::Nothing;
+                    }
+                    if active == 0 || f & flags::DISAMBIGUATE == 0 {
+                        return Encoded::Legacy;
+                    }
+                }
+                // Keypad keys that produce text stay text unless all keys are escapes.
+                if matches!(func, Func::Keypad(_)) && (f & flags::DISAMBIGUATE == 0 || (k.text.is_some() && active & !mods::SHIFT == 0)) {
                     return if release { Encoded::Nothing } else { Encoded::Legacy };
                 }
                 if func == Func::Escape && f & flags::DISAMBIGUATE == 0 {
@@ -323,33 +325,4 @@ fn csi_u(k: &KeyInput, code: u32, f: u32) -> String {
     }
     s.push('u');
     s
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KittyGraphicsEvent {
-    Begin { id: Option<u32>, width: Option<u32>, height: Option<u32> },
-    DataChunk(Vec<u8>),
-    End,
-    Delete { id: Option<u32> },
-}
-
-pub fn parse_kitty_graphics_params(params: &str) -> KittyGraphicsEvent {
-    // Very small parser: recognize t=d (delete) and i=<id>, s=<w>, v=<h>
-    let mut id = None;
-    let mut width = None;
-    let mut height = None;
-    let mut delete = false;
-    for kv in params.split(',') {
-        let mut it = kv.splitn(2, '=');
-        let k = it.next().unwrap_or("");
-        let v = it.next().unwrap_or("");
-        match k {
-            "i" => id = v.parse::<u32>().ok(),
-            "s" => width = v.parse::<u32>().ok(),
-            "v" => height = v.parse::<u32>().ok(),
-            "t" if v == "d" => delete = true,
-            _ => {}
-        }
-    }
-    if delete { KittyGraphicsEvent::Delete { id } } else { KittyGraphicsEvent::Begin { id, width, height } }
 }

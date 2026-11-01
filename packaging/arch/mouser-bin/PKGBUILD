@@ -1,0 +1,51 @@
+# Maintainer: Michael Christenson II <placeholder: set before publishing to the AUR>
+# Release workflow: pkgver and the sha256sums are filled in by packaging/arch/update-bin.sh.
+pkgname=mouser-bin
+_pkgname=mouser
+pkgver=0.7.2
+pkgrel=1
+pkgdesc="Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty graphics (prebuilt binary)"
+arch=('x86_64')
+url="https://github.com/WeirdBrains/mouser"
+license=('BSD-3-Clause')
+depends=('glibc' 'libgcc' 'libstdc++' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'alsa-lib')
+makedepends=('ncurses')
+optdepends=('vulkan-icd-loader: GPU renderer (falls back to CPU without it)'
+            'libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
+            'libx11: X11 session support'
+            'libxcursor: X11 cursors'
+            'libxi: X11 input'
+            'libxrandr: X11 monitors')
+provides=('mouser')
+conflicts=('mouser' 'mouser-git')
+options=('!strip' '!debug')
+source=("${_pkgname}-src-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+source_x86_64=("${_pkgname}-${pkgver}-x86_64-unknown-linux-gnu.tar.gz::${url}/releases/download/v${pkgver}/mouser-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums=('3ac4ae0eb39bcbbddba1503c2a2e52bb58a0850447ed572ffb70b3599c56417a')
+sha256sums_x86_64=('bdfd67a90da668eb0a537f499f1e1310dddf81aa4c7ec5d8ef1b082581dafd27')
+
+build() {
+  cd "${_pkgname}-${pkgver}"
+  mkdir -p terminfo
+  tic -x -o terminfo extra/mouser.terminfo
+}
+
+package() {
+  install -Dm755 "${srcdir}/mouser-app" "${pkgdir}/usr/bin/mouser"
+  cd "${_pkgname}-${pkgver}"
+  install -Dm644 resources/linux/mouser.desktop "${pkgdir}/usr/share/applications/mouser.desktop"
+  install -Dm644 resources/linux/io.github.m3talsmith.mouser.metainfo.xml \
+    "${pkgdir}/usr/share/metainfo/io.github.m3talsmith.mouser.metainfo.xml"
+  local d
+  for d in resources/icons/hicolor/*/apps/mouser.png; do
+    install -Dm644 "$d" "${pkgdir}/usr/share/icons/${d#resources/icons/}"
+  done
+  install -Dm644 resources/icons/mouser.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/mouser.svg"
+  install -d "${pkgdir}/usr/share/terminfo"
+  cp -a terminfo/. "${pkgdir}/usr/share/terminfo/"
+  install -Dm644 extra/mouser.terminfo "${pkgdir}/usr/share/${_pkgname}/mouser.terminfo"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${_pkgname}/README.md"
+  if [ -f LICENSE ]; then
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  fi
+}

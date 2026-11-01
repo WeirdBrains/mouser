@@ -105,6 +105,25 @@ fn keypad_code(p: Phys) -> Option<u32> {
     })
 }
 
+/// Keypad keys with Num Lock off report KP_LEFT … KP_BEGIN (57417..=57427).
+fn keypad_nav_code(k: &Key) -> Option<u32> {
+    use NamedKey as N;
+    Some(match k {
+        Key::Named(N::ArrowLeft) => 57417,
+        Key::Named(N::ArrowRight) => 57418,
+        Key::Named(N::ArrowUp) => 57419,
+        Key::Named(N::ArrowDown) => 57420,
+        Key::Named(N::PageUp) => 57421,
+        Key::Named(N::PageDown) => 57422,
+        Key::Named(N::Home) => 57423,
+        Key::Named(N::End) => 57424,
+        Key::Named(N::Insert) => 57425,
+        Key::Named(N::Delete) => 57426,
+        Key::Named(N::Clear) => 57427,
+        _ => return None,
+    })
+}
+
 fn named(n: NamedKey, phys: Option<Phys>) -> Option<Func> {
     use NamedKey as N;
     let right = |l: Phys| phys.is_some_and(|p| p == l);
@@ -199,7 +218,7 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
     };
     let mut bits = mod_bits(m);
     let key = if ev.location == KeyLocation::Numpad
-        && let Some(code) = phys.and_then(keypad_code)
+        && let Some(code) = keypad_nav_code(&ev.logical_key).or_else(|| phys.and_then(keypad_code))
     {
         KeyCode::Func(Func::Keypad(code))
     } else {
@@ -241,6 +260,85 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
         }
         _ => (None, None),
     };
-    let text = ev.text.as_ref().map(|t| t.to_string()).filter(|t| !t.is_empty() && !t.chars().any(char::is_control));
+    // Ctrl/Alt/Super combinations carry no associated text (some keymaps, e.g. virtual
+    // keyboards, still report the plain character).
+    let text = text_for(ev.text.as_deref(), bits);
     Some(KeyInput { key, shifted, base, mods: bits, event, text })
+}
+
+/// Describe a winit key event for Fuzzball keyboard mode (docs/protocol/keyboard.md).
+pub fn fuzzball_event(ev: &KeyEvent, m: ModifiersState) -> Option<mouser_core::fuzzball::KeyEvent> {
+    use mouser_core::fuzzball::{KeyAction, KeyName, mods as fm};
+    let PhysicalKey::Code(phys) = ev.physical_key else { return None };
+    // winit's physical key names are the W3C UI Events `code` values.
+    let code = format!("{phys:?}");
+    let action = match (ev.state, ev.repeat) {
+        (ElementState::Released, _) => KeyAction::Release,
+        (_, true) => KeyAction::Repeat,
+        _ => KeyAction::Press,
+    };
+    let mut bits = 0;
+    if m.shift_key() {
+        bits |= fm::SHIFT;
+    }
+    if m.alt_key() {
+        bits |= fm::ALT;
+    }
+    if m.control_key() {
+        bits |= fm::CTRL;
+    }
+    if m.super_key() {
+        bits |= fm::SUPER;
+    }
+    let key = match ev.key_without_modifiers() {
+        Key::Character(s) => KeyName::Char(s.chars().next()?),
+        Key::Named(NamedKey::Space) => KeyName::Char(' '),
+        Key::Named(n) => {
+            // `mods` reflects the state after a modifier key's own event.
+            let bit = match n {
+                NamedKey::Shift => fm::SHIFT,
+                NamedKey::Control => fm::CTRL,
+                NamedKey::Alt => fm::ALT,
+                NamedKey::Super | NamedKey::Meta => fm::SUPER,
+                NamedKey::Hyper => fm::HYPER,
+                NamedKey::AltGraph => fm::ALTGR,
+                _ => 0,
+            };
+            if action == KeyAction::Release {
+                bits &= !bit
+            } else {
+                bits |= bit
+            }
+            KeyName::Named(format!("{n:?}"))
+        }
+        _ => return None,
+    };
+    // Text only for presses/repeats without Ctrl/Alt/Super (those are shortcuts).
+    let text = ev.text.as_ref().map(|t| t.to_string()).filter(|t| !t.is_empty() && bits & (fm::CTRL | fm::ALT | fm::SUPER) == 0);
+    Some(mouser_core::fuzzball::KeyEvent { action, code, key, mods: bits, locks: 0, text })
+}
+
+/// Kitty associated text: none when Ctrl, Alt or Super is held, or for control characters.
+pub fn text_for(text: Option<&str>, mods: u8) -> Option<String> {
+    use mouser_core::kitty::mods as km;
+    if mods & (km::CTRL | km::ALT | km::SUPER) != 0 {
+        return None;
+    }
+    text.map(str::to_string).filter(|t| !t.is_empty() && !t.chars().any(char::is_control))
+}
+
+#[cfg(test)]
+mod text_tests {
+    use super::text_for;
+    use mouser_core::kitty::mods;
+
+    #[test]
+    fn modified_keys_have_no_text() {
+        assert_eq!(text_for(Some("x"), mods::CTRL), None);
+        assert_eq!(text_for(Some("x"), mods::ALT), None);
+        assert_eq!(text_for(Some("x"), mods::SUPER), None);
+        assert_eq!(text_for(Some("\u{18}"), 0), None);
+        assert_eq!(text_for(Some("A"), mods::SHIFT).as_deref(), Some("A"));
+        assert_eq!(text_for(Some("a"), mods::CAPS_LOCK).as_deref(), Some("a"));
+    }
 }

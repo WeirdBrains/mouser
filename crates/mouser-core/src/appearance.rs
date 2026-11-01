@@ -229,6 +229,8 @@ pub struct ThemeEditor {
     pub error: Option<String>,
     /// Dropdown for the font family field.
     pub fonts: FontList,
+    /// Selection colours from the theme file (not editable here, kept on save).
+    pub selection: (Option<String>, Option<String>),
 }
 
 /// Rows shown at once in the font dropdown.
@@ -299,7 +301,15 @@ impl ThemeEditor {
         }
         fields.push(Field::new("Font family", font_family.unwrap_or(""), FieldKind::Text));
         fields.push(Field::new("Font size", format_size(font_size), FieldKind::Size));
-        Self { theme: def.name.clone(), variant: def.variant.clone(), fields, focus: 0, error: None, fonts: FontList::default() }
+        Self {
+            theme: def.name.clone(),
+            variant: def.variant.clone(),
+            fields,
+            focus: 0,
+            error: None,
+            fonts: FontList::default(),
+            selection: (def.selection_foreground.clone(), def.selection_background.clone()),
+        }
     }
 
     pub fn focus_field(&mut self, i: usize) {
@@ -449,6 +459,8 @@ impl ThemeEditor {
             cursor: norm(&v(CURSOR)),
             accent: norm(&v(ACCENT)),
             palette: (PALETTE..PALETTE + 16).map(|i| norm(&v(i)).unwrap()).collect(),
+            selection_foreground: self.selection.0.clone(),
+            selection_background: self.selection.1.clone(),
         };
         let family = v(FONT_FAMILY);
         Ok(EditorResult { theme, font_family: (!family.is_empty()).then_some(family), font_size: parse_size(&v(FONT_SIZE)).unwrap() })

@@ -39,14 +39,56 @@ Notes
 - Fedora:
   - Download `mouser-<ver>-1.x86_64.rpm` and install:
     - `sudo rpm -Uvh mouser-<ver>-1.x86_64.rpm`
-- Arch:
-  - Download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` and install:
-    - `sudo pacman -U mouser-bin-<ver>-1-x86_64.pkg.tar.zst`
+- Arch (see "Arch packages" below):
+  - Prebuilt: `sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst`
+  - From source: `cd packaging/arch/mouser-git && makepkg -si`
+  - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
-  - CLI: `brew install --formula https://raw.githubusercontent.com/m3talsmith/mouser/main/Formula/mouser.rb`
-  - App: `brew install --cask https://raw.githubusercontent.com/m3talsmith/mouser/main/Casks/mouser.rb`
+  - CLI: `brew install --formula https://raw.githubusercontent.com/WeirdBrains/mouser/main/Formula/mouser.rb`
+  - App: `brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Casks/mouser.rb`
   - Or download the `.dmg` and drag `Mouser.app` to Applications.
 - Windows:
   - Download and run `MouserSetup-<ver>.exe` (Start Menu shortcut installed), or unzip the portable `.zip`.
 
+## Arch packages
+
+`packaging/arch/` holds two AUR-ready packages:
+
+- `mouser-git/PKGBUILD`: builds `main` from source (`cargo`, `tic`), version from
+  `git describe` (e.g. `0.7.2.r33.g90b79b6`).
+- `mouser-bin/PKGBUILD`: the release binary (`mouser-x86_64-unknown-linux-gnu.tar.gz`)
+  plus the tag's source tree for the desktop entry, icons, metainfo and terminfo.
+
+Both install `/usr/bin/mouser`, `mouser.desktop` (xdg-terminal-exec keys),
+`io.github.m3talsmith.mouser.metainfo.xml`, hicolor icons (PNG sizes + SVG), the
+compiled `mouser` terminfo in `/usr/share/terminfo` and the source in
+`/usr/share/mouser/mouser.terminfo`. They `provides=mouser` and conflict with each other,
+so installing one replaces the other, including the old `mouser-bin` 0.7.x packages
+(pacman asks `Remove mouser-bin? [y/N]`; answer `y`).
+
+Build locally (no install):
+
+```bash
+cd packaging/arch/mouser-git && makepkg -f      # or: makepkg -si to install
+namcap PKGBUILD *.pkg.tar.zst
+```
+
+Release workflow: the Arch job builds `mouser-bin` in an `archlinux:base-devel`
+container from this PKGBUILD with the freshly built binary and `git archive` of the tag.
+After the release is published, `packaging/arch/update-bin.sh <ver>` sets `pkgver` and
+real `sha256sums` (downloaded from the release) and rewrites `.SRCINFO`, and the bot
+commits it with the Homebrew update. Regenerate both `.SRCINFO` files on Arch with
+`packaging/arch/srcinfo.sh` after editing a PKGBUILD.
+
+Upgrading a machine after a release: `sudo pacman -U <release URL of mouser-bin-<ver>-1-x86_64.pkg.tar.zst>`
+(same package name, so a plain upgrade).
+
+### Publishing to the AUR (not done yet)
+Needs the maintainer's personal AUR account (registration is closed at the moment):
+1. Add an SSH key to the AUR account, then
+   `git clone ssh://aur@aur.archlinux.org/mouser-git.git` (and `mouser-bin.git`).
+2. Copy `PKGBUILD` and `.SRCINFO` in, set the `# Maintainer:` line, commit, push.
+3. The repo's `LICENSE` (BSD-3-Clause) must ship in `/usr/share/licenses/<pkg>/`;
+   both PKGBUILDs install it.
+4. Per release, push the updated `mouser-bin` PKGBUILD/.SRCINFO to the AUR.
 

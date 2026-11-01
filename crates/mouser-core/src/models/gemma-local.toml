@@ -1,0 +1,16 @@
+# The local model provider (P4b, docs/models.md §Local). llama.cpp is built in
+# with the `local-llm` cargo feature; weights download only after consent
+# (`mouser model local download`), or point it at a compatible server instead
+# (`mouser model local url`).
+name = "gemma-local"
+version = "0.1.0"
+description = "Gemma 4 on llama.cpp, built into Mouser (cargo feature local-llm)"
+provides = [{ kind = "model-provider" }]
+run = { transport = "builtin" }
+permissions = ["models.download"]
+
+[model]
+api = "llama.cpp"
+default = "gemma-4-e2b"      # Michael's decision 4: E2B by default
+models = ["gemma-4-e2b", "gemma-4-e4b"]
+# Switch: mouser model default gemma-local/gemma-4-e4b

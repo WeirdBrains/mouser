@@ -1,25 +1,22 @@
-//! Kitty graphics protocol (https://sw.kovidgoyal.net/kitty/graphics-protocol/):
-//! `ESC _ G <keys> ; <base64 payload> ESC \`.
-//!
-//! Supported: direct transmission (t=d) of RGB (f=24), RGBA (f=32) and PNG
-//! (f=100), chunking (m=1), actions transmit / transmit+put / put / delete /
-//! query (a=t,T,p,d,q), image ids and numbers, placement ids, cell-anchored
-//! placements with pixel offsets, source rectangles, c/r scaling, z-index and
-//! cursor movement (C). Not supported (error reply): file, temp-file and
-//! shared-memory transmission, compression (o=z), animation and unicode
-//! placeholders.
+//! Image store shared by the Fuzzball graphics protocol (see `fuzzball.rs`
+//! and `docs/protocol/graphics.md`) and the Kitty graphics fallback
+//! (`kitty_graphics.rs`): decoded images, cell-anchored placements, their
+//! lifecycle (scrolling, erasing, resizing), memory accounting and the
+//! base64 / PNG decoders.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Total decoded image bytes kept before the oldest images are evicted.
-const MAX_BYTES: usize = 320 * 1024 * 1024;
-const MAX_DIM: u32 = 10_000;
+/// Total decoded image bytes kept (`g_mem`).
+pub const MAX_BYTES: usize = 320 * 1024 * 1024;
+/// Largest image width or height in pixels (`g_max_dim`).
+pub const MAX_DIM: u32 = 10_000;
+/// Most placements per screen (`g_max_place`).
+pub const MAX_PLACEMENTS: usize = 4096;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
     pub id: u32,
-    pub number: u32,
     pub width: u32,
     pub height: u32,
     /// RGBA8, `width * height * 4` bytes.
@@ -28,68 +25,354 @@ pub struct Image {
     pub key: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Placement {
     pub image_id: u32,
     pub id: u32,
     /// Absolute row (lines scrolled off so far + screen row) and column of the top-left cell.
     pub row: i64,
     pub col: u32,
-    /// Pixel offset inside that cell.
-    pub x_off: u32,
-    pub y_off: u32,
+    /// Size in cells as shown now (scaled down to fit the screen width if needed).
+    pub cols: u32,
+    pub rows: u32,
+    /// Column and size the application asked for; [`Placement::fit`] derives
+    /// `col`/`cols`/`rows` from these, so scaling on resize is reversible.
+    pub req_col: u32,
+    pub req_cols: u32,
+    pub req_rows: u32,
     /// Source rectangle in image pixels.
     pub src: (u32, u32, u32, u32),
-    /// Displayed size in pixels.
+    /// -1 behind text, 0 above text, 1 above text and cursor.
+    pub z: i32,
+    /// Alternate screen placement.
+    pub alt: bool,
+    /// Last time it was placed (for eviction order).
+    pub stamp: u64,
+    /// Kitty `X`/`Y`: pixel offset of the image inside the anchor cell.
+    pub x_off: u32,
+    pub y_off: u32,
+    /// Kitty placement without `c`/`r`: drawn at this natural pixel size.
+    pub natural: Option<(u32, u32)>,
+    /// Keep the source aspect ratio inside the box, centred (Kitty `c`/`r`).
+    pub letterbox: bool,
+    /// Never refitted to the screen width (a Kitty placement already wider than
+    /// the screen when placed is truncated on the right, as the protocol says).
+    pub fixed: bool,
+    /// Fuzzball `fit=w`: always as wide as the screen right of the anchor
+    /// column, scaled up or down (aspect kept) on every resize.
+    pub fill: bool,
+    /// Kitty `U=1` virtual placement: drawn only through Unicode placeholders.
+    pub virt: bool,
+    /// Kitty relative placement: parent `(image id, placement id)` and the
+    /// `H`/`V` cell offset from it.
+    pub parent: Option<(u32, u32)>,
+    pub rel: (i32, i32),
+}
+
+impl Placement {
+    /// Fit the placement to a screen `screen_cols` wide. A `fill` placement spans
+    /// from its anchor column to the right edge (moved to column 0 once the anchor
+    /// is cut off). Any other placement keeps its requested anchor and size when
+    /// they fit; when it would overhang the right edge it moves to column 0 and is
+    /// scaled down (aspect kept) to at most the screen width. Rows scale with the
+    /// width; a wider screen restores the request.
+    pub fn fit(&mut self, screen_cols: usize) {
+        let w = (screen_cols.max(1) as u64).min(u32::MAX as u64) as u32;
+        let (col, cols) = if self.fill {
+            let col = if self.req_col < w { self.req_col } else { 0 };
+            (col, w - col)
+        } else if self.req_col + self.req_cols <= w {
+            (self.req_col, self.req_cols)
+        } else {
+            (0, self.req_cols.min(w))
+        };
+        self.col = col;
+        self.cols = cols.max(1);
+        self.rows = ((self.req_rows as u64 * self.cols as u64).div_ceil(self.req_cols.max(1) as u64) as u32).max(1);
+    }
+
+    /// Displayed size in pixels for a cell size: `cols` cells wide, and as tall as
+    /// the requested box scaled by the same factor.
+    pub fn pixel_size(&self, cell: (u32, u32)) -> (u32, u32) {
+        let r = self.draw_rect(cell);
+        (r.2, r.3)
+    }
+
+    /// Where the image is drawn relative to the anchor cell's top-left pixel:
+    /// `(x, y, width, height)`. The requested box (natural size, or `req_cols x
+    /// req_rows` cells) is scaled by `cols / req_cols` after a shrink, then the
+    /// source rectangle is letterboxed into it when asked.
+    pub fn draw_rect(&self, cell: (u32, u32)) -> (u32, u32, u32, u32) {
+        let (cw, ch) = (cell.0.max(1) as u64, cell.1.max(1) as u64);
+        let (num, den) = (self.cols as u64, self.req_cols.max(1) as u64);
+        let scale = |v: u64| if num == den { v } else { (v * num / den).max(1) };
+        let (bw, bh) = match self.natural {
+            Some((w, h)) => (scale(w as u64), scale(h as u64)),
+            None if num == den => (self.cols as u64 * cw, self.rows as u64 * ch),
+            None => (self.cols as u64 * cw, scale(self.req_rows as u64 * ch)),
+        };
+        let off = |v: u64| v * num / den;
+        let (mut x, mut y, mut w, mut h) = (off(self.x_off as u64), off(self.y_off as u64), bw.max(1), bh.max(1));
+        if self.letterbox && self.natural.is_none() {
+            let (sw, sh) = (self.src.2.max(1) as u64, self.src.3.max(1) as u64);
+            if w * sh > h * sw {
+                let nw = (h * sw / sh).max(1);
+                x += (w - nw) / 2;
+                w = nw;
+            } else {
+                let nh = (w * sh / sw).max(1);
+                y += (h - nh) / 2;
+                h = nh;
+            }
+        }
+        let c = |v: u64| v.min(u32::MAX as u64) as u32;
+        (c(x), c(y), c(w), c(h))
+    }
+
+    /// Whether the placement covers cell (`row` absolute, `col`).
+    pub fn covers(&self, row: i64, col: u32) -> bool {
+        !self.virt && row >= self.row && row < self.row + self.rows as i64 && col >= self.col && col < self.col + self.cols
+    }
+}
+
+/// One image to draw: anchor cell (row relative to the top of the view, may
+/// be negative), pixel offset from it and drawn size.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draw {
+    pub image_id: u32,
+    pub src: (u32, u32, u32, u32),
+    pub row: i64,
+    pub col: i64,
+    pub x_off: i64,
+    pub y_off: i64,
     pub width: u32,
     pub height: u32,
     pub z: i32,
 }
 
-/// What the parser should do after a command.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Effect {
-    pub reply: Option<String>,
-    /// Move the cursor by this many cells (right, down) after a placement.
-    pub cursor: Option<(u32, u32)>,
-}
-
-#[derive(Debug, Default, Clone)]
-struct Pending {
-    keys: HashMap<char, String>,
-    data: Vec<u8>,
-}
+/// A published limit (`g_mem`, `g_max_place`) would be exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverLimit;
 
 #[derive(Debug, Default)]
 pub struct Graphics {
+    /// Follow the Kitty rules: several unnamed (`p=0`) placements per image,
+    /// erase commands other than clear-screen leave placements alone, and only
+    /// placements entirely inside a scroll region scroll with it.
+    pub kitty: bool,
     pub images: HashMap<u32, Image>,
     pub placements: Vec<Placement>,
-    order: Vec<u32>,
-    next_id: u32,
     next_key: u64,
-    pending: Option<Pending>,
+    clock: u64,
+    /// Image id -> last placement time.
+    last_placed: HashMap<u32, u64>,
 }
 
-/// Where the cursor is and how big a cell is, for placements.
-#[derive(Debug, Clone, Copy)]
-pub struct Cursor {
-    /// Absolute row of screen row 0.
-    pub top: i64,
-    pub abs_row: i64,
-    pub col: u32,
-    pub cell_w: u32,
-    pub cell_h: u32,
-}
+impl Graphics {
+    pub fn mem_used(&self) -> usize {
+        self.images.values().map(|i| i.rgba.len()).sum()
+    }
 
-fn parse_keys(s: &str) -> HashMap<char, String> {
-    s.split(',')
-        .filter_map(|kv| {
-            let (k, v) = kv.split_once('=')?;
-            let mut c = k.chars();
-            let key = c.next()?;
-            c.next().is_none().then(|| (key, v.to_string()))
-        })
-        .collect()
+    /// Store (or replace) an image. Evicts least recently placed images without
+    /// visible placements to stay under `limit`; `Err` if it still does not fit.
+    pub fn insert(&mut self, id: u32, width: u32, height: u32, rgba: Vec<u8>, limit: usize) -> Result<(), OverLimit> {
+        self.remove_image(id);
+        let need = rgba.len();
+        while self.mem_used() + need > limit {
+            let victim = self
+                .images
+                .keys()
+                .filter(|i| !self.placements.iter().any(|p| p.image_id == **i))
+                .min_by_key(|i| self.last_placed.get(i).copied().unwrap_or(0))
+                .copied();
+            match victim {
+                Some(v) => self.remove_image(v),
+                None => return Err(OverLimit),
+            }
+        }
+        self.next_key += 1;
+        self.images.insert(id, Image { id, width, height, rgba: Arc::new(rgba), key: self.next_key });
+        Ok(())
+    }
+
+    pub fn remove_image(&mut self, id: u32) {
+        self.images.remove(&id);
+        self.last_placed.remove(&id);
+        self.placements.retain(|p| p.image_id != id);
+    }
+
+    /// Add or move placement `(image_id, id)`.
+    pub fn place(&mut self, mut p: Placement) -> Result<(), OverLimit> {
+        if !(self.kitty && p.id == 0) {
+            self.placements.retain(|q| !(q.image_id == p.image_id && q.id == p.id && (q.alt == p.alt || self.kitty)));
+        }
+        if self.placements.iter().filter(|q| q.alt == p.alt).count() >= MAX_PLACEMENTS {
+            return Err(OverLimit);
+        }
+        self.clock += 1;
+        p.stamp = self.clock;
+        self.last_placed.insert(p.image_id, self.clock);
+        self.placements.push(p);
+        Ok(())
+    }
+
+    /// Drop placements matching `f`; with `free`, also image data left without placements.
+    pub fn delete(&mut self, free: bool, f: impl Fn(&Placement) -> bool) {
+        let gone: Vec<u32> = self.placements.iter().filter(|p| f(p)).map(|p| p.image_id).collect();
+        self.placements.retain(|p| !f(p));
+        if free {
+            for id in gone {
+                if !self.placements.iter().any(|p| p.image_id == id) {
+                    self.remove_image(id);
+                }
+            }
+        }
+    }
+
+    /// Placements on screen `alt` visible in rows `top .. top + rows` (absolute), lowest z first.
+    pub fn visible(&self, alt: bool, top: i64, rows: usize) -> Vec<(&Placement, &Image)> {
+        let mut v: Vec<_> = self
+            .placements
+            .iter()
+            .filter(|p| p.alt == alt && p.row + p.rows as i64 > top && p.row < top + rows as i64)
+            .filter_map(|p| self.images.get(&p.image_id).map(|i| (p, i)))
+            .collect();
+        v.retain(|(p, _)| !p.virt);
+        v.sort_by_key(|(p, _)| (p.z, if self.kitty { p.image_id } else { 0 }, p.stamp));
+        v
+    }
+
+    /// Draws for the placements visible in absolute rows `top .. top + rows`.
+    pub fn draws(&self, alt: bool, top: i64, rows: usize, cell: (u32, u32)) -> Vec<Draw> {
+        self.visible(alt, top, rows)
+            .into_iter()
+            .map(|(p, _)| {
+                let r = p.draw_rect(cell);
+                Draw {
+                    image_id: p.image_id,
+                    src: p.src,
+                    row: p.row - top,
+                    col: p.col as i64,
+                    x_off: r.0 as i64,
+                    y_off: r.1 as i64,
+                    width: r.2,
+                    height: r.3,
+                    z: p.z,
+                }
+            })
+            .collect()
+    }
+
+    /// Replace image `id`'s pixels (same size), e.g. for an animation frame.
+    pub fn set_rgba(&mut self, id: u32, rgba: Arc<Vec<u8>>) {
+        self.next_key += 1;
+        if let Some(i) = self.images.get_mut(&id) {
+            i.rgba = rgba;
+            i.key = self.next_key;
+        }
+    }
+
+    /// The alternate screen was left: its placements go with it.
+    pub fn leave_alt(&mut self) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt && !p.virt);
+        before != self.placements.len()
+    }
+
+    /// Follow a scroll on screen `alt`. `base`: absolute row of screen row 0 when it
+    /// happened; `rows`: screen height. Placements scrolled out of the region go.
+    /// Kitty placements only scroll when entirely inside the region.
+    pub fn scrolled(&mut self, alt: bool, base: i64, ev: crate::grid::ScrollEvent, rows: usize) -> bool {
+        let (top, bottom) = (base + ev.top as i64, base + ev.bottom as i64);
+        let n = ev.delta.unsigned_abs() as i64;
+        let mut changed = false;
+        if ev.to_scrollback {
+            // Region rows keep their absolute row; rows below the region stay on the
+            // same screen row, which is now `n` further down in absolute terms.
+            if ev.bottom + 1 < rows {
+                for p in self.placements.iter_mut().filter(|p| p.alt == alt && !p.virt && p.row > bottom && p.row < base + rows as i64) {
+                    p.row += n;
+                    changed = true;
+                }
+            }
+            return changed;
+        }
+        let kitty = self.kitty;
+        let before = self.placements.len();
+        let mut moved = Vec::new();
+        for (i, p) in self.placements.iter_mut().enumerate() {
+            let inside = p.row >= top && if kitty { p.row + p.rows as i64 - 1 <= bottom } else { p.row <= bottom };
+            if p.alt == alt && !p.virt && inside {
+                p.row += ev.delta as i64;
+                changed = true;
+                if p.row < top || p.row > bottom {
+                    moved.push(i);
+                }
+            }
+        }
+        for i in moved.into_iter().rev() {
+            self.placements.remove(i);
+        }
+        changed || before != self.placements.len()
+    }
+
+    /// Main-screen placements anchored above absolute row `first` (no longer in the
+    /// scrollback) are removed. Image data stays until deleted or evicted.
+    pub fn evict_scrollback(&mut self, first: i64) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| !p.alt && !p.virt && p.row < first);
+        before != self.placements.len()
+    }
+
+    /// Apply a grid resize. `alt`: the active screen; `top`: absolute row of the
+    /// first visible line; `shift`: rows the active alt screen moved up to keep the
+    /// cursor visible; `rows`/`cols`: the new size. Main-screen placements were
+    /// already moved with their re-wrapped text; placements whose anchor row is
+    /// cut off (below the last row, or above the alt screen) are removed, and every
+    /// placement is refitted to the width. The inactive main screen is kept (and
+    /// re-wrapped) during a resize in the alt screen.
+    /// Main-screen placements anchored above `stale_below` sit in scrollback lines
+    /// not re-wrapped yet; they are refitted when those lines are.
+    #[allow(clippy::too_many_arguments)]
+    pub fn resize(&mut self, alt: bool, top: i64, shift: i64, rows: usize, cols: usize, stale_below: i64) -> bool {
+        let before = self.placements.len();
+        if alt && shift != 0 {
+            for p in self.placements.iter_mut().filter(|p| p.alt && !p.virt) {
+                p.row -= shift;
+            }
+        }
+        let bottom = top + rows as i64;
+        self.delete(false, |p| {
+            if p.virt {
+                return false;
+            }
+            if p.alt != alt {
+                return !p.alt && p.row >= bottom;
+            }
+            p.row >= bottom || (p.alt && p.row < top)
+        });
+        let mut changed = before != self.placements.len() || shift != 0;
+        for p in self.placements.iter_mut().filter(|p| !p.virt && !p.fixed && (p.alt || p.row >= stale_below)) {
+            let old = (p.col, p.cols, p.rows);
+            p.fit(cols);
+            changed |= old != (p.col, p.cols, p.rows);
+        }
+        changed
+    }
+
+    /// Erase covered rows `from..to` (absolute) on a screen: placements touching them go.
+    pub fn erase_rows(&mut self, alt: bool, from: i64, to: i64) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt == alt && !p.virt && p.row < to && p.row + p.rows as i64 > from);
+        before != self.placements.len()
+    }
+
+    /// Erase cells `c0..c1` of absolute row `row`.
+    pub fn erase_cells(&mut self, alt: bool, row: i64, c0: u32, c1: u32) -> bool {
+        let before = self.placements.len();
+        self.delete(false, |p| p.alt == alt && !p.virt && row >= p.row && row < p.row + p.rows as i64 && c0 < p.col + p.cols && c1 > p.col);
+        before != self.placements.len()
+    }
 }
 
 /// Standard base64 (padding optional, whitespace ignored).
@@ -144,288 +427,4 @@ pub fn decode_png(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         return Err("short image data".into());
     }
     Ok((w, h, rgba))
-}
-
-fn num(keys: &HashMap<char, String>, k: char) -> Option<u32> {
-    keys.get(&k).and_then(|v| v.parse().ok())
-}
-
-impl Graphics {
-    /// Handle one APC payload (the bytes after `G`).
-    pub fn command(&mut self, body: &[u8], cur: Cursor) -> Effect {
-        let (ctrl, payload) = match body.iter().position(|&b| b == b';') {
-            Some(i) => (&body[..i], &body[i + 1..]),
-            None => (body, &[][..]),
-        };
-        let ctrl = String::from_utf8_lossy(ctrl);
-        let keys = parse_keys(&ctrl);
-        // Chunked transfer: continuation chunks carry only m= (and maybe q=).
-        if let Some(p) = &mut self.pending {
-            p.data.extend_from_slice(payload);
-            if keys.get(&'m').map(String::as_str) == Some("1") {
-                return Effect::default();
-            }
-            let p = self.pending.take().unwrap();
-            return self.run(p.keys, &p.data, cur);
-        }
-        if keys.get(&'m').map(String::as_str) == Some("1") {
-            self.pending = Some(Pending { keys, data: payload.to_vec() });
-            return Effect::default();
-        }
-        self.run(keys, payload, cur)
-    }
-
-    fn reply(keys: &HashMap<char, String>, msg: &str, id: Option<u32>) -> Option<String> {
-        let quiet = num(keys, 'q').unwrap_or(0);
-        let ok = msg == "OK";
-        if (ok && quiet >= 1) || (!ok && quiet >= 2) {
-            return None;
-        }
-        let id = id.or_else(|| num(keys, 'i').filter(|&i| i > 0));
-        let number = num(keys, 'I').filter(|&n| n > 0);
-        if id.is_none() && number.is_none() {
-            return None;
-        }
-        let mut s = String::from("\x1b_G");
-        let mut parts = Vec::new();
-        if let Some(i) = id {
-            parts.push(format!("i={i}"));
-        }
-        if let Some(n) = number {
-            parts.push(format!("I={n}"));
-        }
-        if let Some(p) = num(keys, 'p').filter(|&p| p > 0) {
-            parts.push(format!("p={p}"));
-        }
-        s += &parts.join(",");
-        s += ";";
-        s += msg;
-        s += "\x1b\\";
-        Some(s)
-    }
-
-    fn run(&mut self, keys: HashMap<char, String>, payload: &[u8], cur: Cursor) -> Effect {
-        let action = keys.get(&'a').and_then(|a| a.chars().next()).unwrap_or('t');
-        match action {
-            't' | 'T' | 'q' => {
-                let img = match self.decode(&keys, payload) {
-                    Ok(img) => img,
-                    Err(e) => return Effect { reply: Self::reply(&keys, &e, None), cursor: None },
-                };
-                if action == 'q' {
-                    return Effect { reply: Self::reply(&keys, "OK", None), cursor: None };
-                }
-                let id = self.store(&keys, img);
-                let mut eff = Effect { reply: None, cursor: None };
-                if action == 'T' {
-                    match self.place(&keys, id, cur) {
-                        Ok(mv) => eff.cursor = mv,
-                        Err(e) => return Effect { reply: Self::reply(&keys, &e, Some(id)), cursor: None },
-                    }
-                }
-                let explicit = num(&keys, 'i').filter(|&i| i > 0).or(num(&keys, 'I').filter(|&n| n > 0).map(|_| id));
-                eff.reply = explicit.and_then(|_| Self::reply(&keys, "OK", Some(id)));
-                eff
-            }
-            'p' => {
-                let id = match self.resolve_id(&keys) {
-                    Some(id) => id,
-                    None => return Effect { reply: Self::reply(&keys, "ENOENT:image not found", None), cursor: None },
-                };
-                match self.place(&keys, id, cur) {
-                    Ok(mv) => Effect { reply: Self::reply(&keys, "OK", Some(id)), cursor: mv },
-                    Err(e) => Effect { reply: Self::reply(&keys, &e, Some(id)), cursor: None },
-                }
-            }
-            'd' => {
-                self.delete(&keys, cur);
-                Effect::default()
-            }
-            _ => Effect { reply: Self::reply(&keys, "EINVAL:unsupported action", None), cursor: None },
-        }
-    }
-
-    fn resolve_id(&self, keys: &HashMap<char, String>) -> Option<u32> {
-        if let Some(i) = num(keys, 'i').filter(|&i| i > 0) {
-            return self.images.contains_key(&i).then_some(i);
-        }
-        let n = num(keys, 'I').filter(|&n| n > 0)?;
-        // Newest image with that number.
-        self.order.iter().rev().find(|id| self.images.get(id).is_some_and(|im| im.number == n)).copied()
-    }
-
-    fn decode(&self, keys: &HashMap<char, String>, payload: &[u8]) -> Result<Image, String> {
-        match keys.get(&'t').map(String::as_str).unwrap_or("d") {
-            "d" => {}
-            _ => return Err("ENOTSUPPORTED:only direct transmission (t=d) is supported".into()),
-        }
-        if keys.contains_key(&'o') {
-            return Err("ENOTSUPPORTED:compression is not supported".into());
-        }
-        let data = base64_decode(payload).ok_or("EINVAL:bad base64")?;
-        let format = num(keys, 'f').unwrap_or(32);
-        let (w, h, rgba) = match format {
-            24 | 32 => {
-                let (w, h) = (num(keys, 's').unwrap_or(0), num(keys, 'v').unwrap_or(0));
-                if w == 0 || h == 0 || w > MAX_DIM || h > MAX_DIM {
-                    return Err("EINVAL:missing or bad s/v size".into());
-                }
-                let bpp = (format / 8) as usize;
-                if data.len() < w as usize * h as usize * bpp {
-                    return Err("ENODATA:insufficient image data".into());
-                }
-                let rgba = if format == 32 {
-                    data[..(w * h * 4) as usize].to_vec()
-                } else {
-                    data[..(w * h * 3) as usize].as_chunks::<3>().0.iter().flat_map(|p| [p[0], p[1], p[2], 255]).collect()
-                };
-                (w, h, rgba)
-            }
-            100 => decode_png(&data).map_err(|e| format!("EBADPNG:{e}"))?,
-            _ => return Err("EINVAL:unknown format".into()),
-        };
-        Ok(Image { id: 0, number: num(keys, 'I').unwrap_or(0), width: w, height: h, rgba: Arc::new(rgba), key: 0 })
-    }
-
-    fn store(&mut self, keys: &HashMap<char, String>, mut img: Image) -> u32 {
-        let id = match num(keys, 'i').filter(|&i| i > 0) {
-            Some(i) => i,
-            None => {
-                // Auto ids count down from the top so they don't clash with client ids.
-                self.next_id += 1;
-                u32::MAX - self.next_id
-            }
-        };
-        self.next_key += 1;
-        img.id = id;
-        img.key = self.next_key;
-        // Re-transmitting an id replaces the image and its placements.
-        self.placements.retain(|p| p.image_id != id);
-        self.order.retain(|&i| i != id);
-        self.order.push(id);
-        self.images.insert(id, img);
-        self.evict();
-        id
-    }
-
-    fn evict(&mut self) {
-        let mut total: usize = self.images.values().map(|i| i.rgba.len()).sum();
-        while total > MAX_BYTES && self.order.len() > 1 {
-            let old = self.order.remove(0);
-            if let Some(im) = self.images.remove(&old) {
-                total -= im.rgba.len();
-            }
-            self.placements.retain(|p| p.image_id != old);
-        }
-    }
-
-    fn place(&mut self, keys: &HashMap<char, String>, id: u32, cur: Cursor) -> Result<Option<(u32, u32)>, String> {
-        let img = self.images.get(&id).ok_or("ENOENT:image not found")?;
-        let sx = num(keys, 'x').unwrap_or(0).min(img.width);
-        let sy = num(keys, 'y').unwrap_or(0).min(img.height);
-        let sw = num(keys, 'w').filter(|&w| w > 0).unwrap_or(img.width - sx).min(img.width - sx);
-        let sh = num(keys, 'h').filter(|&h| h > 0).unwrap_or(img.height - sy).min(img.height - sy);
-        if sw == 0 || sh == 0 {
-            return Err("EINVAL:empty source rectangle".into());
-        }
-        let (cw, ch) = (cur.cell_w.max(1), cur.cell_h.max(1));
-        let cols = num(keys, 'c').filter(|&c| c > 0);
-        let rows = num(keys, 'r').filter(|&r| r > 0);
-        let (width, height) = match (cols, rows) {
-            (Some(c), Some(r)) => (c * cw, r * ch),
-            (Some(c), None) => (c * cw, (c as u64 * cw as u64 * sh as u64 / sw as u64) as u32),
-            (None, Some(r)) => ((r as u64 * ch as u64 * sw as u64 / sh as u64) as u32, r * ch),
-            (None, None) => (sw, sh),
-        };
-        let x_off = num(keys, 'X').unwrap_or(0).min(cw - 1);
-        let y_off = num(keys, 'Y').unwrap_or(0).min(ch - 1);
-        let pid = num(keys, 'p').unwrap_or(0);
-        if pid > 0 {
-            self.placements.retain(|p| !(p.image_id == id && p.id == pid));
-        }
-        let z = keys.get(&'z').and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-        self.placements.push(Placement {
-            image_id: id,
-            id: pid,
-            row: cur.abs_row,
-            col: cur.col,
-            x_off,
-            y_off,
-            src: (sx, sy, sw, sh),
-            width,
-            height,
-            z,
-        });
-        if num(keys, 'C') == Some(1) {
-            return Ok(None);
-        }
-        let span_c = (x_off + width).div_ceil(cw);
-        let span_r = (y_off + height).div_ceil(ch);
-        // The cursor ends up on the last row of the image, just after it.
-        Ok(Some((span_c, span_r.saturating_sub(1))))
-    }
-
-    fn delete(&mut self, keys: &HashMap<char, String>, cur: Cursor) {
-        let what = keys.get(&'d').and_then(|v| v.chars().next()).unwrap_or('a');
-        let free = what.is_ascii_uppercase();
-        let mut removed_ids = Vec::new();
-        let hit = |p: &Placement, col: u32, row: i64| {
-            let cols = (p.x_off + p.width).div_ceil(cur.cell_w.max(1));
-            let rows = (p.y_off + p.height).div_ceil(cur.cell_h.max(1));
-            col >= p.col && col < p.col + cols && row >= p.row && row < p.row + rows as i64
-        };
-        match what.to_ascii_lowercase() {
-            'a' => {
-                removed_ids.extend(self.placements.iter().map(|p| p.image_id));
-                self.placements.clear();
-            }
-            'i' | 'n' => {
-                let id = if what.eq_ignore_ascii_case(&'i') { num(keys, 'i') } else { self.resolve_id(keys) };
-                if let Some(id) = id {
-                    let pid = num(keys, 'p').unwrap_or(0);
-                    self.placements.retain(|p| !(p.image_id == id && (pid == 0 || p.id == pid)));
-                    removed_ids.push(id);
-                }
-            }
-            'c' => {
-                removed_ids.extend(self.placements.iter().filter(|p| hit(p, cur.col, cur.abs_row)).map(|p| p.image_id));
-                self.placements.retain(|p| !hit(p, cur.col, cur.abs_row));
-            }
-            'p' => {
-                let (x, y) = (num(keys, 'x').unwrap_or(1).saturating_sub(1), num(keys, 'y').unwrap_or(1).saturating_sub(1) as i64);
-                let row = cur.top + y;
-                removed_ids.extend(self.placements.iter().filter(|p| hit(p, x, row)).map(|p| p.image_id));
-                self.placements.retain(|p| !hit(p, x, row));
-            }
-            'z' => {
-                let z = keys.get(&'z').and_then(|v| v.parse::<i32>().ok()).unwrap_or(0);
-                removed_ids.extend(self.placements.iter().filter(|p| p.z == z).map(|p| p.image_id));
-                self.placements.retain(|p| p.z != z);
-            }
-            _ => {}
-        }
-        if free {
-            for id in removed_ids {
-                if !self.placements.iter().any(|p| p.image_id == id) {
-                    self.images.remove(&id);
-                    self.order.retain(|&i| i != id);
-                }
-            }
-        }
-    }
-
-    /// Placements visible in rows `top .. top + rows` (absolute), lowest z first.
-    pub fn visible(&self, top: i64, rows: usize, cell_h: u32) -> Vec<(&Placement, &Image)> {
-        let mut v: Vec<_> = self
-            .placements
-            .iter()
-            .filter(|p| {
-                let span = (p.y_off + p.height).div_ceil(cell_h.max(1)) as i64;
-                p.row + span > top && p.row < top + rows as i64
-            })
-            .filter_map(|p| self.images.get(&p.image_id).map(|i| (p, i)))
-            .collect();
-        v.sort_by_key(|(p, _)| p.z);
-        v
-    }
 }

@@ -40,6 +40,89 @@ pub struct Preferences {
     /// Whether the open sidebar is collapsed to a thin strip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sidebar_collapsed: Option<bool>,
+    /// GPU rendering engine (`mouser engine use`); unset means `mouser`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    /// GPU engines in priority order (`mouser engine priority`); `mouser` is
+    /// always in it, last unless moved. Replaces `engine`, which is still read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engines: Option<Vec<String>>,
+    /// `[mcp.server]`: Mouser's own MCP server (docs/mcp.md); off unless set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<McpPrefs>,
+    /// `[models]`: model providers and the default model (docs/models.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<crate::models::ModelsPrefs>,
+    /// `[chat]`: the agent chat mode (docs/chat.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat: Option<crate::agent::ChatPrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpPrefs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<McpServerPrefs>,
+    /// `[[mcp.servers]]`: MCP servers Mouser connects to (docs/mcp.md §Client).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub servers: Vec<McpServerEntry>,
+}
+
+/// One `[[mcp.servers]]` entry: a stdio `command` or an HTTP(S) `url`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
+    /// Extra environment for a stdio server; values may be `keychain:NAME`.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Bearer token reference: `keychain:<secret name>` (never the token itself).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+    /// PEM CA/cert to trust for an HTTPS url (e.g. Mouser's self-signed cert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca: Option<String>,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// `[mcp.server]` in preferences.toml.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct McpServerPrefs {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Loopback HTTP port (also what `mouser mcp serve --stdio` connects to).
+    #[serde(default = "default_http_port")]
+    pub port: u16,
+    /// Also serve HTTPS on `https_port`.
+    #[serde(default)]
+    pub https: bool,
+    #[serde(default = "default_https_port")]
+    pub https_port: u16,
+    /// PEM certificate chain and key; unset: a self-signed pair in $MOUSER_HOME/mcp/.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+}
+
+fn default_http_port() -> u16 {
+    7801
+}
+fn default_https_port() -> u16 {
+    7802
+}
+
+impl Default for McpServerPrefs {
+    fn default() -> Self {
+        McpServerPrefs { enabled: false, port: default_http_port(), https: false, https_port: default_https_port(), cert: None, key: None }
+    }
 }
 
 /// Load preferences, apply `f`, and save them back (keeps unrelated fields).

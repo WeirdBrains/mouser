@@ -1,8 +1,8 @@
 [package]
 name = "mouser-pty"
 edition = "2024"
-version = "0.2.0"
-license = "MIT"
+version.workspace = true
+license = "BSD-3-Clause"
 description = "PTY spawn and IO glue for Mouser"
 repository = ""
 

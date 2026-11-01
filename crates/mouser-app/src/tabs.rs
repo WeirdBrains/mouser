@@ -17,6 +17,9 @@ pub enum Launch {
     Shell,
     /// A connection: argv run directly as the tab's process.
     Command(Vec<String>),
+    /// A program from the command line (`mouser -e ...`): closes when it
+    /// exits unless `hold` is set.
+    Exec { argv: Vec<String>, hold: bool },
 }
 
 pub struct Session {
@@ -27,12 +30,24 @@ pub struct Session {
     /// Title when the program sets none (connection name or "shell").
     pub name: String,
     pub launch: Launch,
+    /// Working directory for the process (default: `$HOME`).
+    pub cwd: Option<std::path::PathBuf>,
     master: Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn mouser_pty::Child + Send>>>,
+    /// The child's pid (0 before start); `child` is locked while waiting.
+    pid: std::sync::atomic::AtomicU32,
     /// Exit code once the process ended and the tab is kept open to show it.
     pub exited: Mutex<Option<u32>>,
     /// The tab should be removed.
     pub closed: AtomicBool,
+    /// A timer is waiting to expire an abandoned Fuzzball upload.
+    upload_timer: AtomicBool,
+    /// Wakes the graphics timer early when new timer work arrives.
+    timer_kick: (Mutex<bool>, std::sync::Condvar),
+    /// A worker is re-wrapping older scrollback lines after a resize.
+    reflowing: Arc<AtomicBool>,
+    /// Mouse selection (lock after `parser`).
+    pub selection: Mutex<Option<crate::select::SelState>>,
 }
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -40,7 +55,11 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// Whether a finished tab closes by itself: shells always, connections only
 /// when they exit cleanly (so an ssh error stays readable).
 pub fn closes_on_exit(launch: &Launch, code: u32) -> bool {
-    matches!(launch, Launch::Shell) || code == 0
+    match launch {
+        Launch::Shell => true,
+        Launch::Exec { hold, .. } => !hold,
+        Launch::Command(_) => code == 0,
+    }
 }
 
 pub fn exit_banner(code: u32) -> String {
@@ -49,6 +68,10 @@ pub fn exit_banner(code: u32) -> String {
 
 impl Session {
     pub fn new(name: impl Into<String>, launch: Launch, size: Size, sb: ScrollbackConfig) -> Arc<Self> {
+        Self::new_in(name, launch, None, size, sb)
+    }
+
+    pub fn new_in(name: impl Into<String>, launch: Launch, cwd: Option<std::path::PathBuf>, size: Size, sb: ScrollbackConfig) -> Arc<Self> {
         let scrollback = Arc::new(Scrollback::new(sb));
         let writer = SharedWriter(Arc::new(Mutex::new(None)));
         let parser = TerminalParser::new(size, scrollback.clone(), writer.clone());
@@ -59,11 +82,101 @@ impl Session {
             writer,
             name: name.into(),
             launch,
+            cwd,
             master: Mutex::new(None),
             child: Mutex::new(None),
+            pid: std::sync::atomic::AtomicU32::new(0),
             exited: Mutex::new(None),
             closed: AtomicBool::new(false),
+            upload_timer: AtomicBool::new(false),
+            timer_kick: (Mutex::new(false), std::sync::Condvar::new()),
+            selection: Mutex::new(None),
+            reflowing: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    /// Re-wrap the older scrollback lines in small steps on a worker so resize
+    /// frames never wait for the whole scrollback (one worker per tab).
+    fn settle_reflow(&self) {
+        if self.reflowing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let (parser, flag) = (self.parser.clone(), self.reflowing.clone());
+        std::thread::spawn(move || {
+            loop {
+                let more = parser.lock().unwrap().reflow_step(mouser_core::parser::REFLOW_STEP_ROWS);
+                crate::wake();
+                if more {
+                    // Let the renderer and the PTY reader take the lock between steps.
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                    continue;
+                }
+                flag.store(false, Ordering::Release);
+                // A resize may have queued more work after the last step.
+                let pending = parser.lock().unwrap().reflow_pending();
+                if !pending || flag.swap(true, Ordering::AcqRel) {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// Where commander should look: local folder, or remote (foreground
+    /// `ssh` and/or an OSC 7 from another host).
+    pub fn place(&self) -> Option<mouser_core::remote::Place> {
+        let osc7 = self.parser.lock().unwrap().cwd.clone();
+        let fg = self.foreground_argv();
+        // The local folder only from /proc or a local OSC 7, never a remote one.
+        let local = || {
+            let pid = self.pid.load(Ordering::Relaxed);
+            if pid != 0
+                && let Ok(p) = std::fs::read_link(format!("/proc/{pid}/cwd"))
+            {
+                return Some(p);
+            }
+            osc7.as_deref()
+                .and_then(mouser_core::remote::osc7)
+                .filter(|(h, _)| mouser_core::remote::is_local_host(h, mouser_core::remote::local_hostname()))
+                .map(|(_, p)| p)
+                .or_else(|| self.cwd.clone())
+                .or_else(|| std::env::var_os("HOME").map(Into::into))
+        };
+        let shell_fg = self.shell_in_foreground().unwrap_or(true);
+        mouser_core::remote::place(osc7.as_deref(), fg.as_deref(), shell_fg, local())
+    }
+
+    /// argv of the terminal's foreground process (unix).
+    pub fn foreground_argv(&self) -> Option<Vec<String>> {
+        #[cfg(unix)]
+        {
+            let pg = self.master.lock().unwrap().as_ref()?.process_group_leader()?;
+            if let Ok(b) = std::fs::read(format!("/proc/{pg}/cmdline")) {
+                return Some(b.split(|c| *c == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect());
+            }
+            let out = std::process::Command::new("ps").args(["-o", "args=", "-p", &pg.to_string()]).output().ok()?;
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            (!s.is_empty()).then(|| s.split_whitespace().map(String::from).collect())
+        }
+        #[cfg(not(unix))]
+        {
+            None
+        }
+    }
+
+    /// Whether the shell (not a program it started) is the terminal's
+    /// foreground process; `None` where that cannot be told.
+    pub fn shell_in_foreground(&self) -> Option<bool> {
+        let pid = self.pid.load(Ordering::Relaxed);
+        #[cfg(unix)]
+        {
+            let pg = self.master.lock().unwrap().as_ref()?.process_group_leader()?;
+            (pid != 0).then_some(pg as u32 == pid)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+            None
+        }
     }
 
     pub fn started(&self) -> bool {
@@ -78,8 +191,8 @@ impl Session {
     /// Spawn the process at the given size; output is fed on a reader thread.
     pub fn start(self: &Arc<Self>, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
         let spawned = match &self.launch {
-            Launch::Shell => mouser_pty::spawn_shell(cols, rows, pw, ph),
-            Launch::Command(argv) => mouser_pty::spawn_argv(argv, cols, rows, pw, ph),
+            Launch::Shell => mouser_pty::spawn_shell_in(self.cwd.as_deref(), cols, rows, pw, ph),
+            Launch::Command(argv) | Launch::Exec { argv, .. } => mouser_pty::spawn_argv_in(argv, self.cwd.as_deref(), cols, rows, pw, ph),
         };
         let handles = match spawned {
             Ok(h) => h,
@@ -91,6 +204,7 @@ impl Session {
             }
         };
         *self.writer.0.lock().unwrap() = Some(handles.writer);
+        self.pid.store(handles.child.process_id().unwrap_or(0), Ordering::Relaxed);
         *self.child.lock().unwrap() = Some(handles.child);
         *self.master.lock().unwrap() = Some(handles.master);
         let me = self.clone();
@@ -102,6 +216,7 @@ impl Session {
                     Ok(0) => break,
                     Ok(n) => {
                         me.feed(&buf[..n]);
+                        me.watch_graphics(wake);
                         wake();
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -115,10 +230,60 @@ impl Session {
         });
     }
 
+    /// While a chunked upload (Fuzzball or Kitty) is pending or a Kitty
+    /// animation runs, keep one timer thread: it drops uploads idle for
+    /// `UPLOAD_TIMEOUT` and advances animation frames, waking a redraw when a
+    /// frame changes.
+    fn watch_graphics(self: &Arc<Self>, wake: fn()) {
+        if !self.parser.lock().unwrap().graphics_timers_pending() {
+            return;
+        }
+        if self.upload_timer.swap(true, Ordering::AcqRel) {
+            // Already running, maybe asleep until a later deadline: recheck now.
+            *self.timer_kick.0.lock().unwrap() = true;
+            self.timer_kick.1.notify_one();
+            return;
+        }
+        let me = self.clone();
+        std::thread::spawn(move || {
+            loop {
+                let (next, changed) = {
+                    let mut p = me.parser.lock().unwrap();
+                    let gen0 = p.graphics_generation;
+                    let next = p.graphics_timers(std::time::Instant::now());
+                    (next, p.graphics_generation != gen0)
+                };
+                if changed {
+                    wake();
+                }
+                if me.closed.load(Ordering::Acquire) {
+                    break;
+                }
+                let Some(t) = next else { break };
+                let (lock, cv) = &me.timer_kick;
+                let mut kicked = lock.lock().unwrap();
+                while !*kicked {
+                    let left = t.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    kicked = cv.wait_timeout(kicked, left).unwrap().0;
+                }
+                *kicked = false;
+            }
+            me.upload_timer.store(false, Ordering::Release);
+            // Work may have started between the last check and clearing the flag.
+            if !me.closed.load(Ordering::Acquire) {
+                me.watch_graphics(wake);
+            }
+        });
+    }
+
     pub fn feed(&self, bytes: &[u8]) {
         let events = {
             let mut p = self.parser.lock().unwrap();
             p.feed(bytes);
+            crate::select::refresh(&p, &mut self.selection.lock().unwrap());
             std::mem::take(&mut p.events)
         };
         self.scrollback.maybe_compress_idle();
@@ -141,7 +306,20 @@ impl Session {
     }
 
     pub fn resize(&self, cols: u16, rows: u16, pw: u16, ph: u16) {
-        self.parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+        let size = Size { cols: cols as usize, rows: rows as usize };
+        {
+            let mut p = self.parser.lock().unwrap();
+            if p.screen.size != size {
+                let t = std::time::Instant::now();
+                p.resize(size);
+                log::debug!(target: "mouser_frame", "resize {}x{} {:.2} ms", size.cols, size.rows, t.elapsed().as_secs_f64() * 1e3);
+                // Re-wrapping moves text; a selection would point at other cells.
+                *self.selection.lock().unwrap() = None;
+                if p.reflow_pending() {
+                    self.settle_reflow();
+                }
+            }
+        }
         if let Some(m) = self.master.lock().unwrap().as_mut() {
             let _ = mouser_pty::set_master_winsize(&mut **m, cols, rows, pw, ph);
         }

@@ -45,14 +45,26 @@ pub struct Scrollback {
     cfg: ScrollbackConfig,
     chunks: RwLock<Vec<ScrollbackChunk>>,
     tail: RwLock<Vec<String>>, // recent, always uncompressed
+    /// Soft-wrap flag per stored line (same order and length as the lines).
+    wrapped: RwLock<std::collections::VecDeque<bool>>,
 }
 
 impl Scrollback {
     pub fn new(cfg: ScrollbackConfig) -> Self {
-        Self { cfg, chunks: RwLock::new(Vec::new()), tail: RwLock::new(Vec::new()) }
+        Self { cfg, chunks: RwLock::new(Vec::new()), tail: RwLock::new(Vec::new()), wrapped: RwLock::new(Default::default()) }
     }
 
     pub fn push_line(&self, line: String) {
+        self.push_line_wrapped(line, false);
+    }
+
+    /// Whether stored line `i` continues on line `i + 1` (soft wrap).
+    pub fn is_wrapped(&self, i: usize) -> bool {
+        self.wrapped.read().get(i).copied().unwrap_or(false)
+    }
+
+    pub fn push_line_wrapped(&self, line: String, wrapped: bool) {
+        self.wrapped.write().push_back(wrapped);
         // First, append to tail
         let maybe_full_chunk = {
             let mut tail = self.tail.write();
@@ -67,6 +79,120 @@ impl Scrollback {
         }
     }
 
+    /// Every saved line (with its style runs, `crate::sbstyle`) and its soft-wrap flag, oldest first.
+    pub fn all_lines_wrapped(&self) -> Vec<(String, bool)> {
+        let lines = self.get_raw_lines(0, self.total_lines());
+        let w = self.wrapped.read();
+        lines.into_iter().enumerate().map(|(i, l)| (l, w.get(i).copied().unwrap_or(false))).collect()
+    }
+
+    /// Start of the logical line holding line `i` (the first of its soft-wrapped rows).
+    pub fn line_start(&self, i: usize) -> usize {
+        let w = self.wrapped.read();
+        let mut i = i.min(w.len());
+        while i > 0 && w.get(i - 1).copied().unwrap_or(false) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// Lines `a..b` (with style runs) and their soft-wrap flags.
+    pub fn lines_wrapped(&self, a: usize, b: usize) -> Vec<(String, bool)> {
+        let lines = self.get_raw_lines(a, b.saturating_sub(a));
+        let w = self.wrapped.read();
+        lines.into_iter().enumerate().map(|(i, l)| (l, w.get(a + i).copied().unwrap_or(false))).collect()
+    }
+
+    /// Replace lines `a..b` with `new`. Only the chunks touching the range are
+    /// rebuilt. Returns how many of the oldest lines were dropped to stay within
+    /// the limit.
+    pub fn splice(&self, a: usize, b: usize, new: Vec<(String, bool)>) -> usize {
+        let mut chunks = self.chunks.write();
+        let mut tail = self.tail.write();
+        let total = chunks.iter().map(|c| c.line_count()).sum::<usize>() + tail.len();
+        let (a, b) = (a.min(total), b.min(total).max(a.min(total)));
+        // First chunk touching `a`.
+        let (mut ci, mut idx) = (0, 0);
+        while ci < chunks.len() && idx + chunks[ci].line_count() <= a {
+            idx += chunks[ci].line_count();
+            ci += 1;
+        }
+        let start = idx;
+        let mut gathered: Vec<String> = Vec::new();
+        let mut cj = ci;
+        while cj < chunks.len() && idx < b.max(a + 1) {
+            gathered.extend(Self::materialize_chunk(&mut chunks[cj], &self.cfg.compression).iter().cloned());
+            idx += chunks[cj].line_count();
+            cj += 1;
+        }
+        let with_tail = cj == chunks.len();
+        if with_tail {
+            gathered.append(&mut tail);
+        }
+        let (nw, new_lines): (Vec<bool>, Vec<String>) = new.into_iter().map(|(l, w)| (w, l)).unzip();
+        let after = gathered.split_off((b - start).min(gathered.len()));
+        gathered.truncate(a - start);
+        gathered.extend(new_lines);
+        gathered.extend(after);
+        let step = self.cfg.chunk_lines.max(1);
+        let mut rebuilt = Vec::new();
+        let mut it = gathered.into_iter().peekable();
+        while it.peek().is_some() {
+            let part: Vec<String> = it.by_ref().take(step).collect();
+            if with_tail && it.peek().is_none() && part.len() < step {
+                *tail = part;
+                break;
+            }
+            rebuilt.push(ScrollbackChunk::Uncompressed { lines: part, last_access: Instant::now() });
+        }
+        chunks.splice(ci..cj, rebuilt);
+        {
+            let mut w = self.wrapped.write();
+            let len = w.len();
+            let rest = w.split_off(b.min(len));
+            w.truncate(a);
+            w.extend(nw);
+            w.extend(rest);
+        }
+        drop(tail);
+        let before = chunks.iter().map(|c| c.line_count()).sum::<usize>() + self.tail.read().len();
+        self.enforce_max_locked(&mut chunks);
+        let after_n = chunks.iter().map(|c| c.line_count()).sum::<usize>() + self.tail.read().len();
+        before - after_n
+    }
+
+    /// Replace every saved line (re-wrapping). Returns how many lines were dropped
+    /// from the front to stay within the limit.
+    pub fn replace_all(&self, lines: Vec<(String, bool)>) -> usize {
+        let max = self.cfg.max_scrollback_lines;
+        let drop = lines.len().saturating_sub(max);
+        let step = self.cfg.chunk_lines.max(1);
+        let mut chunks = Vec::new();
+        let mut cur = Vec::with_capacity(step);
+        let mut wrapped = std::collections::VecDeque::with_capacity(lines.len() - drop);
+        for (l, w) in lines.into_iter().skip(drop) {
+            wrapped.push_back(w);
+            cur.push(l);
+            if cur.len() == step {
+                chunks.push(ScrollbackChunk::Uncompressed {
+                    lines: std::mem::replace(&mut cur, Vec::with_capacity(step)),
+                    last_access: Instant::now(),
+                });
+            }
+        }
+        *self.chunks.write() = chunks;
+        *self.tail.write() = cur;
+        *self.wrapped.write() = wrapped;
+        drop
+    }
+
+    /// Drop every saved line (ED 3).
+    pub fn clear(&self) {
+        self.chunks.write().clear();
+        self.tail.write().clear();
+        self.wrapped.write().clear();
+    }
+
     pub fn total_lines(&self) -> usize {
         let chunks = self.chunks.read();
         let chunk_lines: usize = chunks.iter().map(|c| c.line_count()).sum();
@@ -79,10 +205,19 @@ impl Scrollback {
         while total > self.cfg.max_scrollback_lines && !chunks.is_empty() {
             let dropped = chunks.remove(0).line_count();
             total = total.saturating_sub(dropped);
+            let mut w = self.wrapped.write();
+            let n = dropped.min(w.len());
+            w.drain(..n);
         }
     }
 
+    /// Text of lines `start..start+count` (style runs removed).
     pub fn get_lines(&self, start: usize, count: usize) -> Vec<String> {
+        self.get_raw_lines(start, count).into_iter().map(crate::sbstyle::strip).collect()
+    }
+
+    /// Lines as stored: text, then `\0` and style runs on styled lines (`crate::sbstyle`).
+    pub fn get_raw_lines(&self, start: usize, count: usize) -> Vec<String> {
         // Materialize a range across chunks + tail.
         let mut out = Vec::with_capacity(count);
         let mut remaining = count;
@@ -130,6 +265,7 @@ impl Scrollback {
         }
     }
 
+    /// Compress at most one idle chunk (called often, e.g. on every PTY read).
     pub fn maybe_compress_idle(&self) {
         let idle = Duration::from_millis(self.cfg.idle_compress_ms);
         let mut chunks = self.chunks.write();
@@ -146,6 +282,9 @@ impl Scrollback {
                             line_count: count,
                             algo: self.cfg.compression.algorithm,
                         };
+                        // One chunk per call: the lock is shared with drawing and
+                        // re-wrapping, so never hold it for the whole scrollback.
+                        return;
                     }
                 }
                 ScrollbackChunk::Compressed { .. } => { /* already compressed */ }

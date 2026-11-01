@@ -11,7 +11,7 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 - Fast text rendering via `winit` + `softbuffer` + `fontdue` (CPU rasterization, zero-copy blits)
 - Chunked, compressed scrollback using Zstd or LZ4, with idle-based auto-compression and transparent on-demand decompression
 - Scrollback search across compressed history
-- Kitty protocol support (keyboard + graphics) with a public compliance checklist
+- Fuzzball protocol (graphics + keyboard, `docs/protocol/`), with the Kitty keyboard and Kitty graphics protocols as fallbacks
 - TOML configuration for font, colors, scrollback size, compression algorithm/level, and idle thresholds
 
 ## Why these crates?
@@ -47,15 +47,32 @@ Data flow:
 - To avoid UI stalls, the renderer prefetches ±1 chunk around the viewport and schedules recompression after those chunks again go idle.
 - The maximum scrollback is bounded (`max_scrollback_lines`) and drops the oldest chunks when exceeded.
 
-## Kitty protocol support
+## Fuzzball and Kitty fallbacks
 
-Mouser aims for full support over time. Today’s status lives in [`docs/kitty-compliance.md`](docs/kitty-compliance.md) and is summarized here:
+- **Fuzzball** is Mouser's own protocol for images and structured key events (DCS, tag `Fz`,
+  tmux/screen-friendly). Spec: [`docs/protocol/`](docs/protocol/README.md). Try it with
+  `tools/fuzzball-demo.py` inside Mouser.
+- **Kitty keyboard protocol** is supported as a fallback, for apps that don't speak
+  Fuzzball yet. Compliance matrix: [`docs/kitty-compliance.md`](docs/kitty-compliance.md).
+- **Kitty graphics protocol** is supported as a fallback too (`kitten icat`, chafa, yazi, …),
+  including Unicode placeholders and animation; Fuzzball takes precedence. Details and
+  limits: [`docs/protocol/graphics.md` §7](docs/protocol/graphics.md).
+- iTerm2 `OSC 1337` images are **not** supported.
 
-- Keyboard protocol: negotiation commands recognized; extended `CSI u` key reporting enabled when requested.
-- Graphics protocol: parses Kitty graphics sequences and iTerm2-compatible `OSC 1337` image transfers; basic placement and deletion supported. More features tracked in the checklist.
-- Extensions: OSC 8 hyperlinks, OSC 52 clipboard, synchronized output (2026), OSC 99 desktop notifications — initial parsing and handling where feasible; details in the checklist.
+### Showing images: `mouser show`
 
-If a feature your workflow depends on is missing, please open an issue referencing the checklist item.
+```sh
+mouser show photo.jpg diagram.png      # one after another, each scaled to the terminal width (follows resizes)
+curl -s https://example.com/x.png | mouser show -
+mouser show --width 30 logo.png        # 30 cells wide, height keeps the aspect
+mouser show --original icon.png        # natural pixel size
+```
+
+Formats: PNG (sent as-is), JPEG, GIF (first frame), WebP, BMP. Video and audio are not
+supported. Uses Fuzzball graphics when the terminal answers, Kitty graphics otherwise.
+Inside tmux (`set -g allow-passthrough on`) it shows Kitty Unicode placeholders, which
+tmux moves and redraws like text. Exits non-zero when neither protocol answers and for
+unsupported files.
 
 ## Tabs
 
@@ -78,12 +95,20 @@ An ssh tab that exits with an error stays open showing
 
 ## Terminal
 
-- **Ctrl+Shift+V** pastes (bracketed when the app asks for it).
+- **Drag** selects text (double-click word, triple-click line, Alt+drag block, Shift+click extends); **Ctrl+Shift+C** copies.
+- **Ctrl+Shift+V** pastes the clipboard (bracketed when the app asks for it); **middle-click** / **Shift+Insert** paste the selection (PRIMARY). On macOS use Cmd+C / Cmd+V.
 - **Ctrl+click** opens an OSC 8 hyperlink.
 - **Shift+mouse** bypasses an app's mouse capture.
-- Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (unless `xterm-kitty` is installed).
+- Resizing re-wraps long lines (screen and scrollback); images move with their text.
+- Install the Mouser terminfo with `tic -x -o ~/.terminfo extra/mouser.terminfo`; Mouser then sets `TERM=mouser` (otherwise `xterm-256color`).
 
-See [docs/terminal.md](docs/terminal.md) for the supported sequences.
+Run a program instead of the shell with `mouser -e btop` or `mouser -- nvim file`;
+`--working-directory DIR` (`--dir`), `--title`, `--class` (`--app-id`), `--hold` and
+`--version` work like in other terminals. The desktop entry is
+xdg-terminal-exec compliant, so Mouser can be the default terminal on Omarchy and other
+desktops (`mouser.desktop` first in `~/.config/xdg-terminals.list`).
+
+See [docs/terminal.md](docs/terminal.md) for the supported sequences and options.
 
 ## Configuration
 
@@ -96,8 +121,30 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   shell exits). A fresh install starts with the collapsed strip (click `«` to expand).
   `MOUSER_OPEN_SIDEBAR=1` forces it open and expanded for that run without overwriting the
   saved state.
-- Rendering uses the GPU (wgpu) when available and falls back to the CPU; set
+- Rendering uses the GPU when available and falls back to the CPU; set
   `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
+- GPU rendering engines are swappable: `mouser` (wgpu, default), `skia` (Skia over
+  OpenGL) or a custom engine (a shared library with a small C ABI):
+
+  ```bash
+  mouser engine list                 # * marks the engine new windows use
+  mouser engine use skia             # put skia first (or: MOUSER_ENGINE=skia,mouser mouser)
+  mouser engine priority skia my-engine mouser   # full order; mouser is always the last fallback
+  mouser engine move my-engine up    # first | last | up | down | <position>
+  mouser engine install ./my-engine  # directory with engine.toml + library
+  mouser engine uninstall my-engine
+  mouser engine unskip my-engine     # stop skipping an engine that crashed (--all: every engine)
+  ```
+
+  Open windows switch engine in place when the order changes (tabs, running programs,
+  scrollback and images stay). Custom engines run isolated in an engine host process:
+  if one crashes, the window carries on with the next engine and the crashed one is
+  marked skipped (`mouser engine list`, restore with `unskip`). `mouser` is always the
+  last GPU fallback. On Linux and macOS the window runs in its own process: if any
+  engine crashes, the window comes back on the next engine and your shells, scrollback,
+  tabs and images are still there. The bottom of the right sidebar lists the engines
+  with their state; click one to switch. See `docs/engines.md`
+  (example engine: `crates/mouser-engine-example`).
 - `preferences.toml` — choices made in the app: `theme`, `mode` (`dark`/`light`/`system`),
   `font_family`/`font_size` overrides, and the sidebar's `sidebar_width`, `sidebar_open` and
   `sidebar_collapsed`. Values here win over `config.toml`.
@@ -160,6 +207,18 @@ Prebuilt install packages are attached to each GitHub Release:
 - macOS: CLI Homebrew formula (`Formula/mouser.rb`) and a `Mouser.app` `.dmg` with a Cask (`Casks/mouser.rb`)
 - Windows: portable `.zip` and an installer `.exe`
 
+### Arch Linux
+
+```bash
+# Latest release (prebuilt):
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/latest/download/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+# Or build main from source:
+git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si
+```
+
+`yay -S mouser-git` / `yay -S mouser-bin` once the packages are on the AUR (planned).
+Both replace each other and an older `mouser-bin` install (pacman asks to remove it).
+
 See `docs/release.md` for details and per-platform install commands.
 Tests (with a safety timeout):
 
@@ -167,18 +226,30 @@ Tests (with a safety timeout):
 timeout 120 cargo test --workspace
 ```
 
-## Kitty compliance checklist
+## Kitty keyboard compliance
 
-See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). We keep this updated as we implement features. Tests for keyboard and graphics parsers live under `mouser-core/tests/`.
+See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). Tests live in `crates/mouser-core/tests/kitty_keyboard_*`.
+
+## Known limitations
+
+- **Windows runs single-process.** On Linux and macOS each window is split into a
+  session process (shells, scrollback, tabs) and a UI process (window, engine), so a
+  crash in a GPU driver or engine restarts only the window and keeps the shells. On
+  Windows the session and the window share one process: an engine or driver crash
+  closes the window and ends its shells. Custom engines also run in-process there
+  (no engine host), so a crashing custom engine takes the window down instead of being
+  skipped. Details: [docs/engines.md §8](docs/engines.md).
+- Windows has no clipboard PRIMARY selection, and Waypipe/X11 forwarding are Linux-only.
 
 ## Roadmap
 
 - Rich text shaping and ligatures
 - Tabs and multiple terminals
-- Full Kitty graphics feature coverage, animations, and shared memory transport
+- Fuzzball: IME events
 - Cross-platform validation (Windows/macOS)
+- The session/UI process split on Windows (needs a pipe pair for the UI child)
 
 ## License
 
-MIT
+BSD-3-Clause. See [LICENSE](LICENSE).
 

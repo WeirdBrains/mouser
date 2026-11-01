@@ -4,7 +4,7 @@ These rules are adapted from the owner's Muninn project for this repository.
 
 ## Where to work
 - Always work directly on the owner's machine (alien-blue), in this repository folder:
-  `~/Projects/m3talsmith/mouser`. No cloud agents, no clones elsewhere. Work on `main` directly; no PRs or branches.
+  `~/Projects/WeirdBrains/mouser`. No cloud agents, no clones elsewhere. Work on `main` directly; no PRs or branches.
 - Toolchain: Rust >= 1.99 (edition 2024), cargo on this machine. Prefer bundled/vendored
   crate features over installing system packages; ask before installing anything.
 

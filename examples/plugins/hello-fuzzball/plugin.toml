@@ -1,0 +1,11 @@
+# A Fuzzball plugin runs inside the terminal (works over ssh and tmux); the
+# manifest is optional and only lists it. Run ./hello-fuzzball.sh in a Mouser tab.
+name = "hello-fuzzball"
+version = "0.1.0"
+description = "asks Mouser for a plugin grant over Fuzzball p"
+
+[[provides]]
+kind = "tool-provider"
+
+[run]
+transport = "fuzzball"

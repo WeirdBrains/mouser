@@ -355,3 +355,23 @@ fn xterm_window_reports() {
     t.feed(b"\x1b]2;hi\x07\x1b[11t\x1b[13t\x1b[13;2t\x1b[14;2t\x1b[20t\x1b[21t");
     assert_eq!(out.take(), "\x1b[1t\x1b[3;0;0t\x1b[3;0;0t\x1b[4;54;90t\x1b]L\x1b\\\x1b]lhi\x1b\\");
 }
+
+/// CSI 18t must report the grid the terminal actually has after a resize
+/// (the "81 wide" seen in vttest was the window really being 81 columns).
+#[test]
+fn size_report_follows_resize() {
+    let (mut t, out) = term(81, 24);
+    t.feed(b"\x1b[18t");
+    assert_eq!(out.take(), "\x1b[8;24;81t");
+    t.resize(Size { cols: 80, rows: 24 });
+    t.feed(b"\x1b[18t");
+    assert_eq!(out.take(), "\x1b[8;24;80t");
+}
+
+#[test]
+fn paste_drops_control_characters() {
+    let mut m = mouser_core::parser::Modes::default();
+    assert_eq!(mouser_core::input::paste_bytes("a\tb\x03c\x1b[31md\x7fe\u{9b}f\x00", &m), b"a\tbc[31mdef");
+    m.bracketed_paste = true;
+    assert_eq!(mouser_core::input::paste_bytes("x\x1b[201~\x1by\nz", &m), b"\x1b[200~xy\nz\x1b[201~");
+}

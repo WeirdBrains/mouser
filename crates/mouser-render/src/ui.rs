@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub enum Category {
     Ssh,
     Waypipe,
@@ -8,7 +8,7 @@ pub enum Category {
     X11,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiItem {
     pub name: String,
     pub edit_rect: Rect,
@@ -19,7 +19,7 @@ pub struct UiItem {
     pub read_only: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiCategory {
     pub category: Category,
     pub header_rect: Rect,
@@ -27,7 +27,7 @@ pub struct UiCategory {
     pub items: Vec<UiItem>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -41,7 +41,7 @@ impl Rect {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UiLayout {
     pub sidebar_rect: Rect,
     pub categories: Vec<UiCategory>,
@@ -58,9 +58,276 @@ pub struct UiLayout {
     pub panel: Option<Panel>,
     /// Optional notice button under the SSH header (e.g. migration offer).
     pub notice: Option<(Rect, String)>,
+    /// "Engines" section above the Appearance button ([`add_engines`]).
+    pub engines: Vec<EngineRow>,
+    pub engines_title: Rect,
+    /// "MCP" section: servers and their tools ([`add_mcp`]).
+    #[serde(default)]
+    pub mcp: Vec<McpRow>,
+    /// Engine row being dragged (set by the window, not the model).
+    #[serde(default)]
+    pub engine_drag: Option<EngineDrag>,
+    /// The current mode's view above the prompt (docs/modes.md); the
+    /// terminal grid starts below it.
+    #[serde(default)]
+    pub dock: Option<Dock>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A view docked above the terminal grid.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Dock {
+    pub panel: Panel,
+    /// Pixels the grid moves down (the panel's height plus a gap).
+    pub inset: i32,
+}
+
+/// Pixels the pointer must move before a press on an engine row becomes a
+/// drag; less is a click (switch to it).
+pub const DRAG_THRESHOLD: i32 = 5;
+
+/// Press-and-drag of an engine row in the sidebar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EngineDrag {
+    /// Index of the pressed row.
+    pub from: usize,
+    pub start: (i32, i32),
+    pub pos: (i32, i32),
+    /// Moved past [`DRAG_THRESHOLD`]: a drag, not a click.
+    pub active: bool,
+}
+
+/// What releasing the pointer does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineDrop {
+    /// Didn't move: a click on the row.
+    Click(String),
+    /// New priority order.
+    Reorder(Vec<String>),
+    /// Dropped outside the section, or in the same place.
+    Cancel,
+}
+
+impl EngineDrag {
+    /// Start a drag if (`px`, `py`) is on an engine row.
+    pub fn press(layout: &UiLayout, px: i32, py: i32) -> Option<Self> {
+        if layout.panel.is_some() || layout.modal.is_some() {
+            return None;
+        }
+        let from = engine_row_at(layout, px, py)?;
+        Some(Self { from, start: (px, py), pos: (px, py), active: false })
+    }
+
+    pub fn moved(&mut self, px: i32, py: i32) {
+        self.pos = (px, py);
+        if (px - self.start.0).abs().max((py - self.start.1).abs()) >= DRAG_THRESHOLD {
+            self.active = true;
+        }
+    }
+
+    /// Insertion index (0..=rows) for the current pointer, or None outside
+    /// the section (a drop there cancels).
+    pub fn target(&self, layout: &UiLayout) -> Option<usize> {
+        if !self.active || !drop_zone(layout).contains(self.pos.0, self.pos.1) {
+            return None;
+        }
+        Some(drop_index(layout, self.pos.1))
+    }
+
+    pub fn release(&self, layout: &UiLayout) -> EngineDrop {
+        let Some(row) = layout.engines.get(self.from) else { return EngineDrop::Cancel };
+        if !self.active {
+            return EngineDrop::Click(row.name.clone());
+        }
+        let Some(at) = self.target(layout) else { return EngineDrop::Cancel };
+        let names: Vec<String> = layout.engines.iter().map(|e| e.name.clone()).collect();
+        let new = reordered(&names, self.from, at);
+        if new == names { EngineDrop::Cancel } else { EngineDrop::Reorder(new) }
+    }
+}
+
+/// Index of the engine row at (`px`, `py`).
+pub fn engine_row_at(layout: &UiLayout, px: i32, py: i32) -> Option<usize> {
+    layout.engines.iter().position(|e| e.rect.contains(px, py))
+}
+
+/// Where a dragged row can be dropped: the section (title to last row) plus
+/// half a row of slack above and below.
+pub fn drop_zone(layout: &UiLayout) -> Rect {
+    let (Some(first), Some(last)) = (layout.engines.first(), layout.engines.last()) else { return Rect { x: 0, y: 0, w: 0, h: 0 } };
+    let slack = first.rect.h / 2;
+    let top = layout.engines_title.y.min(first.rect.y) - slack;
+    let bottom = last.rect.y + last.rect.h + slack;
+    Rect { x: first.rect.x, y: top, w: first.rect.w, h: bottom - top }
+}
+
+/// Insertion index for pointer height `py`: before the first row whose middle
+/// is below it.
+pub fn drop_index(layout: &UiLayout, py: i32) -> usize {
+    layout.engines.iter().position(|e| py < e.rect.y + e.rect.h / 2).unwrap_or(layout.engines.len())
+}
+
+/// `names` with the item at `from` moved to insertion index `at` (an index
+/// into the list before the move, 0..=len).
+pub fn reordered(names: &[String], from: usize, at: usize) -> Vec<String> {
+    let mut v = names.to_vec();
+    if from >= v.len() {
+        return v;
+    }
+    let item = v.remove(from);
+    let at = if at > from { at - 1 } else { at }.min(v.len());
+    v.insert(at, item);
+    v
+}
+
+/// How an engine shows in the sidebar's Engines section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EngineState {
+    /// This window draws with it.
+    Active,
+    Ok,
+    Skipped,
+    Failed,
+}
+
+impl EngineState {
+    pub fn label(self) -> &'static str {
+        match self {
+            EngineState::Active => "active",
+            EngineState::Ok => "ok",
+            EngineState::Skipped => "skipped",
+            EngineState::Failed => "failed",
+        }
+    }
+}
+
+/// One engine row; a click makes it this window's engine (`mouser engine use`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EngineRow {
+    pub name: String,
+    pub state: EngineState,
+    /// Why it is skipped or failed (drawn as a second, muted line).
+    pub note: Option<String>,
+    pub rect: Rect,
+}
+
+pub const ENGINES_TITLE: &str = "Engines";
+
+/// Place the Engines section (in priority order) at the bottom of an expanded
+/// sidebar, just above the Appearance button; if the connections reach that
+/// far it goes below them and the Appearance button moves down.
+pub fn add_engines(layout: &mut UiLayout, engines: &[(String, EngineState, Option<String>)], cell_h: i32) {
+    if layout.collapsed || layout.sidebar_rect.w == 0 || engines.is_empty() {
+        return;
+    }
+    let line_h = cell_h + 8;
+    let row_h = |n: &Option<String>| if n.is_some() { 2 * line_h - 6 } else { line_h };
+    let total = line_h + 4 + engines.iter().map(|(_, _, n)| row_h(n) + 2).sum::<i32>();
+    let mut content_bottom = layout.collapse_rect.y + layout.collapse_rect.h;
+    for c in &layout.categories {
+        content_bottom = content_bottom.max(c.header_rect.y + c.header_rect.h);
+        for i in &c.items {
+            content_bottom = content_bottom.max(i.name_rect.y + i.name_rect.h);
+        }
+    }
+    if let Some((r, _)) = &layout.notice {
+        content_bottom = content_bottom.max(r.y + r.h);
+    }
+    if let Some(r) = layout.mcp.last() {
+        content_bottom = content_bottom.max(r.rect.y + r.rect.h);
+    }
+    let a = layout.appearance_rect;
+    let top = (a.y - 12 - total).max(content_bottom + 12);
+    let x = a.x;
+    let w = (layout.sidebar_rect.x + layout.sidebar_rect.w - SIDEBAR_MARGIN - x).max(0);
+    layout.engines_title = Rect { x, y: top, w, h: line_h };
+    let mut y = top + line_h + 4;
+    layout.engines = engines
+        .iter()
+        .map(|(name, state, note)| {
+            let r = Rect { x, y, w, h: row_h(note) };
+            y += r.h + 2;
+            EngineRow { name: name.clone(), state: *state, note: note.clone(), rect: r }
+        })
+        .collect();
+    layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
+}
+
+pub const MCP_TITLE: &str = "MCP";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum McpRowKind {
+    Title,
+    /// A server; `ok` is connected, `bad` failed/denied (state label drawn right).
+    Server {
+        state: String,
+        ok: bool,
+        bad: bool,
+    },
+    /// A clickable tool under its server.
+    Tool,
+    /// A muted line (why it failed).
+    Note,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct McpRow {
+    pub kind: McpRowKind,
+    /// Server id the row belongs to.
+    pub server: String,
+    pub text: String,
+    pub rect: Rect,
+}
+
+/// One server for [`add_mcp`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McpServerSpec {
+    pub id: String,
+    /// What the row shows (`▸ id (3)`).
+    pub label: String,
+    pub state: String,
+    pub ok: bool,
+    pub bad: bool,
+    pub note: Option<String>,
+    pub tools: Vec<String>,
+}
+
+/// Place the MCP section below the connections (call before [`add_engines`]).
+pub fn add_mcp(layout: &mut UiLayout, servers: &[McpServerSpec], cell_h: i32) {
+    if layout.collapsed || layout.sidebar_rect.w == 0 || servers.is_empty() {
+        return;
+    }
+    let line_h = cell_h + 8;
+    let mut y = layout.collapse_rect.y + layout.collapse_rect.h;
+    for c in &layout.categories {
+        y = y.max(c.header_rect.y + c.header_rect.h);
+        for i in &c.items {
+            y = y.max(i.name_rect.y + i.name_rect.h);
+        }
+    }
+    if let Some((r, _)) = &layout.notice {
+        y = y.max(r.y + r.h);
+    }
+    y += 12;
+    let x = layout.appearance_rect.x;
+    let w = (layout.sidebar_rect.x + layout.sidebar_rect.w - SIDEBAR_MARGIN - x).max(0);
+    let mut push = |kind: McpRowKind, server: &str, text: &str, indent: i32, h: i32| {
+        layout.mcp.push(McpRow { kind, server: server.into(), text: text.into(), rect: Rect { x: x + indent, y, w: w - indent, h } });
+        y += h + 2;
+    };
+    push(McpRowKind::Title, "", MCP_TITLE, 0, line_h);
+    for s in servers {
+        push(McpRowKind::Server { state: s.state.clone(), ok: s.ok, bad: s.bad }, &s.id, &s.label, 0, line_h);
+        if let Some(n) = &s.note {
+            push(McpRowKind::Note, &s.id, n, 16, cell_h + 4);
+        }
+        for t in &s.tools {
+            push(McpRowKind::Tool, &s.id, t, 16, cell_h + 6);
+        }
+    }
+    layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PanelStyle {
     Title,
     Label,
@@ -80,8 +347,17 @@ pub enum PanelStyle {
     },
     /// Colour sample.
     Swatch(u32),
+    /// Framed tile (commander grid / carousel item).
+    Tile {
+        selected: bool,
+    },
     /// Background of a dropdown drawn over the panel.
     Popup,
+    /// Seek / volume bar: `done` and the hover mark (`u16::MAX`: none) in 1/1000.
+    Progress {
+        done: u16,
+        hover: u16,
+    },
     /// Dropdown row; bit `i` of `highlight` marks char `i` as matched.
     Option {
         selected: bool,
@@ -89,7 +365,7 @@ pub enum PanelStyle {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PanelItem {
     pub rect: Rect,
     pub text: String,
@@ -97,7 +373,7 @@ pub struct PanelItem {
     pub action: UiAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Panel {
     pub rect: Rect,
     pub items: Vec<PanelItem>,
@@ -106,7 +382,7 @@ pub struct Panel {
 pub const APPEARANCE_LABEL: &str = "Appearance";
 
 /// Font dropdown under the font family field.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct FontDropdownView {
     /// Visible rows: (index into the filtered list, name, matched char positions).
     pub rows: Vec<(usize, String, Vec<usize>)>,
@@ -120,7 +396,7 @@ fn highlight_bits(pos: &[usize]) -> u64 {
 }
 
 /// Data for [`editor_panel`]: one entry per field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EditorFieldView {
     pub label: String,
     pub value: String,
@@ -336,22 +612,24 @@ pub fn editor_panel(
     Panel { rect, items }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ModalKind {
     Add(Category),
     Edit { category: Category, name: String },
     ConfirmDelete { category: Category, name: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ModalState {
     pub kind: ModalKind,
     pub advanced_open: bool,
     pub rect: Rect,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UiAction {
+    /// Approval popup answer: 0 allow once, 1 always, 2 deny, 3 never.
+    Approve(u8),
     OpenAdd(Category),
     OpenEdit {
         category: Category,
@@ -398,6 +676,26 @@ pub enum UiAction {
     CloseTab(usize),
     CloseActiveTab,
     CycleTab(i32),
+    /// Engines section: make this engine first and switch to it (`mouser engine use`).
+    UseEngine(String),
+    /// MCP server row: reconnect, or ask to start an MCP plugin.
+    McpServer(String),
+    /// MCP tool row: (server id, tool).
+    McpTool(String, String),
+    /// Engines section drag-and-drop: save this priority order (`mouser engine priority`).
+    ReorderEngines(Vec<String>),
+    /// An action of the current mode (from a click in its view or windows):
+    /// the mode's own action id and an argument (e.g. an item index).
+    Mode {
+        action: String,
+        arg: i32,
+    },
+    /// Ctrl+Shift+K: the key mappings of the current mode.
+    ShowKeymap,
+    /// Ctrl+Shift+M: all modes.
+    ShowModes,
+    /// Switch to the mode with this hotkey (click in the modes window).
+    SwitchMode(char),
     None,
 }
 
@@ -420,7 +718,7 @@ pub fn clamp_sidebar_width(requested: i32, window_w: i32, cell_w: i32) -> i32 {
 }
 
 /// Inputs for [`build_sidebar`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SidebarSpec {
     pub width_px: i32,
     pub height_px: i32,
@@ -498,6 +796,11 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
             appearance_rect: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
             panel: None,
             notice: None,
+            engines: Vec::new(),
+            mcp: Vec::new(),
+            engines_title: Rect { x: sidebar_rect.x, y: 0, w: 0, h: 0 },
+            engine_drag: None,
+            dock: None,
         };
     }
     let sidebar_w = match requested_width {
@@ -535,7 +838,22 @@ pub fn build_sidebar(spec: SidebarSpec, groups: &BTreeMap<Category, Vec<String>>
     }
     let ap_w = button_w(APPEARANCE_LABEL);
     let appearance_rect = Rect { x: inner_x, y: (height_px - SIDEBAR_MARGIN - line_h).max(y), w: ap_w.min(inner_right - inner_x), h: line_h };
-    UiLayout { sidebar_rect, categories: cats, modal, collapsed: false, collapse_rect, resize_rect, appearance_rect, panel: None, notice: None }
+    UiLayout {
+        sidebar_rect,
+        categories: cats,
+        modal,
+        collapsed: false,
+        collapse_rect,
+        resize_rect,
+        appearance_rect,
+        panel: None,
+        notice: None,
+        engines: Vec::new(),
+        mcp: Vec::new(),
+        engines_title: Rect { x: inner_x, y: 0, w: 0, h: 0 },
+        engine_drag: None,
+        dock: None,
+    }
 }
 
 /// Layout with no sidebar (zero width at the right edge), e.g. to show a panel
@@ -552,6 +870,11 @@ pub fn without_sidebar(width_px: i32, height_px: i32) -> UiLayout {
         appearance_rect: empty,
         panel: None,
         notice: None,
+        engines: Vec::new(),
+        mcp: Vec::new(),
+        engines_title: empty,
+        engine_drag: None,
+        dock: None,
     }
 }
 
@@ -694,6 +1017,52 @@ pub fn confirm_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, message: &s
     Panel { rect, items }
 }
 
+/// One button of the approval popup: (label, answer index, primary).
+pub const APPROVAL_BUTTONS: [(&str, u8, bool); 4] =
+    [("Allow once [y]", 0, true), ("Allow always [a]", 1, false), ("Deny [n]", 2, false), ("Never [N]", 3, false)];
+
+/// The plugin approval popup (docs/plugins.md §Approval). Drawn by Mouser over
+/// everything; terminal output can't draw or answer it. `lines` explain the
+/// request; `offer` lists the answers shown (0 once, 1 always, 2 deny, 3 never);
+/// `armed` false shows the buttons inert for the first moment (no click-through).
+#[allow(clippy::too_many_arguments)]
+pub fn approval_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, title: &str, lines: &[String], offer: &[u8], armed: bool) -> Panel {
+    let row_h = cell_h + 8;
+    let pad = 16;
+    let longest = lines.iter().map(|l| l.chars().count()).chain([title.chars().count()]).max().unwrap_or(30) as i32;
+    let buttons: Vec<_> = APPROVAL_BUTTONS.iter().filter(|b| offer.contains(&b.1)).collect();
+    let bw_total: i32 = buttons.iter().map(|b| cell_w * b.0.chars().count() as i32 + 2 * BUTTON_PAD + 8).sum();
+    let w = (2 * pad + cell_w * longest.clamp(36, 80)).max(2 * pad + bw_total);
+    let h = 2 * pad + row_h * (lines.len() as i32 + 3);
+    let rect = centered(vp_w, vp_h, w, h);
+    let (x, mut y) = (rect.x + pad, rect.y + pad);
+    let mut items =
+        vec![PanelItem { rect: Rect { x, y, w: rect.w - 2 * pad, h: row_h }, text: title.into(), style: PanelStyle::Title, action: UiAction::None }];
+    y += row_h + row_h / 2;
+    for l in lines {
+        items.push(PanelItem {
+            rect: Rect { x, y, w: rect.w - 2 * pad, h: row_h },
+            text: l.clone(),
+            style: PanelStyle::Label,
+            action: UiAction::None,
+        });
+        y += row_h;
+    }
+    y += row_h / 2;
+    let mut bx = x;
+    for (label, i, primary) in buttons {
+        let bw = cell_w * label.chars().count() as i32 + 2 * BUTTON_PAD;
+        items.push(PanelItem {
+            rect: Rect { x: bx, y, w: bw, h: row_h },
+            text: (*label).into(),
+            style: PanelStyle::Button { primary: *primary && armed },
+            action: if armed { UiAction::Approve(*i) } else { UiAction::None },
+        });
+        bx += bw + 8;
+    }
+    Panel { rect, items }
+}
+
 pub fn category_title(c: &Category) -> &'static str {
     match c {
         Category::Ssh => "SSH",
@@ -701,6 +1070,33 @@ pub fn category_title(c: &Category) -> &'static str {
         Category::Tunnels => "Tunnels",
         Category::X11 => "X11",
     }
+}
+
+fn over_dock(l: &UiLayout, x: i32, y: i32) -> bool {
+    l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(x, y))
+}
+
+/// A left press over a mode's view: the mode sees the press (seek bar, image
+/// pan), then the item under it is clicked. `None`: not over the view.
+pub fn dock_press(l: &UiLayout, x: i32, y: i32) -> Option<Vec<UiAction>> {
+    over_dock(l, x, y).then(|| vec![UiAction::Mode { action: "pointer_down".into(), arg: crate::modes::commander::pack_xy(x, y) }, hit_test(l, x, y)])
+}
+
+/// The wheel over a mode's view (`lines` > 0 is up): "scroll", or with Ctrl
+/// a zoom about the pointer. `None`: not over the view.
+pub fn dock_wheel(l: &UiLayout, x: i32, y: i32, lines: isize, ctrl: bool) -> Option<Vec<UiAction>> {
+    if !over_dock(l, x, y) {
+        return None;
+    }
+    let n = lines.signum() as i32 * lines.unsigned_abs().div_ceil(3) as i32;
+    Some(match (lines, ctrl) {
+        (0, _) => vec![],
+        (_, true) => vec![
+            UiAction::Mode { action: "pointer_move".into(), arg: crate::modes::commander::pack_xy(x, y) },
+            UiAction::Mode { action: "zoom_wheel".into(), arg: n },
+        ],
+        _ => vec![UiAction::Mode { action: "scroll".into(), arg: -n }],
+    })
 }
 
 pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
@@ -716,6 +1112,19 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
             return UiAction::ClosePanel;
         }
         return UiAction::None;
+    }
+    if layout.modal.is_none()
+        && let Some(d) = &layout.dock
+        && d.panel.rect.contains(px, py)
+    {
+        // Last item first: labels and previews sit on top of their tiles.
+        return d
+            .panel
+            .items
+            .iter()
+            .rev()
+            .find(|i| i.rect.contains(px, py) && i.action != UiAction::None)
+            .map_or(UiAction::None, |i| i.action.clone());
     }
     if let Some(modal) = &layout.modal {
         // Modal consumes clicks
@@ -737,6 +1146,16 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
     if layout.notice.as_ref().is_some_and(|(r, _)| r.contains(px, py)) {
         return UiAction::Notice;
     }
+    if let Some(r) = layout.mcp.iter().find(|r| r.rect.contains(px, py)) {
+        match &r.kind {
+            McpRowKind::Server { .. } => return UiAction::McpServer(r.server.clone()),
+            McpRowKind::Tool => return UiAction::McpTool(r.server.clone(), r.text.clone()),
+            McpRowKind::Title | McpRowKind::Note => {}
+        }
+    }
+    if let Some(e) = layout.engines.iter().find(|e| e.rect.contains(px, py)) {
+        return UiAction::UseEngine(e.name.clone());
+    }
     for cat in &layout.categories {
         if cat.add_rect.contains(px, py) {
             return UiAction::OpenAdd(cat.category.clone());
@@ -757,7 +1176,7 @@ pub fn hit_test(layout: &UiLayout, px: i32, py: i32) -> UiAction {
 }
 
 /// Tab strip state handed to the renderer (only drawn with 2+ tabs).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct TabBar {
     pub titles: Vec<String>,
     pub active: usize,

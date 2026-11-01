@@ -1,10 +1,12 @@
 # Mouser Docs
 
-- [Kitty compliance](./kitty-compliance.md)
+- [Fuzzball protocol](./protocol/README.md)
+- [Kitty keyboard compliance](./kitty-compliance.md)
 - [Connection manager](./connection-manager.md)
 - [Modes](./modes.md)
 - [Themes](./themes.md)
 - [Rendering and fonts](./rendering.md)
+- [Rendering engines](./engines.md)
 - [Storage](./storage.md)
 - [Release process](./release.md)
 

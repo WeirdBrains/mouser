@@ -57,8 +57,8 @@ fn functional_legacy_letter_and_tilde_forms() {
     assert_eq!(enc(&func(Func::F(12), 0), f), "\x1b[24~");
     assert_eq!(enc(&func(Func::Delete, CTRL | ALT), f), "\x1b[3;7~");
     assert_eq!(enc(&func(Func::PageDown, 0), f), "\x1b[6~");
-    // Keys that only exist under report-all.
-    assert_eq!(enc(&func(Func::F(13), 0), f), "<legacy>");
+    // Keys with no legacy encoding are CSI u once any enhancement is on.
+    assert_eq!(enc(&func(Func::F(13), 0), f), "\x1b[57376u");
     assert_eq!(enc(&func(Func::F(13), 0), REPORT_ALL_KEYS), "\x1b[57376u");
     assert_eq!(enc(&func(Func::F(35), 0), REPORT_ALL_KEYS), "\x1b[57398u");
     assert_eq!(enc(&func(Func::CapsLock, 0), REPORT_ALL_KEYS), "\x1b[57358u");

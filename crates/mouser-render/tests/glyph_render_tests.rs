@@ -72,7 +72,8 @@ fn check_snapshot(name: &str, actual: &str) {
         std::fs::write(&path, actual).unwrap();
         return;
     }
-    let expected = std::fs::read_to_string(&path).unwrap();
+    // Windows checkouts may turn the snapshot into CRLF.
+    let expected = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
     assert_eq!(expected, actual, "snapshot {name} changed; rerun with UPDATE_SNAPSHOTS=1 if intended");
 }
 

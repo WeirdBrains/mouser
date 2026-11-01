@@ -1,0 +1,75 @@
+# Maintainer: Michael Christenson II <placeholder: set before publishing to the AUR>
+pkgname=mouser-git
+_pkgname=mouser
+pkgver=0.7.2.r0.g0000000
+pkgrel=1
+pkgdesc="Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty graphics (git main)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/WeirdBrains/mouser"
+license=('BSD-3-Clause')
+depends=('glibc' 'libgcc' 'libstdc++' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'alsa-lib')
+makedepends=('cargo' 'git' 'ncurses')
+optdepends=('vulkan-icd-loader: GPU renderer (falls back to CPU without it)'
+            'libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
+            'libx11: X11 session support'
+            'libxcursor: X11 cursors'
+            'libxi: X11 input'
+            'libxrandr: X11 monitors')
+# The opt-in local-model variant (MOUSER_LOCAL_LLM=1 makepkg) links libvulkan.
+if [[ -n ${MOUSER_LOCAL_LLM:-} ]]; then
+  depends+=('vulkan-icd-loader')
+  makedepends+=('cmake' 'clang' 'vulkan-headers' 'shaderc' 'spirv-headers')
+fi
+provides=('mouser')
+conflicts=('mouser' 'mouser-bin')
+options=('!lto')
+source=("${_pkgname}::git+https://github.com/WeirdBrains/mouser.git")
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "${_pkgname}"
+  git describe --long --tags --abbrev=7 --match 'v[0-9]*' | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
+}
+
+prepare() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')" 2>/dev/null \
+    || cargo fetch --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  # Opt-in built-in local model (docs/models.md): MOUSER_LOCAL_LLM=1 makepkg
+  cargo build --frozen --release -p mouser-app ${MOUSER_LOCAL_LLM:+--features local-llm}
+  mkdir -p terminfo
+  tic -x -o terminfo extra/mouser.terminfo
+}
+
+check() {
+  cd "${_pkgname}"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen --release -p mouser-core
+}
+
+package() {
+  cd "${_pkgname}"
+  install -Dm755 target/release/mouser-app "${pkgdir}/usr/bin/mouser"
+  install -Dm644 resources/linux/mouser.desktop "${pkgdir}/usr/share/applications/mouser.desktop"
+  install -Dm644 resources/linux/io.github.m3talsmith.mouser.metainfo.xml \
+    "${pkgdir}/usr/share/metainfo/io.github.m3talsmith.mouser.metainfo.xml"
+  local d
+  for d in resources/icons/hicolor/*/apps/mouser.png; do
+    install -Dm644 "$d" "${pkgdir}/usr/share/icons/${d#resources/icons/}"
+  done
+  install -Dm644 resources/icons/mouser.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/mouser.svg"
+  install -d "${pkgdir}/usr/share/terminfo"
+  cp -a terminfo/. "${pkgdir}/usr/share/terminfo/"
+  install -Dm644 extra/mouser.terminfo "${pkgdir}/usr/share/${_pkgname}/mouser.terminfo"
+  install -Dm644 README.md "${pkgdir}/usr/share/doc/${_pkgname}/README.md"
+  if [ -f LICENSE ]; then
+    install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  fi
+}

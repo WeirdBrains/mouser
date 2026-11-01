@@ -3,6 +3,7 @@
 
 use crate::text::{Draw, FontStack, luminance, mix};
 use crate::ui::{self, UiLayout};
+use mouser_core::kitty_graphics::PLACEHOLDER;
 
 /// Padding between the window edge and the terminal grid, in pixels.
 pub const PADDING: i32 = 8;
@@ -20,7 +21,7 @@ pub struct Frame<'a> {
     pub accent: Option<u32>,
     /// Cursor colour; derived from `fg` if `None`.
     pub cursor_color: Option<u32>,
-    /// Kitty graphics placements, lowest z first.
+    /// Fuzzball graphics placements, lowest z first.
     pub images: &'a [ImageDraw],
     /// Per-cell colours and decorations, parallel to `lines` (missing rows or
     /// cells draw plain in `fg`).
@@ -33,11 +34,13 @@ pub struct Frame<'a> {
 impl Frame<'_> {
     /// Pixels above the first grid row.
     pub fn top(&self, cell_h: i32) -> i32 {
-        PADDING + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
+        PADDING
+            + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
+            + self.ui.and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum CursorShape {
     #[default]
     Block,
@@ -57,7 +60,7 @@ pub mod paint {
 }
 
 /// Resolved paint for one cell (colours already themed, inverse/dim applied).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CellPaint {
     pub fg: u32,
     /// Background fill, or `None` for the window background.
@@ -67,12 +70,12 @@ pub struct CellPaint {
     pub ul_color: u32,
     pub flags: u8,
     /// Combining marks drawn over the base glyph (`'\0'` = none).
-    pub comb: [char; 2],
+    pub comb: [char; 3],
 }
 
 impl CellPaint {
     pub fn plain(fg: u32) -> Self {
-        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 2] }
+        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 3] }
     }
 }
 
@@ -104,20 +107,27 @@ fn draw_underline(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, style: u8, colo
     }
 }
 
-fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+/// Cell backgrounds of a styled row. All rows' backgrounds are painted before
+/// any text so wide glyphs and italics overhang cleanly, and so Kitty images
+/// with `z < KITTY_BELOW_BG` can sit under them and other negative z between
+/// them and the text.
+fn draw_row_bgs(canvas: &mut dyn Draw, fonts: &FontStack, top: i32, styles: &[CellPaint]) {
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
-    // Backgrounds first so wide glyphs and italics overhang cleanly.
     for (col, p) in styles.iter().enumerate() {
         if let Some(bg) = p.bg {
             canvas.fill_rect(PADDING + col as i32 * cw, top, cw, ch, bg);
         }
     }
+}
+
+fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+    let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let under_y = top + (fonts.ascent + 2).min(ch - 3);
     for (col, c) in line.chars().enumerate() {
         let x = PADDING + col as i32 * cw;
         let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
         let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
-        if p.flags & paint::NO_GLYPH == 0 {
+        if p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER {
             let g = if p.flags & paint::ITALIC != 0 { crate::text::italic_key(c) } else { c };
             canvas.draw_char(fonts, x, top, g, p.fg);
             if p.flags & paint::BOLD != 0 {
@@ -143,7 +153,7 @@ fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line:
 }
 
 /// One image placement to draw, anchored to a grid cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImageDraw {
     /// Unique per image upload (texture cache key).
     pub key: u64,
@@ -164,8 +174,58 @@ pub struct ImageDraw {
     pub z: i32,
 }
 
-fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], below: bool, top: i32) {
-    for img in images.iter().filter(|i| (i.z < 0) == below) {
+/// Fuzzball placements on screen `alt` visible in absolute rows `top .. top + rows`,
+/// as draw commands (row relative to `top`) sized for `cell` pixels, lowest z first.
+/// Downscaled images come from `scaler`'s cache.
+pub fn image_draws(
+    gfx: &mouser_core::graphics::Graphics,
+    alt: bool,
+    top: i64,
+    rows: usize,
+    cell: (u32, u32),
+    scaler: &mut crate::scale::ImageScaler,
+) -> Vec<ImageDraw> {
+    layered_image_draws(&[(gfx, gfx.draws(alt, top, rows, cell))], scaler)
+}
+
+/// Draw commands for several stores, each with its draws (for example Kitty
+/// placements and placeholders, then Fuzzball placements). Sorted by z; at
+/// equal z later layers draw on top, so Fuzzball goes last to take precedence.
+pub fn layered_image_draws(
+    layers: &[(&mouser_core::graphics::Graphics, Vec<mouser_core::graphics::Draw>)],
+    scaler: &mut crate::scale::ImageScaler,
+) -> Vec<ImageDraw> {
+    let mut draws: Vec<ImageDraw> = Vec::new();
+    for (gfx, list) in layers {
+        for d in list {
+            let Some(im) = gfx.images.get(&d.image_id) else { continue };
+            let i32c = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+            draws.push(ImageDraw {
+                key: im.key,
+                rgba: im.rgba.clone(),
+                img_w: im.width,
+                img_h: im.height,
+                src: d.src,
+                col: i32c(d.col),
+                row: i32c(d.row),
+                x_off: i32c(d.x_off),
+                y_off: i32c(d.y_off),
+                width: d.width,
+                height: d.height,
+                z: d.z,
+            });
+        }
+    }
+    draws.sort_by_key(|d| d.z);
+    scaler.prepare(&mut draws);
+    draws
+}
+
+/// Kitty images with a z-index below this draw under cell backgrounds.
+pub const KITTY_BELOW_BG: i32 = -1_073_741_824;
+
+fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], z: std::ops::Range<i64>, top: i32) {
+    for img in images.iter().filter(|i| z.contains(&(i.z as i64))) {
         let x = PADDING + img.col * fonts.cell_w + img.x_off;
         let y = top + img.row * fonts.cell_h + img.y_off;
         canvas.draw_image(img, x, y);
@@ -186,17 +246,31 @@ pub fn accent_for(bg: u32) -> u32 {
 
 pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
+    // The commander view goes first: its previews are images, drawn with the rest.
+    if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()) {
+        let accent = frame.accent.unwrap_or(accent_for(frame.bg));
+        let (bg, fg) = (frame.bg, frame.fg);
+        let dark = luminance(bg) < 128.0;
+        let panel = if dark { mix(bg, 0xFFFFFF, 0.05) } else { mix(bg, 0x000000, 0.04) };
+        draw_panel(canvas, fonts, &d.panel, bg, fg, panel, mix(bg, fg, 0.25), mix(panel, fg, 0.65), accent);
+    }
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let top0 = frame.top(ch);
-    draw_images(canvas, fonts, frame.images, true, top0);
+    let (lo, below_bg) = (i64::MIN, KITTY_BELOW_BG as i64);
+    draw_images(canvas, fonts, frame.images, lo..below_bg, top0);
+    for (row, st) in frame.styles.iter().enumerate().take(frame.lines.len()) {
+        draw_row_bgs(canvas, fonts, top0 + row as i32 * ch, st);
+    }
+    draw_images(canvas, fonts, frame.images, below_bg..0, top0);
     for (row, line) in frame.lines.iter().enumerate() {
         let top = top0 + row as i32 * ch;
         match frame.styles.get(row) {
             Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, top, line, st, frame.fg),
+            _ if line.contains(PLACEHOLDER) => canvas.draw_text(fonts, PADDING, top, &line.replace(PLACEHOLDER, " "), frame.fg),
             _ => canvas.draw_text(fonts, PADDING, top, line, frame.fg),
         }
     }
-    draw_images(canvas, fonts, frame.images, false, top0);
+    draw_images(canvas, fonts, frame.images, 0..i64::MAX, top0);
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = top0 + cy as i32 * ch;
@@ -206,7 +280,7 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
         match frame.cursor_shape {
             CursorShape::Block => {
                 canvas.fill_rect(x, y, w, ch, color);
-                if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)) {
+                if let Some(c) = frame.lines.get(cy).and_then(|l| l.chars().nth(cx)).filter(|c| *c != PLACEHOLDER) {
                     canvas.draw_char(fonts, x, y, c, frame.bg);
                 }
             }
@@ -232,8 +306,61 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
     }
 }
 
+/// Corner radius of every box (panels, popups, tiles, buttons, fields, tabs).
+pub const RADIUS: i32 = 8;
+
+/// A filled box with rounded corners, from plain rects so every renderer
+/// (wgpu, skia, CPU, engine plugins) draws it the same. Corner edge pixels are
+/// blended with `under` (the colour beneath) as cheap anti-aliasing.
+#[allow(clippy::too_many_arguments)]
+pub fn round_rect(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, h: i32, r: i32, color: u32, under: u32) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let r = r.min(w / 2).min(h / 2).max(0);
+    if r == 0 {
+        canvas.fill_rect(x, y, w, h, color);
+        return;
+    }
+    let rf = r as f64;
+    for i in 0..r {
+        let dy = rf - i as f64 - 0.5;
+        let dx = rf - (rf * rf - dy * dy).max(0.0).sqrt();
+        let full = dx.ceil() as i32;
+        let cover = full as f64 - dx;
+        let edge = mix(under, color, cover as f32);
+        for row in [y + i, y + h - 1 - i] {
+            canvas.fill_rect(x + full, row, w - 2 * full, 1, color);
+            if full > 0 && cover > 0.05 {
+                canvas.fill_rect(x + full - 1, row, 1, 1, edge);
+                canvas.fill_rect(x + w - full, row, 1, 1, edge);
+            }
+        }
+    }
+    canvas.fill_rect(x, y + r, w, h - 2 * r, color);
+}
+
+/// A rounded box with a 1 px `edge` outline (`t` px thick).
+#[allow(clippy::too_many_arguments)]
+pub fn round_box(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, h: i32, r: i32, t: i32, edge: u32, fill: u32, under: u32) {
+    round_rect(canvas, x, y, w, h, r, edge, under);
+    round_rect(canvas, x + t, y + t, w - 2 * t, h - 2 * t, (r - t).max(0), fill, edge);
+}
+
+/// Soft drop shadow under a box: three widening, fading rounded layers,
+/// offset down. Darker on dark themes (a light shadow would not show),
+/// faint on light ones.
+pub fn drop_shadow(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, h: i32, r: i32, bg: u32) {
+    let strength = if luminance(bg) < 128.0 { 0.42 } else { 0.16 };
+    for k in (1..=3).rev() {
+        let a = strength * (4 - k) as f32 / 4.0;
+        round_rect(canvas, x - k + 1, y - k + 3, w + 2 * k - 2, h + 2 * k - 2, r + k, mix(bg, 0x000000, a), bg);
+    }
+}
+
 fn draw_button(canvas: &mut dyn Draw, fonts: &mut FontStack, r: ui::Rect, label: &str, fill: u32, text: u32) {
-    canvas.fill_rect(r.x, r.y, r.w, r.h, fill);
+    // `under` is approximated by the button colour (corner pixels sit on the panel).
+    round_rect(canvas, r.x, r.y, r.w, r.h, RADIUS.min(r.h / 3), fill, fill);
     let top = r.y + (r.h - fonts.cell_h) / 2;
     canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, top, label, text);
 }
@@ -255,9 +382,10 @@ fn draw_ui(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, bg: 
 #[allow(clippy::too_many_arguments)]
 fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let r = p.rect;
-    canvas.fill_rect(r.x - 1, r.y - 1, r.w + 2, r.h + 2, border);
-    canvas.fill_rect(r.x, r.y, r.w, r.h, panel);
-    canvas.fill_rect(r.x, r.y, r.w, 2, accent);
+    // Soft drop shadow, then a rounded border and an opaque body.
+    drop_shadow(canvas, r.x - 1, r.y - 1, r.w + 2, r.h + 2, RADIUS + 1, bg);
+    round_box(canvas, r.x - 1, r.y - 1, r.w + 2, r.h + 2, RADIUS + 1, 1, border, panel, bg);
+    canvas.fill_rect(r.x + RADIUS, r.y, r.w - 2 * RADIUS, 2, accent);
     let ch = fonts.cell_h;
     for it in &p.items {
         let b = it.rect;
@@ -271,8 +399,8 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
             ui::PanelStyle::Error => canvas.draw_text(fonts, b.x, ty, &clip(&it.text, max), 0xF7768E),
             ui::PanelStyle::Row { selected } => {
                 if selected {
-                    canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.22));
-                    canvas.fill_rect(b.x, b.y, 3, b.h, accent);
+                    round_rect(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 3), mix(panel, accent, 0.22), panel);
+                    canvas.fill_rect(b.x, b.y + 3, 3, b.h - 6, accent);
                 }
                 canvas.draw_text(fonts, b.x + ui::BUTTON_PAD, ty, &clip(&it.text, max.saturating_sub(1)), if selected { fg } else { muted });
             }
@@ -288,8 +416,7 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 } else {
                     border
                 };
-                canvas.fill_rect(b.x, b.y, b.w, b.h, edge);
-                canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, mix(bg, panel, 0.5));
+                round_box(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 2), if focused { 2 } else { 1 }, edge, mix(bg, panel, 0.5), panel);
                 let n = max.saturating_sub(1);
                 let chars: Vec<char> = it.text.chars().collect();
                 let shown: String = chars[chars.len().saturating_sub(n)..].iter().collect();
@@ -299,14 +426,27 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                     canvas.fill_rect(cx, b.y + 3, 2, b.h - 6, accent);
                 }
             }
+            ui::PanelStyle::Progress { done, hover } => {
+                let th = 6.min(b.h);
+                let ty = b.y + (b.h - th) / 2;
+                round_rect(canvas, b.x, ty, b.w, th, th / 2, mix(panel, fg, 0.18), panel);
+                let dw = (b.w as i64 * done.min(1000) as i64 / 1000) as i32;
+                round_rect(canvas, b.x, ty, dw.max(th), th, th / 2, accent, panel);
+                if hover != u16::MAX {
+                    let hx = b.x + (b.w as i64 * hover.min(1000) as i64 / 1000) as i32;
+                    canvas.fill_rect(hx - 1, b.y + 2, 2, b.h - 4, mix(panel, fg, 0.6));
+                }
+                let k = (b.h - 4).clamp(6, 14);
+                round_rect(canvas, b.x + dw - k / 2, b.y + (b.h - k) / 2, k, k, k / 2, fg, panel);
+            }
             ui::PanelStyle::Popup => {
-                canvas.fill_rect(b.x - 1, b.y - 1, b.w + 2, b.h + 2, accent);
-                canvas.fill_rect(b.x, b.y, b.w, b.h, mix(bg, panel, 0.35));
+                drop_shadow(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, bg);
+                round_box(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, 1, accent, mix(bg, panel, 0.35), panel);
             }
             ui::PanelStyle::Option { selected, highlight } => {
                 if selected {
-                    canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.22));
-                    canvas.fill_rect(b.x, b.y, 3, b.h, accent);
+                    round_rect(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 3), mix(panel, accent, 0.22), panel);
+                    canvas.fill_rect(b.x, b.y + 3, 3, b.h - 6, accent);
                 }
                 let base = if selected { fg } else { muted };
                 for (i, c) in it.text.chars().take(max.saturating_sub(1)).enumerate() {
@@ -315,8 +455,12 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 }
             }
             ui::PanelStyle::Swatch(c) => {
-                canvas.fill_rect(b.x, b.y, b.w, b.h, border);
-                canvas.fill_rect(b.x + 1, b.y + 1, b.w - 2, b.h - 2, c);
+                round_box(canvas, b.x, b.y, b.w, b.h, 4, 1, border, c, panel);
+            }
+            ui::PanelStyle::Tile { selected } => {
+                let (edge, t) = if selected { (accent, 2) } else { (border, 1) };
+                drop_shadow(canvas, b.x, b.y, b.w, b.h, RADIUS, panel);
+                round_box(canvas, b.x, b.y, b.w, b.h, RADIUS, t, edge, mix(bg, panel, 0.5), panel);
             }
         }
     }
@@ -343,6 +487,93 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
             let t: String = text.chars().take(max).collect();
             draw_button(canvas, fonts, *r, &t, mix(panel, accent, 0.12), fg);
         }
+        for m in &layout.mcp {
+            let r = m.rect;
+            let ty = r.y + (r.h - cell_h) / 2;
+            let max = |w: i32| ((w / fonts.cell_w).max(0)) as usize;
+            match &m.kind {
+                ui::McpRowKind::Title => canvas.draw_text(fonts, r.x, ty, ui::MCP_TITLE, fg),
+                ui::McpRowKind::Server { state, ok, bad } => {
+                    round_rect(canvas, r.x, r.y, r.w, r.h, RADIUS.min(r.h / 3), mix(panel, fg, 0.05), panel);
+                    let lw = state.chars().count() as i32 * fonts.cell_w;
+                    let name: String = m.text.chars().take(max(r.w - lw - 3 * ui::BUTTON_PAD)).collect();
+                    canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty, &name, fg);
+                    let col = if *ok {
+                        accent
+                    } else if *bad {
+                        mix(muted, 0xF7768E, 0.6)
+                    } else {
+                        muted
+                    };
+                    canvas.draw_text(fonts, r.x + r.w - ui::BUTTON_PAD - lw, ty, state, col);
+                }
+                ui::McpRowKind::Tool => {
+                    let t: String = format!("▸ {}", m.text).chars().take(max(r.w - ui::BUTTON_PAD)).collect();
+                    canvas.draw_text(fonts, r.x, ty, &t, mix(fg, accent, 0.35));
+                }
+                ui::McpRowKind::Note => {
+                    let t: String = m.text.chars().take(max(r.w)).collect();
+                    canvas.draw_text(fonts, r.x, ty, &t, muted);
+                }
+            }
+        }
+        if !layout.engines.is_empty() {
+            let t = layout.engines_title;
+            canvas.draw_text(fonts, t.x, t.y + (t.h - cell_h) / 2, ui::ENGINES_TITLE, fg);
+            for e in &layout.engines {
+                let r = e.rect;
+                let line_h = cell_h + 8;
+                let active = e.state == ui::EngineState::Active;
+                let bg = if active { mix(panel, accent, 0.18) } else { mix(panel, fg, 0.05) };
+                round_rect(canvas, r.x, r.y, r.w, r.h, RADIUS.min(r.h / 3), bg, panel);
+                let label = e.state.label();
+                let lw = label.chars().count() as i32 * fonts.cell_w;
+                let max = ((r.w - lw - 3 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+                let name: String = e.name.chars().take(max).collect();
+                let ty = r.y + (line_h - cell_h) / 2;
+                canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty, &name, if active { accent } else { fg });
+                let state_col = match e.state {
+                    ui::EngineState::Active => accent,
+                    ui::EngineState::Ok => muted,
+                    _ => mix(muted, 0xF7768E, 0.6),
+                };
+                canvas.draw_text(fonts, r.x + r.w - ui::BUTTON_PAD - lw, ty, label, state_col);
+                if layout.engine_drag.is_some_and(|d| layout.engines.get(d.from) == Some(e)) {
+                    // The dragged row stays in place, outlined, under its ghost.
+                    for (x, y, w, h) in [(r.x, r.y, r.w, 1), (r.x, r.y + r.h - 1, r.w, 1), (r.x, r.y, 1, r.h), (r.x + r.w - 1, r.y, 1, r.h)] {
+                        canvas.fill_rect(x, y, w, h, accent);
+                    }
+                }
+                if let Some(n) = &e.note {
+                    let max = ((r.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+                    let t: String = n.chars().take(max).collect();
+                    canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, ty + line_h - 6, &t, muted);
+                }
+            }
+        }
+        if let Some(d) = layout.engine_drag
+            && let Some(row) = layout.engines.get(d.from)
+        {
+            // Ghost of the row under the pointer.
+            let line_h = cell_h + 8;
+            let gy = d.pos.1 - line_h / 2;
+            let r = row.rect;
+            drop_shadow(canvas, r.x, gy, r.w, line_h, RADIUS, panel);
+            round_rect(canvas, r.x, gy, r.w, line_h, RADIUS, mix(panel, accent, 0.35), panel);
+            canvas.draw_text(fonts, r.x + ui::BUTTON_PAD, gy + (line_h - cell_h) / 2, &row.name, fg);
+            // Insertion line between rows, drawn over the ghost.
+            if let Some(at) = d.target(layout) {
+                // Insertion line between rows.
+                let y = match layout.engines.get(at) {
+                    Some(e) => e.rect.y - 2,
+                    None => layout.engines.last().map_or(0, |e| e.rect.y + e.rect.h),
+                };
+                let r = row.rect;
+                canvas.fill_rect(r.x - 2, y - 1, r.w + 4, 3, accent);
+                canvas.fill_rect(r.x - 4, y - 3, 3, 7, accent);
+                canvas.fill_rect(r.x + r.w + 1, y - 3, 3, 7, accent);
+            }
+        }
         let a = layout.appearance_rect;
         if a.w > 0 {
             draw_button(canvas, fonts, a, ui::APPEARANCE_LABEL, mix(panel, accent, 0.18), accent);
@@ -368,8 +599,8 @@ fn draw_sidebar(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout,
     }
     if let Some(modal) = &layout.modal {
         let m = modal.rect;
-        canvas.fill_rect(m.x - 1, m.y - 1, m.w + 2, m.h + 2, border);
-        canvas.fill_rect(m.x, m.y, m.w, m.h, panel);
+        drop_shadow(canvas, m.x - 1, m.y - 1, m.w + 2, m.h + 2, RADIUS + 1, panel);
+        round_box(canvas, m.x - 1, m.y - 1, m.w + 2, m.h + 2, RADIUS + 1, 1, border, panel, panel);
         let title = match &modal.kind {
             ui::ModalKind::Add(c) => format!("Add {}", ui::category_title(c)),
             ui::ModalKind::Edit { category, name } => format!("Edit {}: {}", ui::category_title(category), name),
@@ -389,8 +620,9 @@ fn draw_tabs(canvas: &mut dyn Draw, fonts: &mut FontStack, bar: &ui::TabBar, wid
     for (i, (r, close)) in ui::tab_rects(bar.titles.len(), width, fonts.cell_w, fonts.cell_h).into_iter().enumerate() {
         let active = i == bar.active;
         if active {
-            canvas.fill_rect(r.x, r.y, r.w, r.h, bg);
-            canvas.fill_rect(r.x, r.h - 2, r.w, 2, accent);
+            // Rounded on top, square where it meets the terminal.
+            round_rect(canvas, r.x + 1, r.y + 2, r.w - 2, r.h, RADIUS, bg, strip);
+            canvas.fill_rect(r.x + 1, r.h - 2, r.w - 2, 2, accent);
         }
         canvas.fill_rect(r.x + r.w - 1, 4, 1, r.h - 8, mix(bg, fg, 0.2));
         let text = if active { fg } else { mix(strip, fg, 0.6) };
