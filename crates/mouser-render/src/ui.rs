@@ -931,18 +931,18 @@ pub fn confirm_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, message: &s
 
 /// One button of the approval popup: (label, answer index, primary).
 pub const APPROVAL_BUTTONS: [(&str, u8, bool); 4] =
-    [("Allow once [y]", 0, true), ("Always [a]", 1, false), ("Deny [n]", 2, false), ("Never [N]", 3, false)];
+    [("Allow once [y]", 0, true), ("Allow always [a]", 1, false), ("Deny [n]", 2, false), ("Never [N]", 3, false)];
 
 /// The plugin approval popup (docs/plugins.md §Approval). Drawn by Mouser over
 /// everything; terminal output can't draw or answer it. `lines` explain the
-/// request; `persist` false hides Always/Never (remote Fuzzball plugins);
+/// request; `offer` lists the answers shown (0 once, 1 always, 2 deny, 3 never);
 /// `armed` false shows the buttons inert for the first moment (no click-through).
 #[allow(clippy::too_many_arguments)]
-pub fn approval_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, title: &str, lines: &[String], persist: bool, armed: bool) -> Panel {
+pub fn approval_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, title: &str, lines: &[String], offer: &[u8], armed: bool) -> Panel {
     let row_h = cell_h + 8;
     let pad = 16;
     let longest = lines.iter().map(|l| l.chars().count()).chain([title.chars().count()]).max().unwrap_or(30) as i32;
-    let buttons: Vec<_> = APPROVAL_BUTTONS.iter().filter(|b| persist || matches!(b.1, 0 | 2)).collect();
+    let buttons: Vec<_> = APPROVAL_BUTTONS.iter().filter(|b| offer.contains(&b.1)).collect();
     let bw_total: i32 = buttons.iter().map(|b| cell_w * b.0.chars().count() as i32 + 2 * BUTTON_PAD + 8).sum();
     let w = (2 * pad + cell_w * longest.clamp(36, 80)).max(2 * pad + bw_total);
     let h = 2 * pad + row_h * (lines.len() as i32 + 3);

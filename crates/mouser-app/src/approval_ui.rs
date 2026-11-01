@@ -60,12 +60,12 @@ impl Approvals {
 
     /// Key while the popup is open; `Some` once answered.
     pub fn key(&mut self, bytes: &[u8]) -> Option<(Request, Answer)> {
-        let persist = self.queue.front()?.scope.persistable();
+        let offer = offer(&self.queue.front()?.scope);
         let a = match bytes {
             b"y" | b"Y" | b"o" | b"\r" => Answer::Once,
-            b"a" if persist => Answer::Always,
+            b"a" if offer.contains(&1) => Answer::Always,
             b"n" | b"\x1b" => Answer::Deny,
-            b"N" if persist => Answer::Never,
+            b"N" if offer.contains(&3) => Answer::Never,
             _ => return None,
         };
         // Esc always works; the rest only once armed.
@@ -79,12 +79,12 @@ impl Approvals {
         if !self.armed() {
             return None;
         }
-        let persist = self.queue.front()?.scope.persistable();
+        let offer = offer(&self.queue.front()?.scope);
         let a = match i {
             0 => Answer::Once,
-            1 if persist => Answer::Always,
+            1 if offer.contains(&1) => Answer::Always,
             2 => Answer::Deny,
-            3 if persist => Answer::Never,
+            3 if offer.contains(&3) => Answer::Never,
             _ => return None,
         };
         Some((self.queue.pop_front()?, a))
@@ -103,19 +103,33 @@ impl Approvals {
         let who = match r.scope {
             Scope::Installed => format!("Plugin \"{}\" asks to:", r.plugin),
             Scope::FuzzballLocal => format!("Program in this tab (\"{}\") asks to:", r.plugin),
-            Scope::FuzzballRemote => format!("REMOTE program (over ssh, \"{}\") asks to:", r.plugin),
+            Scope::FuzzballRemote { .. } => format!("REMOTE program (over ssh, \"{}\") asks to:", r.plugin),
         };
         let mut lines: Vec<String> = r.caps.iter().map(|c| format!("  • {}  ({c})", plugins::capability_text(c))).collect();
         if r.caps.is_empty() {
             lines.push("  • connect as a plugin (no capabilities)".into());
         }
         lines.extend(r.detail.iter().cloned());
-        if !r.scope.persistable() {
-            lines.push("Untrusted remote plugin: Mouser asks every time.".into());
+        match &r.scope {
+            Scope::FuzzballRemote { host: Some(h) } => {
+                lines.push(format!("Host: {h}"));
+                lines.push("Allow always remembers this host, plugin and capabilities only.".into());
+            }
+            Scope::FuzzballRemote { host: None } => lines.push("Unknown remote host: Mouser asks every time.".into()),
+            _ => {}
         }
         if more > 0 {
             lines.push(format!("({more} more waiting)"));
         }
-        Some(ui::approval_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, r.scope.persistable(), armed))
+        Some(ui::approval_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, &offer(&r.scope), armed))
+    }
+}
+
+/// The answers offered: remote gets once / always (known host) / deny.
+pub fn offer(scope: &Scope) -> Vec<u8> {
+    match scope {
+        Scope::FuzzballRemote { host: Some(_) } => vec![0, 1, 2],
+        Scope::FuzzballRemote { host: None } => vec![0, 2],
+        _ => vec![0, 1, 2, 3],
     }
 }

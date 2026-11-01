@@ -54,6 +54,15 @@ fn install_list_permissions_priority_and_examples_run() {
     assert!(cli(Action::Permissions("hello-command".into(), vec!["root=allow".into()])).is_err());
     let p = cli(Action::Permissions("fuzzball:hello-fuzzball".into(), vec!["notify=allow".into()])).unwrap();
     assert!(p.contains("notify") && p.contains("allow"));
+    // Saved remote grants are listed and revocable.
+    let h = mouser_core::permissions::Scope::FuzzballRemote { host: Some("m@127.0.0.1:22422 SHA256:x".into()) };
+    mouser_core::permissions::Broker::answer("hello-fuzzball", &["notify".into()], &h, mouser_core::permissions::Answer::Always).unwrap();
+    let l = cli(Action::PermissionsList).unwrap();
+    assert!(l.contains("\"ssh:m@127.0.0.1:22422 SHA256:x/hello-fuzzball\": notify=allow"), "{l}");
+    let o = cli(Action::Revoke("ssh:m@127.0.0.1:22422 SHA256:x/hello-fuzzball".into())).unwrap();
+    assert!(o.contains("revoked"));
+    assert!(!cli(Action::PermissionsList).unwrap().contains("ssh:"));
+    assert!(cli(Action::Revoke("ssh:nope".into())).is_err());
     // Priority and enable/disable mirror the engines CLI.
     assert!(cli(Action::Move("hello-mcp".into(), "first".into())).unwrap().contains("priority: hello-mcp > "));
     assert!(cli(Action::Move("hello-mcp".into(), "0".into())).is_err());

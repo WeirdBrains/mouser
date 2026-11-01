@@ -148,8 +148,8 @@ enum PluginCommand {
     },
     /// Move one plugin: first, last, up, down or a 1-based position.
     Move { name: String, to: String },
-    /// Show or set permissions: `mouser plugin permissions NAME [cap=allow|ask|never ...]` (`*=never` for all).
-    Permissions { name: String, set: Vec<String> },
+    /// List every saved permission (no NAME), show or set one (`cap=allow|ask|never ...`, `*=never` for all), or `NAME revoke`.
+    Permissions { name: Option<String>, set: Vec<String> },
     /// Start an MCP plugin, do the handshake and list its tools.
     Probe { name: String },
 }
@@ -431,7 +431,9 @@ fn main() -> Result<()> {
             PluginCommand::Disable { name } => Action::Disable(name.clone()),
             PluginCommand::Priority { names } => Action::Priority(names.clone()),
             PluginCommand::Move { name, to } => Action::Move(name.clone(), to.clone()),
-            PluginCommand::Permissions { name, set } => Action::Permissions(name.clone(), set.clone()),
+            PluginCommand::Permissions { name: None, .. } => Action::PermissionsList,
+            PluginCommand::Permissions { name: Some(name), set } if set.len() == 1 && set[0] == "revoke" => Action::Revoke(name.clone()),
+            PluginCommand::Permissions { name: Some(name), set } => Action::Permissions(name.clone(), set.clone()),
             PluginCommand::Probe { name } => Action::Probe(name.clone()),
         };
         if let Err(e) = mouser_app::plugin_cli::run(&a, &mut std::io::stdout()) {
@@ -1519,7 +1521,15 @@ fn plugin_hellos(st: &mut AppState, sessions: &[std::sync::Arc<tabs::Session>]) 
     for s in sessions {
         let hellos = std::mem::take(&mut s.parser.lock().unwrap().fuzzball.plugin_hellos);
         for h in hellos {
-            let scope = if session_remote(s) { Scope::FuzzballRemote } else { Scope::FuzzballLocal };
+            let scope = if session_remote(s) {
+                let host = match s.place() {
+                    Some(mouser_core::remote::Place::Remote { ssh: Some(t), .. }) => t.identity(),
+                    _ => None,
+                };
+                Scope::FuzzballRemote { host }
+            } else {
+                Scope::FuzzballLocal
+            };
             match Broker::check(&h.name, &h.caps, &scope) {
                 Check::Allow => fuzzball_answer(s, h.id, &h.name, Some(&h.caps)),
                 Check::Deny => fuzzball_answer(s, h.id, &h.name, None),

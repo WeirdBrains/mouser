@@ -51,7 +51,9 @@ mouser plugin uninstall <name>           # also forgets its permissions
 mouser plugin enable|disable <name>
 mouser plugin priority <a> <b> ...       # the rest follow in their order
 mouser plugin move <name> first|last|up|down|<n>
-mouser plugin permissions <name> [cap=allow|ask|never ...]   # `*=never` for all; fuzzball:<name> too
+mouser plugin permissions                # every saved permission, by key
+mouser plugin permissions <key> [cap=allow|ask|never ...]    # `*=never` for all; fuzzball:<name>, ssh:… too
+mouser plugin permissions '<key>' revoke  # forget it; it asks again
 mouser plugin probe <name>               # MCP: handshake and list its tools
 ```
 
@@ -90,8 +92,11 @@ The popup offers **Allow once [y]**, **Always [a]**, **Deny [n]/Esc** and
 - Buttons and keys do nothing for the first 400 ms (no click-through). Esc
   (deny) always works.
 - It names who is asking: an installed plugin, a program in this tab, or a
-  **REMOTE** program over ssh. Remote programs get only Allow once / Deny, and
-  nothing is remembered.
+  **REMOTE** program over ssh. Remote programs get Allow once, **Allow always**
+  and Deny (no Never). Allow always is saved under
+  `ssh:<user@host:port> <SHA256 host key>/<plugin>`, one entry per capability, so
+  another host, a changed host key, or extra capabilities ask again. There is no
+  Allow always when the host can't be identified.
 
 Command and MCP plugins run with a scrubbed environment (PATH, HOME, LANG, plus
 `MOUSER_PLUGIN_API` and `MOUSER_PLUGIN_NAME`), so tokens and API keys in your

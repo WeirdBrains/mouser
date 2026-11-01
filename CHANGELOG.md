@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Added (t200u): Allow always for plugins over ssh
+
+- The approval popup for a remote (ssh) Fuzzball plugin offers **Allow always** next to Allow once and Deny.
+- The grant is saved in `plugins/permissions.toml` under the host identity (`user@host:port` from `ssh -G`, plus the host key's SHA256 fingerprint from known_hosts when there is one), the plugin name, and each capability. A different host or key, or a request for more capabilities, prompts again.
+- `mouser plugin permissions` with no name lists every saved grant; `mouser plugin permissions '<key>' revoke` removes one.
+
 ### Added (t198u): the plugin system (phase 1 of docs/plans/mcp-agent.md)
 
 - `plugin.toml` manifests in `$MOUSER_HOME/plugins/<name>/`, and a registry by kind: mode, engine, model-provider, tool-provider, command. Commander and the engines are listed as built-ins.
