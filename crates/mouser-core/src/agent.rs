@@ -61,6 +61,12 @@ pub trait AgentHost: Send + Sync {
     fn check(&self, tool: &AgentTool, args: &Value) -> Check;
     /// Run an approved call (blocking; may be abandoned on cancel).
     fn call(&self, tool: &AgentTool, args: &Value) -> Result<String, String>;
+    /// Run an approved call that stops when `cancel` is set (MCP: the server is
+    /// told and a stdio server that keeps running is stopped). Defaults to [`call`](Self::call).
+    fn call_cancellable(&self, tool: &AgentTool, args: &Value, cancel: &AtomicBool) -> Result<String, String> {
+        let _ = cancel;
+        self.call(tool, args)
+    }
     /// The model to use: (provider, model); `None` = none configured.
     fn model(&self) -> Option<(String, String)> {
         models::default_choice()
@@ -371,9 +377,9 @@ impl Chat {
         }
         self.set_tool(i, ToolState::Running, None);
         let (tx, rx) = mpsc::channel();
-        let (host, tool, a) = (self.host.clone(), t.clone(), args.clone());
+        let (host, tool, a, cancel) = (self.host.clone(), t.clone(), args.clone(), self.cancel.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(host.call(&tool, &a));
+            let _ = tx.send(host.call_cancellable(&tool, &a, &cancel));
         });
         let r = loop {
             match rx.recv_timeout(Duration::from_millis(100)) {
@@ -382,9 +388,11 @@ impl Chat {
                 Err(_) => break None,
             }
         };
+        // A tool that stopped because of the cancel reports an error; it's a cancel.
+        let r = if self.cancelled() { None } else { r };
         match r {
             None => {
-                self.set_tool(i, ToolState::Cancelled, Some("cancelled (the call was abandoned)".into()));
+                self.set_tool(i, ToolState::Cancelled, Some("cancelled (the tool was told to stop)".into()));
                 ("cancelled by the user".into(), true)
             }
             Some(Ok(out)) => {

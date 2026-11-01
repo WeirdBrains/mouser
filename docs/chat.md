@@ -16,7 +16,7 @@ All keys can be remapped in `modes.toml` under `[chat.keys]`; `ctrl+shift+k` lis
 | Key | Does |
 |---|---|
 | `alt+i` (or click the input) | type a message; Enter sends, Ctrl+U clears |
-| `esc`, `alt+x`, Ctrl+C, the **cancel** button | cancel the running turn (the stream stops, an open card is denied, a running tool is abandoned) |
+| `esc`, `alt+x`, Ctrl+C, the **cancel** button | cancel the running turn (the stream stops, an open card is denied, a running tool is told to stop: MCP servers get `notifications/cancelled`, and a stdio server that hasn't stopped within 1 s is killed and reconnected) |
 | `alt+y` / `alt+a` / `alt+n` | card: allow once / allow for this chat / deny |
 | `alt+l` | new chat |
 | `alt+pageup` / `alt+pagedown`, wheel | scroll the transcript |
@@ -87,4 +87,3 @@ configured provider works too. The header shows `provider/model`.
 - Showing cost.
 - Images.
 - More than one chat at a time.
-- Killing a running MCP call on cancel: the call is abandoned and its result ignored.

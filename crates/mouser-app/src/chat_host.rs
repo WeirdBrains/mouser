@@ -155,4 +155,15 @@ impl AgentHost for ChatHost {
         let (id, name) = tool.display.rsplit_once('.').ok_or("bad tool")?;
         mcp_clients().call(id, name, args.clone()).map_err(|e| format!("{e:#}"))
     }
+
+    fn call_cancellable(&self, tool: &AgentTool, args: &Value, cancel: &std::sync::atomic::AtomicBool) -> Result<String, String> {
+        match tool.display.strip_prefix("mouser.") {
+            // Mouser's own tools are short and in-process.
+            Some(_) => self.call(tool, args),
+            None => {
+                let (id, name) = tool.display.rsplit_once('.').ok_or("bad tool")?;
+                mcp_clients().call_cancellable(id, name, args.clone(), Some(cancel)).map_err(|e| format!("{e:#}"))
+            }
+        }
+    }
 }

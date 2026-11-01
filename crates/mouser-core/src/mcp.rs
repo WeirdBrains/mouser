@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,12 @@ pub const PROTOCOL: &str = "2025-06-18";
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 /// Tool calls may take long (a server asking its user, a slow job).
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(600);
+/// After a cancelled call, how long a server gets to stop on its own (after
+/// `notifications/cancelled`) before a stdio server is killed.
+pub const CANCEL_GRACE: Duration = Duration::from_secs(1);
+/// The error text of a call cancelled by the user (`Manager` reconnects when the
+/// server had to be stopped).
+pub const CANCELLED: &str = "cancelled by the user";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tool {
@@ -214,6 +221,7 @@ enum Link {
 pub struct Client {
     link: Link,
     next: u64,
+    dead: bool,
     /// `serverInfo.name` / `version` and the negotiated protocol.
     pub server: (String, String, String),
 }
@@ -252,6 +260,9 @@ impl Client {
         let (prog, args) = argv.split_first().context("empty command")?;
         let mut c = Command::new(prog);
         c.args(args).current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+        // Its own process group, so stopping it also stops what it started.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut c, 0);
         scrubbed(&mut c, plugin);
         for (k, v) in env {
             c.env(k, v);
@@ -268,14 +279,14 @@ impl Client {
                 }
             }
         });
-        Self::handshake(Client { link: Link::Stdio { child, stdin, lines }, next: 1, server: Default::default() })
+        Self::handshake(Client { link: Link::Stdio { child, stdin, lines }, next: 1, dead: false, server: Default::default() })
     }
 
     /// Connect to a Streamable HTTP(S) server.
     pub fn connect(url: &str, token: Option<String>, ca: Option<&std::path::Path>) -> Result<Self> {
         let target = Target::parse(url)?;
         let tls = if target.https { Some(tls_for(ca)?) } else { None };
-        Self::handshake(Client { link: Link::Http { target, token, tls, session: None }, next: 1, server: Default::default() })
+        Self::handshake(Client { link: Link::Http { target, token, tls, session: None }, next: 1, dead: false, server: Default::default() })
     }
 
     fn handshake(mut me: Self) -> Result<Self> {
@@ -311,7 +322,11 @@ impl Client {
     }
 
     fn request_for(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
-        let v = self.exchange(method, params, timeout)?;
+        self.request_cancellable(method, params, timeout, None)
+    }
+
+    fn request_cancellable(&mut self, method: &str, params: Value, timeout: Duration, cancel: Option<&AtomicBool>) -> Result<Value> {
+        let v = self.exchange(method, params, timeout, cancel)?;
         if let Some(e) = v.get("error") {
             bail!("{method}: {}", e["message"].as_str().unwrap_or("error"));
         }
@@ -319,7 +334,11 @@ impl Client {
     }
 
     /// Send a request and return the whole reply message (result or error).
-    fn exchange(&mut self, method: &str, params: Value, timeout: Duration) -> Result<Value> {
+    ///
+    /// With `cancel`: when it is set the server gets `notifications/cancelled`;
+    /// a stdio server that hasn't stopped within [`CANCEL_GRACE`] is killed
+    /// (with its process group), and the error says so.
+    fn exchange(&mut self, method: &str, params: Value, timeout: Duration, cancel: Option<&AtomicBool>) -> Result<Value> {
         let id = self.next;
         self.next += 1;
         let m = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -331,22 +350,70 @@ impl Client {
                 stdin.write_all(&b)?;
                 stdin.flush()?;
                 let deadline = Instant::now() + timeout;
+                let mut cancelled_at: Option<Instant> = None;
                 loop {
-                    let left = deadline.saturating_duration_since(Instant::now());
+                    if cancelled_at.is_none() && cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+                        let n = json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id, "reason": CANCELLED}});
+                        let mut b = serde_json::to_vec(&n)?;
+                        b.push(b'\n');
+                        let _ = stdin.write_all(&b);
+                        let _ = stdin.flush();
+                        cancelled_at = Some(Instant::now());
+                    }
+                    if let Some(t) = cancelled_at
+                        && t.elapsed() >= CANCEL_GRACE
+                    {
+                        break None;
+                    }
+                    let mut left = deadline.saturating_duration_since(Instant::now());
+                    if cancel.is_some() {
+                        left = left.min(Duration::from_millis(50));
+                    }
                     let l = match lines.recv_timeout(left) {
                         Ok(l) => l,
+                        Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => continue,
                         Err(RecvTimeoutError::Timeout) => bail!("{method}: no reply in {}s", timeout.as_secs()),
                         Err(RecvTimeoutError::Disconnected) => bail!("{method}: the server exited"),
                     };
+                    if cancelled_at.is_some()
+                        && let Ok(v) = serde_json::from_str::<Value>(&l)
+                        && pick(&v)
+                    {
+                        // It stopped on its own (a reply or an error after the cancel).
+                        bail!("{method}: {CANCELLED}");
+                    }
                     if let Ok(v) = serde_json::from_str::<Value>(&l)
                         && pick(&v)
                     {
-                        break v;
+                        break Some(v);
                     }
                 }
             }
             Link::Http { target, token, tls, session } => {
-                let r = post_to(target, token.as_deref(), session.as_deref(), &m.to_string(), tls.clone(), timeout)?;
+                // On cancel, tell the server from another connection; it ends the request.
+                let done = AtomicBool::new(false);
+                let r = std::thread::scope(|sc| {
+                    if let Some(c) = cancel {
+                        let (t, k, tl, se, d) = (target.clone(), token.clone(), tls.clone(), session.clone(), &done);
+                        sc.spawn(move || {
+                            while !d.load(Ordering::SeqCst) {
+                                if c.load(Ordering::SeqCst) {
+                                    let n = json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": id, "reason": CANCELLED}});
+                                    let _ = post_to(&t, k.as_deref(), se.as_deref(), &n.to_string(), tl, TIMEOUT);
+                                    return;
+                                }
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                        });
+                    }
+                    let r = post_to(target, token.as_deref(), session.as_deref(), &m.to_string(), tls.clone(), timeout);
+                    done.store(true, Ordering::SeqCst);
+                    r
+                });
+                if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+                    bail!("{method}: {CANCELLED}");
+                }
+                let r = r?;
                 match r.status {
                     200 => {}
                     401 | 403 => bail!("{method}: refused ({}); check the token", r.status),
@@ -356,15 +423,28 @@ impl Client {
                 if r.session.is_some() {
                     *session = r.session;
                 }
-                messages(&r.content_type, &r.body).into_iter().find(|v| pick(v)).with_context(|| format!("{method}: no reply in the response"))?
+                Some(
+                    messages(&r.content_type, &r.body)
+                        .into_iter()
+                        .find(|v| pick(v))
+                        .with_context(|| format!("{method}: no reply in the response"))?,
+                )
             }
+        };
+        let Some(v) = v else {
+            // Cancelled and still running after the grace period: stop it.
+            self.dead = true;
+            if let Link::Stdio { child, .. } = &mut self.link {
+                kill_tree(child);
+            }
+            bail!("{method}: {CANCELLED} (the server was stopped)");
         };
         Ok(v)
     }
 
     /// Liveness: any reply (even an error from a server without `ping`) counts.
     pub fn ping(&mut self) -> Result<()> {
-        self.exchange("ping", json!({}), TIMEOUT).map(|_| ())
+        self.exchange("ping", json!({}), TIMEOUT, None).map(|_| ())
     }
 
     pub fn tools(&mut self) -> Result<Vec<Tool>> {
@@ -383,7 +463,13 @@ impl Client {
 
     /// Call a tool; returns the text parts of its content.
     pub fn call(&mut self, name: &str, args: Value) -> Result<String> {
-        let r = self.request_for("tools/call", json!({"name": name, "arguments": args}), CALL_TIMEOUT)?;
+        self.call_cancellable(name, args, None)
+    }
+
+    /// [`call`](Self::call) that stops when `cancel` is set: the server is told
+    /// (`notifications/cancelled`) and a stdio server that keeps running is killed.
+    pub fn call_cancellable(&mut self, name: &str, args: Value, cancel: Option<&AtomicBool>) -> Result<String> {
+        let r = self.request_cancellable("tools/call", json!({"name": name, "arguments": args}), CALL_TIMEOUT, cancel)?;
         let text: Vec<&str> = r["content"].as_array().map(|a| a.iter().filter_map(|c| c["text"].as_str()).collect()).unwrap_or_default();
         if r["isError"].as_bool() == Some(true) {
             bail!("{name}: {}", text.join("\n"));
@@ -392,11 +478,35 @@ impl Client {
     }
 }
 
+impl Client {
+    /// The stdio server was stopped (after a cancel); reconnect before using it again.
+    pub fn is_dead(&self) -> bool {
+        self.dead
+    }
+
+    /// The stdio server's process id.
+    pub fn pid(&self) -> Option<u32> {
+        match &self.link {
+            Link::Stdio { child, .. } => Some(child.id()),
+            Link::Http { .. } => None,
+        }
+    }
+}
+
+/// Stop a server and everything in its process group.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 impl Drop for Client {
     fn drop(&mut self) {
         if let Link::Stdio { child, .. } = &mut self.link {
-            let _ = child.kill();
-            let _ = child.wait();
+            kill_tree(child);
         }
     }
 }
@@ -472,5 +582,52 @@ done
         assert_eq!(c.call("greet", json!({})).unwrap(), "hi from fake");
         assert!(c.request("resources/list", json!({})).unwrap_err().to_string().contains("nope"));
         c.ping().unwrap();
+    }
+
+    /// Cancel reaches a running call: the server gets `notifications/cancelled`;
+    /// one that ignores it is stopped (with what it started) within the grace period.
+    #[test]
+    fn cancel_stops_a_running_call() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let t = tempfile::tempdir().unwrap();
+        let log = t.path().join("log");
+        let s = format!(
+            r#"#!/bin/sh
+while read -r l; do
+  id=$(printf '%s' "$l" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  case "$l" in
+    *'"initialize"'*) printf '{{"jsonrpc":"2.0","id":%s,"result":{{"protocolVersion":"2025-06-18","capabilities":{{}},"serverInfo":{{"name":"slow","version":"1"}}}}}}\n' "$id";;
+    *'notifications/cancelled'*) echo cancelled >> {log};;
+    *'"tools/call"'*) sleep 30; echo finished >> {log};;
+  esac
+done
+"#,
+            log = log.display()
+        );
+        let p = t.path().join("srv");
+        std::fs::write(&p, s).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut c = Client::start(&[p.display().to_string()], t.path(), "slow").unwrap();
+        let pid = c.pid().unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let k = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            k.store(true, Ordering::SeqCst);
+        });
+        let t0 = Instant::now();
+        let e = c.call_cancellable("x", json!({}), Some(&cancel)).unwrap_err().to_string();
+        let took = t0.elapsed();
+        assert!(e.contains(CANCELLED) && e.contains("stopped"), "{e}");
+        assert!(took < Duration::from_secs(4), "{took:?}");
+        assert!(c.is_dead());
+        // The server and its `sleep` are gone (the whole process group).
+        std::thread::sleep(Duration::from_millis(200));
+        assert_ne!(unsafe { libc::kill(-(pid as libc::pid_t), 0) }, 0, "process group still alive");
+        let _ = std::fs::read_to_string(&log).unwrap_or_default();
+        // Without cancel, a quick call still works on a fresh client.
+        let mut c = Client::start(&[fake_server(t.path()).display().to_string()], t.path(), "fake").unwrap();
+        let never = AtomicBool::new(false);
+        assert_eq!(c.call_cancellable("greet", json!({}), Some(&never)).unwrap(), "hi from fake");
     }
 }
