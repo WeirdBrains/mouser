@@ -208,6 +208,47 @@ enum ModelCommand {
     },
     /// Set the default model: PROVIDER[/MODEL].
     Default { spec: String },
+    /// The built-in local model (gemma-local): status, download, delete, url, dir.
+    Local {
+        #[command(subcommand)]
+        action: Option<LocalCommand>,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum LocalCommand {
+    /// Engine, server, models dir and which weights are downloaded.
+    Status,
+    /// Download weights (gemma-4-e2b 2.84 GB, gemma-4-e4b 4.59 GB); shows the size and asks first.
+    Download {
+        id: Option<String>,
+        /// Skip the question (you already agreed to the size shown by `status`).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Delete downloaded weights.
+    Delete { id: String },
+    /// Use an OpenAI/Anthropic-compatible server instead of the built-in engine.
+    Url {
+        #[arg(required_unless_present = "clear")]
+        url: Option<String>,
+        #[arg(long)]
+        api: Option<String>,
+        /// Model name the server expects.
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        key_stdin: bool,
+        #[arg(long, conflicts_with_all = ["url", "api", "model", "key_stdin"])]
+        clear: bool,
+    },
+    /// Where model files go (`MOUSER_MODELS_DIR` overrides).
+    Dir {
+        #[arg(required_unless_present = "clear")]
+        path: Option<String>,
+        #[arg(long, conflicts_with = "path")]
+        clear: bool,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -478,6 +519,8 @@ fn first_tab(cli: &Cli) -> FirstTab {
 
 fn main() -> Result<()> {
     env_logger::init();
+    #[cfg(feature = "local-llm")]
+    mouser_llm::register();
     // Isolated custom engine process (docs/engines.md §7); not a user command.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("__engine-host") {
@@ -578,6 +621,25 @@ fn main() -> Result<()> {
         use mouser_app::model_cli::Action;
         let a = match action {
             ModelCommand::List => Action::List,
+            ModelCommand::Local { action } => {
+                use mouser_app::model_cli::LocalAction as L;
+                Action::Local(match action {
+                    None | Some(LocalCommand::Status) => L::Status,
+                    Some(LocalCommand::Download { id, yes }) => L::Download { id: id.clone(), yes: *yes },
+                    Some(LocalCommand::Delete { id }) => L::Delete(id.clone()),
+                    Some(LocalCommand::Dir { path, .. }) => L::Dir(path.clone()),
+                    Some(LocalCommand::Url { url, api, model, key_stdin, .. }) => {
+                        let key = if *key_stdin {
+                            let mut t = String::new();
+                            std::io::stdin().read_line(&mut t)?;
+                            Some(t)
+                        } else {
+                            None
+                        };
+                        L::Url { url: url.clone(), api: api.clone(), model: model.clone(), key }
+                    }
+                })
+            }
             ModelCommand::Remove { name } => Action::Remove(name.clone()),
             ModelCommand::Default { spec } => Action::Default(spec.clone()),
             ModelCommand::Test { spec, prompt, tool } => Action::Test { spec: spec.clone(), prompt: prompt.clone(), tool: *tool },
@@ -1869,6 +1931,8 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
     } else if let Some(rest) = trimmed.strip_prefix("connect ") {
         let mut w = writer.clone();
         let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
+    } else if let Some(arg) = trimmed.strip_prefix("model download").filter(|r| r.is_empty() || r.starts_with(' ')) {
+        model_download_request(arg.trim(), app_state);
     } else if command_plugin(trimmed, app_state) {
         // A command plugin's word: run (or asked to run) by the plugin.
     } else {
@@ -1930,8 +1994,17 @@ fn fuzzball_answer(s: &tabs::Session, id: u32, name: &str, granted: Option<&[Str
 
 /// Apply the user's answer to a popup.
 fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core::permissions::Answer, app_state: &Arc<Mutex<AppState>>) {
-    let _ = mouser_core::permissions::Broker::answer(&req.plugin, &req.caps, &req.scope, a);
+    if !req.once_only {
+        let _ = mouser_core::permissions::Broker::answer(&req.plugin, &req.caps, &req.scope, a);
+    }
     match req.origin {
+        approval_ui::Origin::ModelDownload { id } => {
+            if a.granted() {
+                spawn_model_download(&id, app_state);
+            } else {
+                st.look.say(format!("[mouser] {id} was not downloaded"));
+            }
+        }
         approval_ui::Origin::Fuzzball { session, id } => {
             fuzzball_answer(&session, id, &req.plugin, a.granted().then_some(&req.caps[..]));
             st.look.say(format!("[mouser] {} plugin {}", if a.granted() { "allowed" } else { "denied" }, req.plugin));
@@ -1963,6 +2036,51 @@ fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core
         }
     }
     wake();
+}
+
+/// `[mouser] model download [ID]`: show the size and ask (every time) first.
+fn model_download_request(arg: &str, app_state: &Arc<Mutex<AppState>>) {
+    use mouser_core::models::local;
+    let id = if arg.is_empty() { local::CATALOG[0].id } else { arg };
+    let mut st = app_state.lock().unwrap();
+    let Some(w) = local::weights(id) else {
+        let ids: Vec<&str> = local::CATALOG.iter().map(|w| w.id).collect();
+        st.look.say(format!("[mouser] unknown local model {id}; one of: {}", ids.join(", ")));
+        return;
+    };
+    if w.installed() {
+        st.look.say(format!("[mouser] {} is already downloaded: {}", w.id, w.path().display()));
+        return;
+    }
+    st.approvals.push(approval_ui::Request::once("Model download", w.consent_text(), approval_ui::Origin::ModelDownload { id: w.id.to_string() }));
+    wake();
+}
+
+/// Download approved weights off the UI thread, with progress notices every 10%.
+fn spawn_model_download(id: &str, app_state: &Arc<Mutex<AppState>>) {
+    use mouser_core::models::local;
+    let Some(w) = local::weights(id) else { return };
+    let app_state = app_state.clone();
+    std::thread::spawn(move || {
+        let say = |m: String| {
+            app_state.lock().unwrap().look.say(m);
+            wake();
+        };
+        say(format!("[mouser] downloading {} ({})…", w.label, local::human(w.size)));
+        let mut last = 0;
+        let r = local::download(local::Consent::given(w), &w.url(), &mut |d, t| {
+            let tenth = d * 10 / t.max(1);
+            if tenth > last && tenth < 10 {
+                last = tenth;
+                say(format!("[mouser] {} {}0% ({} of {})", w.id, tenth, local::human(d), local::human(t)));
+            }
+            true
+        });
+        say(match r {
+            Ok(p) => format!("[mouser] {} downloaded and verified: {}", w.id, p.display()),
+            Err(e) => format!("[mouser] {} download failed: {e:#}", w.id),
+        });
+    });
 }
 
 /// `[mouser]` line words owned by a command plugin. True when it was one.

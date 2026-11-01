@@ -1,6 +1,6 @@
 //! `mouser model …` under a temporary MOUSER_HOME, file secret store, mock HTTP only.
 
-use mouser_app::model_cli::{Action, run};
+use mouser_app::model_cli::{Action, LocalAction, run};
 use std::io::{BufRead, BufReader, Read, Write};
 
 fn cli(a: Action) -> anyhow::Result<String> {
@@ -68,7 +68,7 @@ fn model_add_list_test_default_remove() {
     for n in ["openai", "xai", "openrouter", "moonshot", "anthropic", "google", "gemma-local"] {
         assert!(l.contains(n), "{n}: {l}");
     }
-    assert!(l.contains("gemma-4-e2b, gemma-4-e4b") && l.contains("not built yet (P4b)") && l.contains("no default model"), "{l}");
+    assert!(l.contains("gemma-4-e2b, gemma-4-e4b") && l.contains("not in this build") && l.contains("no default model"), "{l}");
     assert!(add("custom", None, None, None, &[]).is_err(), "custom needs --api/--url");
     assert!(add("x", Some("openai"), Some("http://example.com/v1"), None, &[]).is_err(), "plain http to a remote host");
     assert!(add("gemma-local", None, None, None, &[]).is_err());
@@ -85,20 +85,23 @@ fn model_add_list_test_default_remove() {
         "{prefs}"
     );
     // A local OpenAI-compatible server (llama-server / Ollama style) against the mock.
-    let (url, heads) = mock(2);
+    let (url, heads) = mock(3);
     add("local", Some("openai"), Some(&url), None, &["qwen3", "llama3"]).unwrap();
     let o = cli(Action::Test { spec: Some("local".into()), prompt: "hi".into(), tool: false }).unwrap();
-    assert!(o.contains("local/qwen3:") && o.contains("Hello from mock") && o.contains("[usage: 3 in, 3 out]") && o.contains("[done: end]"), "{o}");
+    assert!(o.contains("local/qwen3:") && o.contains("Hello from mock") && o.contains("[usage: 3 in, 3 out; ") && o.contains("[done: end]"), "{o}");
     assert!(!heads.recv().unwrap().contains("Authorization"));
     let o = cli(Action::Test { spec: Some("local/llama3".into()), prompt: "time?".into(), tool: true }).unwrap();
-    assert!(o.contains("[tool call get_time c1] {\"city\":\"Oslo\"}") && o.contains("[done: tool_use]"), "{o}");
+    assert!(
+        o.contains("[tool call get_time c1] {\"city\":\"Oslo\"}") && o.contains("[done: tool_use]") && o.contains("[tool result: 14:05 (demo)]"),
+        "{o}"
+    );
     // Defaults.
     assert!(cli(Action::Default("nope".into())).is_err());
     assert!(cli(Action::Default("gemma-local/gemma-9".into())).is_err());
     let o = cli(Action::Default("gemma-local/gemma-4-e4b".into())).unwrap();
-    assert!(o.contains("gemma-local/gemma-4-e4b") && o.contains("not built yet"), "{o}");
+    assert!(o.contains("gemma-local/gemma-4-e4b") && o.contains("not downloaded yet (4.59 GB)"), "{o}");
     let e = cli(Action::Test { spec: None, prompt: "hi".into(), tool: false }).unwrap_err().to_string();
-    assert!(e.contains("P4b"), "{e}");
+    assert!(e.contains("not downloaded yet") && e.contains("mouser model local download gemma-4-e4b"), "{e}");
     cli(Action::Default("local/llama3".into())).unwrap();
     assert!(cli(Action::List).unwrap().contains("* local"));
     // Remove drops the key and a default pointing at it.
@@ -111,4 +114,68 @@ fn model_add_list_test_default_remove() {
         std::env::remove_var("MOUSER_SECRET_STORE");
         std::env::remove_var("MOUSER_HOME");
     }
+}
+
+#[test]
+#[serial_test::serial]
+fn model_local_dir_download_delete_url() {
+    let t = tempfile::tempdir().unwrap();
+    let big = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("MOUSER_HOME", t.path());
+        std::env::set_var("MOUSER_SECRET_STORE", "file");
+        std::env::remove_var("MOUSER_MODELS_DIR");
+    }
+    let l = |a| cli(Action::Local(a));
+    let s = l(LocalAction::Status).unwrap();
+    assert!(s.contains("not in this build") && s.contains(&t.path().join("models").display().to_string()), "{s}");
+    assert!(s.contains("not downloaded (2.84 GB): mouser model local download gemma-4-e2b"), "{s}");
+
+    // The models dir: preference, then env override.
+    let o = l(LocalAction::Dir(Some(big.path().display().to_string()))).unwrap();
+    assert!(o.contains(&big.path().display().to_string()), "{o}");
+    let other = big.path().join("env");
+    unsafe { std::env::set_var("MOUSER_MODELS_DIR", &other) };
+    assert!(l(LocalAction::Status).unwrap().contains(&other.display().to_string()));
+    unsafe { std::env::remove_var("MOUSER_MODELS_DIR") };
+
+    // A short download (a mock serving 10 bytes): kept as .part, reported, deleted.
+    let srv = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}/w.gguf", srv.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        let (mut s, _) = srv.accept().unwrap();
+        let mut r = BufReader::new(s.try_clone().unwrap());
+        loop {
+            let mut h = String::new();
+            r.read_line(&mut h).unwrap();
+            if h == "\r\n" {
+                break;
+            }
+        }
+        write!(s, "HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n0123456789").unwrap();
+    });
+    unsafe { std::env::set_var("MOUSER_MODEL_URL_OVERRIDE", &url) };
+    let e = l(LocalAction::Download { id: None, yes: true }).unwrap_err().to_string();
+    unsafe { std::env::remove_var("MOUSER_MODEL_URL_OVERRIDE") };
+    assert!(e.contains("stopped at 10 bytes of 2.84 GB"), "{e}");
+    assert!(big.path().join("gemma-4-E2B-it-Q4_0.gguf.part").exists());
+    assert!(l(LocalAction::Status).unwrap().contains("partial 10 bytes of 2.84 GB"));
+    assert!(l(LocalAction::Delete("gemma-4-e2b".into())).unwrap().contains("deleted"));
+    assert!(!big.path().join("gemma-4-E2B-it-Q4_0.gguf.part").exists());
+    assert!(l(LocalAction::Delete("gemma-9".into())).is_err());
+    l(LocalAction::Dir(None)).unwrap();
+
+    // A compatible server instead of the built-in engine.
+    let (u, _rx) = mock(1);
+    let o = l(LocalAction::Url { url: Some(u.clone()), api: None, model: Some("served".into()), key: Some("sk-test-not-real".into()) }).unwrap();
+    assert!(o.contains(&u), "{o}");
+    assert!(cli(Action::List).unwrap().contains(&format!("via {u}")));
+    let o = cli(Action::Test { spec: Some("gemma-local".into()), prompt: "hi".into(), tool: false }).unwrap();
+    assert!(o.contains("Hello from mock"), "{o}");
+    let p = std::fs::read_to_string(t.path().join("preferences.toml")).unwrap();
+    assert!(!p.contains("sk-test-not-real") && p.contains("keychain:model-gemma-local"), "{p}");
+    assert!(l(LocalAction::Url { url: Some("ftp://x".into()), api: None, model: None, key: None }).is_err());
+    assert!(l(LocalAction::Url { url: Some(u.clone()), api: Some("google".into()), model: None, key: None }).is_err());
+    l(LocalAction::Url { url: None, api: None, model: None, key: None }).unwrap();
+    assert!(cli(Action::List).unwrap().contains("not in this build"));
 }

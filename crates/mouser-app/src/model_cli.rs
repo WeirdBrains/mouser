@@ -1,7 +1,9 @@
-//! `mouser model list | add | remove | test | default` (docs/models.md).
+//! `mouser model list | add | remove | test | default | local …` (docs/models.md).
 
 use anyhow::{Result, bail};
-use mouser_core::models::{self, Api, ChatRequest, ChatSink, Event, Message, Origin, PRESETS, ProviderEntry, ToolChoice, ToolSpec};
+use mouser_core::models::{
+    self, Api, ChatRequest, ChatSink, Event, Message, Origin, PRESETS, Part, ProviderEntry, Role, ToolChoice, ToolSpec, local,
+};
 use std::io::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +29,160 @@ pub enum Action {
     },
     /// Set the default `provider[/model]`.
     Default(String),
+    /// The built-in local model (gemma-local).
+    Local(LocalAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalAction {
+    Status,
+    /// Download weights (default: the selected gemma model). Without `yes` it
+    /// shows the size and asks on the terminal.
+    Download {
+        id: Option<String>,
+        yes: bool,
+    },
+    Delete(String),
+    /// Use an OpenAI/Anthropic-compatible server instead (None clears).
+    Url {
+        url: Option<String>,
+        api: Option<String>,
+        model: Option<String>,
+        key: Option<String>,
+    },
+    /// Where model files go (None: the default).
+    Dir(Option<String>),
+}
+
+fn selected_weights(id: Option<&str>) -> Result<&'static local::Weights> {
+    let id = match id {
+        Some(i) => i.to_string(),
+        None => match models::default_choice() {
+            Some((p, m)) if p == "gemma-local" => m,
+            _ => local::CATALOG[0].id.to_string(),
+        },
+    };
+    local::weights(&id)
+        .ok_or_else(|| anyhow::anyhow!("unknown local model {id}; one of: {}", local::CATALOG.iter().map(|w| w.id).collect::<Vec<_>>().join(", ")))
+}
+
+fn ask_yes(lines: &[String], out: &mut dyn Write) -> Result<bool> {
+    use std::io::IsTerminal;
+    for l in lines {
+        writeln!(out, "{l}")?;
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("not downloading: confirm on a terminal, or pass --yes");
+    }
+    write!(out, "Download it? [y/N] ")?;
+    out.flush()?;
+    let mut a = String::new();
+    std::io::stdin().read_line(&mut a)?;
+    Ok(matches!(a.trim(), "y" | "Y" | "yes" | "Yes"))
+}
+
+fn run_local(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
+    match a {
+        LocalAction::Status => {
+            let lp = local::prefs();
+            match local::backend() {
+                Some(b) => writeln!(out, "engine: {} (built in)", b.describe())?,
+                None => writeln!(out, "engine: not in this build (cargo feature local-llm)")?,
+            }
+            if let Some(u) = &lp.url {
+                writeln!(out, "server: {u} ({}) — used instead of the built-in engine", lp.api.unwrap_or(Api::OpenAi).name())?;
+            }
+            writeln!(out, "models dir: {}", local::dir().display())?;
+            for w in &local::CATALOG {
+                let st = if w.installed() {
+                    "downloaded".to_string()
+                } else if let Ok(m) = std::fs::metadata(w.path().with_extension("gguf.part")) {
+                    format!("partial {} of {} (download resumes)", local::human(m.len()), local::human(w.size))
+                } else {
+                    format!("not downloaded ({}): mouser model local download {}", local::human(w.size), w.id)
+                };
+                writeln!(out, "  {:<12} {:<24} {st}", w.id, w.label)?;
+            }
+            Ok(())
+        }
+        LocalAction::Download { id, yes } => {
+            let w = selected_weights(id.as_deref())?;
+            if w.installed() {
+                writeln!(out, "{} is already downloaded: {}", w.id, w.path().display())?;
+                return Ok(());
+            }
+            if !*yes && !ask_yes(&w.consent_text(), out)? {
+                writeln!(out, "not downloaded")?;
+                return Ok(());
+            }
+            let url = std::env::var("MOUSER_MODEL_URL_OVERRIDE").unwrap_or_else(|_| w.url());
+            let mut last = u64::MAX;
+            let p = local::download(local::Consent::given(w), &url, &mut |d, t| {
+                let pct = d * 100 / t.max(1);
+                if pct != last {
+                    last = pct;
+                    eprint!("\r{} {pct}% ({} of {})   ", w.id, local::human(d), local::human(t));
+                }
+                true
+            });
+            eprintln!();
+            let p = p?;
+            writeln!(out, "downloaded and verified: {}", p.display())?;
+            Ok(())
+        }
+        LocalAction::Delete(id) => {
+            let w = selected_weights(Some(id))?;
+            if local::remove(w) {
+                writeln!(out, "deleted {}", w.path().display())?;
+            } else {
+                writeln!(out, "{} was not downloaded", w.id)?;
+            }
+            Ok(())
+        }
+        LocalAction::Url { url, api, model, key } => {
+            let mut prefs = models::prefs();
+            let mut lp = prefs.local.clone().unwrap_or_default();
+            match url {
+                None => {
+                    lp.url = None;
+                    lp.api = None;
+                    lp.model = None;
+                    lp.key = None;
+                    mouser_core::secrets::delete(&key_secret("gemma-local"));
+                    writeln!(out, "gemma-local uses the built-in engine")?;
+                }
+                Some(u) => {
+                    mouser_core::mcp::Target::parse(u)?;
+                    let api = match api.as_deref() {
+                        None => Api::OpenAi,
+                        Some(s) => match Api::parse(s) {
+                            Some(a @ (Api::OpenAi | Api::Anthropic)) => a,
+                            _ => bail!("--api must be openai or anthropic"),
+                        },
+                    };
+                    lp.url = Some(u.clone());
+                    lp.api = Some(api);
+                    lp.model = model.clone();
+                    if let Some(k) = key {
+                        mouser_core::secrets::set(&key_secret("gemma-local"), k.trim())?;
+                        lp.key = Some(format!("keychain:{}", key_secret("gemma-local")));
+                    }
+                    writeln!(out, "gemma-local now uses {u} ({}); try: mouser model test gemma-local", api.name())?;
+                }
+            }
+            prefs.local = Some(lp);
+            models::save(&prefs)
+        }
+        LocalAction::Dir(d) => {
+            let mut prefs = models::prefs();
+            let mut lp = prefs.local.clone().unwrap_or_default();
+            lp.dir = d.clone();
+            prefs.local = Some(lp);
+            models::save(&prefs)?;
+            writeln!(out, "models dir: {}", local::dir().display())?;
+            Ok(())
+        }
+    }
 }
 
 pub fn key_secret(name: &str) -> String {
@@ -44,7 +200,21 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
                     Origin::Configured => "ready (no key)".to_string(),
                     Origin::Preset => format!("add a key: mouser model add {} --key-stdin", e.name),
                     Origin::Plugin => "plugin".to_string(),
-                    Origin::Stub => "not built yet (P4b)".to_string(),
+                    Origin::Local => {
+                        let lp = local::prefs();
+                        match (&lp.url, local::backend()) {
+                            (Some(u), _) => format!("via {u}"),
+                            (None, None) => "not in this build (feature local-llm); or mouser model local url URL".to_string(),
+                            (None, Some(_)) => {
+                                let have: Vec<&str> = local::CATALOG.iter().filter(|w| w.installed()).map(|w| w.id).collect();
+                                if have.is_empty() {
+                                    "built in; download: mouser model local download".to_string()
+                                } else {
+                                    format!("built in; downloaded: {}", have.join(", "))
+                                }
+                            }
+                        }
+                    }
                 };
                 let mark = if d.as_ref().is_some_and(|(n, _)| *n == e.name) { "*" } else { " " };
                 writeln!(out, "{mark} {:<12} {:<9} {:<44} {state}", e.name, e.api.name(), if e.url.is_empty() { "(built in)" } else { &e.url })?;
@@ -68,7 +238,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             }
             if name == "gemma-local" {
                 bail!(
-                    "gemma-local is the built-in local model (P4b, not built yet); switch its model with `mouser model default gemma-local/gemma-4-e4b`"
+                    "gemma-local is the built-in local model; see `mouser model local` (switch with `mouser model default gemma-local/gemma-4-e4b`)"
                 );
             }
             let mut prefs = models::prefs();
@@ -84,7 +254,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
                 },
             };
             if api == Api::LlamaCpp {
-                bail!("llama.cpp providers are built in (P4b)");
+                bail!("llama.cpp is built in as gemma-local; see `mouser model local`");
             }
             let url = match (url, &prev, preset) {
                 (Some(u), _, _) => u.clone(),
@@ -141,7 +311,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             let (prov, m) = models::split(spec);
             let Some(p) = models::find(prov) else { bail!("no model provider {prov} (see `mouser model list`)") };
             if let Some(m) = m
-                && p.origin == Origin::Stub
+                && p.origin == Origin::Local
                 && !p.entry.models.iter().any(|x| x == m)
             {
                 bail!("{prov} offers {}", p.entry.models.join(", "));
@@ -151,11 +321,16 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             models::save(&prefs)?;
             let (n, m) = models::default_choice().unwrap_or_default();
             writeln!(out, "default model: {n}/{m}")?;
-            if p.origin == Origin::Stub {
-                writeln!(out, "note: {prov} is not built yet (P4b)")?;
+            if p.origin == Origin::Local
+                && local::prefs().url.is_none()
+                && let Some(w) = local::weights(&m)
+                && !w.installed()
+            {
+                writeln!(out, "note: {} is not downloaded yet ({}): mouser model local download {}", w.id, local::human(w.size), w.id)?;
             }
             Ok(())
         }
+        Action::Local(l) => run_local(l, out),
         Action::Test { spec, prompt, tool } => {
             let (prov, model) = match spec {
                 Some(s) => {
@@ -182,20 +357,40 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
                 req.tool_choice = ToolChoice::Required;
             }
             writeln!(out, "{prov}/{model}:")?;
-            struct Print<'a>(&'a mut dyn Write);
+            struct Print<'a>(&'a mut dyn Write, std::time::Instant, models::Collect);
             impl ChatSink for Print<'_> {
                 fn event(&mut self, e: Event) {
+                    self.2.event(e.clone());
                     let _ = match e {
                         Event::Text(t) => write!(self.0, "{t}"),
                         Event::ToolStart { name, id, .. } => write!(self.0, "\n[tool call {name} {id}] "),
                         Event::ToolArgs { delta, .. } => write!(self.0, "{delta}"),
-                        Event::Usage { input, output } => write!(self.0, "\n[usage: {input} in, {output} out]"),
+                        Event::Usage { input, output } => {
+                            write!(self.0, "\n[usage: {input} in, {output} out; {:.2}s]", self.1.elapsed().as_secs_f64())
+                        }
                         Event::Done { stop } => writeln!(self.0, "\n[done: {stop}]"),
                     };
                     let _ = self.0.flush();
                 }
             }
-            p.chat(&req, &mut Print(out))
+            let mut pr = Print(out, std::time::Instant::now(), models::Collect::default());
+            p.chat(&req, &mut pr)?;
+            // With --tool, answer the call (a demo time) and print the model's reply.
+            if *tool && !pr.2.calls.is_empty() {
+                req.messages.push(pr.2.message());
+                let results =
+                    pr.2.calls
+                        .iter()
+                        .map(|(id, name, _)| Part::ToolResult { id: id.clone(), name: name.clone(), content: "14:05 (demo)".into(), is_error: false })
+                        .collect();
+                req.messages.push(Message { role: Role::User, parts: results });
+                req.tool_choice = ToolChoice::Auto;
+                writeln!(pr.0, "[tool result: 14:05 (demo)]")?;
+                pr.1 = std::time::Instant::now();
+                pr.2 = models::Collect::default();
+                p.chat(&req, &mut pr)?;
+            }
+            Ok(())
         }
     }
 }
