@@ -230,12 +230,24 @@ timeout 120 cargo test --workspace
 
 See [`docs/kitty-compliance.md`](docs/kitty-compliance.md). Tests live in `crates/mouser-core/tests/kitty_keyboard_*`.
 
+## Known limitations
+
+- **Windows runs single-process.** On Linux and macOS each window is split into a
+  session process (shells, scrollback, tabs) and a UI process (window, engine), so a
+  crash in a GPU driver or engine restarts only the window and keeps the shells. On
+  Windows the session and the window share one process: an engine or driver crash
+  closes the window and ends its shells. Custom engines also run in-process there
+  (no engine host), so a crashing custom engine takes the window down instead of being
+  skipped. Details: [docs/engines.md §8](docs/engines.md).
+- Windows has no clipboard PRIMARY selection, and Waypipe/X11 forwarding are Linux-only.
+
 ## Roadmap
 
 - Rich text shaping and ligatures
 - Tabs and multiple terminals
 - Fuzzball: IME events
 - Cross-platform validation (Windows/macOS)
+- The session/UI process split on Windows (needs a pipe pair for the UI child)
 
 ## License
 

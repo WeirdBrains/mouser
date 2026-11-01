@@ -393,7 +393,10 @@ restart covers everything the host doesn't (built-in engines, the host itself).
 ### Platforms
 
 Linux and macOS: split by default. Windows: no socketpair/fd inheritance in std; stays
-single-process (custom engines still in-process) for now.
+single-process (custom engines still in-process). **Known limitation in 1.0**: on
+Windows an engine or GPU driver crash ends the window and its shells, and a crashing
+custom engine is not survived. A port would hand the UI child two anonymous pipe pairs
+(or a named pipe) instead of the socketpairs and needs testing on a Windows machine.
 
 ### What a UI crash still loses
 
