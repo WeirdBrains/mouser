@@ -112,13 +112,13 @@ ESC P = F z c q ; id=1 ESC \
 Reply:
 
 ```
-ESC P = F z c r ; id=1,v=0,sub=gk,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,g_max_place=4096,g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1 ESC \
+ESC P = F z c r ; id=1,v=0,sub=gkp,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,g_max_place=4096,g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1 ESC \
 ```
 
 | key | meaning |
 |---|---|
 | `v` | protocol version implemented (this document: `0`). |
-| `sub` | supported subsystems, as letters. |
+| `sub` | supported subsystems, as letters (`g` graphics, `k` keyboard, `p` plugins: plugins.md). |
 | `raw` | `1` if `enc=raw` is accepted on this connection, else `0`. |
 | `max_chunk` | largest accepted payload per message, in wire bytes. |
 | `g_*`, `k_*` | subsystem limits/features (see graphics.md, keyboard.md). |
