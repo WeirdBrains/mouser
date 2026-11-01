@@ -1,19 +1,38 @@
 # Plan: plugins, MCP and the agent chat mode (t187u-t189u)
 
-Status: **plan only, nothing built.** Written 2026-10-31 after Phase 1 (commander)
-closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
+Status: **P1 in progress** (decisions below are Michael's, t196u-t198u). Written
+2026-10-31 after Phase 1 (commander) closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
 install approval), security model, tests, rough size and open questions. Section 9
 lists the sources behind the facts in it.
+
+## Decisions (Michael, t196u-t198u)
+
+These replace the provisional defaults the first draft proposed.
+
+1. **Plugins connect three ways: MCP, Fuzzball, and a mouser command.** A *command
+   plugin* registers commands on the `[mouser]` command line, backed by an external
+   executable: Mouser runs it with a JSON request on stdin and reads a JSON reply
+   from stdout. (Interpretation; Michael may clarify.) **No native-library plugins in
+   v1**: engines keep their own C ABI, nothing else loads code in-process.
+2. **Mouser's MCP server (P2) offers stdio, loopback HTTP, and an HTTPS option** (TLS
+   with the user's certificate, or a generated self-signed one).
+3. **The local model is llama.cpp built in**, plus an option to point at any
+   OpenAI- and/or Anthropic-compatible inference URL (llama-server, Ollama, vLLM, …).
+4. **The default local model is Gemma 4 E2B**, with a setting to switch to E4B.
+5. **Bringing in any model is a plugin.** `model-provider` is a plugin kind; the
+   Gemma/llama.cpp plugin is just the first one, and the frontier adapters (OpenAI,
+   Anthropic, Google, xAI, Moonshot/Kimi, OpenRouter) are model-provider plugins too.
+   Others can ship plugins for other models through the same interface.
 
 ## 0. Phases at a glance
 
 | # | Phase | Depends on | Rough size | Ships |
 |---|---|---|---|---|
 | P1 | Plugin system core: manifest, registry, CLI, permissions, Fuzzball + MCP hooks | – | L (3-4 wk) | `mouser plugin …`, approval prompts, example plugins |
-| P2 | Mouser as an MCP server | P1 (permissions) | M (1.5-2 wk) | `mouser mcp serve` (stdio) + local Streamable HTTP, token auth |
+| P2 | Mouser as an MCP server | P1 (permissions) | M (1.5-2 wk) | `mouser mcp serve` (stdio) + loopback Streamable HTTP + HTTPS option, token auth |
 | P3 | MCP client + sidebar | P1 | M (1.5 wk) | `[[mcp.servers]]` in preferences.toml, sidebar section |
-| P4 | Model providers as plugins | P1 | M-L (2-3 wk) | one `ModelProvider` interface; hosted providers; keys in the OS keychain |
-| P4b | Embedded local model plugin (optional) | P4 | M (1.5-2 wk) | llama.cpp-backed Gemma, downloaded only with consent |
+| P4 | Model providers as plugins | P1 | M-L (2-3 wk) | the `model-provider` plugin kind; frontier adapters as plugins; keys in the OS keychain |
+| P4b | Embedded local model plugin (optional) | P4 | M (1.5-2 wk) | the first model plugin: llama.cpp + Gemma 4 E2B (E4B switch), or an OpenAI/Anthropic-compatible URL; downloads only with consent |
 | P5 | Agent chat mode | P2, P3, P4 | L (3 wk) | dock above the prompt, tools with per-action approval, transcript, cancel |
 | P6 | Convert modes and engines to plugins (t189u) | P1-P5 | M-L (2-3 wk) | commander, chat and the engines loaded through the plugin registry |
 
@@ -48,11 +67,13 @@ run side by side once P1 has landed, and P4 can overlap with them.
   `mouser_core::engines`.
 - CLI: `mouser plugin list | install <dir|plugin.toml> | uninstall <name> |
   enable/disable <name> | priority … | move … | unskip … | permissions <name>`.
-- Three transports:
-  - **in-process**, for built-ins and native libraries over a C ABI like the engine ABI;
-  - **MCP**, an out-of-band process over stdio, or a local URL;
+- Three transports (decision 1), plus *builtin* for code compiled into Mouser:
+  - **MCP**, an out-of-band process over stdio (a local URL comes with P3);
   - **Fuzzball**, in-band escape sequences from a program running *in* the terminal,
-    so it works over ssh and tmux.
+    so it works over ssh and tmux;
+  - **command**, an executable that adds commands to the `[mouser]` line (JSON on
+    stdin, JSON on stdout).
+  - No native-library plugins in v1.
 - A permission model with approval prompts drawn by Mouser itself (they can't be
   forged by terminal output).
 - Plugin types: `mode`, `engine`, `model-provider`, `tool-provider`, plus reserved
@@ -71,11 +92,10 @@ kind = "mode"                 # mode | engine | model-provider | tool-provider
 id = "chat"
 hotkey = "a"
 
-[run]                         # how it is reached: builtin | library | mcp | fuzzball
+[run]                         # how it is reached: mcp | fuzzball | command
 transport = "mcp"
 command = ["mouser-chat-plugin", "--stdio"]   # mcp over stdio
-# url = "http://127.0.0.1:7801/mcp"            # or a local Streamable HTTP endpoint
-# library = "libmouser_plugin_x.so"           # transport = "library" (C ABI)
+# transport = "command": command = [...] plus commands = ["hello"] on the [mouser] line
 
 [permissions]                 # asked for on install, shown in `plugin permissions`
 screen_read = true            # visible text of the active tab
@@ -101,7 +121,8 @@ models = "ask"                # may start / download a model
   - `ModelProvider` is defined in P4.
 - **Adapters per transport:**
   - *builtin* is a direct Rust impl;
-  - *library* uses the C ABI (versioned like engine ABI 1);
+  - *command* runs the executable once per `[mouser]` command: one JSON request
+    on stdin, one JSON reply on stdout, with a timeout;
   - *mcp* runs an rmcp client (P3) and maps the plugin's MCP tools and resources
     onto `ToolProvider`; a mode over MCP gets `view`/`action`/`key` as tools that
     return a panel description (JSON of `Panel`, already serde);
@@ -144,8 +165,7 @@ models = "ask"                # may start / download a model
 ### Size and open questions
 - Size: **L, 3-4 weeks.**
 - Questions for Michael:
-  1. Is the C ABI for non-engine plugins worth it in v1, or are MCP and Fuzzball
-     enough?
+  1. ~~C ABI for non-engine plugins?~~ Decided: no native libraries in v1.
   2. Should remote (ssh) Fuzzball plugins be allowed at all by default?
   3. Is `plugins/` next to `engines/` fine, with engines later moving under
      `plugins/`?
@@ -207,7 +227,8 @@ own chat mode).
 ### Size and open questions
 - Size: **M, 1.5-2 weeks.**
 - Questions:
-  4. Should HTTP be offered at all, or stdio only in v1?
+  4. ~~HTTP at all?~~ Decided: stdio, loopback HTTP, and an HTTPS option (user cert
+     or self-signed).
   5. Should `shell.run` be allowed in a tab running a full-screen program? (Proposed:
      no, as with the `[mouser]` command line.)
   6. For `files.trash`, use the OS trash, or a Mouser trash under $MOUSER_HOME?
@@ -289,8 +310,9 @@ trait ModelProvider: Send + Sync {
 - **Kimi K2** is about 1T parameters (MoE), so it is hosted-only. Its K2.6 API fixes
   some sampling parameters (no temperature/top_p) and rejects
   `tool_choice="required"`; the adapter has per-model quirks for these.
-- Providers are plugins of kind `model-provider`: built-in Rust (OpenAI-compatible,
-  Anthropic, Google) or external over MCP or a library.
+- Providers are plugins of kind `model-provider` (decision 5): the frontier adapters
+  ship as built-in model-provider plugins, and anyone can add a model through an
+  external plugin over MCP. The local llama.cpp/Gemma plugin is the first one.
 
 ### API keys
 - Stored in the OS keychain through the `keyring` crate:
@@ -381,9 +403,9 @@ later (open question).
 ### Size and open questions
 - Size: **M, 1.5-2 weeks** (plus CI work).
 - Questions:
-  9. Which local route comes first: llama-server / Ollama over HTTP (no deps) or
-     embedded llama-cpp-2?
-  10. Default E2B (faster, about 2.9 GB) or E4B (better tools, about 4.5 GB)?
+  9. ~~Which local route first?~~ Decided: llama.cpp built in, plus an
+     OpenAI/Anthropic-compatible inference URL option.
+  10. ~~E2B or E4B?~~ Decided: E2B default, a setting switches to E4B.
   11. Is a FunctionGemma fine-tune on Mouser's own tools wanted later?
 
 ## 7. P5: the agent chat mode
