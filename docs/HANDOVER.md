@@ -254,3 +254,9 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - Built-ins can't be disabled yet (P6).
   - MCP plugins start only through `plugin probe` (P3 wires them to the sidebar and agent).
   - No approval UI on Windows for command plugins with sh (the examples need sh/python3).
+
+### t200u: Allow always over ssh
+- b83c7a7: `Scope::FuzzballRemote { host }`. The host is `SshTarget::identity()`: `ssh -G` gives user@hostname:port, and `ssh-keygen -l -F` on ssh's UserKnownHostsFile gives the SHA256 fingerprint. The key is `ssh:<id>/<plugin>` with one allow per capability, so extra capabilities, another host or another key ask again. Remote gets Allow once / Allow always / Deny (no Never); with no identity, once/deny only. `mouser plugin permissions` (no name) lists grants; `permissions '<key>' revoke` removes one. `ui::approval_panel` takes an `offer` list.
+- Live: the test sshd (`sshd -f /tmp/mx/sshd/sshd_config`, port 22422, stopped afterwards); the window was started with `hl.dsp.exec_cmd(cmd, {float=true, no_initial_focus=true})` so it never steals focus. A script with `set -m` (so ssh is the tab's foreground) connects twice: the first shows the REMOTE popup, `a` is pressed, and the second is granted with no prompt. Shot: ~/.cache/mouser-shots/p1-ssh-sheet.png (popup | reconnect).
+- CI green on b83c7a7 (3 OSes). Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r90.gb83c7a7-1-x86_64.pkg.tar.zst.
+- Next: P2, Mouser's MCP server (stdio, loopback HTTP, HTTPS option), per docs/plans/mcp-agent.md.
