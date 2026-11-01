@@ -1,6 +1,6 @@
 # Plan: plugins, MCP and the agent chat mode (t187u-t189u)
 
-Status: **P1, P2 and P3 done** (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
+Status: **P1-P4 done** (P4b waits for Michael's OK) (docs/plugins.md, docs/mcp.md) (decisions below are Michael's, t196u-t198u). Written
 2026-10-31 after Phase 1 (commander) closed. Each step below has its scope, architecture, dependencies (⚠ = needs Michael's
 install approval), security model, tests, rough size and open questions. Section 9
 lists the sources behind the facts in it.
@@ -296,6 +296,14 @@ auth = "keychain:docs-token"                 # or "oauth" (rmcp auth feature)
      global only?
 
 ## 5. P4: model providers as plugins
+
+> **Done (as built), see docs/models.md:**
+> - Hand-rolled streaming HTTP/SSE on std + rustls, not reqwest.
+> - Adapters: OpenAI-compatible Chat Completions, Anthropic Messages, and native Google (Gemini's compatible URL goes through openai).
+> - `[models]` prefs, `mouser model list/add/remove/test/default`, and keys via `--key-stdin` into the keychain.
+> - Built-in model-provider plugins, plus plugins with a `[model]` table (`transport = "http"`).
+> - `gemma-local` is stubbed (E2B default, E4B switch).
+> - Deferred: Responses API, images, retries, server-side model lists, the `network` grant for plugin hosts, and `mouser model key set` with a no-echo prompt (`add --key-stdin` does that job).
 
 ### One interface (`mouser_core::models`)
 ```rust

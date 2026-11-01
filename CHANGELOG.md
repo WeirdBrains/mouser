@@ -1,5 +1,19 @@
 ## [Unreleased]
 
+### Added (P4): model providers as plugins (docs/models.md)
+
+- `mouser_core::models::ModelProvider`: one interface with streaming (text, tool-call deltas, usage, done) and tool calling (tools as JSON Schema, tool choice, tool results). Cancel works through the sink.
+- There are three wire adapters on Mouser's std + rustls HTTP stack (no new system deps):
+  - OpenAI-compatible Chat Completions, covering OpenAI, xAI, OpenRouter, Moonshot/Kimi and any custom URL such as llama-server, Ollama or vLLM. Kimi K2 gets its sampling and `tool_choice` quirks handled.
+  - Anthropic Messages, also for compatible URLs.
+  - Google Gemini native. Gemini's OpenAI-compatible endpoint works through the openai adapter.
+- Every model is a `model-provider` plugin:
+  - openai, xai, openrouter, moonshot, anthropic and google are built in;
+  - you can add `[[models.providers]]` entries;
+  - installed plugins can declare a `[model]` table with the new `http` transport (see `examples/plugins/ollama-model`).
+- `mouser model list | add | remove | test | default`. Keys are read with `--key-stdin` into the OS keychain, and preferences.toml holds only `keychain:` references.
+- `gemma-local` is a stub manifest that declares Gemma 4 E2B as the default with an E4B switch. Building and downloading it are P4b and wait for approval.
+
 ### Added (P3): MCP client and the sidebar MCP section (docs/mcp.md §Client)
 
 - `[[mcp.servers]]` in preferences.toml takes a stdio `command` (with `env`) or a Streamable HTTP(S) `url`. Secrets are `keychain:NAME` references; tokens go to the OS keychain (or a 0600 file with a warning) and never into preferences.
