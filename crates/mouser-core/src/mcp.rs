@@ -69,7 +69,7 @@ impl Target {
         matches!(self.host.as_str(), "127.0.0.1" | "localhost" | "::1")
     }
 
-    fn host_header(&self) -> String {
+    pub fn host_header(&self) -> String {
         if self.host.contains(':') { format!("[{}]:{}", self.host, self.port) } else { format!("{}:{}", self.host, self.port) }
     }
 }

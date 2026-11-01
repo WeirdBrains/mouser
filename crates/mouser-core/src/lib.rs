@@ -15,6 +15,7 @@ pub mod kitty_graphics;
 pub mod mcp;
 pub mod mcp_client;
 pub mod mcp_server;
+pub mod models;
 pub mod modes;
 pub mod parser;
 pub mod permissions;
