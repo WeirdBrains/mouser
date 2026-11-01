@@ -284,3 +284,37 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - The server starts only at launch (restart after `enable`).
   - Client names are self-declared (the token is the trust boundary).
   - The stdio bridge needs the HTTP listener (it is always on when enabled).
+
+### P3: MCP client and the sidebar MCP section (docs/mcp.md §Client)
+- Commits:
+  - 173566f core;
+  - abc0e60 app;
+  - f5f2cda docs.
+- Package: `~/.cache/mouser-pkg/mouser-git-0.7.2.r97.gf5f2cda-1-x86_64.pkg.tar.zst` (not installed).
+- Core:
+  - `mcp.rs`: `Client` over stdio and Streamable HTTP(S) via `Client::connect(url, token, ca)`.
+    - `Target::parse` refuses plain http to non-loopback hosts.
+    - `post_to` tries every resolved address.
+    - Replies may be JSON or SSE.
+    - `ping` counts any reply as alive.
+    - Public roots come from `webpki-roots`.
+  - `mcp_client.rs`: `Manager` with a thread per server.
+    - States: Connecting, Connected, Failed(reason, retry), NeedsApproval, Denied, Disabled.
+    - Backoff from 1 s to 5 min; ping every 30 s.
+    - Sources are `[[mcp.servers]]` plus enabled MCP plugins (`plugin:<name>`).
+    - `broker_name` gives `mcp-server:<name>` or the plugin name; `tool_cap` gives `tool.<name>`.
+  - `storage::McpServerEntry`: name, command, env, url, token (`keychain:NAME`), ca, enabled.
+- App (main.rs):
+  - `mcp_clients()` (OnceLock), `mcp_rows`, `mcp_server_click`, `mcp_tool_click`/`mcp_call`, `spawn_mcp_call` and `mcp_command` (the `[mouser]` line: `mcp`, `mcp tools|reconnect ID`, `mcp call ID TOOL [JSON]`).
+  - New approval origins: `McpRun` and `McpTool`.
+  - The secret for each server's token is named `mcp-server-NAME`, with no colon so the file fallback is Windows-safe.
+  - `mouser plugin permissions mcp-server:NAME tool.X=allow` works.
+- Render: `ui::add_mcp` runs before `add_engines`; the McpRow kinds are Title, Server, Tool and Note. Clicking a connected server toggles its tool list.
+- Live check:
+  - Temp MOUSER_HOME/HOME, `SHELL=/bin/sh`, file secret store, ports 17801/17802.
+  - The window was floating and unfocused (verified), and keys were sent with send_shortcut.
+  - self over http and self-https (with `--ca`) were connected to Mouser's own P2 server with 11 tools each; hello (stdio) and plugin:hello-mcp (after the `run` popup) were connected too.
+  - tabs_list and `greet {"name":"Michael"}` ran through the broker popup.
+  - Screenshots: `~/.cache/mouser-shots/p3-b.png` and `p3-sheet.png` / `p3-combo.png`.
+- Deferred: resources, prompts, list-changed, OAuth, project-local config, sidebar enable toggles, and live reload of prefs (applies on the next start).
+- Next: P4 (model providers). It needs Michael's go-ahead, and it hits the hard stops (llama.cpp deps, model downloads).
