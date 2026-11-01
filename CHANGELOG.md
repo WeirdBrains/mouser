@@ -1,5 +1,14 @@
 ## [Unreleased]
 
+### Added (P4b): the built-in local model (docs/models.md §The local model)
+
+- `gemma-local` runs Gemma 4 E2B (default) or E4B on llama.cpp inside Mouser: crate `mouser-llm`, behind the opt-in cargo feature `local-llm`, with Vulkan (Metal on macOS). The default build and CI are unchanged.
+- It can use an OpenAI- or Anthropic-compatible server instead: `mouser model local url URL [--api anthropic] [--model NAME] [--key-stdin]`.
+- Downloads always need consent. `mouser model local download [ID]` shows the size and asks; `--yes` skips the question. In the app, `[mouser] model download` opens an Allow once / Deny popup that is never saved. Downloads resume and are checked against a pinned SHA256.
+- `mouser model local [status] | delete ID | dir PATH`. The models dir can be set with `MOUSER_MODELS_DIR` or `[models.local] dir`.
+- Prompts use the model's own chat template (minijinja) and a `<tool_call>` tag protocol for tools. `mouser model test --tool` now does a full round trip (call, demo result, reply). `MOUSER_LLM_TIMINGS=1` prints speeds.
+- Arch: `MOUSER_LOCAL_LLM=1 makepkg` builds the variant; default deps are unchanged.
+
 ### Added (P4): model providers as plugins (docs/models.md)
 
 - `mouser_core::models::ModelProvider`: one interface with streaming (text, tool-call deltas, usage, done) and tool calling (tools as JSON Schema, tool choice, tool results). Cancel works through the sink.
