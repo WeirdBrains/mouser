@@ -533,6 +533,9 @@ fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
             c.call::<Option<()>>(Call::UiAction(act));
         }
     }
+    // `MOUSER_TEST_KEYS=tab,tab,backspace,text:ab`: typed through the key-event
+    // path (as the window does) once the shell has started, by the first UI.
+    let keys = if first { std::env::var("MOUSER_TEST_KEYS").unwrap_or_default() } else { String::new() };
     let crash = crate::test_crash_engine();
     let mut cache = HashMap::new();
     for n in 1u32.. {
@@ -548,11 +551,15 @@ fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
         }
         let (screen, _, _): (Vec<String>, Vec<Vec<crate::CellPaint>>, usize) = c.call::<Option<_>>(Call::View(0, rows)).unwrap_or_default();
         let (back, _, _): (Vec<String>, Vec<Vec<crate::CellPaint>>, usize) = c.call::<Option<_>>(Call::View(40, rows)).unwrap_or_default();
+        if n == 15 && !keys.is_empty() {
+            test_keys(c, &keys);
+        }
+        let cursor: Option<(usize, usize)> = c.call(Call::Cursor);
         let tabs: ui::TabBar = c.call(Call::Tabs);
         let images = fill_images(c.call(Call::Images(0, rows, (10, 20))), &mut cache);
         let bytes: usize = images.iter().map(|d| d.rgba.len()).sum();
         let text = format!(
-            "ui_pid={}\nengine={engine}\nframe={n}\ntabs={} active={}\nimages={} bytes={bytes}\n--- screen\n{}\n--- scrollback\n{}\n",
+            "ui_pid={}\nengine={engine}\nframe={n}\ncursor={cursor:?}\ntabs={} active={}\nimages={} bytes={bytes}\n--- screen\n{}\n--- scrollback\n{}\n",
             std::process::id(),
             tabs.titles.len(),
             tabs.active,
@@ -566,6 +573,25 @@ fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
         std::thread::sleep(Duration::from_millis(100));
     }
     Ok(())
+}
+
+/// Send `MOUSER_TEST_KEYS` (comma separated: `tab`, `backspace`, `enter`,
+/// `esc`, `text:…`) as key events, 50 ms apart.
+fn test_keys(c: &Client, keys: &str) {
+    use mouser_core::kitty::{Func, KeyCode, KeyInput};
+    for k in keys.split(',') {
+        let ev: Vec<(Vec<u8>, KeyCode)> = match k {
+            "tab" => vec![(b"\t".to_vec(), KeyCode::Func(Func::Tab))],
+            "backspace" => vec![(b"\x7f".to_vec(), KeyCode::Func(Func::Backspace))],
+            "enter" => vec![(b"\r".to_vec(), KeyCode::Func(Func::Enter))],
+            "esc" => vec![(b"\x1b".to_vec(), KeyCode::Func(Func::Escape))],
+            _ => k.strip_prefix("text:").unwrap_or("").chars().map(|ch| (ch.to_string().into_bytes(), KeyCode::Char(ch))).collect(),
+        };
+        for (b, code) in ev {
+            c.call::<Option<()>>(Call::KeyEvent(Some(b), KeyInput::press(code, 0), None));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 macro_rules! opt {
