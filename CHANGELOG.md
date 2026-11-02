@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-02
+
+### Added
+
+- Chat: `alt+m` or clicking the model name in the header opens a model switcher (configured models plus installable local/hosted ones, current marked). The pick becomes the default and applies from the next message; it is disabled while a turn runs.
+
 ## [1.1.0] - 2026-11-02
 
 ### Added
