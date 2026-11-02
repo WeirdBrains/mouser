@@ -1,47 +1,21 @@
 ## [Unreleased]
 
-### Changed
-
-- `esc :` waits longer for the `:`: 1200 ms (was 500 ms), configurable with
-  `[keys] leader_timeout_ms`. A held Esc still reaches the shell, in order, when the
-  wait runs out or another key comes first.
+## [1.0.1] - 2026-11-02
 
 ### Added
 
-- The local model is in every build and package: llama.cpp (Vulkan on Linux, Metal on
-  macOS, CPU on Windows) is a default feature, and there is no separate variant.
-  `mouser model local enable [gemma-4-e2b|gemma-4-e4b]` asks, downloads, verifies and
-  makes it the default; `mouser model local disable` hides it (downloads kept). The chat
-  picker's local rows use the same path. Linux packages now depend on the Vulkan loader
-  (`vulkan-icd-loader` / `libvulkan1` / `vulkan-loader`). Without a Vulkan driver the
-  model runs on the CPU, and llama.cpp starts only on the first local chat. The binary
-  is about 44 MB larger.
-- `mouser model local move DIR` moves downloaded weights (an atomic rename, or a copy
-  that is SHA256-checked before the old file is removed) and saves `[models.local] dir`.
-  `mouser model local` shows how to change the folder.
-- `mouser model default|test` accept a bare model name offered by one provider
-  (`mouser model default gemma-4-e4b`).
-- Commander fullscreen media: `alt+e`, the header's `fullscreen` button or a
-  double-click makes the image viewer or player fill the whole window, local or remote.
-  The shell, tab bar and sidebar are hidden, and the terminal keeps its size. Images
-  are letterboxed and keep zoom and pan; video keeps play/pause, seeking and the
-  clickable bars. Controls hide after 2.5 s idle and come back on mouse move. Audio
-  gets a full-window controls view. Space and the arrows go to the player while
-  fullscreen. Esc or `alt+e` leaves (docs/modes.md).
-- Fuzzball shell actions (`s`, docs/protocol/shell.md): with the new shell integration
-  (`eval "$(mouser shell-integration zsh)"`, also bash and fish), commander changes
-  directory silently. There is no `cd` line, the half-typed line is kept, and the
-  prompt is redrawn in place. Without the integration Mouser still types the `cd`, then
-  erases it and its echo so one prompt remains.
-- Chat model picker: with no usable model, `esc :a` (or sending a message) shows a
-  picker in the dock: Gemma 4 E2B/E4B local, OpenAI, xAI, OpenRouter, Kimi, Anthropic,
-  Google or a custom URL. Local: consent with size and folder, progress, SHA256, cancel.
-  Hosted: masked API key into the keychain, optional model, a connection test. Then it
-  becomes the default and the held message is sent. Replaces "no model configured".
+- Chat model picker: with no usable model, `esc :a` sets one up (local Gemma or a hosted provider).
+- The local model is built into every package; `mouser model local enable|disable|move`.
+- `mouser model default|test` accept a bare model name.
+- Fuzzball shell actions (`s`): silent `cd` from commander with the zsh/bash/fish integration (`mouser shell-integration`).
+- Commander fullscreen media: `alt+e`, the header button or a double-click.
+- Mouser remembers the last mode a window closed in.
 
-- Mouser remembers the mode (or no mode) a window closed in and starts in it next time
-  (`$MOUSER_HOME/state/last-mode`; the last window to close wins; a mode that is gone
-  falls back to no mode).
+### Changed
+
+- `esc :` waits 1200 ms for the `:` (was 500 ms), configurable with `[keys] leader_timeout_ms`.
+- Without the shell integration, the typed `cd` is erased so one prompt remains.
+- Linux packages depend on the Vulkan loader.
 
 ## [1.0.0] - 2026-11-01
 
