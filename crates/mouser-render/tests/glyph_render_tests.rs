@@ -226,7 +226,10 @@ fn installed_emoji_font_draws_in_colour() {
     let db = mouser_render::text::system_db();
     let mut fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
     let Some(name) = fonts.emoji_family().map(str::to_string) else { return };
-    for cluster in ["👍", "❤\u{fe0f}", "🎉", "😂", "✅", "👍🏽", "👩\u{200d}💻", "🇺🇸"] {
+    // Segoe UI Emoji (COLR v1 on Windows 11) ships no flag glyphs at all.
+    let flags = !name.eq_ignore_ascii_case("Segoe UI Emoji");
+    let clusters = ["👍", "❤\u{fe0f}", "🎉", "😂", "✅", "👍🏽", "👩\u{200d}💻"].into_iter().chain(flags.then_some("🇺🇸"));
+    for cluster in clusters {
         let img = fonts.emoji_image(cluster, 2).unwrap_or_else(|| panic!("{name} has no colour glyph for {cluster:?}"));
         assert_eq!(img.img_w as i32, fonts.cell_w * 2);
         let px = img.rgba.chunks(4).filter(|p| p[3] > 0);

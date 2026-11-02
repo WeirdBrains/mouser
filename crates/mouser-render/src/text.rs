@@ -557,13 +557,12 @@ pub fn pick_emoji_family(configured: Option<&str>, installed: &[String]) -> Opti
     EMOJI_FAMILIES.iter().find_map(|f| find(f))
 }
 
-/// A colour emoji font: raw data (for shaping and bitmaps) plus an outline
-/// rasteriser for COLR layers.
+/// A colour emoji font: raw data for shaping, bitmaps (CBDT/sbix PNG) and
+/// COLR v0/v1 vector glyphs.
 pub struct EmojiFace {
     pub family: String,
     data: Arc<Vec<u8>>,
     index: u32,
-    outlines: Option<Font>,
 }
 
 fn emoji_face(db: &fontdb::Database, family: &str) -> Option<Arc<EmojiFace>> {
@@ -576,36 +575,253 @@ fn emoji_face(db: &fontdb::Database, family: &str) -> Option<Arc<EmojiFace>> {
     let face = db.query(&query).and_then(|id| {
         db.with_face_data(id, |data, index| {
             let data = Arc::new(data.to_vec());
-            let colr = rustybuzz::ttf_parser::Face::parse(&data, index).ok().is_some_and(|f| f.tables().colr.is_some());
-            let outlines =
-                if colr { Font::from_bytes(data.as_slice(), FontSettings { collection_index: index, ..Default::default() }).ok() } else { None };
-            Arc::new(EmojiFace { family: family.to_string(), data, index, outlines })
+            Arc::new(EmojiFace { family: family.to_string(), data, index })
         })
     });
     faces.lock().unwrap().insert(family.to_string(), face.clone());
     face
 }
 
-#[derive(Default)]
-struct Layers {
-    current: Option<rustybuzz::ttf_parser::GlyphId>,
-    out: Vec<(u16, Option<rustybuzz::ttf_parser::RgbaColor>)>,
+/// COLR v0/v1 painter onto a tiny-skia pixmap (font units mapped by `base`).
+struct ColrPainter<'f> {
+    face: &'f ttf_parser::Face<'f>,
+    base: tiny_skia::Transform,
+    transforms: Vec<tiny_skia::Transform>,
+    path: Option<tiny_skia::Path>,
+    clips: Vec<Option<tiny_skia::Mask>>,
+    layers: Vec<(tiny_skia::Pixmap, tiny_skia::BlendMode)>,
 }
 
-impl rustybuzz::ttf_parser::colr::Painter for Layers {
-    fn outline(&mut self, glyph_id: rustybuzz::ttf_parser::GlyphId) {
-        self.current = Some(glyph_id);
+struct PathSink(tiny_skia::PathBuilder);
+
+impl ttf_parser::OutlineBuilder for PathSink {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.0.move_to(x, y);
     }
-    fn paint_foreground(&mut self) {
-        if let Some(g) = self.current.take() {
-            self.out.push((g.0, None));
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.0.line_to(x, y);
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.0.quad_to(x1, y1, x, y);
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.0.cubic_to(x1, y1, x2, y2, x, y);
+    }
+    fn close(&mut self) {
+        self.0.close();
+    }
+}
+
+fn skia_color(c: ttf_parser::RgbaColor) -> tiny_skia::Color {
+    tiny_skia::Color::from_rgba8(c.red, c.green, c.blue, c.alpha)
+}
+
+fn blend_mode(m: ttf_parser::colr::CompositeMode) -> tiny_skia::BlendMode {
+    use tiny_skia::BlendMode as B;
+    use ttf_parser::colr::CompositeMode as C;
+    match m {
+        C::Clear => B::Clear,
+        C::Source => B::Source,
+        C::Destination => B::Destination,
+        C::SourceOver => B::SourceOver,
+        C::DestinationOver => B::DestinationOver,
+        C::SourceIn => B::SourceIn,
+        C::DestinationIn => B::DestinationIn,
+        C::SourceOut => B::SourceOut,
+        C::DestinationOut => B::DestinationOut,
+        C::SourceAtop => B::SourceAtop,
+        C::DestinationAtop => B::DestinationAtop,
+        C::Xor => B::Xor,
+        C::Plus => B::Plus,
+        C::Screen => B::Screen,
+        C::Overlay => B::Overlay,
+        C::Darken => B::Darken,
+        C::Lighten => B::Lighten,
+        C::ColorDodge => B::ColorDodge,
+        C::ColorBurn => B::ColorBurn,
+        C::HardLight => B::HardLight,
+        C::SoftLight => B::SoftLight,
+        C::Difference => B::Difference,
+        C::Exclusion => B::Exclusion,
+        C::Multiply => B::Multiply,
+        C::Hue => B::Hue,
+        C::Saturation => B::Saturation,
+        C::Color => B::Color,
+        C::Luminosity => B::Luminosity,
+    }
+}
+
+fn stops(it: impl Iterator<Item = ttf_parser::colr::ColorStop>) -> Vec<tiny_skia::GradientStop> {
+    it.map(|s| tiny_skia::GradientStop::new(s.stop_offset, skia_color(s.color))).collect()
+}
+
+fn spread(e: ttf_parser::colr::GradientExtend) -> tiny_skia::SpreadMode {
+    match e {
+        ttf_parser::colr::GradientExtend::Pad => tiny_skia::SpreadMode::Pad,
+        ttf_parser::colr::GradientExtend::Repeat => tiny_skia::SpreadMode::Repeat,
+        ttf_parser::colr::GradientExtend::Reflect => tiny_skia::SpreadMode::Reflect,
+    }
+}
+
+impl ColrPainter<'_> {
+    fn transform(&self) -> tiny_skia::Transform {
+        *self.transforms.last().unwrap_or(&self.base)
+    }
+    fn target(&mut self) -> &mut tiny_skia::Pixmap {
+        &mut self.layers.last_mut().expect("base layer").0
+    }
+    fn shader(&self, paint: ttf_parser::colr::Paint<'_>) -> tiny_skia::Shader<'static> {
+        use ttf_parser::colr::Paint;
+        let ts = self.transform();
+        // A degenerate gradient (one stop, zero length) paints its first colour.
+        let first = |s: &[ttf_parser::colr::ColorStop]| {
+            tiny_skia::Shader::SolidColor(s.first().map(|s| skia_color(s.color)).unwrap_or(tiny_skia::Color::BLACK))
+        };
+        match paint {
+            Paint::Solid(c) => tiny_skia::Shader::SolidColor(skia_color(c)),
+            Paint::LinearGradient(g) => {
+                let raw: Vec<_> = g.stops(0, &[]).collect();
+                let st = stops(raw.iter().copied());
+                // Project p0->p1 onto the line perpendicular to p0->p2 (COLR v1 spec).
+                let (p0, p1, p2) = ((g.x0, g.y0), (g.x1, g.y1), (g.x2, g.y2));
+                let (nx, ny) = (p2.1 - p0.1, -(p2.0 - p0.0));
+                let (dx, dy) = (p1.0 - p0.0, p1.1 - p0.1);
+                let n2 = nx * nx + ny * ny;
+                let end = if n2 > 0.0 {
+                    let k = (dx * nx + dy * ny) / n2;
+                    (p0.0 + k * nx, p0.1 + k * ny)
+                } else {
+                    p1
+                };
+                tiny_skia::LinearGradient::new(
+                    tiny_skia::Point::from_xy(p0.0, p0.1),
+                    tiny_skia::Point::from_xy(end.0, end.1),
+                    st,
+                    spread(g.extend),
+                    ts,
+                )
+                .unwrap_or_else(|| first(&raw))
+            }
+            Paint::RadialGradient(g) => {
+                let raw: Vec<_> = g.stops(0, &[]).collect();
+                let st = stops(raw.iter().copied());
+                tiny_skia::RadialGradient::new(
+                    tiny_skia::Point::from_xy(g.x0, g.y0),
+                    tiny_skia::Point::from_xy(g.x1, g.y1),
+                    g.r1.max(g.r0),
+                    st,
+                    spread(g.extend),
+                    ts,
+                )
+                .unwrap_or_else(|| first(&raw))
+            }
+            // tiny-skia has no sweep gradient: use the mid stop's colour.
+            Paint::SweepGradient(g) => {
+                let raw: Vec<_> = g.stops(0, &[]).collect();
+                tiny_skia::Shader::SolidColor(raw.get(raw.len() / 2).map(|s| skia_color(s.color)).unwrap_or(tiny_skia::Color::BLACK))
+            }
         }
     }
-    fn paint_color(&mut self, color: rustybuzz::ttf_parser::RgbaColor) {
-        if let Some(g) = self.current.take() {
-            self.out.push((g.0, Some(color)));
+}
+
+impl<'a> ttf_parser::colr::Painter<'a> for ColrPainter<'_> {
+    fn outline_glyph(&mut self, glyph_id: ttf_parser::GlyphId) {
+        let mut sink = PathSink(tiny_skia::PathBuilder::new());
+        self.path = self.face.outline_glyph(glyph_id, &mut sink).and_then(|_| sink.0.finish()).and_then(|p| p.transform(self.transform()));
+    }
+    fn paint(&mut self, paint: ttf_parser::colr::Paint<'a>) {
+        let shader = self.shader(paint);
+        let p = tiny_skia::Paint { shader, anti_alias: true, ..Default::default() };
+        let mask = self.clips.last().cloned().flatten();
+        let path = self.path.take();
+        let target = self.target();
+        match path {
+            Some(path) => target.fill_path(&path, &p, tiny_skia::FillRule::Winding, tiny_skia::Transform::identity(), mask.as_ref()),
+            None => {
+                let r = tiny_skia::Rect::from_xywh(0.0, 0.0, target.width() as f32, target.height() as f32).unwrap();
+                target.fill_rect(r, &p, tiny_skia::Transform::identity(), mask.as_ref());
+            }
         }
     }
+    fn push_clip(&mut self) {
+        let (w, h) = (self.layers[0].0.width(), self.layers[0].0.height());
+        let mut mask = self.clips.last().cloned().flatten();
+        if let Some(path) = self.path.take() {
+            match mask.as_mut() {
+                Some(m) => m.intersect_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity()),
+                None => {
+                    let mut m = tiny_skia::Mask::new(w, h).unwrap();
+                    m.fill_path(&path, tiny_skia::FillRule::Winding, true, tiny_skia::Transform::identity());
+                    mask = Some(m);
+                }
+            }
+        }
+        self.clips.push(mask);
+    }
+    fn push_clip_box(&mut self, b: ttf_parser::colr::ClipBox) {
+        self.path = tiny_skia::Rect::from_ltrb(b.x_min, b.y_min, b.x_max, b.y_max)
+            .map(tiny_skia::PathBuilder::from_rect)
+            .and_then(|p| p.transform(self.transform()));
+        self.push_clip();
+    }
+    fn pop_clip(&mut self) {
+        self.clips.pop();
+    }
+    fn push_layer(&mut self, mode: ttf_parser::colr::CompositeMode) {
+        let (w, h) = (self.layers[0].0.width(), self.layers[0].0.height());
+        self.layers.push((tiny_skia::Pixmap::new(w, h).unwrap(), blend_mode(mode)));
+    }
+    fn pop_layer(&mut self) {
+        if self.layers.len() > 1 {
+            let (top, mode) = self.layers.pop().unwrap();
+            let p = tiny_skia::PixmapPaint { blend_mode: mode, ..Default::default() };
+            self.target().draw_pixmap(0, 0, top.as_ref(), &p, tiny_skia::Transform::identity(), None);
+        }
+    }
+    fn push_transform(&mut self, t: ttf_parser::Transform) {
+        let next = self.transform().pre_concat(tiny_skia::Transform::from_row(t.a, t.b, t.c, t.d, t.e, t.f));
+        self.transforms.push(next);
+    }
+    fn pop_transform(&mut self) {
+        self.transforms.pop();
+    }
+}
+
+/// Paints COLR (v0 or v1) glyph `gid` into a `bw` x `bh` straight-alpha RGBA box.
+fn paint_colr(data: &[u8], index: u32, gid: u16, bw: u32, bh: u32) -> Option<Vec<u8>> {
+    let face = ttf_parser::Face::parse(data, index).ok()?;
+    let glyph = ttf_parser::GlyphId(gid);
+    if !face.is_color_glyph(glyph) {
+        return None;
+    }
+    // Size the em so the glyph fills the box height, leaving a little air.
+    let upem = face.units_per_em().max(1) as f32;
+    let (asc, desc) = (face.ascender() as f32, face.descender() as f32);
+    let px = bh as f32 * 0.92 * upem / (asc - desc).max(1.0);
+    let s = px / upem;
+    let baseline = (asc * s).round();
+    let advance = face.glyph_hor_advance(glyph).map(|a| a as f32 * s).unwrap_or(bw as f32);
+    let left = ((bw as f32 - advance) / 2.0).round();
+    let base = tiny_skia::Transform::from_row(s, 0.0, 0.0, -s, left, baseline);
+    let mut painter = ColrPainter {
+        face: &face,
+        base,
+        transforms: Vec::new(),
+        path: None,
+        clips: Vec::new(),
+        layers: vec![(tiny_skia::Pixmap::new(bw, bh)?, tiny_skia::BlendMode::SourceOver)],
+    };
+    face.paint_color_glyph(glyph, 0, ttf_parser::RgbaColor::new(0, 0, 0, 255), &mut painter)?;
+    let (pix, _) = painter.layers.swap_remove(0);
+    Some(
+        pix.pixels()
+            .iter()
+            .flat_map(|p| {
+                let c = p.demultiply();
+                [c.red(), c.green(), c.blue(), c.alpha()]
+            })
+            .collect(),
+    )
 }
 
 impl EmojiFace {
@@ -627,49 +843,8 @@ impl EmojiFace {
             let rgba = image::load_from_memory_with_format(img.data, image::ImageFormat::Png).ok()?.to_rgba8();
             return Some(fit(rgba, bw, bh));
         }
-        let font = self.outlines.as_ref()?;
-        let mut layers = Layers::default();
-        face.paint_color_glyph(glyph, 0, &mut layers)?;
-        // Size the em so the glyph fills the box height, leaving a little air.
-        let upem = face.units_per_em().max(1) as f32;
-        let (asc, desc) = (face.ascender() as f32, face.descender() as f32);
-        let px = bh as f32 * 0.92 * upem / (asc - desc).max(1.0);
-        let baseline = (asc / upem * px).round() as i32;
-        let advance = font.metrics_indexed(gid, px).advance_width;
-        let left = ((bw as f32 - advance) / 2.0).round() as i32;
-        let mut out = vec![0u8; (bw * bh * 4) as usize];
-        for (layer, color) in layers.out {
-            let (m, cov) = font.rasterize_indexed(layer, px);
-            let c = color.map(|c| [c.red, c.green, c.blue, c.alpha]).unwrap_or([0, 0, 0, 255]);
-            let (ox, oy) = (left + m.xmin, baseline - (m.height as i32 + m.ymin));
-            for iy in 0..m.height {
-                for ix in 0..m.width {
-                    let (x, y) = (ox + ix as i32, oy + iy as i32);
-                    if x < 0 || y < 0 || x >= bw as i32 || y >= bh as i32 {
-                        continue;
-                    }
-                    let a = cov[iy * m.width + ix] as u32 * c[3] as u32 / 255;
-                    let o = ((y as u32 * bw + x as u32) * 4) as usize;
-                    over(&mut out[o..o + 4], [c[0], c[1], c[2]], a);
-                }
-            }
-        }
-        Some((out, bw, bh))
+        paint_colr(&self.data, self.index, gid, bw, bh).map(|out| (out, bw, bh))
     }
-}
-
-/// Source-over blend of a straight-alpha colour onto a straight-alpha pixel.
-fn over(dst: &mut [u8], src: [u8; 3], a: u32) {
-    if a == 0 {
-        return;
-    }
-    let da = dst[3] as u32;
-    let out_a = a + da * (255 - a) / 255;
-    for k in 0..3 {
-        let v = (src[k] as u32 * a + dst[k] as u32 * da * (255 - a) / 255) / out_a.max(1);
-        dst[k] = v.min(255) as u8;
-    }
-    dst[3] = out_a.min(255) as u8;
 }
 
 /// Scale `img` to fit `bw` x `bh` keeping its aspect, centred on a clear box.
