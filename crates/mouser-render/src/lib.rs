@@ -207,6 +207,9 @@ pub struct Renderer {
     pub rows: usize,
     pub font_size: f32,
     pub font_family: Option<String>,
+    /// Colour emoji family (`None`: first installed of `text::EMOJI_FAMILIES`; `"none"`: off).
+    #[serde(default)]
+    pub emoji_family: Option<String>,
     /// Initial window title (default "Mouser").
     pub title: Option<String>,
     /// Wayland app_id / X11 WM_CLASS (default "Mouser").
@@ -217,7 +220,7 @@ pub struct Renderer {
 
 impl Default for Renderer {
     fn default() -> Self {
-        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, title: None, app_id: None, size: None }
+        Self { cols: 100, rows: 30, font_size: 15.0, font_family: None, emoji_family: None, title: None, app_id: None, size: None }
     }
 }
 
@@ -513,7 +516,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut frames_on_engine = 0u32;
     watch_engine_prefs(proxy.clone());
     let font_db = Arc::new(text::system_db());
-    let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32);
+    let mut fonts = FontStack::from_db(&font_db, renderer.font_family.as_deref(), renderer.font_size * scale as f32)
+        .with_emoji(&font_db, renderer.emoji_family.as_deref());
+    log::info!("colour emoji font: {}", fonts.emoji_family().unwrap_or("none"));
     // Family switches load on a worker thread; `font_gen` drops stale results.
     let mut font_gen = 0u64;
 
@@ -955,8 +960,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         renderer.font_size = size;
                         font_gen += 1;
                         let (generation, db, proxy, px) = (font_gen, font_db.clone(), proxy.clone(), size * scale as f32);
+                        let emoji = renderer.emoji_family.clone();
                         std::thread::spawn(move || {
-                            let stack = FontStack::from_db(&db, family.as_deref(), px);
+                            let stack = FontStack::from_db(&db, family.as_deref(), px).with_emoji(&db, emoji.as_deref());
                             let _ = proxy.send_event(UserEvent::Fonts(generation, Box::new(stack)));
                         });
                     } else if (size - renderer.font_size).abs() > f32::EPSILON {

@@ -30,6 +30,9 @@ pub struct Preferences {
     pub theme: Option<String>,
     pub font_family: Option<String>,
     pub font_size: Option<f32>,
+    /// Colour emoji font family (`"none"` turns colour emoji off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji_font: Option<String>,
     pub mode: Option<ThemeMode>,
     /// Sidebar width in physical pixels (clamped to the window when used).
     #[serde(default, skip_serializing_if = "Option::is_none")]

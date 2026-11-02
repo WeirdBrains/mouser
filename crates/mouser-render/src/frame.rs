@@ -120,6 +120,17 @@ fn draw_row_bgs(canvas: &mut dyn Draw, fonts: &FontStack, top: i32, styles: &[Ce
     }
 }
 
+/// Whether a cell should try the colour emoji face: a wide emoji, or any
+/// emoji-capable character with VS16 / joiners / modifiers attached.
+fn wants_emoji(c: char, p: &CellPaint) -> bool {
+    if p.comb.contains(&'\u{fe0e}') {
+        return false;
+    }
+    let wide = p.flags & paint::WIDE != 0;
+    let decorated = p.comb.iter().any(|m| matches!(*m, '\u{fe0f}' | '\u{200d}' | '\u{20e3}') || mouser_core::grid::is_skin_tone(*m));
+    mouser_core::grid::emoji_capable(c) && (wide || decorated) || wide && mouser_core::grid::is_regional(c)
+}
+
 fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let under_y = top + (fonts.ascent + 2).min(ch - 3);
@@ -127,7 +138,15 @@ fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line:
         let x = PADDING + col as i32 * cw;
         let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
         let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
-        if p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER {
+        let emoji = (p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER && wants_emoji(c, &p))
+            .then(|| {
+                let cluster: String = std::iter::once(c).chain(p.comb.into_iter().filter(|m| *m != '\0')).collect();
+                fonts.emoji_image(&cluster, if p.flags & paint::WIDE != 0 { 2 } else { 1 })
+            })
+            .flatten();
+        if let Some(img) = emoji {
+            canvas.draw_image(&img, x, top);
+        } else if p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER {
             let g = if p.flags & paint::ITALIC != 0 { crate::text::italic_key(c) } else { c };
             canvas.draw_char(fonts, x, top, g, p.fg);
             if p.flags & paint::BOLD != 0 {

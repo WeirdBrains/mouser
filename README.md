@@ -121,6 +121,12 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   shell exits). A fresh install starts with the collapsed strip (click `«` to expand).
   `MOUSER_OPEN_SIDEBAR=1` forces it open and expanded for that run without overwriting the
   saved state.
+- Colour emoji come from the system's emoji font: Noto Color Emoji (or Twemoji,
+  JoyPixels, …) on Linux, Apple Color Emoji on macOS, Segoe UI Emoji on Windows. Emoji take
+  two cells; VS16 (`❤️`), skin tones and ZWJ sequences draw as one emoji. Pick another font
+  with `emoji_font = "Twemoji"` under `[ui]` in `config.toml` (or in preferences, `esc :p`);
+  `"none"` turns colour emoji off. Mouser installs no fonts: on Linux install
+  `noto-fonts-emoji` (Arch) or `fonts-noto-color-emoji` (Debian/Ubuntu) if emoji show as boxes.
 - Rendering uses the GPU when available and falls back to the CPU; set
   `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
 - GPU rendering engines are swappable: `mouser` (wgpu, default), `skia` (Skia over

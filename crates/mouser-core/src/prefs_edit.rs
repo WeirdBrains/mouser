@@ -61,6 +61,7 @@ pub fn schema() -> Vec<Field> {
         f("Appearance", "theme", "Theme", Kind::Choice(themes), "Red Star", true),
         f("Appearance", "mode", "Light / dark", choice(&["system", "light", "dark"]), "system", true),
         f("Appearance", "font_family", "Font family", Kind::Text { url: false }, "(config.toml)", false),
+        f("Appearance", "emoji_font", "Emoji font", Kind::Text { url: false }, "(auto: Noto Color Emoji, Apple Color Emoji, Segoe UI Emoji…)", false),
         f("Appearance", "font_size", "Font size", Kind::Float { min: 6.0, max: 72.0 }, "16", false),
         f("Window", "sidebar_open", "Sidebar open", Kind::Bool, "false", false),
         f("Window", "sidebar_collapsed", "Sidebar collapsed", Kind::Bool, "false", false),

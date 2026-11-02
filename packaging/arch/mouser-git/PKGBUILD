@@ -13,7 +13,8 @@ optdepends=('libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
             'libx11: X11 session support'
             'libxcursor: X11 cursors'
             'libxi: X11 input'
-            'libxrandr: X11 monitors')
+            'libxrandr: X11 monitors'
+            'noto-fonts-emoji: colour emoji')
 # The built-in local model (llama.cpp, Vulkan) is always included since 1.0.1.
 depends+=('vulkan-icd-loader')
 makedepends+=('cmake' 'clang' 'vulkan-headers' 'shaderc' 'spirv-headers')

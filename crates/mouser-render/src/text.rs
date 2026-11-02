@@ -57,6 +57,9 @@ pub struct FontStack {
     pub cell_h: i32,
     pub ascent: i32,
     cache: HashMap<char, Glyph>,
+    /// Colour emoji face (see [`EMOJI_FAMILIES`]) and rendered clusters.
+    emoji: Option<Arc<EmojiFace>>,
+    emoji_cache: HashMap<String, Option<Arc<crate::frame::ImageDraw>>>,
     /// Unique per (fonts, size); lets GPU atlases know when to start over.
     pub generation: u64,
 }
@@ -126,12 +129,61 @@ impl FontStack {
         let top_pad = (cell_h - ascent_px - descent_px) / 2;
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let generation = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new(), generation }
+        Self { fonts, size, cell_w, cell_h, ascent: ascent_px + top_pad, cache: HashMap::new(), emoji: None, emoji_cache: HashMap::new(), generation }
     }
 
     /// The same fonts at another pixel size (cheap: parsed faces are shared).
     pub fn resized(&self, size: f32) -> Self {
-        Self::from_fonts(self.fonts.clone(), size)
+        let mut s = Self::from_fonts(self.fonts.clone(), size);
+        s.emoji = self.emoji.clone();
+        s
+    }
+
+    /// Add the colour emoji face: `family` if installed (`"none"` disables
+    /// colour emoji), else the first of [`EMOJI_FAMILIES`] found.
+    pub fn with_emoji(mut self, db: &fontdb::Database, family: Option<&str>) -> Self {
+        self.emoji = pick_emoji_family(family, &installed_families(db)).and_then(|name| emoji_face(db, &name));
+        self.emoji_cache.clear();
+        self
+    }
+
+    /// Name of the colour emoji face in use, if any.
+    pub fn emoji_family(&self) -> Option<&str> {
+        self.emoji.as_ref().map(|e| e.family.as_str())
+    }
+
+    /// `cluster` (base plus joiners, modifiers and selectors) drawn in colour
+    /// to fit `cells` cells, or `None` to draw it as text.
+    pub fn emoji_image(&mut self, cluster: &str, cells: i32) -> Option<Arc<crate::frame::ImageDraw>> {
+        let face = self.emoji.clone()?;
+        if cluster.contains('\u{fe0e}') {
+            return None;
+        }
+        let (bw, bh, generation) = (self.cell_w * cells.max(1), self.cell_h, self.generation);
+        let key = format!("{cells}{cluster}");
+        self.emoji_cache
+            .entry(key)
+            .or_insert_with(|| {
+                let (rgba, w, h) = face.render(cluster, bw.max(1) as u32, bh.max(1) as u32)?;
+                use std::hash::{Hash, Hasher};
+                let mut hs = std::collections::hash_map::DefaultHasher::new();
+                (generation, cells, cluster).hash(&mut hs);
+                Some(Arc::new(crate::frame::ImageDraw {
+                    key: hs.finish() | (1 << 63),
+                    rgba: Arc::new(rgba),
+                    img_w: w,
+                    img_h: h,
+                    src: (0, 0, w, h),
+                    col: 0,
+                    row: 0,
+                    x_off: 0,
+                    y_off: 0,
+                    width: w,
+                    height: h,
+                    z: 0,
+                }))
+            })
+            .clone()
     }
 
     pub fn font_count(&self) -> usize {
@@ -482,4 +534,151 @@ impl Canvas<'_> {
             self.draw_char(fonts, x + i as i32 * cw, top, ch, color);
         }
     }
+}
+
+/// Colour emoji families, in order of preference, when none is configured.
+pub const EMOJI_FAMILIES: &[&str] =
+    &["Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", "Twemoji", "Twitter Color Emoji", "JoyPixels", "EmojiOne Color", "OpenMoji Color"];
+
+/// The emoji family to use from the `installed` family names: the configured
+/// one when installed, else the first of [`EMOJI_FAMILIES`]. `"none"` or
+/// `"off"` turns colour emoji off. Matching ignores case.
+pub fn pick_emoji_family(configured: Option<&str>, installed: &[String]) -> Option<String> {
+    let find = |want: &str| installed.iter().find(|n| n.eq_ignore_ascii_case(want)).cloned();
+    if let Some(c) = configured.map(str::trim).filter(|c| !c.is_empty()) {
+        if c.eq_ignore_ascii_case("none") || c.eq_ignore_ascii_case("off") {
+            return None;
+        }
+        if let Some(n) = find(c) {
+            return Some(n);
+        }
+        log::warn!("emoji font {c:?} is not installed; using the default");
+    }
+    EMOJI_FAMILIES.iter().find_map(|f| find(f))
+}
+
+/// A colour emoji font: raw data (for shaping and bitmaps) plus an outline
+/// rasteriser for COLR layers.
+pub struct EmojiFace {
+    pub family: String,
+    data: Arc<Vec<u8>>,
+    index: u32,
+    outlines: Option<Font>,
+}
+
+fn emoji_face(db: &fontdb::Database, family: &str) -> Option<Arc<EmojiFace>> {
+    static FACES: OnceLock<Mutex<HashMap<String, Option<Arc<EmojiFace>>>>> = OnceLock::new();
+    let faces = FACES.get_or_init(Default::default);
+    if let Some(f) = faces.lock().unwrap().get(family) {
+        return f.clone();
+    }
+    let query = fontdb::Query { families: &[fontdb::Family::Name(family)], ..Default::default() };
+    let face = db.query(&query).and_then(|id| {
+        db.with_face_data(id, |data, index| {
+            let data = Arc::new(data.to_vec());
+            let colr = rustybuzz::ttf_parser::Face::parse(&data, index).ok().is_some_and(|f| f.tables().colr.is_some());
+            let outlines =
+                if colr { Font::from_bytes(data.as_slice(), FontSettings { collection_index: index, ..Default::default() }).ok() } else { None };
+            Arc::new(EmojiFace { family: family.to_string(), data, index, outlines })
+        })
+    });
+    faces.lock().unwrap().insert(family.to_string(), face.clone());
+    face
+}
+
+#[derive(Default)]
+struct Layers {
+    current: Option<rustybuzz::ttf_parser::GlyphId>,
+    out: Vec<(u16, Option<rustybuzz::ttf_parser::RgbaColor>)>,
+}
+
+impl rustybuzz::ttf_parser::colr::Painter for Layers {
+    fn outline(&mut self, glyph_id: rustybuzz::ttf_parser::GlyphId) {
+        self.current = Some(glyph_id);
+    }
+    fn paint_foreground(&mut self) {
+        if let Some(g) = self.current.take() {
+            self.out.push((g.0, None));
+        }
+    }
+    fn paint_color(&mut self, color: rustybuzz::ttf_parser::RgbaColor) {
+        if let Some(g) = self.current.take() {
+            self.out.push((g.0, Some(color)));
+        }
+    }
+}
+
+impl EmojiFace {
+    /// The shaped cluster's colour glyph as RGBA, scaled to fit `bw` x `bh`
+    /// and centred in it. `None` if the font has no colour glyph for it.
+    pub fn render(&self, cluster: &str, bw: u32, bh: u32) -> Option<(Vec<u8>, u32, u32)> {
+        let face = rustybuzz::Face::from_slice(&self.data, self.index)?;
+        let mut buf = rustybuzz::UnicodeBuffer::new();
+        buf.push_str(cluster);
+        let shaped = rustybuzz::shape(&face, &[], buf);
+        let gid = shaped.glyph_infos().first()?.glyph_id as u16;
+        if gid == 0 {
+            return None;
+        }
+        let glyph = rustybuzz::ttf_parser::GlyphId(gid);
+        if let Some(img) = face.glyph_raster_image(glyph, u16::MAX)
+            && img.format == rustybuzz::ttf_parser::RasterImageFormat::PNG
+        {
+            let rgba = image::load_from_memory_with_format(img.data, image::ImageFormat::Png).ok()?.to_rgba8();
+            return Some(fit(rgba, bw, bh));
+        }
+        let font = self.outlines.as_ref()?;
+        let mut layers = Layers::default();
+        face.paint_color_glyph(glyph, 0, &mut layers)?;
+        // Size the em so the glyph fills the box height, leaving a little air.
+        let upem = face.units_per_em().max(1) as f32;
+        let (asc, desc) = (face.ascender() as f32, face.descender() as f32);
+        let px = bh as f32 * 0.92 * upem / (asc - desc).max(1.0);
+        let baseline = (asc / upem * px).round() as i32;
+        let advance = font.metrics_indexed(gid, px).advance_width;
+        let left = ((bw as f32 - advance) / 2.0).round() as i32;
+        let mut out = vec![0u8; (bw * bh * 4) as usize];
+        for (layer, color) in layers.out {
+            let (m, cov) = font.rasterize_indexed(layer, px);
+            let c = color.map(|c| [c.red, c.green, c.blue, c.alpha]).unwrap_or([0, 0, 0, 255]);
+            let (ox, oy) = (left + m.xmin, baseline - (m.height as i32 + m.ymin));
+            for iy in 0..m.height {
+                for ix in 0..m.width {
+                    let (x, y) = (ox + ix as i32, oy + iy as i32);
+                    if x < 0 || y < 0 || x >= bw as i32 || y >= bh as i32 {
+                        continue;
+                    }
+                    let a = cov[iy * m.width + ix] as u32 * c[3] as u32 / 255;
+                    let o = ((y as u32 * bw + x as u32) * 4) as usize;
+                    over(&mut out[o..o + 4], [c[0], c[1], c[2]], a);
+                }
+            }
+        }
+        Some((out, bw, bh))
+    }
+}
+
+/// Source-over blend of a straight-alpha colour onto a straight-alpha pixel.
+fn over(dst: &mut [u8], src: [u8; 3], a: u32) {
+    if a == 0 {
+        return;
+    }
+    let da = dst[3] as u32;
+    let out_a = a + da * (255 - a) / 255;
+    for k in 0..3 {
+        let v = (src[k] as u32 * a + dst[k] as u32 * da * (255 - a) / 255) / out_a.max(1);
+        dst[k] = v.min(255) as u8;
+    }
+    dst[3] = out_a.min(255) as u8;
+}
+
+/// Scale `img` to fit `bw` x `bh` keeping its aspect, centred on a clear box.
+fn fit(img: image::RgbaImage, bw: u32, bh: u32) -> (Vec<u8>, u32, u32) {
+    let (w, h) = img.dimensions();
+    let scale = (bw as f32 / w.max(1) as f32).min(bh as f32 / h.max(1) as f32);
+    let (tw, th) = (((w as f32 * scale).round() as u32).max(1), ((h as f32 * scale).round() as u32).max(1));
+    let small = image::imageops::resize(&img, tw, th, image::imageops::FilterType::Triangle);
+    let mut out = image::RgbaImage::new(bw, bh);
+    image::imageops::overlay(&mut out, &small, ((bw - tw.min(bw)) / 2) as i64, ((bh - th.min(bh)) / 2) as i64);
+    (out.into_raw(), bw, bh)
 }
