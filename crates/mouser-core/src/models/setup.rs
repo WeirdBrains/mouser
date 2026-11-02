@@ -35,6 +35,9 @@ pub enum Kind {
     Preset(&'static str),
     /// Any OpenAI- or Anthropic-compatible URL.
     Custom,
+    /// An already configured `provider/model` (the switch picker): picking it
+    /// only makes it the default.
+    Use(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +85,37 @@ pub fn options(local_built: bool) -> Vec<Opt> {
         kind: Kind::Custom,
         available: true,
     });
+    v
+}
+
+/// The switch picker (agent mode's model key): every configured or plugin
+/// provider's models first, then everything [`options`] offers to install.
+/// The entry matching `current` (`provider/model`) is marked `● `.
+pub fn switch_options(local_built: bool, current: Option<&str>) -> Vec<Opt> {
+    let mut v = Vec::new();
+    for p in all() {
+        if !matches!(p.origin, Origin::Configured | Origin::Plugin) {
+            continue;
+        }
+        for m in &p.entry.models {
+            let spec = format!("{}/{m}", p.entry.name);
+            v.push(Opt { label: spec.clone(), detail: "configured".into(), kind: Kind::Use(spec), available: true });
+        }
+    }
+    v.extend(options(local_built));
+    if let Some(c) = current {
+        for o in &mut v {
+            let hit = match &o.kind {
+                Kind::Use(s) => s == c,
+                Kind::Local(w) => c == format!("gemma-local/{}", w.id),
+                _ => false,
+            };
+            if hit {
+                o.label = format!("● {}", o.label);
+                o.detail = format!("current · {}", o.detail);
+            }
+        }
+    }
     v
 }
 
@@ -146,6 +180,8 @@ pub struct Setup {
     /// Tests: base URL for the hosted presets instead of the real API.
     pub preset_url: Option<String>,
     notify: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Opened to switch models (not first run).
+    pub switch: bool,
 }
 
 impl Setup {
@@ -159,7 +195,17 @@ impl Setup {
             download_url: None,
             preset_url: None,
             notify: None,
+            switch: false,
         }
+    }
+
+    /// The switch picker: [`switch_options`], the current model selected.
+    pub fn switch(local_built: bool, current: Option<&str>) -> Self {
+        let mut s = Setup::new(local_built);
+        s.opts = switch_options(local_built, current);
+        s.switch = true;
+        s.sel = s.opts.iter().position(|o| o.label.starts_with("● ")).unwrap_or(0);
+        s
     }
 
     pub fn set_notify(&mut self, f: Arc<dyn Fn() + Send + Sync>) {
@@ -200,6 +246,10 @@ impl Setup {
                 return;
             }
             Kind::Local(w) => Step::Consent(w),
+            Kind::Use(spec) => match set_default(&spec) {
+                Ok(s) => Step::Done(s, None),
+                Err(e) => Step::Failed(format!("{e:#}"), Box::new(Step::Choose)),
+            },
             k => Step::Form(k, Form::default()),
         };
     }
@@ -349,7 +399,7 @@ impl Setup {
                 }
                 ("custom".into(), if f.api_anthropic { Api::Anthropic } else { Api::OpenAi }, url, f.model.trim().to_string())
             }
-            Kind::Local(_) => return,
+            Kind::Local(_) | Kind::Use(_) => return,
         };
         let key = f.key.trim().to_string();
         if key.is_empty() && kind != Kind::Custom {
