@@ -293,6 +293,7 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("zoom_out", "-", "image view: zoom out (same key as volume down in the player)"),
     b("zoom_fit", "0", "image view: fit"),
     b("zoom_actual", "1", "image view: 100% (actual pixels)"),
+    b("fullscreen", "e", "image / player: fullscreen, the whole window (Esc or the same key leaves)"),
     b("menu", "i", "header overflow menu (\u{2022}\u{2022}\u{2022}) when the window is narrow"),
 ];
 
@@ -875,6 +876,7 @@ mod tests {
                     | "zoom_fit"
                     | "zoom_actual"
                     | "menu"
+                    | "fullscreen"
             )
         }) {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);

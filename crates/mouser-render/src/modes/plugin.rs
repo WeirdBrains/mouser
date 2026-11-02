@@ -207,7 +207,7 @@ impl Mode for PluginMode {
             items.push(row(Rect { x: x0, y: rect.y + 6 + (i as i32 + 1) * row_h, w, h: row_h }, t, st));
         }
         items.push(row(Rect { x: x0, y: rect.y + h - row_h - 6, w, h: row_h }, hint, PanelStyle::Hint));
-        View { dock: Some(Panel { rect, items }), panel: None, images: vec![] }
+        View { dock: Some(Panel { rect, items }), panel: None, images: vec![], fullscreen: false }
     }
 
     fn set_waker(&mut self, w: Waker) {

@@ -463,6 +463,16 @@ pub struct CommanderMode {
     hits: Hits,
     /// Header overflow (•••) dropdown open.
     menu_open: bool,
+    /// The image or player fills the window (alt+e, the header button or a
+    /// double-click; Esc leaves).
+    pub fullscreen: bool,
+    /// Last pointer move or key in fullscreen: the controls show for
+    /// [`FS_CONTROLS`] after it.
+    fs_active: std::time::Instant,
+    /// Last click on the picture, for double-click.
+    fs_click: Option<std::time::Instant>,
+    /// Bumped on activity; the hide timer only fires for the latest.
+    fs_gen: Arc<std::sync::atomic::AtomicU64>,
     last_scrub: Option<std::time::Instant>,
     /// The ssh side channel while the listing is remote.
     ssh: Option<fetch::Remote>,
@@ -524,6 +534,14 @@ pub fn fit_scale(body: Rect, nat: (u32, u32)) -> f64 {
         return 1.0;
     }
     body.w as f64 / nat.0 as f64
+}
+
+/// Scale that shows the whole image inside `body` (fullscreen fit).
+pub fn contain_scale(body: Rect, nat: (u32, u32)) -> f64 {
+    if nat.0 == 0 || nat.1 == 0 {
+        return 1.0;
+    }
+    (body.w as f64 / nat.0 as f64).min(body.h as f64 / nat.1 as f64)
 }
 
 /// Where a zoomed image goes: centred when smaller than the body, else
@@ -606,6 +624,25 @@ fn clip_text(s: &str, cols: i32) -> String {
 }
 
 /// Builder state for one frame.
+/// How long fullscreen controls stay after the last pointer move or key.
+pub const FS_CONTROLS: std::time::Duration = std::time::Duration::from_millis(2500);
+
+fn is_media(p: &Path) -> bool {
+    matches!(cmdr::kind_of(&p.to_string_lossy()), Kind::Image | Kind::Video | Kind::Audio)
+}
+
+/// Fullscreen keys: space and the arrows drive the player / image.
+fn fs_key(bytes: &[u8]) -> Option<&'static str> {
+    Some(match bytes {
+        b" " => "play_pause",
+        b"\x1b[D" | b"\x1bOD" => "left_fs",
+        b"\x1b[C" | b"\x1bOC" => "right_fs",
+        b"\x1b[A" | b"\x1bOA" => "up_fs",
+        b"\x1b[B" | b"\x1bOB" => "down_fs",
+        _ => return None,
+    })
+}
+
 struct Out {
     items: Vec<PanelItem>,
     /// Player frames, ready to draw.
@@ -639,6 +676,10 @@ impl CommanderMode {
             press: None,
             hits: Hits::default(),
             menu_open: false,
+            fullscreen: false,
+            fs_active: std::time::Instant::now(),
+            fs_click: None,
+            fs_gen: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_scrub: None,
             ssh: None,
             remote_meta: Arc::new(HashMap::new()),
@@ -853,12 +894,18 @@ impl CommanderMode {
             self.hits.image = body;
             let nat = self.natural(p);
             if let Some(nat) = nat {
-                let fitw = fit_scale(body, nat);
+                // Fullscreen fits the whole picture (letterboxed); the docked
+                // view fits the width.
+                let fs = self.fullscreen;
+                let fitw = if fs { contain_scale(body, nat) } else { fit_scale(body, nat) };
                 if self.zoom.as_ref().is_none_or(|z| z.path != p) {
-                    self.zoom = Some(Zoom { path: p.to_path_buf(), scale: fitw, cx: 0.5, cy: 0.0, fit: true });
+                    self.zoom = Some(Zoom { path: p.to_path_buf(), scale: fitw, cx: 0.5, cy: if fs { 0.5 } else { 0.0 }, fit: true });
                 }
                 if let Some(z) = self.zoom.as_mut().filter(|z| z.fit) {
                     z.scale = fitw;
+                    if fs {
+                        (z.cx, z.cy) = (0.5, 0.5);
+                    }
                 }
             }
             self.remote_status(body, ch, o);
@@ -1032,7 +1079,25 @@ impl CommanderMode {
     }
 
     fn pointer(&mut self, id: &str, at: (i32, i32)) {
+        if self.fullscreen && at != self.pointer {
+            self.fs_poke();
+        }
         self.pointer = at;
+        if id == "pointer_down" && (inside(self.hits.image, at) || inside(self.hits.video, at)) {
+            let now = std::time::Instant::now();
+            if self.fs_click.is_some_and(|t| now.duration_since(t) < std::time::Duration::from_millis(400)) {
+                // Double-click: toggle fullscreen (and undo the first click's play/pause).
+                self.fs_click = None;
+                if inside(self.hits.video, at)
+                    && let Some(pl) = self.player.as_mut()
+                {
+                    pl.toggle();
+                }
+                self.toggle_fullscreen();
+                return;
+            }
+            self.fs_click = Some(now);
+        }
         let frac = |r: Rect| ((at.0 - r.x) as f64 / r.w.max(1) as f64).clamp(0.0, 1.0);
         match id {
             "pointer_down" => {
@@ -1093,6 +1158,7 @@ impl CommanderMode {
     /// progress and controls.
     fn player_view(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
         let controls = self.player_keys.clone();
+        let (fullscreen, shown) = (self.fullscreen, self.fs_controls_shown());
         let Some(pl) = self.player.as_mut() else { return };
         pl.tick();
         let row_h = ch + 6;
@@ -1100,6 +1166,24 @@ impl CommanderMode {
         let dur = pl.info.duration;
         let mut y = body.y;
         let name = pl.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let bare = fullscreen && pl.info.video && !shown;
+        if bare {
+            // Fullscreen with the controls hidden: only the picture, letterboxed.
+            self.hits.video = body;
+            (self.hits.bar, self.hits.vol) = (Rect::default(), Rect::default());
+            if let Some(f) = pl.frame() {
+                o.frames.push(ModeImage { key: f.key, rgba: f.rgba, width: f.w, height: f.h, src: (0, 0, f.w, f.h), rect: fit(body, f.w, f.h) })
+            }
+            return;
+        }
+        if fullscreen && !pl.info.video {
+            // Audio: a full-window controls view, centred.
+            let w = body.w.min(cw * 90);
+            let h = (6 * row_h + 8).min(body.h);
+            y = body.y + (body.h - h) / 2;
+            let body2 = Rect { x: body.x + (body.w - w) / 2, y, w, h };
+            return self.audio_view(body2, cw, ch, o);
+        }
         if pl.info.video {
             let r = Rect { x: body.x, y, w: body.w, h: (body.h - 3 * row_h - 4).max(ch) };
             self.hits.video = r;
@@ -1158,6 +1242,87 @@ impl CommanderMode {
         self.hits.vol = vol;
         y += row_h;
         o.items.push(item(Rect { x: body.x, y, w: body.w, h: row_h }, clip_text(&controls, body.w / cw.max(1)), PanelStyle::Hint, UiAction::None));
+    }
+
+    fn audio_view(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
+        self.fullscreen = false;
+        self.player_view(body, cw, ch, o);
+        self.fullscreen = true;
+    }
+
+    /// Fullscreen: the title strip (while the controls show) over the whole
+    /// window; returns the body for the picture / player.
+    fn fullscreen_chrome(&mut self, p: &Path, full: Rect, cw: i32, ch: i32, keys: &Keymap, o: &mut Out) -> Rect {
+        o.items.clear();
+        o.menu = None;
+        self.menu_open = false;
+        self.hits.menu = Rect::default();
+        let audio = self.player.as_ref().is_some_and(|pl| !pl.info.video);
+        if !(audio || self.fs_controls_shown()) {
+            self.fs_schedule_hide();
+            return full;
+        }
+        if !audio {
+            self.fs_schedule_hide();
+        }
+        let row_h = ch + 8;
+        let (x0, y0) = (full.x + 10, full.y + 6);
+        let label = format!("exit fullscreen ({} / esc)", keys.label("fullscreen"));
+        let bw = (label.chars().count() as i32 + 2) * cw;
+        let bx = full.x + full.w - 10 - bw;
+        o.items.push(item(Rect { x: bx, y: y0, w: bw, h: row_h - 2 }, label, PanelStyle::Button { primary: false }, act("fullscreen", 0)));
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let t = match self.zoom_label(p) {
+            Some(z) => format!("{z} · {name}"),
+            None => name,
+        };
+        o.items.push(item(
+            Rect { x: x0, y: y0, w: (bx - x0 - cw).max(0), h: row_h },
+            clip_text(&t, ((bx - x0) / cw - 1).max(0)),
+            PanelStyle::Title,
+            UiAction::None,
+        ));
+        let top = y0 + row_h + 6;
+        Rect { x: full.x + 10, y: top, w: full.w - 20, h: full.y + full.h - top - 8 }
+    }
+
+    fn toggle_fullscreen(&mut self) {
+        self.fullscreen = !self.fullscreen;
+        self.zoom = None;
+        self.fs_poke();
+    }
+
+    /// Pointer moved / key pressed in fullscreen: show the controls again.
+    fn fs_poke(&mut self) {
+        self.fs_active = std::time::Instant::now();
+        self.fs_gen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn fs_controls_shown(&self) -> bool {
+        self.fs_active.elapsed() < FS_CONTROLS
+    }
+
+    /// Redraw once the controls are due to hide (a paused picture gets no
+    /// other frames).
+    fn fs_schedule_hide(&self) {
+        let Some(w) = self.waker.clone() else { return };
+        let g = self.fs_gen.clone();
+        let mine = g.load(std::sync::atomic::Ordering::SeqCst);
+        static ARMED: std::sync::Mutex<u64> = std::sync::Mutex::new(u64::MAX);
+        {
+            let mut a = ARMED.lock().unwrap();
+            if *a == mine {
+                return;
+            }
+            *a = mine;
+        }
+        let left = FS_CONTROLS.saturating_sub(self.fs_active.elapsed()) + std::time::Duration::from_millis(30);
+        std::thread::spawn(move || {
+            std::thread::sleep(left);
+            if g.load(std::sync::atomic::Ordering::SeqCst) == mine {
+                w();
+            }
+        });
     }
 
     fn options_panel(&self, ctx: &Context) -> Panel {
@@ -1285,6 +1450,19 @@ impl Mode for CommanderMode {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Option<Effect> {
+        if self.fullscreen && bytes != b"\x1b" {
+            if let Some(id) = fs_key(bytes) {
+                self.fs_poke();
+                let e = self.action(id, if id == "scroll" { 1 } else { 0 });
+                return Some(if e == Effect::Pass { Effect::None } else { e });
+            }
+            // Other plain keys are swallowed (nothing types into the hidden
+            // shell); alt keys fall through to the bindings.
+            if !(bytes.len() > 1 && bytes[0] == 0x1b) {
+                return Some(Effect::None);
+            }
+            return None;
+        }
         // Bound alt keys still work while searching.
         if bytes.len() > 1 && bytes[0] == 0x1b {
             return None;
@@ -1296,11 +1474,19 @@ impl Mode for CommanderMode {
     }
 
     fn wants_text(&self) -> bool {
-        self.c.searching || self.c.piping
+        self.c.searching || self.c.piping || self.fullscreen
+    }
+
+    fn wants_key(&self, bytes: &[u8]) -> bool {
+        // Fullscreen: the arrows go to the player / image, not the shell.
+        self.fullscreen && fs_key(bytes).is_some()
     }
 
     fn escape(&mut self) -> bool {
-        if self.menu_open {
+        if self.fullscreen {
+            self.fullscreen = false;
+            true
+        } else if self.menu_open {
             self.menu_open = false;
             true
         } else if self.c.piping {
@@ -1319,6 +1505,26 @@ impl Mode for CommanderMode {
             self.pointer(id, unpack_xy(arg));
             return Effect::None;
         }
+        if id == "fullscreen" {
+            let media = matches!(&self.c.overlay, Some(Overlay::Preview(p)) if is_media(p));
+            if !media && !self.fullscreen {
+                return Effect::Pass;
+            }
+            self.toggle_fullscreen();
+            return Effect::None;
+        }
+        let playing = self.player.is_some();
+        let id = match id {
+            "left_fs" if playing => "seek_back",
+            "right_fs" if playing => "seek_forward",
+            "up_fs" if playing => "volume_up",
+            "down_fs" if playing => "volume_down",
+            "left_fs" => "left",
+            "right_fs" => "right",
+            "up_fs" => "up",
+            "down_fs" => "down",
+            i => i,
+        };
         if id == "menu" {
             if self.hits.menu.w == 0 && !self.menu_open {
                 return Effect::Pass;
@@ -1409,7 +1615,10 @@ impl Mode for CommanderMode {
             "human" => self.c.flags.human = !self.c.flags.human,
             "reverse" => self.c.flags.reverse = !self.c.flags.reverse,
             "sort" => self.c.flags.sort = [Sort::Name, Sort::Modified, Sort::Size][arg.clamp(0, 2) as usize],
-            "close" => self.c.overlay = None,
+            "close" => {
+                self.fullscreen = false;
+                self.c.overlay = None
+            }
             "keys" => return Effect::ShowKeys,
             "up_to" => {
                 let mut d = self.c.cwd.clone();
@@ -1420,6 +1629,7 @@ impl Mode for CommanderMode {
             }
             // In the file view (and the player) back closes the view first.
             "parent" | "back" if previewing => {
+                self.fullscreen = false;
                 self.c.overlay = None;
                 return Effect::None;
             }
@@ -1493,7 +1703,11 @@ impl Mode for CommanderMode {
             _ => None,
         };
         let buttons: Vec<(String, UiAction)> = if file.is_some() {
-            vec![("close (esc)".into(), act("close", 0))]
+            let mut b = vec![("close (esc)".into(), act("close", 0))];
+            if file.as_deref().is_some_and(is_media) {
+                b.insert(0, (format!("fullscreen ({})", keys.label("fullscreen")), act("fullscreen", 0)));
+            }
+            b
         } else {
             vec![
                 ("help".into(), act("keys", 0)),
@@ -1617,6 +1831,13 @@ impl Mode for CommanderMode {
             keys.label("volume_up"),
             keys.label("close")
         );
+        if self.fullscreen && !file.as_deref().is_some_and(is_media) {
+            self.fullscreen = false;
+        }
+        let rect = if self.fullscreen { Rect { x: 0, y: 0, w: vp.width, h: vp.height } } else { rect };
+        if let (true, Some(p)) = (self.fullscreen, &file) {
+            body = self.fullscreen_chrome(p, rect, cw, ch, keys, &mut o);
+        }
         if let Some(p) = file {
             self.file_view(&p, body, cw, ch, &mut o);
         } else {
@@ -1724,7 +1945,7 @@ impl Mode for CommanderMode {
         let menu = o.menu;
         // Never outside the view (e.g. over the prompt below it), and clear
         // of its rounded corners.
-        let inner = Rect { x: rect.x + crate::frame::RADIUS, w: rect.w - 2 * crate::frame::RADIUS, ..rect };
+        let inner = if self.fullscreen { rect } else { Rect { x: rect.x + crate::frame::RADIUS, w: rect.w - 2 * crate::frame::RADIUS, ..rect } };
         let mut images: Vec<(ModeImage, Rect)> = images.into_iter().map(|(i, c)| (i, intersect(c, inner))).collect();
         let mut frames = o.frames;
         if let Some(m) = menu {
@@ -1735,6 +1956,7 @@ impl Mode for CommanderMode {
             dock: Some(Panel { rect, items: o.items }),
             panel,
             images: images.into_iter().chain(frames.into_iter().map(|f| (f, inner))).filter_map(|(i, clip)| crop(i, clip)).collect(),
+            fullscreen: self.fullscreen,
         }
     }
 }
@@ -1993,6 +2215,27 @@ mod tests {
         assert!(got, "a frame is shown");
         assert_eq!(m.action("play_pause", 0), Effect::None);
         assert!(!m.player.as_ref().unwrap().playing());
+        // Fullscreen: space plays / pauses, arrows seek, the bar is clickable;
+        // idle, only the letterboxed picture remains.
+        assert_eq!(m.action("fullscreen", 0), Effect::None);
+        let c = ctx();
+        let v = m.view(&c, &k);
+        assert!(v.fullscreen && m.hits.bar.w > 0, "controls at first");
+        assert_eq!(m.text(b" "), Some(Effect::None));
+        assert!(m.player.as_ref().unwrap().playing(), "space: play");
+        assert_eq!(m.text(b" "), Some(Effect::None));
+        let before = m.player.as_ref().unwrap().position();
+        assert_eq!(m.text(b"\x1b[C"), Some(Effect::None), "right: seek");
+        assert!(m.player.as_ref().unwrap().position() >= before);
+        m.fs_active = std::time::Instant::now() - FS_CONTROLS * 2;
+        let v = m.view(&c, &k);
+        assert_eq!(m.hits.bar, Rect::default(), "controls hidden");
+        assert_eq!(m.hits.video, Rect { x: 0, y: 0, w: c.viewport.width, h: c.viewport.height });
+        if let Some(i) = v.images.first() {
+            assert!(i.rect.w == c.viewport.width || i.rect.h == c.viewport.height, "letterboxed to the window: {:?}", i.rect);
+        }
+        assert!(m.escape(), "Esc leaves fullscreen first");
+        assert!(m.player.is_some());
         assert!(m.escape());
         m.view(&ctx(), &k);
         assert!(m.player.is_none(), "closing the viewer stops playback");
@@ -2209,6 +2452,70 @@ mod tests {
         assert!(m.previews().decoded().is_empty());
         m.c.selected = 1;
         assert_eq!(m.action("open", 0), Effect::Cd("/srv/app".into()), "cd over the PTY");
+    }
+
+    #[test]
+    fn fullscreen_image_fills_the_window_and_controls_hide() {
+        let t = tempfile::tempdir().unwrap();
+        image::RgbaImage::from_pixel(400, 300, image::Rgba([0, 255, 0, 255])).save(t.path().join("p.png")).unwrap();
+        std::fs::write(t.path().join("a.txt"), "hello").unwrap();
+        let k = Keymap::new(cmdr::BINDINGS);
+        assert_eq!(k.label("fullscreen"), "alt+e");
+        let mut m = CommanderMode::new();
+        m.cwd_changed(t.path());
+        // Not on a text file (alt+e goes to the shell there).
+        m.c.overlay = Some(Overlay::Preview(t.path().join("a.txt")));
+        assert_eq!(m.action("fullscreen", 0), Effect::Pass);
+        m.c.overlay = Some(Overlay::Preview(t.path().join("p.png")));
+        let v = wait_loaded(&mut m, 1);
+        assert!(!v.fullscreen);
+        let btn = v.dock.as_ref().unwrap().items.iter().find(|i| i.text.starts_with("fullscreen (alt+e)")).expect("header button").action.clone();
+        assert_eq!(btn, act("fullscreen", 0));
+        assert_eq!(m.action("fullscreen", 0), Effect::None);
+        let c = ctx();
+        let v = m.view(&c, &k);
+        assert!(v.fullscreen);
+        let d = v.dock.as_ref().unwrap();
+        assert_eq!(d.rect, Rect { x: 0, y: 0, w: c.viewport.width, h: c.viewport.height }, "the whole window");
+        assert!(d.items.iter().any(|i| i.text.starts_with("exit fullscreen (alt+e / esc)")), "controls show at first");
+        // Letterboxed: the whole picture, centred, inside the window.
+        let r = v.images[0].rect;
+        assert!(r.x >= 0 && r.y >= 0 && r.x + r.w <= c.viewport.width && r.y + r.h <= c.viewport.height, "{r:?}");
+        assert!((r.w as f64 / r.h as f64 - 4.0 / 3.0).abs() < 0.02, "aspect kept: {r:?}");
+        // Idle: the controls hide and the picture takes the whole window.
+        m.fs_active = std::time::Instant::now() - FS_CONTROLS * 2;
+        let v = m.view(&c, &k);
+        assert!(v.dock.as_ref().unwrap().items.iter().all(|i| !i.text.contains("fullscreen")), "controls hidden");
+        assert_eq!(m.hits.image, Rect { x: 0, y: 0, w: c.viewport.width, h: c.viewport.height });
+        // A pointer move brings them back.
+        m.action("pointer_move", pack_xy(300, 300));
+        assert!(m.view(&c, &k).dock.unwrap().items.iter().any(|i| i.text.starts_with("exit fullscreen")));
+        // Keys: arrows and space are the view's, other typing is swallowed; alt keys still bind.
+        assert!(m.wants_text() && m.wants_key(b"\x1b[C") && !m.wants_key(b"\x1be"));
+        assert_eq!(m.text(b"x"), Some(Effect::None));
+        assert_eq!(m.text(b"\x1be"), None);
+        assert_eq!(m.text(b"\x1b"), None, "Esc goes to escape()");
+        // Resize: the rect follows the window.
+        let small = Context { viewport: UiViewport { width: 640, height: 480, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 8, w: 640, h: 472 } };
+        assert_eq!(m.view(&small, &k).dock.unwrap().rect, Rect { x: 0, y: 0, w: 640, h: 480 });
+        // Esc leaves fullscreen, then closes the view.
+        assert!(m.escape());
+        assert!(!m.fullscreen && m.c.overlay.is_some());
+        // Double-click on the picture toggles it.
+        let v = m.view(&c, &k);
+        let _ = v;
+        let mid = (m.hits.image.x + m.hits.image.w / 2, m.hits.image.y + 10);
+        m.action("pointer_down", pack_xy(mid.0, mid.1));
+        m.action("pointer_up", pack_xy(mid.0, mid.1));
+        m.action("pointer_down", pack_xy(mid.0, mid.1));
+        assert!(m.fullscreen, "double-click enters");
+        m.action("pointer_up", pack_xy(mid.0, mid.1));
+        m.action("fullscreen", 0);
+        assert!(!m.fullscreen, "the same key leaves");
+        // Closing the view drops fullscreen.
+        m.action("fullscreen", 0);
+        m.action("close", 0);
+        assert!(!m.fullscreen);
     }
 
     #[test]

@@ -79,6 +79,9 @@ pub struct Dock {
     pub panel: Panel,
     /// Pixels the grid moves down (the panel's height plus a gap).
     pub inset: i32,
+    /// The panel covers the whole window (fullscreen media); `inset` is 0.
+    #[serde(default)]
+    pub fullscreen: bool,
 }
 
 /// Pixels the pointer must move before a press on an engine row becomes a

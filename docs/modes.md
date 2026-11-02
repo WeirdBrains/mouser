@@ -133,6 +133,7 @@ they go to the shell):
 | alt+j / alt+l | back / forward 10 s |
 | alt+- / alt+= | volume down / up (10 %) |
 | alt+q or Esc | close |
+| alt+e | fullscreen (below) |
 
 How it stays in sync: two `ffmpeg` readers of the same file start at the same seek point,
 one for video (`-an`, RGBA at the file's frame rate, each frame stamped with its PTS =
@@ -255,6 +256,25 @@ plus the selection's neighbours, so the incoming item loads during the slide.
 
 - Image view: `alt+=` / `alt+-` zoom (they are the player's volume keys too: in the image view they zoom, in the player they change volume; remap `zoom_in`/`zoom_out` to split them), `alt+0` fit, `alt+1` 100%. Ctrl+wheel zooms about the pointer; when zoomed, drag, `alt+arrows` or the wheel pan. The header shows `fit 37%` / `200%`. Past 2048 px the full image is decoded (the preview shows until it is ready). Images stay inside the view and clear of its rounded corners (the renderers have no per-pixel clip, so images are inset rather than masked).
 - Player: `« 10s`, play/pause and `10s »` buttons; the seek bar seeks on click, scrubs on drag (seeks at most every 120 ms, a final one on release) and shows the hovered time; the volume bar takes click, drag and wheel. Clicking the video toggles play.
+- Fullscreen: `alt+e` (`fullscreen`), the header's `fullscreen (alt+e)` button, or a
+  double-click on the picture or video. Commander's image viewer or player then fills
+  the whole window, local or remote. The shell, tab bar and sidebar are hidden, and the
+  terminal keeps its size, so nothing is resized under the shell. Esc or `alt+e` again
+  leaves.
+  - Images are fitted whole and letterboxed on a dark backdrop, and keep zoom and pan.
+    Video is letterboxed the same way and keeps play/pause, seeking and the clickable
+    seek and volume bars.
+  - A title strip with `exit fullscreen`, plus the player's controls for video, shows on
+    entry and after any pointer move or key. It hides after 2.5 s, and the picture then
+    takes the whole window.
+  - Audio gets a centred full-window controls view, always shown.
+  - Keys while fullscreen: Space plays or pauses, ←/→ seek 10 s, ↑/↓ change the volume.
+    In the image view the arrows step or pan. Other typing is swallowed rather than sent
+    to the hidden shell, and alt keys still work. Outside fullscreen the usual rule
+    applies (only alt keys act).
+  - The view follows window resizes. Sizes are physical pixels, so HiDPI is sharp.
+  - The view is closed (and fullscreen dropped) by alt+q, Back or opening something
+    else.
 - Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a `•••` menu (`menu`, default `alt+i`).
 - Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.
 
