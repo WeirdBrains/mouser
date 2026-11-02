@@ -199,7 +199,7 @@ impl Remote {
     /// `ssh ... -- cmd` with Mouser's config (`MOUSER_SSH_CONFIG`) unless
     /// the session gave its own `-F`.
     pub fn command(&self, remote_cmd: &str) -> Command {
-        let mut c = Command::new(ssh_bin());
+        let mut c = crate::process::command(ssh_bin());
         if let Some(cfg) = std::env::var_os("MOUSER_SSH_CONFIG")
             && !self.target.opts.iter().any(|o| o == "-F")
         {
@@ -266,7 +266,7 @@ pub enum Backend {
 }
 
 fn local_has(tool: &str) -> bool {
-    Command::new(tool).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
+    crate::process::command(tool).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
 }
 
 /// rsync when both ends have it, else scp, else ranged `cat` reads.
@@ -556,7 +556,7 @@ fn complete(i: &Inner) -> Result<(), String> {
     let r = &i.file.remote;
     let src = format!("{}:{}", r.target.dest, i.file.path.display());
     let st = match backend(r) {
-        Backend::Rsync => Command::new("rsync")
+        Backend::Rsync => crate::process::command("rsync")
             .args(["-s", "--inplace", "--no-whole-file", "-e"])
             .arg(r.rsh())
             .arg(&src)
@@ -567,7 +567,7 @@ fn complete(i: &Inner) -> Result<(), String> {
             .output(),
         _ => {
             let tmp = i.cache.with_extension("scp");
-            let mut c = Command::new("scp");
+            let mut c = crate::process::command("scp");
             c.arg("-q");
             if let Some(cfg) = std::env::var_os("MOUSER_SSH_CONFIG") {
                 c.arg("-F").arg(cfg);

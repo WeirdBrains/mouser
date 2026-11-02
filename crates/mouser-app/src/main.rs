@@ -1,3 +1,9 @@
+// A GUI program on Windows: a console-subsystem exe gets a console window on
+// launch, which Windows Terminal (as default terminal) turns into a separate
+// window that kills Mouser when closed. CLI subcommands reattach to the
+// parent console instead (see `attach_parent_console`).
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod appearance_ui;
 mod approval_ui;
 mod chat_host;
@@ -561,7 +567,50 @@ fn first_tab(cli: &Cli) -> FirstTab {
     FirstTab { name: cli.title.clone().unwrap_or(default_name), launch, cwd }
 }
 
+/// Windows: print CLI output in the console Mouser was started from. A GUI
+/// program has no console; with a subcommand, attach to the parent's console
+/// and point unredirected standard handles at it (pipes are left alone).
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+    if std::env::args_os().len() < 2 {
+        return;
+    }
+    let unset = |id: STD_HANDLE| {
+        let h = unsafe { GetStdHandle(id) };
+        h.is_null() || h == INVALID_HANDLE_VALUE
+    };
+    let ids = [(STD_INPUT_HANDLE, "CONIN$"), (STD_OUTPUT_HANDLE, "CONOUT$"), (STD_ERROR_HANDLE, "CONOUT$")];
+    let todo: Vec<_> = ids.into_iter().filter(|(id, _)| unset(*id)).collect();
+    if todo.is_empty() || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0 {
+        return;
+    }
+    for (id, name) in todo {
+        let wide: Vec<u16> = name.encode_utf16().chain([0]).collect();
+        let h = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        if h != INVALID_HANDLE_VALUE {
+            unsafe { SetStdHandle(id, h) };
+        }
+    }
+}
+
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    attach_parent_console();
     env_logger::init();
     #[cfg(feature = "local-llm")]
     mouser_llm::register();
@@ -1488,7 +1537,7 @@ fn open_link(uri: &str) {
         log::warn!("not opening link with unsupported scheme: {uri}");
         return;
     }
-    let _ = std::process::Command::new("xdg-open").arg(uri).stdin(std::process::Stdio::null()).spawn();
+    let _ = mouser_core::process::command("xdg-open").arg(uri).stdin(std::process::Stdio::null()).spawn();
 }
 
 /// Clipboard writers to try, in order: Wayland, X11, macOS.
@@ -1521,12 +1570,12 @@ fn paste_commands(primary: bool) -> Vec<(&'static str, Vec<&'static str>)> {
 }
 
 fn write_clip(text: &str, primary: bool) {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     if mouser_render::clipboard::store(text, primary) {
         return;
     }
     for (cmd, args) in copy_commands(primary) {
-        if let Ok(mut c) = Command::new(cmd).args(&args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        if let Ok(mut c) = mouser_core::process::command(cmd).args(&args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
             if let Some(mut stdin) = c.stdin.take() {
                 let _ = stdin.write_all(text.as_bytes());
             }
@@ -1543,7 +1592,7 @@ fn read_clip(primary: bool) -> Option<String> {
         return t;
     }
     for (cmd, args) in paste_commands(primary) {
-        if let Ok(out) = std::process::Command::new(cmd).args(&args).stderr(std::process::Stdio::null()).output() {
+        if let Ok(out) = mouser_core::process::command(cmd).args(&args).stderr(std::process::Stdio::null()).output() {
             return out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string());
         }
     }
@@ -2445,7 +2494,7 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
         }
         Effect::Open(p) => {
             let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-            match std::process::Command::new(opener)
+            match mouser_core::process::command(opener)
                 .arg(&p)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())

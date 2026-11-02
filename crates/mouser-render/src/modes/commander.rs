@@ -303,7 +303,7 @@ fn ffmpeg_frame(input: &Path, max: u32) -> Option<Vec<u8>> {
     let at = if dur > 0.0 { (dur * 0.1).min(30.0) } else { 1.0 };
     let scale = format!("scale='if(gt(iw,ih),{max},-2)':'if(gt(iw,ih),-2,{max})'");
     let run = |t: f64| {
-        std::process::Command::new("ffmpeg")
+        mouser_core::process::command("ffmpeg")
             .args(["-v", "error", "-nostdin", "-ss", &format!("{t:.3}"), "-i"])
             .arg(input)
             .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "pipe:1"])
@@ -341,7 +341,7 @@ fn video_thumb(p: &Path, max: u32) -> Option<image::DynamicImage> {
     let at = if dur > 0.0 { (dur * 0.1).min(30.0) } else { 1.0 };
     let scale = format!("scale='if(gt(iw,ih),{max},-2)':'if(gt(iw,ih),-2,{max})'");
     let run = |t: f64| {
-        std::process::Command::new("ffmpeg")
+        mouser_core::process::command("ffmpeg")
             .args(["-v", "error", "-nostdin", "-ss", &format!("{t:.3}"), "-i"])
             .arg(p)
             .args(["-frames:v", "1", "-vf", &scale, "-f", "image2pipe", "-c:v", "png", "pipe:1"])
@@ -2260,7 +2260,7 @@ pub(crate) mod tests {
             return;
         }
         let t = tempfile::tempdir().unwrap();
-        let ok = std::process::Command::new("ffmpeg")
+        let ok = mouser_core::process::command("ffmpeg")
             .args(["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=4", "-pix_fmt", "yuv420p"])
             .arg(t.path().join("v.mp4"))
             .status()
@@ -2393,7 +2393,7 @@ pub(crate) mod tests {
         std::fs::create_dir(&media).unwrap();
         let v = media.join("clip.mp4");
         let ok = super::super::player::available()
-            && std::process::Command::new("ffmpeg")
+            && mouser_core::process::command("ffmpeg")
                 .args(["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=10:duration=3", "-pix_fmt", "yuv420p"])
                 .arg(&v)
                 .status()
