@@ -12,6 +12,7 @@ fn preferences_round_trip_including_sidebar() {
         theme: Some("Nord".into()),
         font_family: Some("JetBrains Mono".into()),
         font_size: Some(14.5),
+        emoji_font: Some("Twemoji".into()),
         mode: Some(ThemeMode::Dark),
         sidebar_width: Some(340),
         sidebar_open: Some(true),

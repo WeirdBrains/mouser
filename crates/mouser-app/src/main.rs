@@ -380,6 +380,9 @@ fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<
 #[derive(Debug, Deserialize, Clone)]
 struct UiConfig {
     font_family: Option<String>,
+    /// Colour emoji font family (`"none"`: off).
+    #[serde(default)]
+    emoji_font: Option<String>,
     font_size: Option<f32>,
     theme: Option<String>,
 }
@@ -428,7 +431,7 @@ struct AppConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            ui: Some(UiConfig { font_family: None, font_size: Some(16.0), theme: Some("dark".into()) }),
+            ui: Some(UiConfig { font_family: None, emoji_font: None, font_size: Some(16.0), theme: Some("dark".into()) }),
             selection: None,
             colors: Some(ColorsConfig { foreground: None, background: None, cursor: None, palette: None }),
             scrollback: Some(ScrollbackToml {
@@ -467,6 +470,7 @@ fn merge_with_defaults(mut cfg: AppConfig) -> AppConfig {
     if let Some(ui) = cfg.ui.take() {
         out.ui = Some(UiConfig {
             font_family: ui.font_family.or(out.ui.as_ref().and_then(|u| u.font_family.clone())),
+            emoji_font: ui.emoji_font.or(out.ui.as_ref().and_then(|u| u.emoji_font.clone())),
             font_size: ui.font_size.or(out.ui.as_ref().and_then(|u| u.font_size)),
             theme: ui.theme.or(out.ui.as_ref().and_then(|u| u.theme.clone())),
         });
@@ -1297,7 +1301,15 @@ fn main() -> Result<()> {
             })
         }),
     };
-    let r = Renderer { font_size: font_size0, font_family: font_family0, title: cli.title.clone(), app_id: cli.class.clone(), ..Renderer::default() };
+    let emoji_family = prefs0.emoji_font.clone().or(app_cfg.ui.as_ref().and_then(|u| u.emoji_font.clone()));
+    let r = Renderer {
+        font_size: font_size0,
+        font_family: font_family0,
+        emoji_family,
+        title: cli.title.clone(),
+        app_id: cli.class.clone(),
+        ..Renderer::default()
+    };
     {
         // Restore the last saved sidebar state (fresh install: collapsed strip);
         // MOUSER_OPEN_SIDEBAR forces it open for this run only.

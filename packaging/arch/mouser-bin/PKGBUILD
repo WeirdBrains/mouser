@@ -14,7 +14,8 @@ optdepends=('libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
             'libx11: X11 session support'
             'libxcursor: X11 cursors'
             'libxi: X11 input'
-            'libxrandr: X11 monitors')
+            'libxrandr: X11 monitors'
+            'noto-fonts-emoji: colour emoji')
 provides=('mouser')
 conflicts=('mouser' 'mouser-git')
 options=('!strip' '!debug')

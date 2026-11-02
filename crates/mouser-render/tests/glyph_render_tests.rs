@@ -205,3 +205,34 @@ fn sidebar_labels_are_clean_and_buttons_fit() {
         (hr.y..hr.y + hr.h).flat_map(|y| (hr.x..hr.x + hr.w).map(move |x| (x, y))).filter(|&(x, y)| buf[y as usize * w + x as usize] == FG).count();
     assert!(bright > 10);
 }
+
+#[test]
+fn emoji_family_resolution_uses_a_fake_font_list() {
+    use mouser_render::text::pick_emoji_family;
+    let list = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let linux = list(&["DejaVu Sans Mono", "Twemoji", "Noto Color Emoji"]);
+    assert_eq!(pick_emoji_family(None, &linux).as_deref(), Some("Noto Color Emoji"));
+    assert_eq!(pick_emoji_family(Some("twemoji"), &linux).as_deref(), Some("Twemoji"));
+    assert_eq!(pick_emoji_family(Some("Not Installed"), &linux).as_deref(), Some("Noto Color Emoji"));
+    assert_eq!(pick_emoji_family(Some("none"), &linux), None);
+    assert_eq!(pick_emoji_family(None, &list(&["Apple Color Emoji", "Menlo"])).as_deref(), Some("Apple Color Emoji"));
+    assert_eq!(pick_emoji_family(None, &list(&["Segoe UI Emoji", "Consolas"])).as_deref(), Some("Segoe UI Emoji"));
+    assert_eq!(pick_emoji_family(None, &list(&["Consolas"])), None);
+}
+
+/// Real colour rendering, when a colour emoji font is installed (skips otherwise).
+#[test]
+fn installed_emoji_font_draws_in_colour() {
+    let db = mouser_render::text::system_db();
+    let mut fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
+    let Some(name) = fonts.emoji_family().map(str::to_string) else { return };
+    for cluster in ["👍", "❤\u{fe0f}", "🎉", "😂", "✅", "👍🏽", "👩\u{200d}💻", "🇺🇸"] {
+        let img = fonts.emoji_image(cluster, 2).unwrap_or_else(|| panic!("{name} has no colour glyph for {cluster:?}"));
+        assert_eq!(img.img_w as i32, fonts.cell_w * 2);
+        let px = img.rgba.chunks(4).filter(|p| p[3] > 0);
+        let coloured = px.filter(|p| p[0].abs_diff(p[1]) > 30 || p[1].abs_diff(p[2]) > 30).count();
+        assert!(coloured > 10, "{cluster:?} is not in colour");
+    }
+    assert!(fonts.emoji_image("漢", 2).is_none());
+    assert!(fonts.emoji_image("❤\u{fe0e}", 1).is_none());
+}

@@ -80,6 +80,22 @@ impl Cell {
     }
 }
 
+/// Emoji skin-tone modifier (U+1F3FB..U+1F3FF).
+pub fn is_skin_tone(c: char) -> bool {
+    ('\u{1f3fb}'..='\u{1f3ff}').contains(&c)
+}
+
+/// Regional indicator letter (flag halves).
+pub fn is_regional(c: char) -> bool {
+    ('\u{1f1e6}'..='\u{1f1ff}').contains(&c)
+}
+
+/// Characters that may be drawn as a colour emoji (with VS16 or by default).
+pub fn emoji_capable(c: char) -> bool {
+    let v = c as u32;
+    matches!(v, 0x23 | 0x2a | 0x30..=0x39 | 0xa9 | 0xae | 0x203c | 0x2049 | 0x2122 | 0x2139 | 0x2194..=0x21aa | 0x231a..=0x23ff | 0x24c2 | 0x25aa..=0x25fe | 0x2600..=0x27bf | 0x2934 | 0x2935 | 0x2b05..=0x2b55 | 0x3030 | 0x303d | 0x3297 | 0x3299 | 0x1f000..=0x1faff)
+}
+
 /// Display width of `c` in cells: 0 (combining / zero-width), 1 or 2.
 pub fn char_width(c: char) -> usize {
     if c == '\u{200d}' || c == '\u{fe0f}' || c == '\u{fe0e}' {
@@ -266,6 +282,58 @@ impl Screen {
         if let Some(slot) = self.cells[i].comb.iter_mut().find(|m| **m == '\0') {
             *slot = ch;
         }
+        // VS16 asks for emoji presentation: a narrow base like ❤ becomes 2 cells.
+        if ch == '\u{fe0f}' && self.cells[i].style.attrs & attr::WIDE == 0 && !self.pending_wrap && x + 1 == self.cursor.x {
+            let cols = self.size.cols;
+            if self.cursor.x < cols && emoji_capable(self.cells[i].ch) {
+                self.clear_wide_at(self.cursor.x);
+                let j = i + 1;
+                let st = self.cells[i].style;
+                self.cells[i].style.attrs |= attr::WIDE;
+                self.cells[j] = Cell { ch: ' ', comb: ['\0'; 3], style: Style { attrs: (st.attrs & !attr::WRAPLINE) | attr::WIDE_CONT, ..st } };
+                if self.cursor.x + 1 < cols {
+                    self.cursor.x += 1;
+                } else {
+                    self.pending_wrap = true;
+                }
+            }
+        }
+    }
+
+    /// The cell holding the character written just before the cursor, if any.
+    fn prev_cell(&self) -> Option<usize> {
+        let (mut x, y) = (self.cursor.x, self.cursor.y);
+        if !self.pending_wrap {
+            if x == 0 {
+                return None;
+            }
+            x -= 1;
+        }
+        let mut i = self.idx(x, y);
+        if self.cells[i].style.attrs & attr::WIDE_CONT != 0 && x > 0 {
+            i -= 1;
+        }
+        Some(i)
+    }
+
+    /// Whether `ch` continues the emoji cluster in the previous cell: the
+    /// character after a ZWJ, a skin-tone modifier, or a flag's second half.
+    fn joins_previous(&self, ch: char) -> bool {
+        let Some(i) = self.prev_cell() else { return false };
+        let c = &self.cells[i];
+        let last = c.comb.iter().rev().find(|m| **m != '\0').copied();
+        if last == Some('\u{200d}') {
+            return true;
+        }
+        if c.comb.iter().all(|m| *m == '\0') || last == Some('\u{fe0f}') {
+            if is_skin_tone(ch) && c.style.attrs & attr::WIDE != 0 && emoji_capable(c.ch) {
+                return true;
+            }
+            if is_regional(ch) && is_regional(c.ch) && c.comb[0] == '\0' {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn put_char(&mut self, ch: char, style: Style) {
@@ -273,7 +341,7 @@ impl Screen {
             return;
         }
         let w = char_width(ch);
-        if w == 0 {
+        if w == 0 || self.joins_previous(ch) {
             self.combine(ch);
             return;
         }
