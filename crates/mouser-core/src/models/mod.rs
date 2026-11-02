@@ -9,6 +9,7 @@ pub mod google;
 pub mod http;
 pub mod local;
 pub mod openai;
+pub mod setup;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};

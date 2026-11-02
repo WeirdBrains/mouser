@@ -8,6 +8,12 @@
 
 ### Added
 
+- Chat model picker: with no usable model, `esc :a` (or sending a message) shows a
+  picker in the dock: Gemma 4 E2B/E4B local, OpenAI, xAI, OpenRouter, Kimi, Anthropic,
+  Google or a custom URL. Local: consent with size and folder, progress, SHA256, cancel.
+  Hosted: masked API key into the keychain, optional model, a connection test. Then it
+  becomes the default and the held message is sent. Replaces "no model configured".
+
 - Mouser remembers the mode (or no mode) a window closed in and starts in it next time
   (`$MOUSER_HOME/state/last-mode`; the last window to close wins; a mode that is gone
   falls back to no mode).

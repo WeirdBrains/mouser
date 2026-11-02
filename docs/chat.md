@@ -53,6 +53,27 @@ Tool-provider plugins are MCP plugins, so they appear in the second row once
 enabled. Names sent to the model replace dots with `__` (`mouser__shell_run`).
 `mouser plugin permissions chat shell.type=never` blocks a capability for the chat.
 
+## Picking a model
+
+If there is no usable default model (none set, a hosted preset without a key, or the
+local model not downloaded), `esc :a` opens a picker in the dock instead of the chat. A
+message typed before that is kept and sent once a model is ready. A chat restored at
+launch (the last mode) does not open the picker until you use it.
+
+The picker lists: Gemma 4 E2B local (default, ~2.84 GB), Gemma 4 E4B local
+(~4.59 GB), OpenAI, xAI, OpenRouter, Kimi (Moonshot), Anthropic, Google, and a custom
+OpenAI- or Anthropic-compatible URL. ↑/↓ and Enter or a click choose; Esc steps back.
+
+- **Local**: a consent screen shows the size, the source and the folder
+  (`MOUSER_MODELS_DIR`, else `[models.local] dir`, else `$MOUSER_HOME/models`). Nothing
+  downloads until you say so. A progress bar follows; Esc cancels (downloading again
+  resumes); the file is checked against its pinned SHA256.
+- **Hosted**: the API key field shows only dots. Tab moves to the optional model name
+  (and, for a custom URL, the URL and API). Enter sends one short test request with the
+  key in memory; only if it works is the key stored in the OS keychain (or a 0600 file,
+  with a warning) and the provider saved.
+- Then it becomes the default (`[models] default`) and the chat continues.
+
 ## Model
 
 The chat uses `mouser model default` at each turn (docs/models.md). `gemma-local` works

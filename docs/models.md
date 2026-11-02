@@ -16,6 +16,12 @@ calls. Every model is a plugin of kind `model-provider` (decision 5):
 | any name | `[[models.providers]]` | openai / anthropic / google | yours |
 | any name | installed plugin with `[model]` | openai / anthropic / google | the plugin's |
 
+## First run
+
+With no usable model, the chat (`esc :a`) shows a picker that sets one up: local Gemma
+(consent, download, SHA256) or a hosted provider (key into the keychain, connection
+test). See docs/chat.md §Picking a model. Code: `mouser_core::models::setup`.
+
 ## Commands
 
 ```sh

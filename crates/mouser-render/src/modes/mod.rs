@@ -76,6 +76,11 @@ pub trait Mode: Send {
     /// Default key bindings; users remap them in `modes.toml`.
     fn bindings(&self) -> &'static [Binding];
     fn activate(&mut self) {}
+    /// Back in this mode at launch (the last mode, `Host::restore`): like
+    /// `activate`, but nothing that needs the user (no prompts, no downloads).
+    fn restore(&mut self) {
+        self.activate()
+    }
     /// Leaving the mode: drop transient state (search, windows).
     fn deactivate(&mut self) {}
     fn cwd_changed(&mut self, _dir: &Path) {}
@@ -92,6 +97,11 @@ pub trait Mode: Send {
         None
     }
     /// An input of the mode has focus: plain typing goes to [`Mode::text`].
+    /// An escape sequence (arrows, Shift+Tab) this mode takes while it
+    /// wants text, e.g. a list in its view. Default: none.
+    fn wants_key(&self, _bytes: &[u8]) -> bool {
+        false
+    }
     fn wants_text(&self) -> bool {
         false
     }
@@ -187,7 +197,7 @@ impl Host {
         }
         let Some(i) = last.and_then(|n| self.modes.iter().position(|(m, _)| m.name() == n)) else { return };
         self.current = Some(i);
-        self.modes[i].0.activate();
+        self.modes[i].0.restore();
         if let Some(d) = &self.cwd {
             self.modes[i].0.cwd_changed(d);
         }
@@ -262,7 +272,7 @@ impl Host {
     pub fn takes(&self, bytes: &[u8]) -> bool {
         self.current.is_some_and(|i| {
             let (m, k) = &self.modes[i];
-            m.wants_text() && !(bytes.len() > 1 && bytes[0] == 0x1b) || k.lookup(bytes).is_some()
+            m.wants_text() && (!(bytes.len() > 1 && bytes[0] == 0x1b) || m.wants_key(bytes)) || k.lookup(bytes).is_some()
         })
     }
 

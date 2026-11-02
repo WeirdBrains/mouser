@@ -188,6 +188,12 @@ pub fn register(b: Box<dyn LocalBackend>) {
     let _ = BACKEND.set(b);
 }
 
+/// Shown when this build has no local model (the `local-llm` feature).
+pub const NOT_BUILT: &str = "This Mouser was built without the local model (cargo feature local-llm). \
+To get it on Arch: git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si \
+(the mouser-git package includes it from 1.0.1). From source: cargo build --release -p mouser-app --features local-llm. \
+Or pick a hosted model.";
+
 pub fn backend() -> Option<&'static dyn LocalBackend> {
     BACKEND.get().map(|b| b.as_ref())
 }
