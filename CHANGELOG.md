@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Changed
+
+- `esc :` waits longer for the `:`: 1200 ms (was 500 ms), configurable with
+  `[keys] leader_timeout_ms`. A held Esc still reaches the shell, in order, when the
+  wait runs out or another key comes first.
+
 ### Added
 
 - Mouser remembers the mode (or no mode) a window closed in and starts in it next time

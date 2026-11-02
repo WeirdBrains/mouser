@@ -190,7 +190,7 @@ State: Phase 1 complete (see "Phase 1 finished" below).
 Decisions:
 - Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. `mouser_render::modes::{Mode trait, Host}`; core has no commander branching.
 - Commander is the only plugin and the default, active at startup.
-- `esc :` + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); `esc :c` again turns it on. Lone Esc waits 500 ms then goes to the shell; `alt+:` opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).
+- `esc :` + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); `esc :c` again turns it on. Lone Esc waits 1200 ms (`[keys] leader_timeout_ms`; 500 ms before 1.0.1) then goes to the shell; `alt+:` opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).
 - View switch is in commander's own keymap: alt+t default (shadows readline transpose-words). All keys `<alt>+<key>`, remappable in `~/.mouser/modes.toml` `[commander.keys]`; unbound alt keys pass to the shell. ctrl+shift+k keymap window, ctrl+shift+m modes window.
 - Previews lazy on a worker thread, only what is on screen; queue replaced as you move. Carousel: 1 full (focused) + 2 partial neighbours (cropped via src rect).
 - Open: dir -> types `^U cd -- '<path>'`; video/audio -> xdg-open/open (not an in-app player, deviation); else full-width image/text view.

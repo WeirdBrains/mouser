@@ -56,6 +56,26 @@ pub struct Preferences {
     /// `[chat]`: the agent chat mode (docs/chat.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat: Option<crate::agent::ChatPrefs>,
+    /// `[keys]`: keyboard timing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keys: Option<KeysPrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KeysPrefs {
+    /// How long a lone Esc waits for `:` (the `esc :` command line) before it
+    /// goes to the shell, in ms. Default [`DEFAULT_LEADER_TIMEOUT_MS`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leader_timeout_ms: Option<u64>,
+}
+
+/// Default `esc :` wait (was 500 ms before 1.0.1).
+pub const DEFAULT_LEADER_TIMEOUT_MS: u64 = 1200;
+
+/// The `esc :` wait from `[keys] leader_timeout_ms`, kept within 100 ms..10 s.
+pub fn leader_timeout(p: &Preferences) -> std::time::Duration {
+    let ms = p.keys.as_ref().and_then(|k| k.leader_timeout_ms).unwrap_or(DEFAULT_LEADER_TIMEOUT_MS);
+    std::time::Duration::from_millis(ms.clamp(100, 10_000))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
