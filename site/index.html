@@ -26,7 +26,7 @@
     <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
     <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. A file commander, a media player and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
-    <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.0.0">Version 1.0.0</a> · BSD-3-Clause</p>
+    <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.0.1">Version 1.0.1</a> · BSD-3-Clause</p>
     <p class="cta">
       <a class="btn" href="#install">Install</a>
       <a class="btn ghost" href="https://github.com/WeirdBrains/mouser">View on GitHub</a>
@@ -44,7 +44,7 @@
     <li><h3>Crash-proof windows</h3><p>On Linux and macOS the shells live in a session process; a GPU driver or engine crash restarts only the window, with your shells, scrollback and tabs intact.</p></li>
     <li><h3>Commander</h3><p>A file manager docked above the prompt: list, grid and carousel views, image and text previews, and a video and audio player, local or over SSH.</p></li>
     <li><h3>Chat and MCP</h3><p>An optional agent (<code>esc :a</code>) that sees your screen and acts through tools, with an approval card for every command. Mouser is also an MCP server and client.</p></li>
-    <li><h3>Your models</h3><p>OpenAI, Anthropic, Gemini, xAI, OpenRouter, Kimi or any compatible server, or an optional built-in local Gemma model. Keys stay in the OS keychain.</p></li>
+    <li><h3>Your models</h3><p>OpenAI, Anthropic, Gemini, xAI, OpenRouter, Kimi or any compatible server, or the built-in local Gemma model (<code>mouser model local enable</code>; it asks before downloading). Keys stay in the OS keychain.</p></li>
     <li><h3>Tabs and connections</h3><p>Each tab has its own PTY, screen, scrollback and title. A sidebar for SSH hosts from your ssh config, plus Waypipe, tunnels and X11.</p></li>
     <li><h3>Compressed scrollback</h3><p>Chunked history compressed with Zstd or LZ4 when idle, keeping colours, and searchable across compressed chunks.</p></li>
     <li><h3>Fuzzball protocol</h3><p>Mouser's own open graphics and keyboard protocol. Read the <a href="https://github.com/WeirdBrains/mouser/tree/main/docs/protocol">spec</a>. Fallbacks: Kitty keyboard and Kitty graphics.</p></li>
@@ -66,7 +66,7 @@ brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Ca
     <div>
       <h3>Arch Linux</h3>
 <pre><code># Prebuilt release
-sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.0.0/mouser-bin-1.0.0-1-x86_64.pkg.tar.zst
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.0.1/mouser-bin-1.0.1-1-x86_64.pkg.tar.zst
 # Or build main from source
 git clone https://github.com/WeirdBrains/mouser
 cd mouser/packaging/arch/mouser-git &amp;&amp; makepkg -si</code></pre>
@@ -87,6 +87,8 @@ cargo run -p mouser-app --release</code></pre>
       </ul>
     </div>
   </div>
+  <p>Every package includes the local model engine (llama.cpp: Vulkan on Linux, Metal on macOS, CPU on Windows); Linux packages depend on the Vulkan loader.</p>
+  <p>Shell integration (silent <code>cd</code> from commander): <code>eval "$(mouser shell-integration zsh)"</code> in <code>~/.zshrc</code> (also <code>bash</code>, or <code>mouser shell-integration fish | source</code>).</p>
   <p>Optional terminfo entry: <code>tic -x -o ~/.terminfo extra/mouser.terminfo</code></p>
 </section>
 
