@@ -1,6 +1,6 @@
 pkgbase = mouser-bin
 	pkgdesc = Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty graphics (prebuilt binary)
-	pkgver = 1.0.1
+	pkgver = 1.0.2
 	pkgrel = 1
 	url = https://github.com/WeirdBrains/mouser
 	arch = x86_64
@@ -21,9 +21,9 @@ pkgbase = mouser-bin
 	conflicts = mouser-git
 	options = !strip
 	options = !debug
-	source = mouser-src-1.0.1.tar.gz::https://github.com/WeirdBrains/mouser/archive/refs/tags/v1.0.1.tar.gz
-	sha256sums = 7405cb1c75e4f254241dfa24196abad10fa997fa5b208fa84cb6ff125b3b89b0
-	source_x86_64 = mouser-1.0.1-x86_64-unknown-linux-gnu.tar.gz::https://github.com/WeirdBrains/mouser/releases/download/v1.0.1/mouser-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = 1e0592e1dec46ecce5cc83848cb43326fcaf3c48bcf2e77f9cafec90573d8230
+	source = mouser-src-1.0.2.tar.gz::https://github.com/WeirdBrains/mouser/archive/refs/tags/v1.0.2.tar.gz
+	sha256sums = 342d4bf3d559567ca881904dc0b09e94189503d3aa99f8b1335d310b8c36392a
+	source_x86_64 = mouser-1.0.2-x86_64-unknown-linux-gnu.tar.gz::https://github.com/WeirdBrains/mouser/releases/download/v1.0.2/mouser-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = 9b7fe4ce5e49f6c805391209ae7877131940b7b6c30fbcd151006e3f755a92bc
 
 pkgname = mouser-bin

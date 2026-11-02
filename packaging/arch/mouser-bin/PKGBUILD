@@ -2,7 +2,7 @@
 # Release workflow: pkgver and the sha256sums are filled in by packaging/arch/update-bin.sh.
 pkgname=mouser-bin
 _pkgname=mouser
-pkgver=1.0.1
+pkgver=1.0.2
 pkgrel=1
 pkgdesc="Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty graphics (prebuilt binary)"
 arch=('x86_64')
@@ -20,8 +20,8 @@ conflicts=('mouser' 'mouser-git')
 options=('!strip' '!debug')
 source=("${_pkgname}-src-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 source_x86_64=("${_pkgname}-${pkgver}-x86_64-unknown-linux-gnu.tar.gz::${url}/releases/download/v${pkgver}/mouser-x86_64-unknown-linux-gnu.tar.gz")
-sha256sums=('7405cb1c75e4f254241dfa24196abad10fa997fa5b208fa84cb6ff125b3b89b0')
-sha256sums_x86_64=('1e0592e1dec46ecce5cc83848cb43326fcaf3c48bcf2e77f9cafec90573d8230')
+sha256sums=('342d4bf3d559567ca881904dc0b09e94189503d3aa99f8b1335d310b8c36392a')
+sha256sums_x86_64=('9b7fe4ce5e49f6c805391209ae7877131940b7b6c30fbcd151006e3f755a92bc')
 
 build() {
   cd "${_pkgname}-${pkgver}"
