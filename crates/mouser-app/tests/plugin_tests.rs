@@ -137,10 +137,12 @@ fn engines_and_modes_through_the_plugin_cli() {
     assert!(l.contains("commander") && l.contains("switch: esc :c") && l.contains("chat") && !l.contains("openai"), "{l}");
     cli(Action::Disable("commander".into())).unwrap();
     cli(Action::Disable("chat".into())).unwrap();
+    cli(Action::Disable("preferences".into())).unwrap();
     let l = cli(Action::List).unwrap();
     assert!(l.contains("[disabled]") && l.contains("plain terminal"), "{l}");
     cli(Action::Enable("commander".into())).unwrap();
     cli(Action::Enable("chat".into())).unwrap();
+    cli(Action::Enable("preferences".into())).unwrap();
     // A mode plugin installs like any plugin.
     let o = cli(Action::Install(examples().join("hello-mode").display().to_string())).unwrap();
     assert!(o.contains("installed hello-mode 0.1.0 (mode)") && o.contains("run"), "{o}");

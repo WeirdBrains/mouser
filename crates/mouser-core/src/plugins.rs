@@ -355,9 +355,10 @@ pub const RESERVED_COMMANDS: [&str; 16] = [
 ];
 
 /// The compiled-in plugins that have a full manifest (modes and engines).
-pub const BUILTIN_MANIFESTS: [(&str, &str); 4] = [
+pub const BUILTIN_MANIFESTS: [(&str, &str); 5] = [
     ("commander", include_str!("builtin/commander.toml")),
     ("chat", include_str!("builtin/chat.toml")),
+    ("preferences", include_str!("builtin/preferences.toml")),
     ("mouser", include_str!("builtin/mouser.toml")),
     ("skia", include_str!("builtin/skia.toml")),
 ];
@@ -377,9 +378,10 @@ pub fn can_disable(name: &str) -> bool {
 }
 
 /// Built-in providers that are not engines, in their default order (modes first).
-pub const BUILTINS: [(&str, Kind, &str); 9] = [
+pub const BUILTINS: [(&str, Kind, &str); 10] = [
     ("commander", Kind::Mode, "file commander mode (built in)"),
     ("chat", Kind::Mode, "agent chat mode (built in)"),
+    ("preferences", Kind::Mode, "preferences mode (built in)"),
     ("openai", Kind::ModelProvider, "OpenAI (built in; mouser model add openai)"),
     ("xai", Kind::ModelProvider, "xAI Grok (built in, OpenAI-compatible)"),
     ("openrouter", Kind::ModelProvider, "OpenRouter (built in, OpenAI-compatible)"),
@@ -1019,6 +1021,7 @@ library = "libfancy.so"
         // Every mode off: no modes (Mouser falls back to the plain terminal).
         set_enabled("commander", false).unwrap();
         set_enabled("chat", false).unwrap();
+        set_enabled("preferences", false).unwrap();
         assert!(Registry::load().modes().is_empty());
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }

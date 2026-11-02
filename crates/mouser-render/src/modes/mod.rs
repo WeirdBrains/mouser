@@ -11,6 +11,7 @@ pub mod chat;
 pub mod commander;
 pub mod player;
 pub mod plugin;
+pub mod prefs;
 
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use crate::{UiViewport, Waker};
@@ -175,6 +176,7 @@ impl Host {
         for e in r.modes() {
             let m: Option<Box<dyn Mode>> = match (e.transport, e.name.as_str()) {
                 (Transport::Builtin, "commander") => Some(Box::new(commander::CommanderMode::new())),
+                (Transport::Builtin, "preferences") => Some(Box::new(prefs::PrefsMode::new())),
                 (Transport::Command, _) => {
                     mouser_core::plugins::find(&e.name).and_then(plugin::PluginMode::new).map(|m| Box::new(m) as Box<dyn Mode>)
                 }

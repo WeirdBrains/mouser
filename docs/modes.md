@@ -36,6 +36,8 @@ Menus, keybindings and the command line dispatch the same named actions.
 
 ## Mode plugins
 
+Built in: commander (`esc :c`), chat (`esc :a`) and preferences (`esc :p`, [preferences.md](preferences.md)).
+
 ### The last mode is remembered
 
 When a window closes, Mouser saves the mode it was in (or `none` if no mode was on) to
