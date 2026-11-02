@@ -463,6 +463,8 @@ pub struct CommanderMode {
     hits: Hits,
     /// Header overflow (•••) dropdown open.
     menu_open: bool,
+    /// `x–y of N` for the list / grid, shown at the right of the search row.
+    range: Option<String>,
     /// The image or player fills the window (alt+e, the header button or a
     /// double-click; Esc leaves).
     pub fullscreen: bool,
@@ -643,6 +645,24 @@ fn fs_key(bytes: &[u8]) -> Option<&'static str> {
     })
 }
 
+/// `x–y of N` for a view showing `shown` items from `first` of `total`.
+pub fn range_label(first: usize, shown: usize, total: usize) -> String {
+    if total == 0 {
+        return "0 of 0".into();
+    }
+    format!("{}–{} of {total}", (first + 1).min(total), (first + shown).min(total))
+}
+
+/// A slim scrollbar over `track` when not everything fits.
+fn scrollbar(o: &mut Out, track: Rect, first: usize, shown: usize, total: usize) {
+    if total <= shown || total == 0 || track.w <= 0 || track.h <= 0 {
+        return;
+    }
+    let start = (first * 1000 / total) as u16;
+    let len = (shown * 1000 / total).max(1) as u16;
+    o.items.push(item(track, "", PanelStyle::Scrollbar { start, len }, UiAction::None));
+}
+
 struct Out {
     items: Vec<PanelItem>,
     /// Player frames, ready to draw.
@@ -676,6 +696,7 @@ impl CommanderMode {
             press: None,
             hits: Hits::default(),
             menu_open: false,
+            range: None,
             fullscreen: false,
             fs_active: std::time::Instant::now(),
             fs_click: None,
@@ -775,6 +796,10 @@ impl CommanderMode {
         let head = format!(" {:<10} {:>6}  {:<name_w$}  {}", "Attributes", "Size", "Name", "Last Modified");
         o.items.push(item(Rect { x: body.x, y: body.y, w: body.w, h: row_h }, head, PanelStyle::Hint, UiAction::None));
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
+        let track = Rect { x: body.x + body.w - 5, y: body.y + row_h, w: 5, h: row_h * rows as i32 };
+        scrollbar(o, track, self.c.scroll, rows, vis.len());
+        self.range = Some(range_label(self.c.scroll, rows.min(vis.len()), vis.len()));
+        let body = if vis.len() > rows { Rect { w: body.w - 10, ..body } } else { body };
         for (n, e) in vis.iter().enumerate().skip(self.c.scroll).take(rows) {
             let y = body.y + row_h * (1 + (n - self.c.scroll) as i32);
             let name = if e.kind == Kind::Dir && e.name != "." && e.name != ".." { format!("{}/", e.name) } else { e.name.clone() };
@@ -806,6 +831,9 @@ impl CommanderMode {
         self.c.scroll = first;
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
         let start = first * per_row;
+        let total_rows = vis.len().div_ceil(per_row);
+        scrollbar(o, Rect { x: body.x + body.w - 5, y: body.y, w: 5, h: body.h }, first, vis_rows, total_rows);
+        self.range = Some(range_label(start, (per_row * vis_rows).min(vis.len().saturating_sub(start)), vis.len()));
         for (n, e) in vis.iter().enumerate().skip(start).take(per_row * vis_rows) {
             let (r, col) = ((n - start) / per_row, (n - start) % per_row);
             let tile = Rect { x: body.x + col as i32 * (ts + gap), y: body.y + r as i32 * cell_h, w: ts, h: ts };
@@ -859,7 +887,13 @@ impl CommanderMode {
         }
         let t = e.modified.map(cmdr::format_time).unwrap_or_default();
         let mk = if self.c.marks.contains(&e.path) { "* " } else { "" };
-        let label = format!("{mk}{}   {}   {}   ({}/{})", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
+        let label = format!("{mk}{}   {}   {}   {} of {}", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
+        self.range = None;
+        if vis.len() > 1 {
+            // Where we are along the strip.
+            let tr = Rect { x: body.x + body.w / 3, y: body.y + ih + 1, w: body.w / 3, h: 4 };
+            scrollbar(o, tr, self.c.selected, 1, vis.len());
+        }
         let lw = (label.chars().count() as i32 * cw).min(body.w);
         o.items.push(item(
             Rect { x: body.x + (body.w - lw) / 2, y: body.y + ih + 6, w: lw, h: label_h },
@@ -952,13 +986,26 @@ impl CommanderMode {
             o.items.push(item(Rect { x: body.x, y: body.y, w: body.w, h: ch + 4 }, e.clone(), PanelStyle::Error, UiAction::None));
             return;
         }
-        let rows = (body.h / ch.max(1)).max(1) as usize;
+        let mut rows = (body.h / ch.max(1)).max(1) as usize;
+        let long = lines.len() > rows;
+        if long {
+            // The last row says where we are.
+            rows = rows.saturating_sub(1).max(1);
+        }
         let scroll = self.c.overlay_scroll.min(lines.len().saturating_sub(rows));
         self.c.overlay_scroll = scroll;
+        let tw = if long { body.w - 10 } else { body.w };
+        if long {
+            let total = lines.len();
+            scrollbar(o, Rect { x: body.x + body.w - 5, y: body.y, w: 5, h: rows as i32 * ch }, scroll, rows, total);
+            let t = format!("lines {}", range_label(scroll, rows, total));
+            let lw = t.chars().count() as i32 * cw;
+            o.items.push(item(Rect { x: body.x + body.w - lw, y: body.y + rows as i32 * ch, w: lw, h: ch }, t, PanelStyle::Hint, UiAction::None));
+        }
         for (i, l) in lines.iter().skip(scroll).take(rows).enumerate() {
             o.items.push(item(
-                Rect { x: body.x, y: body.y + i as i32 * ch, w: body.w, h: ch },
-                clip_text(&l.replace('\t', "    "), body.w / cw.max(1)),
+                Rect { x: body.x, y: body.y + i as i32 * ch, w: tw, h: ch },
+                clip_text(&l.replace('\t', "    "), tw / cw.max(1)),
                 PanelStyle::Label,
                 UiAction::None,
             ));
@@ -1884,16 +1931,19 @@ impl Mode for CommanderMode {
                     (false, true) => self.c.notice.clone().unwrap_or_default(),
                 };
                 if !fb.is_empty() {
+                    let room = (w - fr.w - cw - 24 * cw).max(0);
                     o.items.push(item(
-                        Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
-                        clip_text(&fb, (w - fr.w - cw) / cw),
+                        Rect { x: fr.x + fr.w + cw, y: fr.y, w: room, h: row_h },
+                        clip_text(&fb, room / cw),
                         if n == 0 { PanelStyle::Error } else { PanelStyle::Hint },
                         UiAction::None,
                     ));
                 }
             }
+            let search_y = body.y;
             body.y += row_h + 8;
             body.h -= row_h + 8;
+            self.range = None;
             if let Some(e) = &self.c.error {
                 o.items.push(item(Rect { x: body.x, y: body.y, w: body.w, h: row_h }, e.clone(), PanelStyle::Error, UiAction::None));
             } else {
@@ -1908,6 +1958,10 @@ impl Mode for CommanderMode {
                         self.carousel(body, cw, ch, &mut o)
                     }
                 }
+            }
+            if let Some(r) = self.range.clone() {
+                let lw = (r.chars().count() as i32 + 1) * cw;
+                o.items.push(item(Rect { x: x0 + w - lw, y: search_y, w: lw, h: row_h }, r, PanelStyle::Hint, UiAction::None));
             }
         }
         // Only what is on screen loads; text snippets of files that left are dropped.
@@ -2049,6 +2103,23 @@ fn crop(mut i: ModeImage, clip: Rect) -> Option<ModeImage> {
 mod tests {
     use super::*;
     use crate::UiViewport;
+
+    #[test]
+    fn range_label_formats_and_clamps() {
+        assert_eq!(range_label(0, 10, 42), "1–10 of 42");
+        assert_eq!(range_label(40, 10, 42), "41–42 of 42");
+        assert_eq!(range_label(0, 0, 0), "0 of 0");
+    }
+
+    #[test]
+    fn scrollbar_only_when_overflowing() {
+        let mut o = Out { items: vec![], frames: vec![], slots: vec![], texts: vec![], extra: vec![], menu: None };
+        let r = Rect { x: 0, y: 0, w: 4, h: 100 };
+        scrollbar(&mut o, r, 0, 10, 5);
+        assert!(o.items.is_empty());
+        scrollbar(&mut o, r, 50, 25, 100);
+        assert!(matches!(o.items[0].style, PanelStyle::Scrollbar { start: 500, len: 250 }));
+    }
 
     /// Tests that set MOUSER_HOME / MOUSER_SSH_BIN run one at a time.
     static ENV: Mutex<()> = Mutex::new(());

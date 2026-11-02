@@ -443,6 +443,20 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                     canvas.fill_rect(cx, b.y + 3, 2, b.h - 6, accent);
                 }
             }
+            ui::PanelStyle::Scrollbar { start, len } => {
+                let (s, l) = (start.min(1000) as i64, len.clamp(1, 1000) as i64);
+                if b.h > b.w {
+                    let t = b.w.min(6);
+                    round_rect(canvas, b.x, b.y, t, b.h, t / 2, mix(panel, fg, 0.12), panel);
+                    let (ty, th) = ((b.h as i64 * s / 1000) as i32, ((b.h as i64 * l / 1000) as i32).max(t * 2).min(b.h));
+                    round_rect(canvas, b.x, b.y + ty.min(b.h - th), t, th, t / 2, mix(panel, fg, 0.45), panel);
+                } else {
+                    let t = b.h.min(6);
+                    round_rect(canvas, b.x, b.y, b.w, t, t / 2, mix(panel, fg, 0.12), panel);
+                    let (tx, tw) = ((b.w as i64 * s / 1000) as i32, ((b.w as i64 * l / 1000) as i32).max(t * 2).min(b.w));
+                    round_rect(canvas, b.x + tx.min(b.w - tw), b.y, tw, t, t / 2, mix(panel, fg, 0.45), panel);
+                }
+            }
             ui::PanelStyle::Progress { done, hover } => {
                 let th = 6.min(b.h);
                 let ty = b.y + (b.h - th) / 2;

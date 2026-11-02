@@ -292,6 +292,10 @@ Remote listings preview, view and play like local ones, through `mouser_core::fe
 - Future: the fetch layer (range map, cache keys, backends, transfer queue) is its own module so a local<->remote sync can reuse it; sync itself is not built.
 - Images fit the terminal's width (default and `alt+0`).
 
+#### Scroll position
+
+When a view doesn't fit, commander shows where you are: a slim scrollbar on the right of the list, grid and text views, and `x–y of N` (text: `lines x–y of N`) at the right of the search row. The carousel shows `n of N` and a track under the picture.
+
 ### Plugin API (`mouser_render::modes`)
 
 A mode implements the `Mode` trait and is registered with `Host::new` (the first
