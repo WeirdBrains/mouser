@@ -1,6 +1,6 @@
 # Mouser handover notes
 
-Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31). Current release: v1.1.0 (2026-11-02). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
+Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31). Current release: v1.1.1 (2026-11-02). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.
 
 Public notes for whoever picks up Mouser next. Machine-specific paths, local
 branch/worktree state and other private context live in `HANDOVER.local.md`
