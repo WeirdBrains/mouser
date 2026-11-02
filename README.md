@@ -211,7 +211,9 @@ Prebuilt install packages are attached to each GitHub Release:
 
 ```bash
 # Latest release (prebuilt):
-sudo pacman -U https://github.com/WeirdBrains/mouser/releases/latest/download/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+# (download first: pacman -U <url> also fetches a .sig, which releases do not ship)
+curl -LO https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+sudo pacman -U mouser-bin-<ver>-1-x86_64.pkg.tar.zst
 # Or build main from source:
 git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si
 ```

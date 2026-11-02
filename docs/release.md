@@ -40,7 +40,7 @@ Notes
   - Download `mouser-<ver>-1.x86_64.rpm` and install:
     - `sudo rpm -Uvh mouser-<ver>-1.x86_64.rpm`
 - Arch (see "Arch packages" below):
-  - Prebuilt: `sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst`
+  - Prebuilt: `curl -LO https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst && sudo pacman -U mouser-bin-<ver>-1-x86_64.pkg.tar.zst` (download first; URL installs look for a .sig we do not publish)
   - From source: `cd packaging/arch/mouser-git && makepkg -si`
   - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
@@ -80,7 +80,7 @@ real `sha256sums` (downloaded from the release) and rewrites `.SRCINFO`, and the
 commits it with the Homebrew update. Regenerate both `.SRCINFO` files on Arch with
 `packaging/arch/srcinfo.sh` after editing a PKGBUILD.
 
-Upgrading a machine after a release: `sudo pacman -U <release URL of mouser-bin-<ver>-1-x86_64.pkg.tar.zst>`
+Upgrading a machine after a release: download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` from the release with `curl -LO`, then `sudo pacman -U` the local file
 (same package name, so a plain upgrade).
 
 ### Publishing to the AUR (not done yet)
