@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-02
+
+### Fixed
+
+- Emoji no longer show as boxes: Mouser falls back to the system colour emoji font (Noto Color Emoji, Twemoji, JoyPixels… on Linux; Apple Color Emoji; Segoe UI Emoji) and draws CBDT/sbix bitmaps and COLR glyphs in colour.
+- Emoji clusters take one 2-cell slot: skin-tone modifiers, ZWJ sequences (up to three joined parts) and flags join the base, and VS16 widens text symbols such as `❤️`.
+
+### Added
+
+- `emoji_font` (`[ui]` in config.toml or preferences, `esc :p`) picks the emoji font; `"none"` turns colour emoji off.
+- Packages suggest the emoji font: Arch optdepends `noto-fonts-emoji`, deb Recommends `fonts-noto-color-emoji`, rpm Recommends `google-noto-color-emoji-fonts`.
+
 ## [1.1.1] - 2026-11-02
 
 ### Added
