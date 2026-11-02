@@ -66,7 +66,8 @@ brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Ca
     <div>
       <h3>Arch Linux</h3>
 <pre><code># Prebuilt release
-sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.1.0/mouser-bin-1.1.0-1-x86_64.pkg.tar.zst
+curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.1.0/mouser-bin-1.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U mouser-bin-1.1.0-1-x86_64.pkg.tar.zst
 # Or build main from source
 git clone https://github.com/WeirdBrains/mouser
 cd mouser/packaging/arch/mouser-git &amp;&amp; makepkg -si</code></pre>
