@@ -189,11 +189,7 @@ impl FontStack {
     /// Glyphs the colour emoji face shapes `cluster` into (1 = one combined
     /// emoji), or `None` without a colour face.
     pub fn emoji_glyph_count(&self, cluster: &str) -> Option<usize> {
-        let face = self.emoji.as_ref()?;
-        let face = rustybuzz::Face::from_slice(&face.data, face.index)?;
-        let mut buf = rustybuzz::UnicodeBuffer::new();
-        buf.push_str(cluster);
-        Some(rustybuzz::shape(&face, &[], buf).len())
+        Some(self.emoji.as_ref()?.shape(cluster)?.len())
     }
 
     pub fn font_count(&self) -> usize {
@@ -863,25 +859,54 @@ fn paint_colr(data: &[u8], index: u32, gid: u16, bw: u32, bh: u32) -> Option<Vec
 }
 
 impl EmojiFace {
-    /// The shaped cluster's colour glyph as RGBA, scaled to fit `bw` x `bh`
-    /// and centred in it. `None` if the font has no colour glyph for it.
-    pub fn render(&self, cluster: &str, bw: u32, bh: u32) -> Option<(Vec<u8>, u32, u32)> {
+    /// Visible glyph ids `cluster` shapes into. GSUB (Noto, Segoe) and AAT
+    /// morx (Apple) ligatures merge a sequence into one glyph; morx leaves
+    /// zero-advance deleted-glyph remnants behind, which are dropped here.
+    fn shape(&self, cluster: &str) -> Option<Vec<u16>> {
         let face = rustybuzz::Face::from_slice(&self.data, self.index)?;
         let mut buf = rustybuzz::UnicodeBuffer::new();
         buf.push_str(cluster);
+        buf.guess_segment_properties();
         let shaped = rustybuzz::shape(&face, &[], buf);
-        let gid = shaped.glyph_infos().first()?.glyph_id as u16;
-        if gid == 0 {
-            return None;
-        }
+        let gids: Vec<u16> =
+            shaped.glyph_infos().iter().zip(shaped.glyph_positions()).filter(|(_, p)| p.x_advance != 0).map(|(g, _)| g.glyph_id as u16).collect();
+        Some(gids)
+    }
+
+    /// One glyph's colour image fitted to `bw` x `bh`.
+    fn render_glyph(&self, gid: u16, bw: u32, bh: u32) -> Option<Vec<u8>> {
+        let face = rustybuzz::ttf_parser::Face::parse(&self.data, self.index).ok()?;
         let glyph = rustybuzz::ttf_parser::GlyphId(gid);
         if let Some(img) = face.glyph_raster_image(glyph, u16::MAX)
             && img.format == rustybuzz::ttf_parser::RasterImageFormat::PNG
         {
             let rgba = image::load_from_memory_with_format(img.data, image::ImageFormat::Png).ok()?.to_rgba8();
-            return Some(fit(rgba, bw, bh));
+            return Some(fit(rgba, bw, bh).0);
         }
-        paint_colr(&self.data, self.index, gid, bw, bh).map(|out| (out, bw, bh))
+        paint_colr(&self.data, self.index, gid, bw, bh)
+    }
+
+    /// The shaped cluster as RGBA, scaled to fit `bw` x `bh` and centred.
+    /// A sequence the font has no ligature for (Segoe has no family glyphs)
+    /// draws its component emoji side by side. `None` if any is missing.
+    pub fn render(&self, cluster: &str, bw: u32, bh: u32) -> Option<(Vec<u8>, u32, u32)> {
+        let gids = self.shape(cluster)?;
+        if gids.is_empty() || gids.contains(&0) {
+            return None;
+        }
+        if let [gid] = gids[..] {
+            return self.render_glyph(gid, bw, bh).map(|out| (out, bw, bh));
+        }
+        let n = gids.len() as u32;
+        let slot = (bw / n).max(1);
+        let mut out = image::RgbaImage::new(bw, bh);
+        let x0 = (bw - slot * n) / 2;
+        for (k, &gid) in gids.iter().enumerate() {
+            let px = self.render_glyph(gid, slot, bh)?;
+            let img = image::RgbaImage::from_raw(slot, bh, px)?;
+            image::imageops::overlay(&mut out, &img, (x0 + slot * k as u32) as i64, 0);
+        }
+        Some((out.into_raw(), bw, bh))
     }
 }
 
