@@ -62,7 +62,7 @@ fn leader_timeout_defaults_reads_keys_and_clamps() {
     use std::time::Duration;
     let d = Preferences::default();
     assert_eq!(leader_timeout(&d), Duration::from_millis(DEFAULT_LEADER_TIMEOUT_MS));
-    assert!(DEFAULT_LEADER_TIMEOUT_MS >= 1000, "long enough for a slow esc then :");
+    const { assert!(DEFAULT_LEADER_TIMEOUT_MS >= 1000, "long enough for a slow esc then :") };
     let p: Preferences = toml::from_str("[keys]\nleader_timeout_ms = 2000\n").unwrap();
     assert_eq!(leader_timeout(&p), Duration::from_millis(2000));
     let p: Preferences = toml::from_str("[keys]\nleader_timeout_ms = 5\n").unwrap();
