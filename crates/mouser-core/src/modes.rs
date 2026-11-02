@@ -136,6 +136,31 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
     })
 }
 
+/// The mode a window was in when it closed, kept in `$MOUSER_HOME/state/last-mode`
+/// (state, not config): a mode name, or `none` for no mode. The last window to
+/// close wins.
+pub fn last_mode_path() -> PathBuf {
+    crate::storage::resolve_home().join("state").join("last-mode")
+}
+
+/// `None`: nothing saved (first run): use the default mode. `Some(None)`: no mode.
+pub fn load_last_mode() -> Option<Option<String>> {
+    let s = std::fs::read_to_string(last_mode_path()).ok()?;
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    Some((s != "none").then(|| s.to_string()))
+}
+
+pub fn save_last_mode(mode: Option<&str>) -> std::io::Result<()> {
+    let p = last_mode_path();
+    std::fs::create_dir_all(p.parent().unwrap())?;
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, format!("{}\n", mode.unwrap_or("none")))?;
+    std::fs::rename(tmp, p)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

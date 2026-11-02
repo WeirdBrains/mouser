@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Added
+
+- Mouser remembers the mode (or no mode) a window closed in and starts in it next time
+  (`$MOUSER_HOME/state/last-mode`; the last window to close wins; a mode that is gone
+  falls back to no mode).
+
 ## [1.0.0] - 2026-11-01
 
 Mouser 1.0: everything below since 0.7.2 (modes and engines as plugins, the chat

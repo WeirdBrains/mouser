@@ -36,6 +36,15 @@ Menus, keybindings and the command line dispatch the same named actions.
 
 ## Mode plugins
 
+### The last mode is remembered
+
+When a window closes, Mouser saves the mode it was in (or `none` if no mode was on) to
+`$MOUSER_HOME/state/last-mode` (state, not configuration), and the next launch starts in
+it. With several windows, the last one to close wins. A remembered mode that has since
+been disabled or uninstalled is skipped quietly (no mode). Restoring only switches the
+mode: the chat starts empty and sends nothing, and no model is picked or downloaded until
+you use it. Delete the file to go back to the default (the first enabled mode).
+
 Exactly one mode plugin is active at a time (or none). Mouser starts in the default
 mode, **commander**. Switching replaces the current mode; there is no stacking.
 The second built-in mode is **chat** (`esc :a`), the agent; see docs/chat.md.

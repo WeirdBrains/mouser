@@ -1065,6 +1065,11 @@ fn main() -> Result<()> {
             _ => None,
         });
         log::info!("modes: {}", if modes.names().is_empty() { "none (plain terminal)".to_string() } else { modes.names().join(", ") });
+        let mut modes = modes;
+        // Back in the mode (or no mode) the last window closed in.
+        if let Some(last) = mouser_core::modes::load_last_mode() {
+            modes.restore(last.as_deref());
+        }
         let mut st = app_state.lock().unwrap();
         st.modes = modes;
         // modes.toml problems and modes left out (shown once).
@@ -1266,6 +1271,9 @@ fn main() -> Result<()> {
         let st = app_state.lock().unwrap();
         if !st.sidebar_forced {
             persist_sidebar_state(&st);
+        }
+        if let Err(e) = mouser_core::modes::save_last_mode(st.modes.current()) {
+            log::warn!("could not save the last mode: {e}");
         }
     }
     result?;
