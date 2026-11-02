@@ -2100,7 +2100,7 @@ fn crop(mut i: ModeImage, clip: Rect) -> Option<ModeImage> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::UiViewport;
 
@@ -2122,7 +2122,7 @@ mod tests {
     }
 
     /// Tests that set MOUSER_HOME / MOUSER_SSH_BIN run one at a time.
-    static ENV: Mutex<()> = Mutex::new(());
+    pub(crate) static ENV: Mutex<()> = Mutex::new(());
 
     fn ctx() -> Context {
         let viewport = UiViewport { width: 1200, height: 900, cell_w: 9, cell_h: 18 };

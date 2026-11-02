@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Preferences mode (`esc :p`): every preference by section, dropdowns for choices, validation, reset, write-back that keeps comments, live apply; secrets go to the OS keychain only.
+
 ## [1.0.2] - 2026-11-02
 
 ### Added

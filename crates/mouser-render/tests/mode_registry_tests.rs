@@ -74,34 +74,36 @@ fn wait_for(m: &mut dyn Mode, want: &str) -> String {
 fn modes_come_from_the_registry() {
     let home = tempfile::tempdir().unwrap();
     unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
-    // Defaults: commander (the default, active) then chat.
+    // Defaults: commander (the default, active), chat, preferences.
     let h = host();
-    assert_eq!(h.names(), ["commander", "chat"]);
+    assert_eq!(h.names(), ["commander", "chat", "preferences"]);
     assert_eq!(h.current(), Some("commander"));
     // A build without the chat mode leaves it out with a note.
     let h = Host::from_registry(&Registry::load(), |_| None);
-    assert_eq!(h.names(), ["commander"]);
+    assert_eq!(h.names(), ["commander", "preferences"]);
     assert!(h.notes.iter().any(|n| n.contains("chat")), "{:?}", h.notes);
     // Priority order decides the switcher order and the default.
     plugins::move_to("chat", 0).unwrap();
-    assert_eq!(host().names(), ["chat", "commander"]);
+    assert_eq!(host().names(), ["chat", "commander", "preferences"]);
     plugins::move_to("commander", 0).unwrap();
     // Built-ins can be turned off; with none on, an empty host (plain terminal).
     plugins::set_enabled("commander", false).unwrap();
     let mut h = host();
-    assert_eq!(h.names(), ["chat"]);
+    assert_eq!(h.names(), ["chat", "preferences"]);
     assert!(h.switch("c").is_err(), "commander is off");
     plugins::set_enabled("chat", false).unwrap();
+    plugins::set_enabled("preferences", false).unwrap();
     let h = host();
     assert!(h.names().is_empty());
     assert_eq!(h.current(), None);
     plugins::set_enabled("commander", true).unwrap();
     plugins::set_enabled("chat", true).unwrap();
+    plugins::set_enabled("preferences", true).unwrap();
 
     // A mode plugin over the command transport joins after the built-in modes.
     plugins::install(&example("hello-mode")).unwrap();
     let mut h = host();
-    assert_eq!(h.names(), ["commander", "chat", "hello-mode"]);
+    assert_eq!(h.names(), ["commander", "chat", "preferences", "hello-mode"]);
     assert_eq!(h.current(), Some("commander"), "installing a mode keeps the default");
     assert_eq!(h.switch("h").unwrap(), "hello-mode mode");
     // A second plugin with the same hotkey is left out with a note.

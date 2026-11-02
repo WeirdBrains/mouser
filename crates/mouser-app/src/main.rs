@@ -2342,12 +2342,22 @@ fn mode_key(st: &mut AppState, bytes: &[u8], parser: &ActiveParser, writer: &tab
 }
 
 /// How long a lone Esc waits for `:` before going to the shell
-/// (`[keys] leader_timeout_ms`, read once). When it runs out, or any other key
+/// (`[keys] leader_timeout_ms`, re-read at most once a second so the
+/// preferences mode applies it live). When it runs out, or any other key
 /// comes first, the held Esc is sent ahead of that key, so nothing is lost or
 /// reordered. Once `:` is caught the command line stays open until Enter/Esc.
 fn esc_wait() -> std::time::Duration {
-    static W: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
-    *W.get_or_init(|| mouser_core::storage::leader_timeout(&mouser_core::storage::load_preferences()))
+    use std::time::{Duration, Instant};
+    static W: Mutex<Option<(Instant, Duration)>> = Mutex::new(None);
+    let mut w = W.lock().unwrap();
+    match *w {
+        Some((at, d)) if at.elapsed() < Duration::from_secs(1) => d,
+        _ => {
+            let d = mouser_core::storage::leader_timeout(&mouser_core::storage::load_preferences());
+            *w = Some((Instant::now(), d));
+            d
+        }
+    }
 }
 
 /// Wait until the shell owns the terminal again (the typed command finished;

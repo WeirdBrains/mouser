@@ -21,6 +21,7 @@ pub mod modes;
 pub mod parser;
 pub mod permissions;
 pub mod plugins;
+pub mod prefs_edit;
 pub mod reflow;
 pub mod remote;
 pub mod sbstyle;

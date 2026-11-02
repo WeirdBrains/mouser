@@ -85,6 +85,19 @@ pub fn set(name: &str, v: &str) -> Result<Store> {
     Ok(Store::File(p))
 }
 
+/// Store a secret in the OS keychain only (the preferences mode): no file
+/// fallback. `MOUSER_SECRET_STORE=file` (tests, headless) is the one exception.
+pub fn set_keychain_only(name: &str, v: &str) -> Result<Store> {
+    if force_file() {
+        return set(name, v);
+    }
+    if keychain_set(name, v) {
+        let _ = fs::remove_file(file(name));
+        return Ok(Store::Keychain);
+    }
+    anyhow::bail!("no OS keychain available; the secret was not saved")
+}
+
 pub fn delete(name: &str) {
     if !force_file()
         && let Ok(e) = keyring::Entry::new(SERVICE, &account(name))

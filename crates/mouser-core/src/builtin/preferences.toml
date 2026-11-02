@@ -1,0 +1,14 @@
+# Built-in mode plugin: every preference by section (docs/preferences.md).
+name = "preferences"
+version = "builtin"
+description = "preferences mode: all settings by section, validated, written back with comments kept (built in)"
+permissions = ["files.write"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "builtin"
+
+[mode]
+hotkey = "p"
