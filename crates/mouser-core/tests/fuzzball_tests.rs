@@ -65,7 +65,7 @@ fn capability_query_then_da1() {
     t.feed(b"\x1bP=Fzcq;id=1\x1b\\\x1b[c");
     let r = out.take();
     let (fz, da) = r.split_at(r.find("\x1b[?").unwrap());
-    assert!(fz.starts_with("\x1bP=Fzcr;id=1,v=0,sub=gkp,raw=0,max_chunk=65536,"), "{fz}");
+    assert!(fz.starts_with("\x1bP=Fzcr;id=1,v=0,sub=gkps,raw=0,max_chunk=65536,"), "{fz}");
     for k in
         ["g_mem=335544320", "g_max_dim=10000", "g_fmt=rgba:rgb:png", "g_max_place=4096", "g_fit=w", "g_reflow=1", "k=1", "k_ime=0", "k_release=1"]
     {

@@ -165,6 +165,94 @@ pub fn download(c: Consent<'_>, url: &str, progress: &mut dyn FnMut(u64, u64) ->
     Ok(dest)
 }
 
+fn sha256_of(p: &Path) -> Result<String> {
+    let mut h = sha2::Sha256::new();
+    std::io::copy(&mut std::fs::File::open(p).with_context(|| p.display().to_string())?, &mut h)?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The weights `mouser model local enable [ID]` uses: `id`, else the one
+/// already downloaded (E2B when both or neither are).
+pub fn pick(id: Option<&str>) -> Result<&'static Weights> {
+    match id {
+        Some(i) => {
+            weights(i).with_context(|| format!("unknown local model {i}; one of: {}", CATALOG.iter().map(|w| w.id).collect::<Vec<_>>().join(", ")))
+        }
+        None => {
+            let have: Vec<&Weights> = CATALOG.iter().filter(|w| w.installed()).collect();
+            Ok(if have.len() == 1 { have[0] } else { &CATALOG[0] })
+        }
+    }
+}
+
+/// Turn gemma-local on and make `w` the default model (the CLI's `enable`
+/// and the chat picker both end here, after any download).
+pub fn enable(w: &Weights) -> Result<String> {
+    let mut p = super::prefs();
+    let mut lp = p.local.clone().unwrap_or_default();
+    lp.disabled = false;
+    p.local = Some(lp);
+    let spec = format!("gemma-local/{}", w.id);
+    p.default = Some(spec.clone());
+    super::save(&p)?;
+    Ok(spec)
+}
+
+/// Hide gemma-local (downloads are kept). True if it was the default, which
+/// is then cleared.
+pub fn disable() -> Result<bool> {
+    let mut p = super::prefs();
+    let mut lp = p.local.clone().unwrap_or_default();
+    lp.disabled = true;
+    p.local = Some(lp);
+    let was = p.default.as_deref().is_some_and(|d| super::split(d).0 == "gemma-local");
+    if was {
+        p.default = None;
+    }
+    super::save(&p)?;
+    Ok(was)
+}
+
+/// Move the downloaded weights to `to` and set `[models.local] dir` to it.
+/// Each file is copied, checked against its pinned SHA256, and only then is the
+/// old copy removed. Returns the files moved.
+pub fn move_to(to: &Path, progress: &mut dyn FnMut(&Weights)) -> Result<Vec<PathBuf>> {
+    if std::env::var_os("MOUSER_MODELS_DIR").is_some_and(|d| !d.is_empty()) {
+        bail!("MOUSER_MODELS_DIR is set and overrides [models.local] dir; unset it first");
+    }
+    std::fs::create_dir_all(to).with_context(|| to.display().to_string())?;
+    let to = std::fs::canonicalize(to)?;
+    let from = dir();
+    let same = std::fs::canonicalize(&from).is_ok_and(|f| f == to);
+    let mut moved = vec![];
+    if !same {
+        for w in CATALOG.iter().filter(|w| w.installed()) {
+            progress(w);
+            let src = w.path();
+            let dst = to.join(w.file);
+            let part = dst.with_extension("gguf.part");
+            // Same filesystem: an atomic rename, the bytes do not change.
+            // Elsewhere: copy, check the copy's SHA256, only then remove the old file.
+            if std::fs::rename(&src, &dst).is_err() {
+                std::fs::copy(&src, &part).with_context(|| format!("copying {} to {}", src.display(), part.display()))?;
+                if sha256_of(&part)? != w.sha256 {
+                    let _ = std::fs::remove_file(&part);
+                    bail!("{}: the copy's checksum does not match; nothing was removed", w.file);
+                }
+                std::fs::rename(&part, &dst)?;
+                std::fs::remove_file(&src)?;
+            }
+            moved.push(dst);
+        }
+    }
+    let mut p = super::prefs();
+    let mut lp = p.local.clone().unwrap_or_default();
+    lp.dir = Some(to.display().to_string());
+    p.local = Some(lp);
+    super::save(&p)?;
+    Ok(moved)
+}
+
 /// Remove downloaded weights (and any partial file). True if something was removed.
 pub fn remove(w: &Weights) -> bool {
     let a = std::fs::remove_file(w.path()).is_ok();
@@ -188,10 +276,10 @@ pub fn register(b: Box<dyn LocalBackend>) {
     let _ = BACKEND.set(b);
 }
 
-/// Shown when this build has no local model (the `local-llm` feature).
-pub const NOT_BUILT: &str = "This Mouser was built without the local model (cargo feature local-llm). \
-To get it on Arch: git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si \
-(the mouser-git package includes it from 1.0.1). From source: cargo build --release -p mouser-app --features local-llm. \
+/// Shown when this build has no local model. Every release and package has
+/// it since 1.0.1; only a source build with `--no-default-features` lacks it.
+pub const NOT_BUILT: &str = "This Mouser was built without the local model (source build with \
+--no-default-features). Rebuild with the default features: cargo build --release -p mouser-app. \
 Or pick a hosted model.";
 
 pub fn backend() -> Option<&'static dyn LocalBackend> {
@@ -222,6 +310,9 @@ pub struct LocalPrefs {
     /// llama.cpp: context size in tokens (default 8192).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<u32>,
+    /// `mouser model local disable`: hide gemma-local until it is enabled again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
 }
 
 pub fn prefs() -> LocalPrefs {

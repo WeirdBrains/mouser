@@ -76,8 +76,8 @@ OpenAI- or Anthropic-compatible URL. ↑/↓ and Enter or a click choose; Esc st
 
 ## Model
 
-The chat uses `mouser model default` at each turn (docs/models.md). `gemma-local` works
-in builds with `--features local-llm`, or through `mouser model local url`. Any
+The chat uses `mouser model default` at each turn (docs/models.md). `gemma-local` is built
+in (`mouser model local enable`), or runs through `mouser model local url`. Any
 configured provider works too. The header shows `provider/model`.
 
 ## Limits and transcripts

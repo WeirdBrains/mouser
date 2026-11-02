@@ -8,6 +8,24 @@
 
 ### Added
 
+- The local model is in every build and package: llama.cpp (Vulkan on Linux, Metal on
+  macOS, CPU on Windows) is a default feature, and there is no separate variant.
+  `mouser model local enable [gemma-4-e2b|gemma-4-e4b]` asks, downloads, verifies and
+  makes it the default; `mouser model local disable` hides it (downloads kept). The chat
+  picker's local rows use the same path. Linux packages now depend on the Vulkan loader
+  (`vulkan-icd-loader` / `libvulkan1` / `vulkan-loader`). Without a Vulkan driver the
+  model runs on the CPU, and llama.cpp starts only on the first local chat. The binary
+  is about 44 MB larger.
+- `mouser model local move DIR` moves downloaded weights (an atomic rename, or a copy
+  that is SHA256-checked before the old file is removed) and saves `[models.local] dir`.
+  `mouser model local` shows how to change the folder.
+- `mouser model default|test` accept a bare model name offered by one provider
+  (`mouser model default gemma-4-e4b`).
+- Fuzzball shell actions (`s`, docs/protocol/shell.md): with the new shell integration
+  (`eval "$(mouser shell-integration zsh)"`, also bash and fish), commander changes
+  directory silently. There is no `cd` line, the half-typed line is kept, and the
+  prompt is redrawn in place. Without the integration Mouser still types the `cd`, then
+  erases it and its echo so one prompt remains.
 - Chat model picker: with no usable model, `esc :a` (or sending a message) shows a
   picker in the dock: Gemma 4 E2B/E4B local, OpenAI, xAI, OpenRouter, Kimi, Anthropic,
   Google or a custom URL. Local: consent with size and folder, progress, SHA256, cancel.
@@ -71,7 +89,7 @@ agent, MCP server and client, model providers, the local model) plus these fixes
   - Every call goes through the permission broker, with an approval card in the dock showing the real action.
   - Shell, typing and file-write tools ask on every call. Other tools can be allowed for the chat.
 - Cancel (Esc, alt+x, Ctrl+C or the button) always works: it stops the stream, denies an open card and abandons a running tool. There is a limit of 8 tool steps per turn.
-- It uses `mouser model default`: gemma-local with `--features local-llm`, or any provider. Hosted providers show a one-time "screen text is sent to" note.
+- It uses `mouser model default`: gemma-local with `--features local-llm` (default since 1.0.1), or any provider. Hosted providers show a one-time "screen text is sent to" note.
 - Transcripts are saved to `$MOUSER_HOME/chats/*.jsonl` (0600); `[chat] transcripts = false` turns this off.
 - `examples/chat_live` is a headless live run with a sandboxed shell tool (feature local-llm).
 

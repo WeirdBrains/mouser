@@ -11,6 +11,12 @@ homepage: https://github.com/WeirdBrains/mouser
 license: BSD-3-Clause
 depends:
   - libasound2
+  - libvulkan1
+overrides:
+  rpm:
+    depends:
+      - alsa-lib
+      - vulkan-loader
 contents:
   - src: ${BINARY_PATH}
     dst: /usr/bin/mouser

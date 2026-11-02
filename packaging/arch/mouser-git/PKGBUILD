@@ -9,17 +9,14 @@ url="https://github.com/WeirdBrains/mouser"
 license=('BSD-3-Clause')
 depends=('glibc' 'libgcc' 'libstdc++' 'hicolor-icon-theme' 'libxkbcommon' 'wayland' 'alsa-lib')
 makedepends=('cargo' 'git' 'ncurses')
-optdepends=('vulkan-icd-loader: GPU renderer (falls back to CPU without it)'
-            'libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
+optdepends=('libglvnd: OpenGL for the Skia engine (mouser engine use skia)'
             'libx11: X11 session support'
             'libxcursor: X11 cursors'
             'libxi: X11 input'
             'libxrandr: X11 monitors')
-# The opt-in local-model variant (MOUSER_LOCAL_LLM=1 makepkg) links libvulkan.
-if [[ -n ${MOUSER_LOCAL_LLM:-} ]]; then
-  depends+=('vulkan-icd-loader')
-  makedepends+=('cmake' 'clang' 'vulkan-headers' 'shaderc' 'spirv-headers')
-fi
+# The built-in local model (llama.cpp, Vulkan) is always included since 1.0.1.
+depends+=('vulkan-icd-loader')
+makedepends+=('cmake' 'clang' 'vulkan-headers' 'shaderc' 'spirv-headers')
 provides=('mouser')
 conflicts=('mouser' 'mouser-bin')
 options=('!lto')
@@ -42,8 +39,8 @@ build() {
   cd "${_pkgname}"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
-  # Opt-in built-in local model (docs/models.md): MOUSER_LOCAL_LLM=1 makepkg
-  cargo build --frozen --release -p mouser-app ${MOUSER_LOCAL_LLM:+--features local-llm}
+  # Default features include the local model (docs/models.md).
+  cargo build --frozen --release -p mouser-app
   mkdir -p terminfo
   tic -x -o terminfo extra/mouser.terminfo
 }

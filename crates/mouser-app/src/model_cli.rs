@@ -52,6 +52,15 @@ pub enum LocalAction {
     },
     /// Where model files go (None: the default).
     Dir(Option<String>),
+    /// Turn gemma-local on (download with consent if needed) and make it the default.
+    Enable {
+        id: Option<String>,
+        yes: bool,
+    },
+    /// Hide gemma-local (downloads are kept).
+    Disable,
+    /// Move downloaded weights to DIR (SHA256-checked) and use DIR from now on.
+    Move(String),
 }
 
 fn selected_weights(id: Option<&str>) -> Result<&'static local::Weights> {
@@ -87,12 +96,17 @@ fn run_local(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
             let lp = local::prefs();
             match local::backend() {
                 Some(b) => writeln!(out, "engine: {} (built in)", b.describe())?,
-                None => writeln!(out, "engine: not in this build (cargo feature local-llm)")?,
+                None => writeln!(out, "engine: not in this build (source build with --no-default-features)")?,
             }
             if let Some(u) = &lp.url {
                 writeln!(out, "server: {u} ({}) — used instead of the built-in engine", lp.api.unwrap_or(Api::OpenAi).name())?;
             }
+            if lp.disabled {
+                writeln!(out, "state: disabled (mouser model local enable)")?;
+            }
             writeln!(out, "models dir: {}", local::dir().display())?;
+            writeln!(out, "  change it: mouser model local dir DIR (or [models.local] dir = \"DIR\" in config.toml);")?;
+            writeln!(out, "  move what is downloaded: mouser model local move DIR")?;
             for w in &local::CATALOG {
                 let st = if w.installed() {
                     "downloaded".to_string()
@@ -111,25 +125,72 @@ fn run_local(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
                 writeln!(out, "{} is already downloaded: {}", w.id, w.path().display())?;
                 return Ok(());
             }
-            if !*yes && !ask_yes(&w.consent_text(), out)? {
-                writeln!(out, "not downloaded")?;
+            fetch(w, *yes, out).map(|_| ())
+        }
+        LocalAction::Enable { id, yes } => {
+            if local::backend().is_none() && local::prefs().url.is_none() {
+                bail!("{}", local::NOT_BUILT);
+            }
+            let w = local::pick(id.as_deref())?;
+            if !w.installed() && local::prefs().url.is_none() && !fetch(w, *yes, out)? {
+                writeln!(out, "not enabled (nothing downloaded)")?;
                 return Ok(());
             }
-            let url = std::env::var("MOUSER_MODEL_URL_OVERRIDE").unwrap_or_else(|_| w.url());
-            let mut last = u64::MAX;
-            let p = local::download(local::Consent::given(w), &url, &mut |d, t| {
-                let pct = d * 100 / t.max(1);
-                if pct != last {
-                    last = pct;
-                    eprint!("\r{} {pct}% ({} of {})   ", w.id, local::human(d), local::human(t));
-                }
-                true
-            });
-            eprintln!();
-            let p = p?;
-            writeln!(out, "downloaded and verified: {}", p.display())?;
+            let spec = local::enable(w)?;
+            writeln!(out, "local model enabled; default model: {spec}")?;
+            writeln!(out, "try: mouser model test   (or open the chat: esc :a)")?;
             Ok(())
         }
+        LocalAction::Disable => {
+            let was = local::disable()?;
+            writeln!(out, "local model disabled (downloads kept in {}); enable again: mouser model local enable", local::dir().display())?;
+            if was {
+                writeln!(out, "it was the default model, so there is no default now (mouser model default PROVIDER[/MODEL])")?;
+            }
+            Ok(())
+        }
+        LocalAction::Move(d) => {
+            let from = local::dir();
+            let moved = local::move_to(std::path::Path::new(d), &mut |w| {
+                eprintln!("moving {} ({}) and checking it…", w.file, local::human(w.size));
+            })?;
+            for p in &moved {
+                writeln!(out, "moved and verified: {p}", p = p.display())?;
+            }
+            if moved.is_empty() {
+                writeln!(out, "nothing to move from {}", from.display())?;
+            }
+            writeln!(out, "models dir: {} (saved as [models.local] dir)", local::dir().display())?;
+            Ok(())
+        }
+        _ => run_local_rest(a, out),
+    }
+}
+
+/// Ask (unless `yes`), then download and verify `w`. False if the user said no.
+fn fetch(w: &local::Weights, yes: bool, out: &mut dyn Write) -> Result<bool> {
+    if !yes && !ask_yes(&w.consent_text(), out)? {
+        writeln!(out, "not downloaded")?;
+        return Ok(false);
+    }
+    let url = std::env::var("MOUSER_MODEL_URL_OVERRIDE").unwrap_or_else(|_| w.url());
+    let mut last = u64::MAX;
+    let p = local::download(local::Consent::given(w), &url, &mut |d, t| {
+        let pct = d * 100 / t.max(1);
+        if pct != last {
+            last = pct;
+            eprint!("\r{} {pct}% ({} of {})   ", w.id, local::human(d), local::human(t));
+        }
+        true
+    });
+    eprintln!();
+    let p = p?;
+    writeln!(out, "downloaded and verified: {}", p.display())?;
+    Ok(true)
+}
+
+fn run_local_rest(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
+    match a {
         LocalAction::Delete(id) => {
             let w = selected_weights(Some(id))?;
             if local::remove(w) {
@@ -173,6 +234,9 @@ fn run_local(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
             prefs.local = Some(lp);
             models::save(&prefs)
         }
+        LocalAction::Status | LocalAction::Download { .. } | LocalAction::Enable { .. } | LocalAction::Disable | LocalAction::Move(_) => {
+            unreachable!("handled by run_local")
+        }
         LocalAction::Dir(d) => {
             let mut prefs = models::prefs();
             let mut lp = prefs.local.clone().unwrap_or_default();
@@ -204,7 +268,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
                         let lp = local::prefs();
                         match (&lp.url, local::backend()) {
                             (Some(u), _) => format!("via {u}"),
-                            (None, None) => "not in this build (feature local-llm); or mouser model local url URL".to_string(),
+                            (None, None) => "not in this build (--no-default-features); or mouser model local url URL".to_string(),
                             (None, Some(_)) => {
                                 let have: Vec<&str> = local::CATALOG.iter().filter(|w| w.installed()).map(|w| w.id).collect();
                                 if have.is_empty() {
@@ -308,6 +372,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             Ok(())
         }
         Action::Default(spec) => {
+            let spec = &models::resolve(spec)?;
             let (prov, m) = models::split(spec);
             let Some(p) = models::find(prov) else { bail!("no model provider {prov} (see `mouser model list`)") };
             if let Some(m) = m
@@ -334,7 +399,8 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
         Action::Test { spec, prompt, tool } => {
             let (prov, model) = match spec {
                 Some(s) => {
-                    let (p, m) = models::split(s);
+                    let s = models::resolve(s)?;
+                    let (p, m) = models::split(&s);
                     let m = match m {
                         Some(m) => m.to_string(),
                         None => models::find(p).and_then(|x| x.default_model().map(String::from)).unwrap_or_default(),

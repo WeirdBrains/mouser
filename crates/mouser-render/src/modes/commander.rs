@@ -1416,7 +1416,7 @@ impl Mode for CommanderMode {
                 for _ in 0..arg.max(0) {
                     d = d.and_then(|d| d.parent().map(Path::to_path_buf));
                 }
-                return d.map_or(Effect::None, |d| Effect::Run(cd_line(&d)));
+                return d.map_or(Effect::None, Effect::Cd);
             }
             // In the file view (and the player) back closes the view first.
             "parent" | "back" if previewing => {
@@ -1743,7 +1743,7 @@ impl CommanderMode {
     fn effect(&mut self, e: cmdr::Effect) -> Effect {
         match e {
             cmdr::Effect::None => Effect::None,
-            cmdr::Effect::Cd(p) => Effect::Run(cd_line(&p)),
+            cmdr::Effect::Cd(p) => Effect::Cd(p),
             // The in-app player; the desktop opener only without ffmpeg.
             // Remote media: ffmpeg reads it through the fetch layer's local
             // HTTP server (seeks become prioritised ranged reads).
@@ -1905,7 +1905,7 @@ mod tests {
         m.last_click = None;
         assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
         let cd = m.action("item", 1);
-        assert_eq!(cd, Effect::Run(format!("cd -- '{}'", t.path().join("sub dir").display())));
+        assert_eq!(cd, Effect::Cd(t.path().join("sub dir")));
         m.action("switch_view", 0);
         let v = m.view(&ctx(), &k);
         assert!(v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count() == 2);
@@ -2015,8 +2015,8 @@ mod tests {
         // The parent's segment jumps one level up; the current one is not a link.
         assert!(d.items.iter().any(|i| i.text == "/a" && i.action == act("up_to", 1)));
         assert!(d.items.iter().any(|i| i.text == "/b" && i.action == UiAction::None));
-        assert_eq!(m.action("up_to", 2), Effect::Run(cd_line(t.path())));
-        assert_eq!(m.action("parent", 0), Effect::Run(cd_line(&t.path().join("a"))));
+        assert_eq!(m.action("up_to", 2), Effect::Cd(t.path().to_path_buf()));
+        assert_eq!(m.action("parent", 0), Effect::Cd(t.path().join("a")));
         // Coming back up selects the folder we left.
         m.cwd_changed(&t.path().join("a"));
         assert_eq!(m.c.selected_entry().unwrap().name, "b");
@@ -2208,7 +2208,7 @@ mod tests {
         assert!(d.items.iter().any(|i| i.text == "image · remote"), "no side channel: a badge, nothing read");
         assert!(m.previews().decoded().is_empty());
         m.c.selected = 1;
-        assert_eq!(m.action("open", 0), Effect::Run("cd -- '/srv/app'".into()), "cd over the PTY");
+        assert_eq!(m.action("open", 0), Effect::Cd("/srv/app".into()), "cd over the PTY");
     }
 
     #[test]

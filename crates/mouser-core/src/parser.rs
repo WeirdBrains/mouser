@@ -321,6 +321,39 @@ impl<W: Write> TerminalParser<W> {
 
     /// Whether a graphics timer is needed: a pending chunked upload in either
     /// protocol or a running Kitty animation.
+    /// Absolute row of the cursor (lines scrolled off + screen row).
+    pub fn cursor_abs_row(&self) -> i64 {
+        self.lines_scrolled + self.screen.cursor.y as i64
+    }
+
+    /// Where the prompt the cursor is on starts: the last OSC 133 `A` mark at or
+    /// above the cursor, else the cursor row.
+    pub fn prompt_start(&self) -> i64 {
+        let cur = self.cursor_abs_row();
+        self.prompt_marks.iter().rev().find(|(r, k)| *k == 'A' && *r <= cur).map_or(cur, |(r, _)| *r)
+    }
+
+    /// Remove the absolute rows `from..to` from the main screen, pulling what is
+    /// below up (the cursor follows). Used to hide a typed `cd` and its echo so
+    /// one prompt remains (docs/protocol/shell.md §6). False (nothing changed)
+    /// on the alternate screen or when the rows already left the screen.
+    pub fn erase_rows(&mut self, from: i64, to: i64) -> bool {
+        if self.screen.in_alt_screen() || to <= from || from < self.lines_scrolled || to > self.cursor_abs_row() {
+            return false;
+        }
+        let n = (to - from) as usize;
+        let (x, y) = (self.screen.cursor.x, self.screen.cursor.y);
+        self.screen.cursor.y = (from - self.lines_scrolled) as usize;
+        self.screen.delete_lines(n);
+        self.screen.cursor.x = x;
+        self.screen.cursor.y = y - n;
+        self.prompt_marks.retain(|(r, _)| *r < from || *r >= to);
+        for m in self.prompt_marks.iter_mut().filter(|m| m.0 >= to) {
+            m.0 -= n as i64;
+        }
+        true
+    }
+
     pub fn graphics_timers_pending(&self) -> bool {
         self.fuzzball.upload_pending() || self.kitty_gfx.upload_pending() || self.kitty_gfx.next_tick().is_some()
     }

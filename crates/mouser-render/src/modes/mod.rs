@@ -58,6 +58,10 @@ pub enum Effect {
     /// Run a command line in the shell; what the user has typed is kept
     /// (cut to the kill ring and yanked back when the prompt returns).
     Run(String),
+    /// Change the shell's directory: silently through the shell integration
+    /// (Fuzzball `s c`, docs/protocol/shell.md), else by typing `cd` and then
+    /// erasing those lines so one prompt remains.
+    Cd(PathBuf),
     /// Hand a file to the desktop's opener (players etc.).
     Open(PathBuf),
     /// Show the key mappings window.

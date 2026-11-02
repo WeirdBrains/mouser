@@ -220,6 +220,21 @@ git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mous
 Both replace each other and an older `mouser-bin` install (pacman asks to remove it).
 
 See `docs/release.md` for details and per-platform install commands.
+
+Every build includes the local model (llama.cpp). Turn it on with `mouser model local
+enable`, which asks before downloading 2.84 GB. Building from source needs cmake and
+clang, plus Vulkan headers and shaderc on Linux (docs/models.md §Building it).
+
+### Shell integration
+
+Load the integration from your shell's rc file. It reports the directory (OSC 7) and
+lets commander change directory silently (docs/protocol/shell.md):
+
+```bash
+eval "$(mouser shell-integration zsh)"    # ~/.zshrc
+eval "$(mouser shell-integration bash)"   # ~/.bashrc
+mouser shell-integration fish | source    # ~/.config/fish/config.fish
+```
 Tests (with a safety timeout):
 
 ```bash

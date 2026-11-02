@@ -20,7 +20,7 @@ pub const UPLOAD_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capability reply body (after `id=N,`).
 pub fn capabilities() -> String {
     format!(
-        "v={VERSION},sub=gkp,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1",
+        "v={VERSION},sub=gkps,raw=0,max_chunk={MAX_CHUNK},g_mem={},g_max_dim={},g_fmt=rgba:rgb:png,g_max_place={},g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1",
         graphics::MAX_BYTES,
         graphics::MAX_DIM,
         graphics::MAX_PLACEMENTS
@@ -80,6 +80,60 @@ pub struct Fuzzball {
     pub plugin_hellos: Vec<PluginHello>,
     /// Plugins this tab granted, with their capabilities (gone with the tab).
     pub plugin_grants: HashMap<String, Vec<String>>,
+    /// What the shell integration advertised (`s a`); None while a command runs.
+    pub shell: Option<ShellCaps>,
+    /// `s r` replies from the shell: (id, ok, msg).
+    pub shell_replies: Vec<(u32, bool, String)>,
+}
+
+/// A shell integration's advertisement (`DCS = F z s a ; v=0,caps=cwd,shell=zsh ST`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellCaps {
+    pub shell: String,
+    pub caps: Vec<String>,
+}
+
+impl ShellCaps {
+    pub fn has(&self, cap: &str) -> bool {
+        self.caps.iter().any(|c| c == cap)
+    }
+}
+
+/// Percent-encode `b` for a Fuzzball param value: everything but
+/// `A-Z a-z 0-9 - . _ ~ /` becomes `%XX` (docs/protocol/shell.md §3).
+pub fn pct_encode(b: &[u8]) -> String {
+    let mut o = String::with_capacity(b.len());
+    for &c in b {
+        if c.is_ascii_alphanumeric() || b"-._~/".contains(&c) {
+            o.push(c as char);
+        } else {
+            o.push_str(&format!("%{c:02X}"));
+        }
+    }
+    o
+}
+
+pub fn pct_decode(s: &str) -> Option<Vec<u8>> {
+    let b = s.as_bytes();
+    let mut o = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let h = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            o.push(u8::from_str_radix(h, 16).ok()?);
+            i += 3;
+        } else {
+            o.push(b[i]);
+            i += 1;
+        }
+    }
+    Some(o)
+}
+
+/// The request Mouser writes to the shell's input to change directory
+/// silently (`s c`, only after the shell advertised `caps=cwd`).
+pub fn shell_cd(id: u32, path: &[u8]) -> Vec<u8> {
+    format!("\x1bP=Fzsc;id={id},path={}\x1b\\", pct_encode(path)).into_bytes()
 }
 
 /// A program in the tab asks to act as a plugin (`DCS = F z p h ; id=N,name=…,caps=a+b ST`).
@@ -139,6 +193,10 @@ fn num(p: &Params, k: &str) -> Option<u32> {
 }
 
 type Res = Result<String, (Error, &'static str)>;
+
+fn eff_err(id: Option<u32>, quiet: u32, e: Error, msg: &str) -> Effect {
+    Effect { reply: id.filter(|_| quiet < 2).map(|id| format!("\x1bP=Fzsr;id={id},ok=0,err={},msg={msg}\x1b\\", e.code())), ..Default::default() }
+}
 
 impl Fuzzball {
     pub fn keyboard(&self, alt: bool) -> bool {
@@ -214,17 +272,46 @@ impl Fuzzball {
                 }
                 None => Err((Error::Inval, "name is required")),
             },
+            ('s', 'a') => {
+                self.shell = match p.get("caps").map(String::as_str) {
+                    None | Some("") => None,
+                    Some(c) if num(&p, "v").is_none_or(|v| v == VERSION) => {
+                        Some(ShellCaps { shell: p.get("shell").cloned().unwrap_or_default(), caps: c.split('+').map(String::from).collect() })
+                    }
+                    Some(_) => return eff_err(id, quiet, Error::Version, "version not available"),
+                };
+                Ok(if id.is_some() { "ok=1".into() } else { String::new() })
+            }
+            ('s', 'r') => {
+                if let Some(id) = id {
+                    let msg = p.get("msg").and_then(|m| pct_decode(m)).map(|m| String::from_utf8_lossy(&m).into_owned()).unwrap_or_default();
+                    self.shell_replies.push((id, num(&p, "ok") == Some(1), msg));
+                    if self.shell_replies.len() > 16 {
+                        self.shell_replies.remove(0);
+                    }
+                }
+                Ok(String::new())
+            }
             _ => Err((Error::NotSup, "unknown subsystem or verb")),
         };
         // Continuation chunks with more=1 stay silent.
         let silent = matches!(&res, Ok(s) if s.is_empty());
-        let reply_sub = if matches!(sub, 'c' | 'g' | 'k' | 'p') { sub } else { 'c' };
+        // `s r` is itself a reply: never answered.
+        if (sub, verb) == ('s', 'r') {
+            return eff;
+        }
+        let reply_sub = if matches!(sub, 'c' | 'g' | 'k' | 'p' | 's') { sub } else { 'c' };
         eff.reply = match (id, res) {
             (Some(id), Ok(s)) if !silent && quiet == 0 => Some(format!("\x1bP=Fz{reply_sub}r;id={id},{s}\x1b\\")),
             (Some(id), Err((e, msg))) if quiet < 2 => Some(format!("\x1bP=Fz{reply_sub}r;id={id},ok=0,err={},msg={msg}\x1b\\", e.code())),
             _ => None,
         };
         eff
+    }
+
+    /// The shell left its prompt (or exited): no silent actions until it advertises again.
+    pub fn shell_gone(&mut self) {
+        self.shell = None;
     }
 
     /// Queue a handshake for the user; the reply comes later (silent now).
