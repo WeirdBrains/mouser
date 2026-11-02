@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## [1.1.4] - 2026-11-02
+
+### Fixed
+
+- Windows: colour emoji draw again. Segoe UI Emoji on Windows 11 is a COLR v1 font (gradients, transforms, layers), which the old COLR v0-only path could not read, so every emoji fell back to a box. Mouser now paints COLR v0 and v1 glyphs with tiny-skia (linear and radial gradients, clips, composite modes; sweep gradients use a solid stop colour). Segoe UI Emoji has no flag glyphs, so flags stay as letters on Windows.
+
 ## [1.1.3] - 2026-11-02
 
 ### Fixed
