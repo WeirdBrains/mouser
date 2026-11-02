@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// Plugin API version this build speaks.
@@ -777,7 +777,7 @@ pub fn split_line(line: &str) -> (&str, Vec<String>) {
 pub fn run_command(p: &Installed, req: &CommandRequest) -> Result<CommandReply> {
     let argv = p.argv();
     let (prog, args) = argv.split_first().context("empty run.command")?;
-    let mut c = Command::new(prog);
+    let mut c = crate::process::command(prog);
     c.args(args).current_dir(&p.dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     c.env_clear();
     for k in ["PATH", "HOME", "LANG", "SystemRoot", "TEMP", "TMP", "USERPROFILE"] {

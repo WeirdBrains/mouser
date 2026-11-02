@@ -16,7 +16,7 @@ use crate::Waker;
 use std::collections::VecDeque;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -48,7 +48,7 @@ pub fn available() -> bool {
     *OK.get_or_init(|| {
         ["ffmpeg", "ffprobe"]
             .iter()
-            .all(|t| Command::new(t).arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success()))
+            .all(|t| mouser_core::process::command(t).arg("-version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success()))
     })
 }
 
@@ -84,7 +84,7 @@ pub fn parse_probe(json: &str) -> Option<Info> {
 }
 
 pub fn probe(p: &Path) -> Option<Info> {
-    let out = Command::new("ffprobe")
+    let out = mouser_core::process::command("ffprobe")
         .args([
             "-v",
             "error",
@@ -399,7 +399,7 @@ impl Player {
         let ss = format!("{:.3}", self.start);
         if self.info.video {
             let (w, h, fps) = (self.size.0, self.size.1, self.info.fps);
-            let child = Command::new("ffmpeg")
+            let child = mouser_core::process::command("ffmpeg")
                 .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", &ss, "-i"])
                 .arg(&self.input)
                 .args(["-an", "-vf", &format!("fps={fps},scale={w}:{h}"), "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
@@ -418,7 +418,7 @@ impl Player {
             }
         }
         if let Some(o) = self.out {
-            let child = Command::new("ffmpeg")
+            let child = mouser_core::process::command("ffmpeg")
                 .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", &ss, "-i"])
                 .arg(&self.input)
                 .args(["-vn", "-f", "f32le", "-ac", &o.channels.to_string(), "-ar", &o.rate.to_string(), "pipe:1"])
@@ -767,7 +767,7 @@ mod tests {
         }
         let t = tempfile::tempdir().unwrap();
         let clip = t.path().join("c.mp4");
-        let ok = Command::new("ffmpeg")
+        let ok = std::process::Command::new("ffmpeg")
             .args(["-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=10:duration=6", "-pix_fmt", "yuv420p"])
             .arg(&clip)
             .status()

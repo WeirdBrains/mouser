@@ -38,7 +38,7 @@ fn control_dir() -> PathBuf {
 /// Run the listing; the error is ssh's last stderr line.
 pub fn fetch(t: &SshTarget, dir: &Path) -> Result<Vec<Entry>, String> {
     let cd = control_dir();
-    let mut cmd = std::process::Command::new(ssh_bin());
+    let mut cmd = mouser_core::process::command(ssh_bin());
     // The config Mouser manages (tests: a temp one), as the launcher uses it.
     if let Some(cfg) = std::env::var_os("MOUSER_SSH_CONFIG")
         && !t.opts.iter().any(|o| o == "-F")

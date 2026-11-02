@@ -258,7 +258,7 @@ impl Client {
     /// Like [`start`](Self::start), with extra environment (`MOUSER_HOME` for Mouser's own bridge).
     pub fn start_env(argv: &[String], dir: &std::path::Path, plugin: &str, env: &[(String, String)]) -> Result<Self> {
         let (prog, args) = argv.split_first().context("empty command")?;
-        let mut c = Command::new(prog);
+        let mut c = crate::process::command(prog);
         c.args(args).current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
         // Its own process group, so stopping it also stops what it started.
         #[cfg(unix)]

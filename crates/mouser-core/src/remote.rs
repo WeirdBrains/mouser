@@ -32,12 +32,12 @@ impl SshTarget {
     /// as ssh resolves it (`ssh -G`, offline), plus ` SHA256:…` of the host key
     /// from the known_hosts file ssh uses, when it is there. `None` if ssh can't say.
     pub fn identity(&self) -> Option<String> {
-        let out = std::process::Command::new(crate::fetch::ssh_bin()).args(&self.opts).arg("-G").arg(&self.dest).output().ok()?;
+        let out = crate::process::command(crate::fetch::ssh_bin()).args(&self.opts).arg("-G").arg(&self.dest).output().ok()?;
         if !out.status.success() {
             return None;
         }
         identity_from(&String::from_utf8_lossy(&out.stdout), |file, host| {
-            let o = std::process::Command::new("ssh-keygen").args(["-l", "-F", host, "-f", file]).output().ok()?;
+            let o = crate::process::command("ssh-keygen").args(["-l", "-F", host, "-f", file]).output().ok()?;
             String::from_utf8_lossy(&o.stdout).split_whitespace().find(|w| w.starts_with("SHA256:")).map(str::to_string)
         })
     }

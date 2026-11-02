@@ -14,7 +14,7 @@ use mouser_engine_abi as abi;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -244,7 +244,7 @@ pub struct HostClient {
 impl HostClient {
     /// Start `program args.. <lib> <name>` and create the engine at `w` x `h`.
     pub fn spawn(program: &Path, args: &[String], lib: &Path, name: &str, w: u32, h: u32) -> Result<Self> {
-        let mut child = Command::new(program)
+        let mut child = mouser_core::process::command(program)
             .args(args)
             .arg(lib)
             .arg(name)
