@@ -17,6 +17,7 @@ const BINDINGS: &[Binding] = &[
     Binding { id: "allow", key: "y", describe: "approval card: allow once" },
     Binding { id: "allow_chat", key: "a", describe: "approval card: allow for this chat (not shell/files)" },
     Binding { id: "deny", key: "n", describe: "approval card: deny" },
+    Binding { id: "model", key: "m", describe: "switch model (also click the model name)" },
     Binding { id: "clear", key: "l", describe: "new chat (clears the transcript)" },
     Binding { id: "up", key: "pageup", describe: "scroll the transcript up" },
     Binding { id: "down", key: "pagedown", describe: "scroll the transcript down" },
@@ -69,16 +70,45 @@ impl ChatMode {
         self.setup.is_some()
     }
 
+    /// The model key / header click: the switch picker. Not while a turn
+    /// runs (the picker would cover its approval cards and Cancel).
+    fn switch_model(&mut self) -> Effect {
+        if self.chat.state.lock().unwrap().running {
+            return Effect::Say("[chat] a turn is running; switch models after it finishes (or cancel it: esc)".into());
+        }
+        let current = mouser_core::models::default_choice().map(|(p, m)| format!("{p}/{m}"));
+        let mut s = match &self.make_setup {
+            Some(f) => {
+                let mut s = f();
+                s.opts = setup::switch_options(s.opts.first().is_some_and(|o| o.available), current.as_deref());
+                s.switch = true;
+                s.sel = s.opts.iter().position(|o| o.label.starts_with("● ")).unwrap_or(0);
+                s
+            }
+            None => Setup::switch(mouser_core::models::local::backend().is_some(), current.as_deref()),
+        };
+        if let Some(w) = &self.waker {
+            s.set_notify(w.clone());
+        }
+        self.setup = Some(s);
+        Effect::None
+    }
+
     pub fn setup(&self) -> Option<&Setup> {
         self.setup.as_ref()
     }
 
     /// The picker finished: note it, and send the held message.
     fn setup_done(&mut self, spec: &str, warn: Option<&str>) -> Effect {
-        self.setup = None;
+        let switch = self.setup.take().is_some_and(|s| s.switch);
         {
             let mut s = self.chat.state.lock().unwrap();
-            s.entries.push(Entry::Note(format!("using {spec} (the default model now; change it with mouser model default)")));
+            s.model = spec.to_string();
+            s.entries.push(Entry::Note(if switch {
+                format!("switched to {spec} (from the next message; also the default model now)")
+            } else {
+                format!("using {spec} (the default model now; change it with mouser model default)")
+            }));
             if let Some(w) = warn {
                 s.entries.push(Entry::Note(w.to_string()));
             }
@@ -228,13 +258,18 @@ pub fn setup_view(s: &Setup, ctx: &Context) -> View {
         items.push(item(Rect { x: *x, y, w: bw, h: row_h }, t, PanelStyle::Button { primary }, act(id, 0)));
         *x += bw + cw;
     };
-    line(&mut items, &mut y, "chat · pick a model".into(), PanelStyle::Title, UiAction::None);
+    line(&mut items, &mut y, if s.switch { "chat · switch model" } else { "chat · pick a model" }.into(), PanelStyle::Title, UiAction::None);
     match &s.step {
         Step::Choose => {
             line(
                 &mut items,
                 &mut y,
-                "No model is set up yet. Pick one (↑/↓ and Enter, or click); Esc closes.".into(),
+                if s.switch {
+                    "● is the current model. Pick one (↑/↓ and Enter, or click); Esc keeps the current one."
+                } else {
+                    "No model is set up yet. Pick one (↑/↓ and Enter, or click); Esc closes."
+                }
+                .into(),
                 PanelStyle::Hint,
                 UiAction::None,
             );
@@ -392,6 +427,7 @@ impl Mode for ChatMode {
                 self.need_model();
             }
             "send" => return self.send(),
+            "model" => return self.switch_model(),
             "cancel" => {
                 if !self.chat.cancel() {
                     return Effect::Say("[chat] nothing running".into());
@@ -516,7 +552,12 @@ impl Mode for ChatMode {
         };
         // Header.
         let mut y = rect.y + 6;
-        items.push(item(Rect { x: x0, y, w: w / 2, h: row_h }, format!("chat · {model}"), PanelStyle::Title, UiAction::None));
+        items.push(item(
+            Rect { x: x0, y, w: w / 2, h: row_h },
+            format!("chat · {model} ▾ ({})", keys.label("model")),
+            PanelStyle::Title,
+            act("model", 0),
+        ));
         let mut bx = x0 + w;
         let mut button = |t: String, a: UiAction, primary: bool, items: &mut Vec<PanelItem>| {
             let bw = (t.chars().count() as i32 + 2) * cw;
@@ -584,9 +625,11 @@ impl Mode for ChatMode {
         let end = all.len() - self.scroll;
         let start = end.saturating_sub(fit);
         if all.is_empty() {
-            let hint =
-                "Ask about what is on the screen, or ask it to do something. Tool calls that type, run or write show a card first. Esc cancels.";
-            for (i, l) in wrap(hint, cols).into_iter().enumerate() {
+            let hint = format!(
+                "Ask about what is on the screen, or ask it to do something. Tool calls that type, run or write show a card first. Esc cancels; {} (or click the model name) switches models.",
+                keys.label("model")
+            );
+            for (i, l) in wrap(&hint, cols).into_iter().enumerate() {
                 items.push(item(Rect { x: x0, y: y + i as i32 * row_h, w, h: row_h }, l, PanelStyle::Hint, UiAction::None));
             }
         }

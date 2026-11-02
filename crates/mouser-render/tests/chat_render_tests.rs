@@ -195,3 +195,109 @@ fn no_model_opens_the_picker_and_the_held_message_follows() {
     assert_eq!(mouser_core::models::prefs().default.as_deref(), Some("xai/grok-4"));
     unsafe { std::env::remove_var("MOUSER_SECRET_STORE") };
 }
+
+/// Two configured providers in a temp MOUSER_HOME, `custom/m` the default.
+fn two_models() -> tempfile::TempDir {
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    for (n, m) in [("custom", "m"), ("other", "n")] {
+        mouser_core::models::setup::save_provider(
+            mouser_core::models::ProviderEntry {
+                name: n.into(),
+                api: mouser_core::models::Api::OpenAi,
+                url: "http://127.0.0.1:9/v1".into(),
+                key: None,
+                models: vec![m.into()],
+                ca: None,
+            },
+            None,
+        )
+        .unwrap();
+    }
+    mouser_core::models::setup::set_default("custom/m").unwrap();
+    home
+}
+
+fn current() -> String {
+    let (p, m) = mouser_core::models::default_choice().unwrap();
+    format!("{p}/{m}")
+}
+
+#[test]
+fn alt_m_opens_the_switch_picker_and_picking_switches_and_persists() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = two_models();
+    let mut m = ChatMode::new(Chat::new(Arc::new(NoModel)));
+    let keys = Keymap::new(m.bindings());
+    assert_eq!(keys.lookup(b"\x1bm"), Some("model"));
+    assert_eq!(keys.label("model"), "alt+m");
+    // No clash with the mode's other keys.
+    let ids: Vec<_> = m.bindings().iter().map(|b| b.key).collect();
+    assert_eq!(ids.iter().filter(|k| **k == "m").count(), 1);
+    m.activate();
+    assert!(m.setup().is_none(), "a usable model: no first-run picker");
+    assert_eq!(m.action("model", 0), Effect::None);
+    let s = m.setup().expect("switch picker open");
+    assert!(s.switch);
+    let cur = &s.opts[s.sel];
+    assert_eq!(cur.label, "● custom/m", "the current model is marked and selected");
+    let i = s.opts.iter().position(|o| o.label == "other/n").expect("other configured model listed");
+    assert!(s.opts.iter().any(|o| o.label.contains("Gemma 4")), "installable local models listed");
+    let v = m.view(&ctx(), &keys).dock.unwrap();
+    assert!(v.items.iter().any(|i| i.text == "chat · switch model"));
+    assert_eq!(m.action("setup_pick", i as i32), Effect::None);
+    assert!(m.setup().is_none());
+    assert_eq!(current(), "other/n");
+    // Persisted in MOUSER_HOME like `mouser model default`.
+    let prefs = std::fs::read_to_string(home.path().join("preferences.toml")).unwrap_or_default();
+    let all: String = walk(home.path());
+    assert!(prefs.contains("other/n") || all.contains("other/n"), "{all}");
+    let v = m.view(&ctx(), &keys).dock.unwrap();
+    assert!(v.items.iter().any(|i| i.text.starts_with("chat · other/n")), "header shows the new model");
+    assert!(v.items.iter().any(|i| i.text.contains("switched to other/n")));
+}
+
+fn walk(p: &std::path::Path) -> String {
+    let mut out = String::new();
+    for e in std::fs::read_dir(p).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out += &walk(&p);
+        } else if let Ok(s) = std::fs::read_to_string(&p) {
+            out += &s;
+        }
+    }
+    out
+}
+
+#[test]
+fn esc_closes_the_switch_picker_with_no_change() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _home = two_models();
+    let mut m = ChatMode::new(Chat::new(Arc::new(NoModel)));
+    m.activate();
+    m.action("model", 0);
+    m.action("down", 0);
+    assert!(m.setup().is_some());
+    assert!(m.escape());
+    assert!(m.setup().is_none());
+    assert_eq!(current(), "custom/m");
+}
+
+#[test]
+fn clicking_the_model_name_in_the_header_opens_the_picker() {
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let _home = two_models();
+    let mut m = ChatMode::new(Chat::new(Arc::new(NoModel)));
+    let keys = Keymap::new(m.bindings());
+    m.activate();
+    let d = m.view(&ctx(), &keys).dock.unwrap();
+    let h = d.items.iter().find(|i| i.text.starts_with("chat · custom/m")).expect("header with the model name");
+    assert_eq!(h.action, UiAction::Mode { action: "model".into(), arg: 0 });
+    // The hit region covers the model name's cells.
+    let name_end = h.rect.x + ("chat · custom/m".chars().count() as i32) * 9;
+    assert!(h.rect.w > 0 && h.rect.x + h.rect.w >= name_end, "{:?}", h.rect);
+    let UiAction::Mode { action, arg } = h.action.clone() else { unreachable!() };
+    m.action(&action, arg);
+    assert!(m.setup().is_some_and(|s| s.switch));
+}
