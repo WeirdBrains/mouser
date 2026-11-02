@@ -33,8 +33,12 @@ i=0; while :; do i=$((i+1)); printf '\rtick %d' $i; sleep 0.1; done
 "#;
 
 fn start(home: tempfile::TempDir, env: &[(&str, &str)]) -> Server {
+    start_shell(home, SHELL, env)
+}
+
+fn start_shell(home: tempfile::TempDir, script: &str, env: &[(&str, &str)]) -> Server {
     let shell = home.path().join("shell.sh");
-    std::fs::write(&shell, SHELL).unwrap();
+    std::fs::write(&shell, script).unwrap();
     Command::new("chmod").arg("+x").arg(&shell).status().unwrap();
     std::fs::write(home.path().join("ssh_config"), "").unwrap();
     let dump = home.path().join("dump.txt");
@@ -197,4 +201,23 @@ fn the_ui_closes_when_the_server_dies() {
         assert!(Instant::now() < end, "UI {} still running without its server", a.ui_pid);
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Tab then Backspace with commander on (the default mode), through the
+/// window's key-event path: zsh gets both keys and the tabs are deleted.
+#[test]
+#[serial]
+fn tab_then_backspace_reaches_zsh_with_commander_on() {
+    if Command::new("zsh").arg("-fc").arg("true").status().is_err() {
+        eprintln!("no zsh; skipped");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let s = start_shell(
+        home,
+        "#!/bin/sh\nPS1='$ ' exec zsh -f\n",
+        &[("MOUSER_TEST_KEYS", "tab,tab,backspace,backspace,text:X"), ("MOUSER_PROC_FORK", "1")],
+    );
+    let d = wait_for(&s.dump, "X typed after the backspaces", |d| d.screen.lines().next().is_some_and(|l| l.trim_end() == "$ X"));
+    assert!(d.screen.starts_with("$ X"), "{}", d.screen);
 }

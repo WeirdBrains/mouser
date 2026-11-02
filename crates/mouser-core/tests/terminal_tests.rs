@@ -88,3 +88,19 @@ fn alt_screen_restores_main_screen() {
     t.feed(b"\x1b[?1049l");
     assert_eq!(lines(&t)[0], "main");
 }
+
+#[test]
+fn zsh_tab_then_backspace_moves_back_over_the_tabs() {
+    // What zsh echoes for Tab, Tab, Backspace, Backspace on an empty line.
+    let (mut t, _, _) = term(40, 4);
+    t.feed(b"$ ");
+    t.feed(b"      ");
+    t.feed(b"        ");
+    assert_eq!(t.screen.cursor.x, 16);
+    t.feed(b"\x1b[8D");
+    assert_eq!(t.screen.cursor.x, 8);
+    t.feed(b"\x08\x08\x08\x08\x08\x08");
+    assert_eq!(t.screen.cursor.x, 2);
+    t.feed(b"X");
+    assert_eq!(lines(&t)[0], "$ X");
+}
