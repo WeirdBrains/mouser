@@ -970,8 +970,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     // A row dragged past the threshold; dropped on a vanished row: cancel.
                     l.engine_drag = engine_drag.filter(|d| d.active && d.from < l.engines.len());
                 }
+                // Fullscreen media covers everything and leaves the terminal's
+                // size alone (no resize reaches the shell).
+                let fullscreen = layout.as_ref().and_then(|l| l.dock.as_ref()).is_some_and(|d| d.fullscreen);
                 // The sidebar takes space from the terminal instead of covering it.
-                text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
+                if !fullscreen {
+                    text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
+                }
                 if let Some(f) = &hooks.get_tabs {
                     tab_bar = f();
                 }
@@ -979,7 +984,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 // A mode's view docked above the prompt pushes the grid down.
                 let inset = layout.as_ref().and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset);
                 grid_top = PADDING + tab_h + inset;
-                let new_grid = grid_size(&fonts, text_w, height as i32 - tab_h - inset);
+                let new_grid = if fullscreen { grid } else { grid_size(&fonts, text_w, height as i32 - tab_h - inset) };
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;

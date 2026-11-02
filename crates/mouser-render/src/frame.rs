@@ -246,6 +246,23 @@ pub fn accent_for(bg: u32) -> u32 {
 
 pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame) {
     canvas.clear(frame.bg);
+    // Fullscreen media: the mode's panel and images only (no grid, tabs or sidebar).
+    if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()).filter(|d| d.fullscreen) {
+        // Always dark around the picture, whatever the theme (letterboxing).
+        let (bg, fg, panel) = (0x0E0E0E, 0xE6E6E6, 0x0E0E0E);
+        let accent = accent_for(bg);
+        canvas.fill_rect(0, 0, canvas.width() as i32, canvas.height() as i32, panel);
+        let flat = ui::Panel { rect: ui::Rect { x: 0, y: 0, w: 0, h: 0 }, items: d.panel.items.clone() };
+        draw_panel(canvas, fonts, &flat, bg, fg, panel, mix(bg, fg, 0.25), mix(panel, fg, 0.65), accent);
+        draw_images(canvas, fonts, frame.images, i64::MIN..i64::MAX, frame.top(fonts.cell_h));
+        if let Some(layout) = frame.ui
+            && let Some(p) = &layout.panel
+        {
+            let muted = mix(panel, fg, 0.65);
+            draw_panel(canvas, fonts, p, bg, fg, panel, mix(bg, fg, 0.25), muted, accent);
+        }
+        return;
+    }
     // The commander view goes first: its previews are images, drawn with the rest.
     if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()) {
         let accent = frame.accent.unwrap_or(accent_for(frame.bg));

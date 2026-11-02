@@ -21,6 +21,13 @@
   `mouser model local` shows how to change the folder.
 - `mouser model default|test` accept a bare model name offered by one provider
   (`mouser model default gemma-4-e4b`).
+- Commander fullscreen media: `alt+e`, the header's `fullscreen` button or a
+  double-click makes the image viewer or player fill the whole window, local or remote.
+  The shell, tab bar and sidebar are hidden, and the terminal keeps its size. Images
+  are letterboxed and keep zoom and pan; video keeps play/pause, seeking and the
+  clickable bars. Controls hide after 2.5 s idle and come back on mouse move. Audio
+  gets a full-window controls view. Space and the arrows go to the player while
+  fullscreen. Esc or `alt+e` leaves (docs/modes.md).
 - Fuzzball shell actions (`s`, docs/protocol/shell.md): with the new shell integration
   (`eval "$(mouser shell-integration zsh)"`, also bash and fish), commander changes
   directory silently. There is no `cd` line, the half-typed line is kept, and the

@@ -47,6 +47,9 @@ pub struct View {
     /// A floating window (options, manual ...).
     pub panel: Option<Panel>,
     pub images: Vec<ModeImage>,
+    /// The dock fills the whole window (commander's fullscreen media): no
+    /// grid, tab bar or sidebar is drawn, and the terminal keeps its size.
+    pub fullscreen: bool,
 }
 
 /// What the mode asks Mouser to do.

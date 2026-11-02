@@ -336,7 +336,7 @@ pub fn setup_view(s: &Setup, ctx: &Context) -> View {
         }
         Step::Done(spec, _) => line(&mut items, &mut y, format!("Ready: {spec}"), PanelStyle::Label, UiAction::None),
     }
-    View { dock: Some(Panel { rect, items }), panel: None, images: vec![] }
+    View { dock: Some(Panel { rect, items }), panel: None, images: vec![], fullscreen: false }
 }
 
 impl Mode for ChatMode {
@@ -596,6 +596,6 @@ impl Mode for ChatMode {
         if start > 0 {
             items.push(item(Rect { x: x0 + w - 12 * cw, y, w: 12 * cw, h: row_h }, format!("↑ {start} more"), PanelStyle::Hint, act("up", 0)));
         }
-        View { dock: Some(Panel { rect, items }), panel: None, images: vec![] }
+        View { dock: Some(Panel { rect, items }), panel: None, images: vec![], fullscreen: false }
     }
 }

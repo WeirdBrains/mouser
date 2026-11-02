@@ -51,7 +51,7 @@ fn frame(h: &mut Host, n: usize, name: &str) -> (Vec<u32>, Vec<ModeImage>) {
     let dock = v.dock.clone().unwrap();
     let inset = dock.rect.h + 8;
     let mut layout = ui::without_sidebar(w as i32, hh as i32);
-    layout.dock = Some(ui::Dock { panel: dock, inset });
+    layout.dock = Some(ui::Dock { panel: dock, inset, fullscreen: false });
     let draws: Vec<ImageDraw> = v.images.iter().map(|m| draw(m, PADDING + inset)).collect();
     let lines = vec!["$ ls".to_string()];
     let mut fonts = FontStack::embedded(15.0);
@@ -125,7 +125,7 @@ fn mouse_clicks_and_wheel_drive_commander() {
     let layout = |h: &mut Host| {
         let mut l = ui::without_sidebar(1100, 760);
         let dock = h.view(&ctx).dock.unwrap();
-        l.dock = Some(ui::Dock { inset: dock.rect.h + 8, panel: dock });
+        l.dock = Some(ui::Dock { inset: dock.rect.h + 8, panel: dock, fullscreen: false });
         l
     };
     let find = |l: &ui::UiLayout, s: &str| {

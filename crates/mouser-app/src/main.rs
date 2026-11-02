@@ -42,6 +42,8 @@ struct AppState {
     modes: mouser_render::modes::Host,
     /// The mode's images from the last layout and the grid top they are relative to.
     mode_images: (Vec<mouser_render::modes::ModeImage>, i32),
+    /// A mode fills the window (fullscreen media): only its images are drawn.
+    mode_fullscreen: bool,
     /// A lone Esc waiting to see whether `:` follows (generation).
     esc_pending: Option<u64>,
     esc_gen: u64,
@@ -739,6 +741,7 @@ fn main() -> Result<()> {
         // Filled from the plugin registry below, once the chat host can be made.
         modes: mouser_render::modes::Host::new(vec![]),
         mode_images: (Vec::new(), 0),
+        mode_fullscreen: false,
         esc_pending: None,
         esc_gen: 0,
         remote: Default::default(),
@@ -792,7 +795,13 @@ fn main() -> Result<()> {
             let fuzz = p.fuzzball.gfx.draws(alt, top, rows, cell);
             let mut v = mouser_render::layered_image_draws(&[(&p.kitty_gfx.gfx, kitty), (&p.fuzzball.gfx, fuzz)], &mut scaler.lock().unwrap());
             drop(p);
-            let (imgs, top) = app_state.lock().unwrap().mode_images.clone();
+            let (imgs, top, fs) = {
+                let st = app_state.lock().unwrap();
+                (st.mode_images.0.clone(), st.mode_images.1, st.mode_fullscreen)
+            };
+            if fs {
+                v.clear();
+            }
             v.extend(imgs.iter().map(|m| mode_image_draw(m, top)));
             v
         })
@@ -2461,6 +2470,7 @@ fn attach_mode_view(
         }
         None => {}
     }
+    st.mode_fullscreen = false;
     if alt {
         st.mode_images.0.clear();
         return layout;
@@ -2472,9 +2482,16 @@ fn attach_mode_view(
         st.mode_images.0.clear();
         return layout;
     }
-    let mut l = layout.unwrap_or_else(|| ui::without_sidebar(vp.width, vp.height));
-    let inset = view.dock.as_ref().map_or(0, |d| d.rect.h + 8);
-    l.dock = view.dock.map(|panel| ui::Dock { panel, inset });
+    let fullscreen = view.fullscreen && view.dock.is_some();
+    st.mode_fullscreen = fullscreen;
+    // Fullscreen media hides the sidebar too (and keeps the terminal's size).
+    let mut l = match layout {
+        Some(l) if !fullscreen => l,
+        Some(l) => ui::UiLayout { panel: l.panel, ..ui::without_sidebar(vp.width, vp.height) },
+        None => ui::without_sidebar(vp.width, vp.height),
+    };
+    let inset = if fullscreen { 0 } else { view.dock.as_ref().map_or(0, |d| d.rect.h + 8) };
+    l.dock = view.dock.map(|panel| ui::Dock { panel, inset, fullscreen });
     if l.panel.is_none() {
         l.panel = view.panel;
     }
