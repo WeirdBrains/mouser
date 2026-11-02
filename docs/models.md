@@ -12,7 +12,7 @@ calls. Every model is a plugin of kind `model-provider` (decision 5):
 | `moonshot` (Kimi) | built in | OpenAI-compatible | `https://api.moonshot.ai/v1` |
 | `anthropic` | built in | Anthropic Messages | `https://api.anthropic.com` |
 | `google` | built in | Gemini `streamGenerateContent` | `https://generativelanguage.googleapis.com` |
-| `gemma-local` | built in (feature `local-llm`) | llama.cpp, or a compatible URL | — |
+| `gemma-local` | built in (every build) | llama.cpp, or a compatible URL | — |
 | any name | `[[models.providers]]` | openai / anthropic / google | yours |
 | any name | installed plugin with `[model]` | openai / anthropic / google | the plugin's |
 
@@ -23,6 +23,10 @@ With no usable model, the chat (`esc :a`) shows a picker that sets one up: local
 test). See docs/chat.md §Picking a model. Code: `mouser_core::models::setup`.
 
 ## Commands
+
+`mouser model default` and `mouser model test` take `provider/model`, a provider, or
+just a model name when only one provider offers it (`mouser model default
+gemma-4-e4b` means `gemma-local/gemma-4-e4b`).
 
 ```sh
 mouser model list                                  # providers, models, * = default
@@ -111,8 +115,17 @@ models = ["llama3.2", "qwen3"]
 
 `gemma-local` is Mouser's own model: **Gemma 4 E2B** by default and **E4B** as the
 switch (`mouser model default gemma-local/gemma-4-e4b`). It runs on llama.cpp built
-into Mouser (Vulkan on Linux/Windows, Metal on macOS) or, instead, on any
-OpenAI/Anthropic-compatible server you name.
+into every Mouser build and package (Vulkan on Linux, Metal on macOS, the CPU on
+Windows) or, instead, on any OpenAI/Anthropic-compatible server you name. Nothing is
+downloaded until you agree to it.
+
+```sh
+mouser model local enable              # Gemma 4 E2B (or the one already downloaded): asks, downloads, makes it the default
+mouser model local enable gemma-4-e4b  # the larger model
+mouser model local disable             # stop offering it; downloads are kept
+```
+
+The chat picker's local rows (`esc :a`) do the same as `enable`.
 
 | Weights | File (ggml-org on Hugging Face) | Size |
 |---|---|---|
@@ -125,6 +138,7 @@ mouser model local download        # shows the size and asks; --yes skips the qu
 mouser model local download gemma-4-e4b
 mouser model local delete gemma-4-e2b
 mouser model local dir /mnt/big/models   # or MOUSER_MODELS_DIR=…; --clear for the default
+mouser model local move /mnt/big/models  # move what is downloaded (SHA256-checked), then use that dir
 mouser model local url http://127.0.0.1:8080/v1 [--api anthropic] [--model NAME] [--key-stdin]
 mouser model local url --clear     # back to the built-in engine
 mouser model test gemma-local --tool     # a tool call, a demo result and the reply
@@ -139,6 +153,16 @@ background with progress notices.
   or popup creates. The `.part` file resumes; size and SHA256 (pinned per file) are checked,
   and a mismatch deletes it.
 - **Models dir:** `$MOUSER_MODELS_DIR`, else `[models.local] dir`, else `$MOUSER_HOME/models`.
+  To change it, run `mouser model local dir DIR`, or put this in `config.toml`:
+
+  ```toml
+  [models.local]
+  dir = "/mnt/big/models"
+  ```
+
+  `mouser model local move DIR` moves weights that are already downloaded. A rename
+  on the same drive is atomic. Across drives, each file is copied and its SHA256
+  checked before the old copy is removed.
 - **`[models.local]`:** `dir`, `url`, `api`, `key` (a `keychain:` ref), `model`,
   `gpu_layers` (default all) and `context` (default 8192).
 - **Prompting:** the GGUF's own chat template (Jinja, rendered with minijinja), with a
@@ -149,18 +173,25 @@ background with progress notices.
 
 ### Building it
 
-The default build has no llama.cpp. Build the feature with:
+llama.cpp is part of the default build (mouser-app's default `local-llm` feature):
 
 ```sh
-cargo build --release -p mouser-app --features local-llm
-# Arch: MOUSER_LOCAL_LLM=1 makepkg   (packaging/arch/mouser-git)
+cargo build --release -p mouser-app
 ```
 
-It needs cmake and clang, plus Vulkan headers, shaderc and spirv-headers on Linux
-(Arch: `cmake clang vulkan-headers shaderc spirv-headers`), and a Vulkan driver at run
-time (`vulkan-icd-loader` + the GPU's ICD). `crates/mouser-llm` is excluded from the
-workspace, so `cargo build/test --workspace` and CI never compile llama.cpp. Without the
-feature, `gemma-local` explains this and still works through `mouser model local url`.
+- **Build needs:** cmake and clang everywhere. On Linux also Vulkan headers, shaderc
+  and spirv-headers (Arch: `cmake clang vulkan-headers shaderc spirv-headers`;
+  Debian/Ubuntu: `cmake clang libclang-dev libvulkan-dev glslc spirv-headers`).
+- **Run needs:** the Vulkan loader on Linux (`libvulkan.so.1`: Arch `vulkan-icd-loader`,
+  Debian/Ubuntu `libvulkan1`, Fedora `vulkan-loader`). The packages depend on it.
+  Without a Vulkan driver (ICD) llama.cpp runs on the CPU. macOS uses Metal (always
+  there). Windows builds llama.cpp for the CPU, so it needs no `vulkan-1.dll`.
+- **Startup:** llama.cpp only starts on the first local chat. Starting Mouser never
+  touches the GPU for the model.
+- **Size:** the binary grows by about 44 MB (Linux, Vulkan shaders included). The
+  Arch package goes from 11.4 MB to 21.8 MB.
+- **Without it:** `cargo build --no-default-features --features skia` leaves llama.cpp
+  out. `gemma-local` then says so and still works through `mouser model local url`.
 
 Measured on an RTX 3060 (Vulkan, E2B Q4_0, warm cache): about 0.9 s to load, about
 2,800-5,500 tokens/s on the prompt and about 90-110 tokens/s generating. The NVIDIA

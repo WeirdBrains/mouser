@@ -1,5 +1,7 @@
-//! llama.cpp inside Mouser (P4b). Built only with `mouser-app --features
-//! local-llm`; [`register`] plugs it into `mouser_core::models::local`.
+//! llama.cpp inside Mouser (P4b). Part of every build through mouser-app's
+//! default `local-llm` feature; [`register`] plugs it into
+//! `mouser_core::models::local`. llama.cpp starts lazily on the first local
+//! chat, and without a usable GPU (no Vulkan driver) it runs on the CPU.
 //! Prompts use the model's own chat template (rendered by core) and tool calls
 //! the `<tool_call>` tag format parsed by `models::local::ToolParser`.
 

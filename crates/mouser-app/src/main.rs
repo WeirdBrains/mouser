@@ -94,6 +94,14 @@ struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
+    /// Print the shell integration for zsh, bash or fish (directory reports and
+    /// silent `cd` from commander; docs/protocol/shell.md). Load it from your rc file:
+    /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`
+    /// or `mouser shell-integration fish | source`.
+    ShellIntegration {
+        /// zsh, bash or fish.
+        shell: String,
+    },
     /// Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow-passthrough).
     ///
     /// Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not
@@ -232,6 +240,20 @@ enum LocalCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Use the built-in local model: downloads (asks first) if needed and makes it
+    /// the default. ID: gemma-4-e2b (default) or gemma-4-e4b; without one, the
+    /// already-downloaded model.
+    Enable {
+        id: Option<String>,
+        /// Skip the download question.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Stop offering the local model (downloads are kept).
+    Disable,
+    /// Move downloaded weights to DIR (each checked against its SHA256 before the
+    /// old copy is removed) and use DIR from now on.
+    Move { dir: String },
     /// Delete downloaded weights.
     Delete { id: String },
     /// Use an OpenAI/Anthropic-compatible server instead of the built-in engine.
@@ -623,6 +645,15 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+    if let Some(Command::ShellIntegration { shell }) = &cli.command {
+        match mouser_core::shell_integration::script(shell) {
+            Some(t) => {
+                print!("{t}");
+                return Ok(());
+            }
+            None => anyhow::bail!("no integration for {shell}; one of: zsh, bash, fish"),
+        }
+    }
     if let Some(Command::Model { action }) = &cli.command {
         use mouser_app::model_cli::Action;
         let a = match action {
@@ -633,6 +664,9 @@ fn main() -> Result<()> {
                     None | Some(LocalCommand::Status) => L::Status,
                     Some(LocalCommand::Download { id, yes }) => L::Download { id: id.clone(), yes: *yes },
                     Some(LocalCommand::Delete { id }) => L::Delete(id.clone()),
+                    Some(LocalCommand::Enable { id, yes }) => L::Enable { id: id.clone(), yes: *yes },
+                    Some(LocalCommand::Disable) => L::Disable,
+                    Some(LocalCommand::Move { dir }) => L::Move(dir.clone()),
                     Some(LocalCommand::Dir { path, .. }) => L::Dir(path.clone()),
                     Some(LocalCommand::Url { url, api, model, key_stdin, .. }) => {
                         let key = if *key_stdin {
@@ -2307,6 +2341,21 @@ fn esc_wait() -> std::time::Duration {
     *W.get_or_init(|| mouser_core::storage::leader_timeout(&mouser_core::storage::load_preferences()))
 }
 
+/// Wait until the shell owns the terminal again (the typed command finished;
+/// a builtin like cd is done at once).
+fn wait_for_prompt(session: Option<&tabs::Session>) {
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    let mut idle = 0;
+    while idle < 3 && std::time::Instant::now() < deadline {
+        match session.and_then(|s| s.shell_in_foreground()) {
+            Some(false) => idle = 0,
+            _ => idle += 1,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer: &tabs::ActiveWriter) {
     use mouser_render::modes::Effect;
     match e {
@@ -2321,23 +2370,46 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
             drop(w);
             let session = writer.0.lock().unwrap().active();
             std::thread::spawn(move || {
-                // Yank the line back once the shell owns the terminal again
-                // (the command finished); a builtin like cd is done at once.
-                std::thread::sleep(std::time::Duration::from_millis(150));
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-                let mut idle = 0;
-                while idle < 3 && std::time::Instant::now() < deadline {
-                    match session.as_ref().and_then(|s| s.shell_in_foreground()) {
-                        Some(false) => idle = 0,
-                        _ => idle += 1,
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
+                wait_for_prompt(session.as_deref());
                 // To the same session, even if another tab is active now.
                 if let Some(s) = session {
                     let mut sw = s.writer.clone();
                     let _ = sw.write_all(mouser_core::modes::RESTORE_LINE);
                 }
+            });
+        }
+        Effect::Cd(path) => {
+            let Some(session) = writer.0.lock().unwrap().active() else { return };
+            #[cfg(unix)]
+            let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec();
+            #[cfg(not(unix))]
+            let bytes = path.to_string_lossy().into_owned().into_bytes();
+            let silent =
+                session.shell_in_foreground() != Some(false) && session.parser.lock().unwrap().fuzzball.shell.as_ref().is_some_and(|s| s.has("cwd"));
+            if silent {
+                // The integration changes directory without touching the line
+                // being typed and redraws its prompt (docs/protocol/shell.md).
+                static ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+                let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let mut w = session.writer.clone();
+                let _ = w.write_all(&mouser_core::fuzzball::shell_cd(id, &bytes));
+                return;
+            }
+            // Fallback: type the cd, then erase it and its echo so one prompt remains.
+            let start = session.parser.lock().unwrap().prompt_start();
+            let mut w = session.writer.clone();
+            let _ = w.write_all(&mouser_core::modes::keep_line(&mouser_render::modes::commander::cd_line(&path)));
+            std::thread::spawn(move || {
+                wait_for_prompt(Some(&session));
+                {
+                    let mut p = session.parser.lock().unwrap();
+                    let end = p.prompt_start();
+                    if end > start {
+                        p.erase_rows(start, end);
+                    }
+                }
+                let mut sw = session.writer.clone();
+                let _ = sw.write_all(mouser_core::modes::RESTORE_LINE);
             });
         }
         Effect::Open(p) => {

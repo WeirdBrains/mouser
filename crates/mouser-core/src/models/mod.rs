@@ -337,7 +337,7 @@ pub fn all() -> Vec<Provider> {
             });
         }
     }
-    if !have(&out, "gemma-local") {
+    if !have(&out, "gemma-local") && !p.local.as_ref().is_some_and(|l| l.disabled) {
         let (d, all) = gemma_models();
         let mut models = vec![d.clone()];
         models.extend(all.into_iter().filter(|m| *m != d));
@@ -388,6 +388,27 @@ pub fn split(spec: &str) -> (&str, Option<&str>) {
         Some((p, m)) => (p, Some(m)),
         None => (spec, None),
     }
+}
+
+/// Resolve `mouser model default|test SPEC`: `provider[/model]`, or a bare
+/// model name offered by exactly one provider.
+pub fn resolve(spec: &str) -> Result<String> {
+    let (p, m) = split(spec);
+    if find(p).is_some() {
+        return Ok(spec.to_string());
+    }
+    if m.is_none() {
+        let hits: Vec<String> = all().into_iter().filter(|x| x.entry.models.iter().any(|y| y == p)).map(|x| x.entry.name).collect();
+        match hits.len() {
+            1 => return Ok(format!("{}/{p}", hits[0])),
+            0 => {}
+            _ => bail!("{p} is offered by {}; name one: PROVIDER/{p}", hits.join(", ")),
+        }
+        if local::weights(p).is_some() {
+            bail!("{p} is the built-in local model, which is disabled: mouser model local enable {p}");
+        }
+    }
+    bail!("no model provider or model named {p} (see `mouser model list`)")
 }
 
 /// The default `(provider, model)`: `models.default`, else the first configured provider.

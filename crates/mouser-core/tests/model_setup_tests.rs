@@ -128,7 +128,7 @@ fn options_list_local_then_hosted_and_say_when_local_is_missing() {
     let mut s = Setup::new(false);
     assert!(!s.opts[0].available && s.opts[0].detail.contains("no local-llm"));
     s.enter();
-    assert!(matches!(&s.step, Step::Failed(m, _) if m.contains("makepkg -si") && m.contains("--features local-llm") && m.contains("hosted")));
+    assert!(matches!(&s.step, Step::Failed(m, _) if m.contains("--no-default-features") && m.contains("hosted")));
     s.enter();
     assert_eq!(s.step, Step::Choose);
     assert_eq!(usable_default(), None, "nothing configured");

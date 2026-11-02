@@ -157,13 +157,13 @@ fn mouse_clicks_and_wheel_drive_commander() {
     assert!(selected(&mut h).contains("photos/"));
     // A quick second click opens the folder: commander cds the shell.
     let e = click(&mut h, "photos/");
-    assert!(matches!(&e, Effect::Run(c) if c.starts_with("cd ") && c.contains("photos")), "{e:?}");
+    assert!(matches!(&e, Effect::Cd(p) if p.ends_with("photos")), "{e:?}");
     h.set_cwd(Some(t.path().join("photos")));
     let crumbs =
         layout(&mut h).dock.unwrap().panel.items.into_iter().filter(|i| i.style == ui::PanelStyle::Title).map(|i| i.text).collect::<String>();
     assert!(crumbs.ends_with("photos"), "now in photos: {crumbs}");
     let e = click(&mut h, "‹ back");
-    assert!(matches!(&e, Effect::Run(c) if c.starts_with("cd ")), "the back button: {e:?}");
+    assert!(matches!(&e, Effect::Cd(_)), "the back button: {e:?}");
     h.set_cwd(Some(t.path().to_path_buf()));
     // The wheel: over the view it scrolls the mode; outside the view it doesn't.
     let l = layout(&mut h);

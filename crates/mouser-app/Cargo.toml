@@ -34,7 +34,7 @@ mouser-engine-abi = { path = "../mouser-engine-abi" }
 
 [features]
 # The Skia GPU engine (skia-safe downloads prebuilt Skia at build time).
-default = ["skia"]
+default = ["skia", "local-llm"]
 skia = ["mouser-render/skia"]
 # The built-in local model (llama.cpp with Vulkan, Metal on macOS); docs/models.md §Local.
 # Build needs cmake, clang, and Vulkan headers + shaderc (Linux/Windows).

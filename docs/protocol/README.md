@@ -11,6 +11,7 @@ designs:
 
 - [`graphics.md`](graphics.md) — images: upload, place, delete, query.
 - [`keyboard.md`](keyboard.md) — one opt-in mode for structured key events.
+- [`shell.md`](shell.md) — silent shell actions (change directory without typing `cd`).
 
 This document defines what both share: framing, capability negotiation, versioning,
 error replies, security rules, conformance and migration.
@@ -42,7 +43,7 @@ All Fuzzball messages are DCS strings with the private marker `=` and the family
 ESC P = F z <subsystem> <verb> ; <params> [: <payload>] ESC \
 ```
 
-- `<subsystem>`: one ASCII letter. `c` = common, `g` = graphics, `k` = keyboard.
+- `<subsystem>`: one ASCII letter. `c` = common, `g` = graphics, `k` = keyboard, `p` = plugins, `s` = shell actions.
 - `<verb>`: one ASCII letter, defined per subsystem.
 - `<params>`: zero or more `key=value` pairs separated by `,`.
 - `<payload>`: present only when the verb takes data; see §3.1.
@@ -112,7 +113,7 @@ ESC P = F z c q ; id=1 ESC \
 Reply:
 
 ```
-ESC P = F z c r ; id=1,v=0,sub=gkp,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,g_max_place=4096,g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1 ESC \
+ESC P = F z c r ; id=1,v=0,sub=gkps,raw=1,max_chunk=65536,g_mem=335544320,g_max_dim=10000,g_fmt=rgba:rgb:png,g_max_place=4096,g_fit=w,g_reflow=1,k=1,k_ime=0,k_release=1 ESC \
 ```
 
 | key | meaning |

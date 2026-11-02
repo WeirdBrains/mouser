@@ -299,7 +299,7 @@ impl Setup {
     }
 
     fn finish_local(&mut self, w: &local::Weights) {
-        self.step = match set_default(&format!("gemma-local/{}", w.id)) {
+        self.step = match local::enable(w) {
             Ok(s) => Step::Done(s, None),
             Err(e) => Step::Failed(format!("{e:#}"), Box::new(Step::Choose)),
         };
