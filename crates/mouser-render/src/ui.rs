@@ -361,6 +361,12 @@ pub enum PanelStyle {
         done: u16,
         hover: u16,
     },
+    /// Scroll position: a slim track with a thumb from `start` for `len`
+    /// (1/1000 of the content). Vertical when taller than wide.
+    Scrollbar {
+        start: u16,
+        len: u16,
+    },
     /// Dropdown row; bit `i` of `highlight` marks char `i` as matched.
     Option {
         selected: bool,
