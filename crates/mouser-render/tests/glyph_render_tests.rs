@@ -245,10 +245,30 @@ fn installed_emoji_font_draws_in_colour() {
 #[test]
 fn installed_emoji_font_merges_clusters() {
     let db = mouser_render::text::system_db();
-    let fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
+    let mut fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
     let Some(name) = fonts.emoji_family().map(str::to_string) else { return };
-    for cluster in ["👋🏽", "👍🏽", "👨\u{200d}👩\u{200d}👧", "👨\u{200d}👩\u{200d}👧\u{200d}👦", "👩🏽\u{200d}💻"] {
+    for cluster in ["👋🏽", "👍🏽", "👍🏿", "👩🏽\u{200d}💻"] {
         assert_eq!(fonts.emoji_glyph_count(cluster), Some(1), "{name} split {cluster:?}");
+    }
+    // Segoe UI Emoji has no family ligatures at all (its GSUB has none; Windows
+    // itself draws them as separate people), so there the members sit side by
+    // side in the cluster's cells. Every other face must merge them.
+    let segoe = name.eq_ignore_ascii_case("Segoe UI Emoji");
+    for (cluster, members) in [("👨\u{200d}👩\u{200d}👧", 3), ("👨\u{200d}👩\u{200d}👧\u{200d}👦", 4)] {
+        let want = if segoe { members } else { 1 };
+        assert_eq!(fonts.emoji_glyph_count(cluster), Some(want), "{name} shaped {cluster:?}");
+        let img = fonts.emoji_image(cluster, 2).unwrap_or_else(|| panic!("{name} drew nothing for {cluster:?}"));
+        // Exactly the cluster's 2 cells: nothing spills into the next one.
+        assert_eq!(img.img_w as i32, fonts.cell_w * 2, "{name}: {cluster:?} wider than 2 cells");
+        let (w, h) = (img.img_w as usize, img.img_h as usize);
+        // Ink in both halves: not just the first member drawn.
+        for half in 0..2 {
+            let ink = (0..h)
+                .flat_map(|y| (half * w / 2..(half + 1) * w / 2).map(move |x| (x, y)))
+                .filter(|&(x, y)| img.rgba[(y * w + x) * 4 + 3] > 0)
+                .count();
+            assert!(ink > 10, "{name}: {cluster:?} has no ink in half {half}");
+        }
     }
 }
 
