@@ -179,3 +179,15 @@ fn mouse_clicks_and_wheel_drive_commander() {
         }
     }
 }
+
+#[test]
+fn restore_picks_the_remembered_mode_or_none() {
+    let mut h = Host::builtin();
+    assert_eq!(h.current(), Some("commander"));
+    h.restore(None);
+    assert_eq!(h.current(), None, "no mode");
+    h.restore(Some("commander"));
+    assert_eq!(h.current(), Some("commander"));
+    h.restore(Some("gone-plugin"));
+    assert_eq!(h.current(), None, "a missing or disabled mode falls back to no mode");
+}

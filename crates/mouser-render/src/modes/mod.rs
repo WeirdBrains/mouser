@@ -178,6 +178,21 @@ impl Host {
         h
     }
 
+    /// Start in the mode a window last closed in (`load_last_mode`): a
+    /// name, or `None` for no mode. A mode that is gone or disabled keeps no
+    /// mode, quietly. Only activates: nothing is sent, nothing downloads.
+    pub fn restore(&mut self, last: Option<&str>) {
+        if let Some(c) = self.current.take() {
+            self.modes[c].0.deactivate();
+        }
+        let Some(i) = last.and_then(|n| self.modes.iter().position(|(m, _)| m.name() == n)) else { return };
+        self.current = Some(i);
+        self.modes[i].0.activate();
+        if let Some(d) = &self.cwd {
+            self.modes[i].0.cwd_changed(d);
+        }
+    }
+
     /// Names of the registered modes, in switcher order.
     pub fn names(&self) -> Vec<&'static str> {
         self.modes.iter().map(|(m, _)| m.name()).collect()
