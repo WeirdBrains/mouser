@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-02
+
 ### Added
 
 - Scroll position indicators in commander: a slim scrollbar and `x–y of N` in the list, grid and text views; `n of N` and a track in the carousel.
