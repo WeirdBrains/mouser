@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-02
+
+### Fixed
+
+- Windows: Mouser no longer dies when Windows Terminal is the default terminal application. Mouser is now a GUI-subsystem program, so launching it opens no console for Windows to hand off to Windows Terminal (closing that window used to kill Mouser). CLI subcommands (`mouser --version`, `mouser model …`) attach to the console they were started from.
+- Windows: helper programs (ssh, ffmpeg/ffprobe, plugins, MCP servers, engine hosts, openers) start with `CREATE_NO_WINDOW`, so none of them pops up a console or Windows Terminal window.
+
 ## [1.1.2] - 2026-11-02
 
 ### Fixed
