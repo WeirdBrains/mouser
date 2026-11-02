@@ -186,6 +186,16 @@ impl FontStack {
             .clone()
     }
 
+    /// Glyphs the colour emoji face shapes `cluster` into (1 = one combined
+    /// emoji), or `None` without a colour face.
+    pub fn emoji_glyph_count(&self, cluster: &str) -> Option<usize> {
+        let face = self.emoji.as_ref()?;
+        let face = rustybuzz::Face::from_slice(&face.data, face.index)?;
+        let mut buf = rustybuzz::UnicodeBuffer::new();
+        buf.push_str(cluster);
+        Some(rustybuzz::shape(&face, &[], buf).len())
+    }
+
     pub fn font_count(&self) -> usize {
         self.fonts.len()
     }
@@ -214,11 +224,39 @@ impl FontStack {
                 return Glyph { metrics, bitmap };
             }
             let font = fonts.iter().find(|f| f.lookup_glyph_index(base) != 0).unwrap_or(&fonts[0]);
-            let (metrics, bitmap) = font.rasterize(base, size);
-            let g = Glyph { metrics, bitmap };
+            // Zero-width marks keep their own placement (see `mark_cell_x`).
+            let g = match mouser_core::grid::char_width(base) {
+                0 => {
+                    let (metrics, bitmap) = font.rasterize(base, size);
+                    Glyph { metrics, bitmap }
+                }
+                cells => fit_glyph(font, base, size, cw * cells as i32),
+            };
             if italic { shear(g) } else { g }
         })
     }
+}
+
+/// `base` rasterised so its ink stays inside `limit` px (its cells): a
+/// fallback glyph wider than that, like Segoe's text-style ❤, is drawn at a
+/// smaller size and centred instead of spilling into the next cell.
+fn fit_glyph(font: &Font, base: char, size: f32, limit: i32) -> Glyph {
+    let (mut metrics, mut bitmap) = font.rasterize(base, size);
+    let limit = limit.max(1);
+    // Far too wide: a smaller size, centred. A pixel or two of overhang
+    // (underscores, italics in some faces) is only trimmed below.
+    if metrics.width as i32 > limit + limit / 4 {
+        (metrics, bitmap) = font.rasterize(base, size * limit as f32 / metrics.width as f32);
+        metrics.xmin = (limit - metrics.width as i32).max(0) / 2;
+    }
+    let (lo, hi) = ((-metrics.xmin).max(0), (limit - metrics.xmin).min(metrics.width as i32));
+    if lo > 0 || hi < metrics.width as i32 {
+        let (w, lo, hi) = (metrics.width, lo.max(0) as usize, hi.max(lo) as usize);
+        bitmap = bitmap.chunks(w.max(1)).flat_map(|r| r[lo.min(w)..hi.min(w)].to_vec()).collect();
+        metrics.xmin += lo as i32;
+        metrics.width = hi.saturating_sub(lo);
+    }
+    Glyph { metrics, bitmap }
 }
 
 /// Italic glyphs are cached under a private key: the BMP char moved into

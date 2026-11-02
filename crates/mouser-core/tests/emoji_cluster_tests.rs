@@ -36,7 +36,7 @@ fn zwj_sequence_is_one_cluster() {
     assert_eq!(c(&t, 2).ch, 'x');
     let mut t = term(10);
     t.feed("👩🏽\u{200d}💻x".as_bytes());
-    assert_eq!(c(&t, 0).comb, ['\u{1f3fd}', '\u{200d}', '💻']);
+    assert_eq!(c(&t, 0).comb[..3], ['\u{1f3fd}', '\u{200d}', '💻']);
     assert_eq!(t.screen.cursor.x, 3);
 }
 
@@ -65,5 +65,36 @@ fn flags_pair_up() {
     assert_eq!(c(&t, 0).comb[0], '🇸');
     assert_eq!(c(&t, 2).ch, '🇯');
     assert_eq!(c(&t, 2).comb[0], '🇵');
+    assert_eq!(c(&t, 4).ch, 'x');
+}
+
+#[test]
+fn long_zwj_sequences_stay_one_cluster() {
+    for seq in ["👨\u{200d}👩\u{200d}👧", "👨\u{200d}👩\u{200d}👧\u{200d}👦", "👩🏽\u{200d}❤\u{fe0f}\u{200d}💋\u{200d}👨🏽", "👋🏽"]
+    {
+        let mut t = term(10);
+        t.feed(format!("{seq}x").as_bytes());
+        assert!(wide(&t, 0), "{seq:?}");
+        let got: String = std::iter::once(c(&t, 0).ch).chain(c(&t, 0).comb.into_iter().filter(|m| *m != '\0')).collect();
+        assert_eq!(got, seq);
+        assert_eq!(c(&t, 2).ch, 'x', "{seq:?}");
+        assert_eq!(t.screen.cursor.x, 3);
+    }
+}
+
+#[test]
+fn text_heart_is_one_cell_and_not_overwritten() {
+    // ❤ alone: 1 cell, the next emoji starts in the next cell.
+    let mut t = term(10);
+    t.feed("❤🎉x".as_bytes());
+    assert!(!wide(&t, 0));
+    assert_eq!(c(&t, 1).ch, '🎉');
+    assert!(wide(&t, 1));
+    assert_eq!(c(&t, 3).ch, 'x');
+    // ❤️: 2 cells.
+    let mut t = term(10);
+    t.feed("❤\u{fe0f}🎉x".as_bytes());
+    assert!(wide(&t, 0));
+    assert_eq!(c(&t, 2).ch, '🎉');
     assert_eq!(c(&t, 4).ch, 'x');
 }

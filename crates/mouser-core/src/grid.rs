@@ -59,18 +59,22 @@ pub struct Style {
     pub link: u32,
 }
 
+/// Marks a cell can carry after its base character: enough for the longest
+/// RGI emoji ZWJ sequences (👩🏽‍❤️‍💋‍👨🏽 has nine after the base).
+pub const COMB_LEN: usize = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cell {
     pub ch: char,
-    /// Up to three combining marks / ZWJ joiners attached to `ch` (`'\0'` = none);
+    /// Up to [`COMB_LEN`] combining marks / ZWJ joiners attached to `ch` (`'\0'` = none);
     /// Kitty Unicode placeholders carry three diacritics.
-    pub comb: [char; 3],
+    pub comb: [char; COMB_LEN],
     pub style: Style,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { ch: ' ', comb: ['\0'; 3], style: Style::default() }
+        Self { ch: ' ', comb: ['\0'; COMB_LEN], style: Style::default() }
     }
 }
 
@@ -290,7 +294,8 @@ impl Screen {
                 let j = i + 1;
                 let st = self.cells[i].style;
                 self.cells[i].style.attrs |= attr::WIDE;
-                self.cells[j] = Cell { ch: ' ', comb: ['\0'; 3], style: Style { attrs: (st.attrs & !attr::WRAPLINE) | attr::WIDE_CONT, ..st } };
+                self.cells[j] =
+                    Cell { ch: ' ', comb: ['\0'; COMB_LEN], style: Style { attrs: (st.attrs & !attr::WRAPLINE) | attr::WIDE_CONT, ..st } };
                 if self.cursor.x + 1 < cols {
                     self.cursor.x += 1;
                 } else {
@@ -325,13 +330,13 @@ impl Screen {
         if last == Some('\u{200d}') {
             return true;
         }
-        if c.comb.iter().all(|m| *m == '\0') || last == Some('\u{fe0f}') {
-            if is_skin_tone(ch) && c.style.attrs & attr::WIDE != 0 && emoji_capable(c.ch) {
-                return true;
-            }
-            if is_regional(ch) && is_regional(c.ch) && c.comb[0] == '\0' {
-                return true;
-            }
+        // A modifier follows the base or the last person after a joiner (👩🏽‍💋‍👨🏽).
+        let tail = c.comb.iter().rev().find(|m| !matches!(**m, '\0' | '\u{fe0f}')).copied().unwrap_or(c.ch);
+        if is_skin_tone(ch) && c.style.attrs & attr::WIDE != 0 && emoji_capable(tail) && !is_skin_tone(tail) && !is_regional(tail) {
+            return true;
+        }
+        if is_regional(ch) && is_regional(c.ch) && c.comb[0] == '\0' {
+            return true;
         }
         false
     }
@@ -380,10 +385,10 @@ impl Screen {
         let keep_wrap = self.cells[self.idx(cols - 1, self.cursor.y)].style.attrs & attr::WRAPLINE;
         if w == 2 {
             self.clear_wide_at(self.cursor.x + 1);
-            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
-            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; 3], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
+            self.cells[i] = Cell { ch, comb: ['\0'; COMB_LEN], style: Style { attrs: st.attrs | attr::WIDE, ..st } };
+            self.cells[i + 1] = Cell { ch: ' ', comb: ['\0'; COMB_LEN], style: Style { attrs: st.attrs | attr::WIDE_CONT, ..st } };
         } else {
-            self.cells[i] = Cell { ch, comb: ['\0'; 3], style: st };
+            self.cells[i] = Cell { ch, comb: ['\0'; COMB_LEN], style: st };
         }
         let last = self.idx(cols - 1, self.cursor.y);
         self.cells[last].style.attrs |= keep_wrap;

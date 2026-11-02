@@ -239,3 +239,47 @@ fn installed_emoji_font_draws_in_colour() {
     assert!(fonts.emoji_image("漢", 2).is_none());
     assert!(fonts.emoji_image("❤\u{fe0e}", 1).is_none());
 }
+
+/// Skin-tone and ZWJ sequences shape to one combined glyph in the installed
+/// colour face (Noto Color Emoji here, Segoe UI Emoji on Windows); skips without one.
+#[test]
+fn installed_emoji_font_merges_clusters() {
+    let db = mouser_render::text::system_db();
+    let fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
+    let Some(name) = fonts.emoji_family().map(str::to_string) else { return };
+    for cluster in ["👋🏽", "👍🏽", "👨\u{200d}👩\u{200d}👧", "👨\u{200d}👩\u{200d}👧\u{200d}👦", "👩🏽\u{200d}💻"] {
+        assert_eq!(fonts.emoji_glyph_count(cluster), Some(1), "{name} split {cluster:?}");
+    }
+}
+
+/// A glyph wider than its cell is shrunk to fit instead of spilling into the
+/// next cell (Segoe's text-style ❤ on Windows).
+#[test]
+fn wide_glyphs_stay_inside_their_cell() {
+    let mut fonts = FontStack::embedded(16.0);
+    fonts.cell_w = 4;
+    let m = fonts.glyph('W').metrics;
+    assert!(m.width as i32 <= 4 && m.xmin >= 0 && m.xmin + m.width as i32 <= 4, "{m:?}");
+    // Rendered: no ink past the first cell when the second is a space.
+    let (buf, w, h) = render("W ", &mut fonts);
+    let right = (PADDING + fonts.cell_w) as usize;
+    for y in 0..h {
+        for x in right..w {
+            assert_eq!(buf[y * w + x], BG, "ink at ({x}, {y})");
+        }
+    }
+}
+
+/// Text-presentation ❤ (any system fallback) fits one cell; VS16 ❤️ is a
+/// 2-cell colour image.
+#[test]
+fn text_heart_is_one_cell_and_emoji_heart_two() {
+    let db = mouser_render::text::system_db();
+    let mut fonts = FontStack::from_db(&db, None, 16.0).with_emoji(&db, None);
+    let m = fonts.glyph('\u{2764}').metrics;
+    assert!(m.xmin >= 0 && m.xmin + m.width as i32 <= fonts.cell_w, "{m:?} vs cell {}", fonts.cell_w);
+    if fonts.emoji_family().is_some() {
+        let img = fonts.emoji_image("\u{2764}\u{fe0f}", 2).expect("colour heart");
+        assert_eq!(img.img_w as i32, fonts.cell_w * 2);
+    }
+}

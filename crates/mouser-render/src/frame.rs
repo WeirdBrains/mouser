@@ -70,12 +70,34 @@ pub struct CellPaint {
     pub ul_color: u32,
     pub flags: u8,
     /// Combining marks drawn over the base glyph (`'\0'` = none).
-    pub comb: [char; 3],
+    #[serde(with = "comb_serde")]
+    pub comb: [char; mouser_core::grid::COMB_LEN],
+}
+
+/// Only the used marks go over the wire, so a long cluster capacity costs
+/// nothing for plain cells.
+mod comb_serde {
+    use mouser_core::grid::COMB_LEN;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(c: &[char; COMB_LEN], s: S) -> Result<S::Ok, S::Error> {
+        let n = c.iter().position(|m| *m == '\0').unwrap_or(COMB_LEN);
+        c[..n].serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[char; COMB_LEN], D::Error> {
+        let v = Vec::<char>::deserialize(d)?;
+        let mut out = ['\0'; COMB_LEN];
+        for (slot, m) in out.iter_mut().zip(v) {
+            *slot = m;
+        }
+        Ok(out)
+    }
 }
 
 impl CellPaint {
     pub fn plain(fg: u32) -> Self {
-        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; 3] }
+        Self { fg, bg: None, underline: 0, ul_color: fg, flags: 0, comb: ['\0'; mouser_core::grid::COMB_LEN] }
     }
 }
 
