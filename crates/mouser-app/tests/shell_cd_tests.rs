@@ -38,9 +38,22 @@ fn screen(bytes: &[u8]) -> Vec<String> {
     p.screen.visible_lines()
 }
 
+fn name_is_old_bash(shell: &str) -> bool {
+    if !shell.ends_with("bash") {
+        return false;
+    }
+    let v = std::process::Command::new(shell).args(["-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"]).output().unwrap();
+    let v: Vec<u32> = String::from_utf8_lossy(&v.stdout).split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    v.len() < 2 || (v[0], v[1]) < (4, 4)
+}
+
 fn check(shell: &str, rc_name: &str, prompt: &str, argv: &dyn Fn(&std::path::Path) -> Vec<String>) {
     if !std::path::Path::new(shell).exists() {
         eprintln!("{shell} not installed, skipped");
+        return;
+    }
+    if name_is_old_bash(shell) {
+        eprintln!("{shell} is older than 4.4 (the integration needs PS0), skipped");
         return;
     }
     let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
