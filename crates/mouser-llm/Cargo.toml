@@ -1,7 +1,7 @@
 [package]
 name = "mouser-llm"
 description = "Mouser's built-in local model: llama.cpp (Vulkan/Metal) behind the local-llm feature"
-version = "1.1.2"
+version = "1.1.3"
 edition = "2024"
 license = "BSD-3-Clause"
 publish = false
