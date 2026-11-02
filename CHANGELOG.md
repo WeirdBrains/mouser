@@ -1,5 +1,12 @@
 ## [Unreleased]
 
+## [1.1.5] - 2026-11-02
+
+### Fixed
+
+- Emoji ZWJ sequences no longer overlap the next cell: leftover zero-width glyphs from Apple Color Emoji are dropped, and family sequences that Segoe UI Emoji cannot merge are drawn side by side inside their 2 cells.
+- Skin-tone and profession sequences (👋🏽, 👍🏿, 👩🏽‍💻) stay one combined glyph.
+
 ## [1.1.4] - 2026-11-02
 
 ### Fixed
