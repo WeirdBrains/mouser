@@ -24,6 +24,7 @@ fn preferences_round_trip_including_sidebar() {
         }),
         models: None,
         chat: None,
+        keys: None,
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();
@@ -53,4 +54,19 @@ fn old_preferences_files_still_load_and_updates_keep_other_fields() {
     assert_eq!(p.sidebar_width, Some(280));
     assert_eq!(p.mode, Some(ThemeMode::Light));
     assert_eq!(p.theme.as_deref(), Some("Red Star"));
+}
+
+#[test]
+fn leader_timeout_defaults_reads_keys_and_clamps() {
+    use mouser_core::storage::{DEFAULT_LEADER_TIMEOUT_MS, leader_timeout};
+    use std::time::Duration;
+    let d = Preferences::default();
+    assert_eq!(leader_timeout(&d), Duration::from_millis(DEFAULT_LEADER_TIMEOUT_MS));
+    assert!(DEFAULT_LEADER_TIMEOUT_MS >= 1000, "long enough for a slow esc then :");
+    let p: Preferences = toml::from_str("[keys]\nleader_timeout_ms = 2000\n").unwrap();
+    assert_eq!(leader_timeout(&p), Duration::from_millis(2000));
+    let p: Preferences = toml::from_str("[keys]\nleader_timeout_ms = 5\n").unwrap();
+    assert_eq!(leader_timeout(&p), Duration::from_millis(100), "clamped");
+    // Saved back without a [keys] table when unset.
+    assert!(!toml::to_string(&d).unwrap().contains("[keys]"));
 }

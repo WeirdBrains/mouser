@@ -2278,7 +2278,7 @@ fn mode_key(st: &mut AppState, bytes: &[u8], parser: &ActiveParser, writer: &tab
         st.esc_pending = Some(g);
         let (app_state, writer) = (app_state.clone(), writer.clone());
         std::thread::spawn(move || {
-            std::thread::sleep(ESC_WAIT);
+            std::thread::sleep(esc_wait());
             let mut st = app_state.lock().unwrap();
             if st.esc_pending == Some(g) {
                 st.esc_pending = None;
@@ -2298,8 +2298,14 @@ fn mode_key(st: &mut AppState, bytes: &[u8], parser: &ActiveParser, writer: &tab
     }
 }
 
-/// How long a lone Esc waits for `:` before going to the shell.
-const ESC_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+/// How long a lone Esc waits for `:` before going to the shell
+/// (`[keys] leader_timeout_ms`, read once). When it runs out, or any other key
+/// comes first, the held Esc is sent ahead of that key, so nothing is lost or
+/// reordered. Once `:` is caught the command line stays open until Enter/Esc.
+fn esc_wait() -> std::time::Duration {
+    static W: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *W.get_or_init(|| mouser_core::storage::leader_timeout(&mouser_core::storage::load_preferences()))
+}
 
 fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer: &tabs::ActiveWriter) {
     use mouser_render::modes::Effect;

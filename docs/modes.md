@@ -56,6 +56,11 @@ Installed mode plugins (`kind = "mode"` over the command transport, with a
 `examples/plugins/hello-mode`.
 
 - `esc :` then the mode's hotkey and Enter switches to it (`esc :c` = commander).
+- After `esc`, Mouser waits **1200 ms** for the `:` (was 500 ms before 1.0.1). Set it in
+  `preferences.toml` with `[keys] leader_timeout_ms = 1500` (100–10000). If the time runs
+  out, or another key comes first, the Esc goes to the shell ahead of that key, in order.
+  Once `:` is caught, the command line stays open until Enter or Esc, however slowly you
+  type. On the alternate screen (vim, less) Esc is never held.
   Typing the hotkey of the mode that is already on turns modes off (plain terminal);
   `esc :c` again turns commander back on. `:c` / `:commander` work from F10 too.
 - A lone Esc waits 500 ms for the `:`; without it the Esc goes to the shell
