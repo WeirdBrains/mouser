@@ -3,9 +3,11 @@
 //! (`mouser mcp serve --stdio`) to the running app's loopback endpoint. The tools
 //! themselves come from the app through [`Tools`].
 //!
-//! Security: loopback only; `Authorization: Bearer <token>` (constant-time
-//! compare); Host and Origin checked against DNS rebinding; bodies capped;
-//! responses are plain JSON (no SSE streams).
+//! Security: loopback by default; a public address only for HTTPS with a
+//! token ([`bind_addr`]), and then only the configured names are accepted in
+//! Host/Origin. `Authorization: Bearer <token>` (constant-time compare); Host
+//! and Origin checked against DNS rebinding; bodies capped; responses are
+//! plain JSON (no SSE streams). Let's Encrypt certificates: [`crate::mcp_acme`].
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -37,6 +39,8 @@ pub struct Server {
     version: String,
     /// Session id -> client name.
     sessions: Mutex<HashMap<String, String>>,
+    /// Public names (besides loopback) accepted in Host and Origin.
+    hosts: Mutex<Vec<String>>,
 }
 
 fn err(id: &Value, code: i64, msg: &str) -> Value {
@@ -46,7 +50,28 @@ fn err(id: &Value, code: i64, msg: &str) -> Value {
 impl Server {
     /// `version`: what `serverInfo.version` reports (Mouser's version).
     pub fn new(tools: Arc<dyn Tools>, token: String, version: &str) -> Arc<Self> {
-        Arc::new(Server { tools, token, version: version.into(), sessions: Mutex::new(HashMap::new()) })
+        Arc::new(Server { tools, token, version: version.into(), sessions: Mutex::new(HashMap::new()), hosts: Mutex::new(Vec::new()) })
+    }
+
+    /// Also accept these public DNS names in Host/Origin (the HTTPS
+    /// listener's certificate names).
+    pub fn allow_hosts(&self, names: &[String]) {
+        *self.hosts.lock().unwrap() = names.iter().map(|n| n.to_ascii_lowercase()).collect();
+    }
+
+    fn host_ok(&self, h: &str, port: u16) -> bool {
+        let h = h.to_ascii_lowercase();
+        loopback_host(&h, port) || self.hosts.lock().unwrap().iter().any(|n| h == *n || h == format!("{n}:{port}"))
+    }
+
+    fn origin_ok(&self, o: &str, port: u16) -> bool {
+        if loopback_origin(o) {
+            return true;
+        }
+        let o = o.to_ascii_lowercase();
+        let Some(rest) = o.strip_prefix("https://") else { return false };
+        let hostport = rest.split('/').next().unwrap_or("");
+        self.hosts.lock().unwrap().iter().any(|n| hostport == n || hostport == format!("{n}:{port}"))
     }
 
     /// One JSON-RPC message; `None` for notifications and responses.
@@ -172,7 +197,7 @@ impl Server {
             read_req(&mut r)?
         };
         let host = req.headers.get("host").map(String::as_str).unwrap_or("");
-        if !loopback_host(host, port) || req.headers.get("origin").is_some_and(|o| !loopback_origin(o)) {
+        if !self.host_ok(host, port) || req.headers.get("origin").is_some_and(|o| !self.origin_ok(o, port)) {
             respond(s, "403 Forbidden", &[], br#"{"error":"loopback clients only"}"#)?;
             return Ok(());
         }
@@ -263,6 +288,63 @@ pub fn serve(l: TcpListener, tls: Option<Arc<rustls::ServerConfig>>, server: Arc
 /// Bind loopback only.
 pub fn bind(port: u16) -> Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("binding 127.0.0.1:{port}"))
+}
+
+/// Bind `addr:port`. Anything but loopback is refused unless the listener
+/// is HTTPS (`tls`) and a real token is set: the server never listens on the
+/// network in the clear or without auth.
+pub fn bind_addr(addr: &str, port: u16, tls: bool, token: &str) -> Result<TcpListener> {
+    let ip: std::net::IpAddr = addr
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse()
+        .with_context(|| format!("mcp.server.bind: {addr:?} is not an IP address"))?;
+    if !ip.is_loopback() {
+        if !tls {
+            bail!("refusing to serve MCP on {ip} without HTTPS (plain HTTP stays on 127.0.0.1)");
+        }
+        if token.len() < 32 {
+            bail!("refusing to serve MCP on {ip} without a token");
+        }
+    }
+    TcpListener::bind((ip, port)).with_context(|| format!("binding {ip}:{port}"))
+}
+
+/// Where the HTTPS certificate comes from (`[mcp.server.tls] source`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsSource {
+    SelfSigned,
+    Files,
+    Acme,
+}
+
+impl TlsSource {
+    pub const NAMES: [&'static str; 3] = ["self-signed", "files", "acme"];
+
+    /// The configured source; unset means `files` when cert and key are set.
+    pub fn of(p: &crate::storage::McpServerPrefs) -> Result<Self> {
+        Ok(match p.tls.as_ref().and_then(|t| t.source.as_deref()) {
+            Some("self-signed") => TlsSource::SelfSigned,
+            Some("files") => TlsSource::Files,
+            Some("acme") => TlsSource::Acme,
+            Some(o) => bail!("mcp.server.tls.source: one of self-signed, files, acme (not {o:?})"),
+            None if p.cert.is_some() || p.key.is_some() => TlsSource::Files,
+            None => TlsSource::SelfSigned,
+        })
+    }
+}
+
+/// Extra public names for Host/Origin from `[mcp.server.tls] domains`.
+pub fn tls_domains(p: &crate::storage::McpServerPrefs) -> Vec<String> {
+    p.tls
+        .as_ref()
+        .and_then(|t| t.domains.as_deref())
+        .unwrap_or("")
+        .split([',', ' '])
+        .map(|d| d.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|d| !d.is_empty())
+        .collect()
 }
 
 pub fn dir() -> PathBuf {
@@ -470,6 +552,32 @@ mod tests {
         assert!(b.contains("\"isError\":true"));
         let (_, _, b) = post(port, TOK, Some(&sid), r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rm"}}"#, tls).unwrap();
         assert!(b.contains("-32602"));
+    }
+
+    #[test]
+    fn public_bind_needs_https_and_a_token() {
+        let e = |r: Result<TcpListener>| r.err().map(|e| format!("{e:#}")).unwrap_or_default();
+        assert!(e(bind_addr("0.0.0.0", 0, false, TOK)).contains("without HTTPS"));
+        assert!(e(bind_addr("192.0.2.1", 0, false, TOK)).contains("without HTTPS"));
+        assert!(e(bind_addr("::", 0, true, "")).contains("without a token"));
+        assert!(e(bind_addr("0.0.0.0", 0, true, "short")).contains("without a token"));
+        assert!(e(bind_addr("mcp.example.com", 0, true, TOK)).contains("not an IP address"));
+        // Loopback is fine either way, as before.
+        assert!(bind_addr("127.0.0.1", 0, false, "").is_ok());
+        assert!(bind_addr("[::1]", 0, true, TOK).is_ok() || std::net::TcpListener::bind("[::1]:0").is_err());
+    }
+
+    #[test]
+    fn public_names_only_when_configured() {
+        let (_, s) = start(None);
+        assert!(!s.host_ok("mcp.example.com:7802", 7802));
+        s.allow_hosts(&["MCP.example.com".into()]);
+        assert!(s.host_ok("mcp.example.com:7802", 7802) && s.host_ok("mcp.example.com", 7802) && s.host_ok("localhost:7802", 7802));
+        assert!(!s.host_ok("mcp.example.com:9", 7802) && !s.host_ok("evil.example", 7802));
+        assert!(s.origin_ok("https://mcp.example.com:7802", 7802) && s.origin_ok("https://mcp.example.com", 7802));
+        assert!(!s.origin_ok("http://mcp.example.com:7802", 7802), "plain http origin");
+        assert!(!s.origin_ok("https://mcp.example.com.evil.example", 7802));
+        assert!(s.origin_ok("http://localhost:3000", 7802));
     }
 
     #[test]

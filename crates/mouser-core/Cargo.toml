@@ -38,6 +38,9 @@ rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"]
 sha2 = "0.10"
 # Fuzzball wire format (encode/parse); terminal state stays in src/fuzzball.rs.
 fuzzball = "1"
+# MCP server Let's Encrypt certificates (ACME, pure Rust, ring + rustls, no OpenSSL).
+instant-acme = { version = "0.8", default-features = false, features = ["ring", "hyper-rustls"] }
+tokio = { version = "1", features = ["rt", "time", "net", "io-util"] }
 webpki-roots = "1"
 minijinja = { version = "3", features = ["json", "loop_controls"] }
 minijinja-contrib = { version = "3", features = ["pycompat"] }
@@ -52,6 +55,10 @@ keyring = { version = "3", features = ["async-secret-service", "crypto-rust", "t
 [dev-dependencies]
 tempfile = "3.10.1"
 serial_test = "3.0.0"
+# mcp_acme tests: an in-memory ACME CA behind instant-acme's HttpClient.
+http = "1"
+bytes = "1"
+http-body-util = "0.1"
 #[dev-dependencies]
 env_logger.workspace = true
 serde_json.workspace = true

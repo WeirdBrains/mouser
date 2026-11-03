@@ -163,6 +163,17 @@ enum Command {
 }
 
 #[derive(clap::Subcommand, Debug)]
+enum McpCertCommand {
+    /// Where the certificate comes from, when it expires and when it renews.
+    Status,
+    /// Get a new Let's Encrypt certificate now if it's due (`--force`: even if not).
+    Renew {
+        #[arg(long)]
+        force: bool,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
 enum McpCommand {
     /// Speak MCP on stdin/stdout, bridged to the running Mouser (for clients that start servers).
     Serve {
@@ -182,6 +193,11 @@ enum McpCommand {
     },
     /// Turn it off.
     Disable,
+    /// The HTTPS certificate: `status`, or `renew` a Let's Encrypt one now.
+    Cert {
+        #[command(subcommand)]
+        action: McpCertCommand,
+    },
     /// Print (`--show`) or replace (`--rotate`) the bearer token.
     Token {
         #[arg(long, conflicts_with = "rotate")]
@@ -668,6 +684,8 @@ fn main() -> Result<()> {
             McpCommand::Status => Action::Status,
             McpCommand::Enable { https, port, https_port } => Action::Enable { https: *https, port: *port, https_port: *https_port },
             McpCommand::Disable => Action::Disable,
+            McpCommand::Cert { action: McpCertCommand::Status } => Action::CertStatus,
+            McpCommand::Cert { action: McpCertCommand::Renew { force } } => Action::CertRenew { force: *force },
             McpCommand::Servers { action: McpServersCommand::List } => Action::ServersList,
             McpCommand::Servers { action: McpServersCommand::Remove { name } } => Action::ServersRemove(name.clone()),
             McpCommand::Servers { action: McpServersCommand::Test { name, call, args } } => {

@@ -65,14 +65,17 @@ picks a tab; the default is the active one.
 
 ## Security
 
-- Nothing listens unless you enable it. It binds **127.0.0.1 only**.
+- Nothing listens unless you enable it. It binds **127.0.0.1** unless you set
+  `bind` for HTTPS (below). Mouser refuses to listen on any other address
+  without HTTPS and a token, and plain HTTP always stays on 127.0.0.1.
 - **A token is required** on HTTP and HTTPS. It is 32 random bytes, compared in
   constant time. It is kept in the OS keychain: macOS Keychain, Windows
   Credential Manager, or Secret Service on Linux. Without a keychain it goes to
   `$MOUSER_HOME/secrets/mcp-token` (0600), and Mouser warns you.
   `MOUSER_SECRET_STORE=file` forces the file.
-- The `Host` and `Origin` headers must be loopback, which blocks DNS-rebinding
-  attacks from web pages. Bodies are capped at 4 MiB.
+- The `Host` and `Origin` headers must be loopback, or one of the names in
+  `[mcp.server.tls] domains` (an `Origin` must then be `https://`), which
+  blocks DNS-rebinding attacks from web pages. Bodies are capped at 4 MiB.
 - Typing, running and file changes go through the plugin permission broker
   (docs/plugins.md) under `mcp:<client name>`. They show Mouser's approval
   popup with the exact text, command or path, and the call waits up to 5 minutes
@@ -81,6 +84,78 @@ picks a tab; the default is the active one.
   `scrollback.read` or `files.read` also blocks those reads.
 - The client name comes from the client itself (`clientInfo.name`). The token
   is what proves access; the name only keeps grants apart.
+
+## Let's Encrypt
+
+To reach the server from other machines with a certificate every client
+trusts, let Mouser get one from Let's Encrypt and renew it itself.
+
+Before you start:
+
+1. A **public DNS name** (A/AAAA record) that points at this computer, e.g.
+   `mcp.example.com`. Let's Encrypt doesn't issue for IP addresses,
+   `localhost` or private names.
+2. The CA must reach you from the internet. For the default `tls-alpn-01`
+   challenge that's **port 443** of that name, forwarded to Mouser's
+   `https_port` (or set `https_port = 443` if Mouser may bind it). For
+   `http-01` it's **port 80** to `http_port`. Open them in your router (port
+   forwarding) and firewall, e.g. `sudo ufw allow 443/tcp`, or allow Mouser in
+   the Windows Defender Firewall / macOS firewall prompt. Ports under 1024
+   need privileges on Linux (`sudo setcap cap_net_bind_service=+ep $(which mouser-app)`)
+   or a forward from 443 to 7802.
+3. `dns-01` needs neither port: Mouser runs your `dns_hook` (or asks you, in
+   `mouser mcp cert renew`) to add a `_acme-challenge` TXT record. It is the
+   only way to get a wildcard (`*.example.com`). There are no DNS provider
+   integrations; the hook is any command, e.g. one calling your provider's CLI.
+   It gets `MOUSER_ACME_ACTION` (`present`/`cleanup`), `MOUSER_ACME_DOMAIN`,
+   `MOUSER_ACME_NAME` and `MOUSER_ACME_TXT`.
+
+```toml
+[mcp.server]
+enabled = true
+https = true
+https_port = 7802
+bind = "0.0.0.0"                  # listen on the network (HTTPS + token only)
+
+[mcp.server.tls]
+source = "acme"                   # self-signed | files | acme
+domains = "mcp.example.com"       # comma-separated
+email = "you@example.com"         # optional: Let's Encrypt expiry notices
+# staging = true                  # Let's Encrypt's staging CA, for trying it out
+# challenge = "http-01"           # tls-alpn-01 (default) | http-01 | dns-01
+# http_port = 80                  # http-01 listener (answers only the challenge)
+# dns_hook = "/usr/local/bin/my-dns-hook"
+# directory = "https://…/directory"  # another ACME CA
+```
+
+All of these are in preferences mode under *MCP server* (dropdowns for the
+source and challenge); saving keeps your comments.
+
+- Mouser asks for the certificate when it starts and serves HTTPS with it as
+  soon as it arrives. It renews **30 days before expiry** in the background
+  and swaps the new certificate in without a restart; open connections keep
+  the old one.
+- A failed attempt keeps the current certificate, is logged, and is retried
+  after 1 h, 2 h, 4 h, … up to once a day. That stays within Let's Encrypt's
+  [rate limits](https://letsencrypt.org/docs/rate-limits/). A forced renewal
+  is refused within a day of the last certificate.
+- The account key, certificate, private key and renewal state live in
+  `$MOUSER_HOME/mcp/acme/`, readable only by you (0600).
+- Production is the default; `staging = true` gives untrusted test
+  certificates with looser limits. Changing the names or the CA gets a new
+  certificate.
+
+```sh
+mouser mcp cert status          # source, names, expiry, next renewal, last error
+mouser mcp cert renew           # renew now if due (asks the running Mouser)
+mouser mcp cert renew --force   # even if not due
+```
+
+Clients then use `https://mcp.example.com/mcp` (or `:7802` without a forward)
+with the token, and no CA file. Anyone who can reach the port can try the
+token, so keep it secret, and rotate it (`mouser mcp token --rotate`) if it
+leaks; approvals for typing, running and file changes still pop up on your
+screen.
 
 # Client: Mouser uses MCP servers
 

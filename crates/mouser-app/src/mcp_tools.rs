@@ -271,7 +271,8 @@ pub fn start(tabs: Arc<Mutex<tabs::Tabs>>, app_state: Arc<Mutex<AppState>>) -> V
     if let mouser_core::secrets::Store::File(p) = &store {
         notes.push(format!("[mouser] warning: no OS keychain; the MCP token is in {} (0600)", p.display()));
     }
-    let server = mouser_core::mcp_server::Server::new(Arc::new(AppTools { tabs, app_state, preapproved: false }), token, env!("CARGO_PKG_VERSION"));
+    let server =
+        mouser_core::mcp_server::Server::new(Arc::new(AppTools { tabs, app_state, preapproved: false }), token.clone(), env!("CARGO_PKG_VERSION"));
     match mouser_core::mcp_server::bind(cfg.port) {
         Ok(l) => {
             let s = server.clone();
@@ -281,17 +282,50 @@ pub fn start(tabs: Arc<Mutex<tabs::Tabs>>, app_state: Arc<Mutex<AppState>>) -> V
         Err(e) => notes.push(format!("[mouser] MCP HTTP: {e:#}")),
     }
     if cfg.https {
-        match mouser_core::mcp_server::tls_config(cfg.cert.as_deref(), cfg.key.as_deref())
-            .and_then(|t| mouser_core::mcp_server::bind(cfg.https_port).map(|l| (t, l)))
-        {
-            Ok(((tls, _, _), l)) => {
-                std::thread::spawn(move || mouser_core::mcp_server::serve(l, Some(tls), server));
-                notes.push(format!("[mouser] MCP server on https://127.0.0.1:{}/mcp", cfg.https_port));
-            }
+        match start_https(&cfg, &token, server) {
+            Ok(n) => notes.push(n),
             Err(e) => notes.push(format!("[mouser] MCP HTTPS: {e:#}")),
         }
     }
     notes
+}
+
+/// The HTTPS listener: self-signed, the user's files, or Let's Encrypt.
+fn start_https(cfg: &mouser_core::storage::McpServerPrefs, token: &str, server: Arc<mouser_core::mcp_server::Server>) -> anyhow::Result<String> {
+    use mouser_core::{mcp_acme, mcp_server};
+    let addr = cfg.bind.as_deref().unwrap_or("127.0.0.1");
+    let shown = if addr == "127.0.0.1" { "127.0.0.1".to_string() } else { addr.to_string() };
+    match mcp_server::TlsSource::of(cfg)? {
+        mcp_server::TlsSource::Acme => {
+            let acme = mcp_acme::AcmeConfig::from_prefs(cfg.tls.as_ref().expect("acme source implies [mcp.server.tls]"))?;
+            let store = Arc::new(mcp_acme::CertStore::default());
+            server.allow_hosts(&acme.domains);
+            let l = mcp_server::bind_addr(addr, cfg.https_port, true, token)?;
+            let tls = mcp_acme::server_config(store.clone())?;
+            std::thread::spawn(move || mcp_server::serve(l, Some(tls), server));
+            let mut extra = String::new();
+            if acme.challenge == mcp_acme::Challenge::Http01 {
+                // Answers only /.well-known/acme-challenge/; never MCP.
+                let l = std::net::TcpListener::bind((addr, acme.http_port))
+                    .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?;
+                let s = store.clone();
+                std::thread::spawn(move || mcp_acme::serve_http01(l, s));
+                extra = format!(", http-01 on :{}", acme.http_port);
+            }
+            let name = acme.domains[0].clone();
+            let ca = acme.ca_name().to_string();
+            mcp_acme::spawn_renewer(acme, mcp_acme::default_dir(), store);
+            Ok(format!("[mouser] MCP server on https://{name}:{}/mcp ({ca} certificate, renewed automatically{extra})", cfg.https_port))
+        }
+        src => {
+            let (cert, key) = if src == mcp_server::TlsSource::Files { (cfg.cert.as_deref(), cfg.key.as_deref()) } else { (None, None) };
+            let (tls, _, _) = mcp_server::tls_config(cert, key)?;
+            server.allow_hosts(&mcp_server::tls_domains(cfg));
+            let l = mcp_server::bind_addr(addr, cfg.https_port, true, token)?;
+            std::thread::spawn(move || mcp_server::serve(l, Some(tls), server));
+            Ok(format!("[mouser] MCP server on https://{shown}:{}/mcp", cfg.https_port))
+        }
+    }
 }
 
 #[cfg(test)]
