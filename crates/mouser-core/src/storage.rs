@@ -133,6 +133,44 @@ pub struct McpServerPrefs {
     pub cert: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+    /// Address the HTTPS listener binds (default 127.0.0.1). A non-loopback
+    /// address needs HTTPS and a token; plain HTTP always stays on loopback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
+    /// `[mcp.server.tls]`: where the HTTPS certificate comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<McpTlsPrefs>,
+}
+
+/// `[mcp.server.tls]` (docs/mcp.md §Let's Encrypt).
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct McpTlsPrefs {
+    /// `self-signed`, `files` (cert/key above) or `acme` (Let's Encrypt).
+    /// Unset: `files` when cert and key are set, else `self-signed`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// ACME: the public DNS name(s), comma-separated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domains: Option<String>,
+    /// ACME: contact email for expiry notices (optional).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    /// ACME: use Let's Encrypt's staging CA (untrusted test certs, loose limits).
+    #[serde(default)]
+    pub staging: bool,
+    /// ACME: another CA's directory URL (overrides `staging`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory: Option<String>,
+    /// ACME: `tls-alpn-01` (default, on the HTTPS port), `http-01` or `dns-01`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub challenge: Option<String>,
+    /// ACME http-01: port of the challenge listener (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_port: Option<u16>,
+    /// ACME dns-01: command run to add/remove the TXT record (gets
+    /// MOUSER_ACME_ACTION/NAME/TXT/DOMAIN); unset: `mouser mcp cert renew` asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_hook: Option<String>,
 }
 
 fn default_http_port() -> u16 {
@@ -144,7 +182,16 @@ fn default_https_port() -> u16 {
 
 impl Default for McpServerPrefs {
     fn default() -> Self {
-        McpServerPrefs { enabled: false, port: default_http_port(), https: false, https_port: default_https_port(), cert: None, key: None }
+        McpServerPrefs {
+            enabled: false,
+            port: default_http_port(),
+            https: false,
+            https_port: default_https_port(),
+            cert: None,
+            key: None,
+            bind: None,
+            tls: None,
+        }
     }
 }
 

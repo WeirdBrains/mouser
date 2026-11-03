@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+### Added
+
+- MCP server: Let's Encrypt certificates (`[mcp.server.tls] source = "acme"`). tls-alpn-01 on the HTTPS port, http-01 on an optional port-80 listener, or dns-01 through a hook command or by hand. Renews 30 days before expiry and swaps the certificate in without a restart; failures keep the old one and back off. `mouser mcp cert status|renew`, preferences-mode settings, and `bind` to listen beyond 127.0.0.1 (HTTPS and token only). See docs/mcp.md.
+
+### Changed
+
+- Fuzzball encoding and parsing now come from the published [`fuzzball`](https://crates.io/crates/fuzzball) 1.0 crate, and the spec lives at https://weirdbrains.github.io/fuzzball/. The bytes on the wire are unchanged.
+
 ## [1.1.5] - 2026-11-02
 
 ### Fixed

@@ -84,3 +84,33 @@ fn every_section_has_fields() {
         assert_eq!(s.iter().filter(|f| f.key == k).count(), 1, "{k}");
     }
 }
+
+#[test]
+fn mcp_lets_encrypt_settings_use_dropdowns_and_keep_comments() {
+    let (_g, t) = home();
+    let p = t.path().join("preferences.toml");
+    std::fs::write(&p, "[mcp.server]\n# my server\nenabled = true\nhttps = true\n\n[mcp.server.tls]\n# public name\ndomains = \"old.example.com\"\n")
+        .unwrap();
+    assert!(matches!(field("mcp.server.tls.source").kind, Kind::Choice(ref v) if v == &["self-signed", "files", "acme"]));
+    assert!(matches!(field("mcp.server.tls.challenge").kind, Kind::Choice(ref v) if v == &["tls-alpn-01", "http-01", "dns-01"]));
+    assert!(validate(&field("mcp.server.tls.source"), "letsencrypt").is_err());
+    assert!(validate(&field("mcp.server.tls.directory"), "ftp://ca").is_err());
+    let mut d = load_doc().unwrap();
+    set(&mut d, &field("mcp.server.tls.source"), "ACME").unwrap();
+    set(&mut d, &field("mcp.server.tls.domains"), "mcp.example.com").unwrap();
+    set(&mut d, &field("mcp.server.tls.email"), "me@example.com").unwrap();
+    set(&mut d, &field("mcp.server.tls.staging"), "on").unwrap();
+    set(&mut d, &field("mcp.server.tls.challenge"), "http-01").unwrap();
+    set(&mut d, &field("mcp.server.tls.http_port"), "80").unwrap();
+    set(&mut d, &field("mcp.server.bind"), "0.0.0.0").unwrap();
+    save(&d).unwrap();
+    let s = std::fs::read_to_string(&p).unwrap();
+    assert!(s.contains("# my server") && s.contains("# public name"), "{s}");
+    let srv = mouser_core::storage::load_preferences().mcp.unwrap().server.unwrap();
+    let tls = srv.tls.clone().unwrap();
+    assert_eq!((tls.source.as_deref(), tls.domains.as_deref(), tls.staging, tls.http_port), (Some("acme"), Some("mcp.example.com"), true, Some(80)));
+    assert_eq!(srv.bind.as_deref(), Some("0.0.0.0"));
+    let acme = mouser_core::mcp_acme::AcmeConfig::from_prefs(&tls).unwrap();
+    assert_eq!((acme.challenge.as_str(), acme.ca_name()), ("http-01", "Let's Encrypt staging"));
+    assert_eq!(mouser_core::mcp_server::TlsSource::of(&srv).unwrap(), mouser_core::mcp_server::TlsSource::Acme);
+}

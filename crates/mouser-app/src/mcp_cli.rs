@@ -31,6 +31,12 @@ pub enum Action {
     },
     ServersList,
     ServersRemove(String),
+    /// `mouser mcp cert status`: the HTTPS certificate and its renewal.
+    CertStatus,
+    /// `mouser mcp cert renew [--force]`: Let's Encrypt renewal now.
+    CertRenew {
+        force: bool,
+    },
     /// Connect, list tools, optionally call one (through the broker).
     ServersTest {
         name: String,
@@ -210,11 +216,12 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             writeln!(out, "MCP server: {}", if s.enabled { "enabled" } else { "off (mouser mcp enable)" })?;
             writeln!(out, "  http  : http://127.0.0.1:{}/mcp (loopback only)", s.port)?;
             if s.https {
-                writeln!(out, "  https : https://127.0.0.1:{}/mcp", s.https_port)?;
-                match mouser_core::mcp_server::tls_config(s.cert.as_deref(), s.key.as_deref()) {
-                    Ok((_, cert, fp)) => writeln!(out, "  cert  : {} (SHA256 {fp})", cert.display())?,
-                    Err(e) => writeln!(out, "  cert  : error: {e:#}")?,
-                }
+                let host = match mouser_core::mcp_server::TlsSource::of(&s) {
+                    Ok(mouser_core::mcp_server::TlsSource::Acme) => mouser_core::mcp_server::tls_domains(&s).first().cloned().unwrap_or_default(),
+                    _ => s.bind.clone().unwrap_or_else(|| "127.0.0.1".into()),
+                };
+                writeln!(out, "  https : https://{host}:{}/mcp", s.https_port)?;
+                cert_status(&s, out)?;
             } else {
                 writeln!(out, "  https : off (mouser mcp enable --https)")?;
             }
@@ -258,6 +265,8 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             writeln!(out, "MCP server disabled (from the next start)")?;
             Ok(())
         }
+        Action::CertStatus => cert_status(&prefs(), out),
+        Action::CertRenew { force } => cert_renew(&prefs(), *force, out),
         Action::TokenShow => {
             let (t, _) = mouser_core::secrets::mcp_token()?;
             writeln!(out, "{t}")?;
@@ -269,4 +278,100 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn cert_status(s: &McpServerPrefs, out: &mut dyn Write) -> Result<()> {
+    use mouser_core::{mcp_acme, mcp_server};
+    match mcp_server::TlsSource::of(s)? {
+        mcp_server::TlsSource::Acme => {
+            let acme = mcp_acme::AcmeConfig::from_prefs(s.tls.as_ref().expect("acme source"))?;
+            let dir = mcp_acme::default_dir();
+            writeln!(out, "  cert  : {} for {} ({})", acme.ca_name(), acme.domains.join(", "), acme.challenge.as_str())?;
+            let store = mcp_acme::CertStore::default();
+            match store.load(&dir) {
+                Ok(true) => {
+                    writeln!(out, "          {} valid until {}", dir.join("cert.pem").display(), mcp_acme::fmt_time(store.not_after().unwrap()))?
+                }
+                Ok(false) => writeln!(out, "          none yet (Mouser gets one when it starts)")?,
+                Err(e) => writeln!(out, "          unusable: {e:#}")?,
+            }
+            let st = mcp_acme::load_state(&dir);
+            let next = mcp_acme::next_attempt(&acme, &st, store.not_after(), std::time::SystemTime::now());
+            writeln!(
+                out,
+                "  renew : {}",
+                if next <= std::time::SystemTime::now() { "due now".to_string() } else { format!("after {}", mcp_acme::fmt_time(next)) }
+            )?;
+            if st.failures > 0 {
+                writeln!(out, "  failed: {} time(s) in a row; last error: {}", st.failures, st.last_error.unwrap_or_default())?;
+            }
+        }
+        src => {
+            let (c, k) = if src == mcp_server::TlsSource::Files { (s.cert.as_deref(), s.key.as_deref()) } else { (None, None) };
+            match mcp_server::tls_config(c, k) {
+                Ok((_, cert, fp)) => writeln!(out, "  cert  : {} (SHA256 {fp})", cert.display())?,
+                Err(e) => writeln!(out, "  cert  : error: {e:#}")?,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn cert_renew(s: &McpServerPrefs, force: bool, out: &mut dyn Write) -> Result<()> {
+    use mouser_core::{mcp_acme, mcp_server};
+    if mcp_server::TlsSource::of(s)? != mcp_server::TlsSource::Acme {
+        bail!("renew is for Let's Encrypt certificates: set [mcp.server.tls] source = \"acme\"");
+    }
+    let acme = mcp_acme::AcmeConfig::from_prefs(s.tls.as_ref().expect("acme source"))?;
+    let dir = mcp_acme::default_dir();
+    let addr = s.bind.as_deref().unwrap_or("127.0.0.1");
+    // The running Mouser owns the HTTPS port: ask it.
+    if s.enabled && s.https && std::net::TcpListener::bind((addr, s.https_port)).is_err() {
+        if !force {
+            let store = mcp_acme::CertStore::default();
+            let _ = store.load(&dir);
+            let next = mcp_acme::next_attempt(&acme, &mcp_acme::load_state(&dir), store.not_after(), std::time::SystemTime::now());
+            if next > std::time::SystemTime::now() {
+                writeln!(out, "not due until {} (use --force to renew anyway)", mcp_acme::fmt_time(next))?;
+                return Ok(());
+            }
+        }
+        mcp_acme::write_private(&mcp_acme::trigger_path(&dir), b"")?;
+        writeln!(out, "asked the running Mouser to renew within a minute; check with `mouser mcp cert status`")?;
+        return Ok(());
+    }
+    let store = std::sync::Arc::new(mcp_acme::CertStore::default());
+    let _ = store.load(&dir);
+    // Answer the challenge ourselves while Mouser isn't running.
+    match acme.challenge {
+        mcp_acme::Challenge::TlsAlpn01 => {
+            let (token, _) = mouser_core::secrets::mcp_token()?;
+            let l = mcp_server::bind_addr(addr, s.https_port, true, &token)?;
+            let st = store.clone();
+            std::thread::spawn(move || mcp_acme::serve_challenge_only(l, st));
+        }
+        mcp_acme::Challenge::Http01 => {
+            let l = std::net::TcpListener::bind((addr, acme.http_port))
+                .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?;
+            let st = store.clone();
+            std::thread::spawn(move || mcp_acme::serve_http01(l, st));
+        }
+        mcp_acme::Challenge::Dns01 => {}
+    }
+    let manual = |name: &str, txt: &str| -> Result<()> {
+        eprintln!("Add this DNS record, wait until it resolves, then press Enter:\n  {name}. 300 IN TXT \"{txt}\"");
+        let mut l = String::new();
+        std::io::stdin().read_line(&mut l)?;
+        Ok(())
+    };
+    let dns = match acme.dns_hook.as_deref() {
+        Some(h) => Some(mcp_acme::DnsPublisher::Hook(h)),
+        None => Some(mcp_acme::DnsPublisher::Manual(&manual)),
+    };
+    let retry = mcp_acme::RetryPolicy::new().timeout(std::time::Duration::from_secs(180));
+    match mcp_acme::renew_once(&acme, &dir, &store, force, None, dns, retry)? {
+        mcp_acme::Outcome::Renewed(na) => writeln!(out, "new certificate for {} valid until {}", acme.domains.join(", "), mcp_acme::fmt_time(na))?,
+        mcp_acme::Outcome::NotDue(t) => writeln!(out, "not due until {} (use --force to renew anyway)", mcp_acme::fmt_time(t))?,
+    }
+    Ok(())
 }
