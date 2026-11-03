@@ -36,6 +36,8 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pemfile = "2"
 rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 sha2 = "0.10"
+# Fuzzball wire format (encode/parse); terminal state stays in src/fuzzball.rs.
+fuzzball = "1"
 webpki-roots = "1"
 minijinja = { version = "3", features = ["json", "loop_controls"] }
 minijinja-contrib = { version = "3", features = ["pycompat"] }
