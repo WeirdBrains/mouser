@@ -63,7 +63,7 @@ pub enum Effect {
     /// (cut to the kill ring and yanked back when the prompt returns).
     Run(String),
     /// Change the shell's directory: silently through the shell integration
-    /// (Fuzzball `s c`, docs/protocol/shell.md), else by typing `cd` and then
+    /// (Fuzzball `s c`, fuzzball docs/shell.md), else by typing `cd` and then
     /// erasing those lines so one prompt remains.
     Cd(PathBuf),
     /// Hand a file to the desktop's opener (players etc.).

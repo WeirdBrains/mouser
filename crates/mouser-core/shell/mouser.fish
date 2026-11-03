@@ -1,4 +1,4 @@
-# Mouser shell integration for fish 3.4+ (docs/protocol/shell.md, Fuzzball `s`, v0).
+# Mouser shell integration for fish 3.4+ (fuzzball docs/shell.md, Fuzzball `s`, v0).
 # Load it from ~/.config/fish/config.fish:   mouser shell-integration fish | source
 # It reports the directory (OSC 7) and lets Mouser change directory silently,
 # keeping the line you are typing.

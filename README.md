@@ -11,7 +11,7 @@ Mouser is a new terminal emulator written in Rust. It runs your login shell insi
 - Fast text rendering via `winit` + `softbuffer` + `fontdue` (CPU rasterization, zero-copy blits)
 - Chunked, compressed scrollback using Zstd or LZ4, with idle-based auto-compression and transparent on-demand decompression
 - Scrollback search across compressed history
-- Fuzzball protocol (graphics + keyboard, `docs/protocol/`), with the Kitty keyboard and Kitty graphics protocols as fallbacks
+- Fuzzball protocol (graphics + keyboard, [spec](https://weirdbrains.github.io/fuzzball/)), with the Kitty keyboard and Kitty graphics protocols as fallbacks
 - TOML configuration for font, colors, scrollback size, compression algorithm/level, and idle thresholds
 
 ## Why these crates?
@@ -50,13 +50,13 @@ Data flow:
 ## Fuzzball and Kitty fallbacks
 
 - **Fuzzball** is Mouser's own protocol for images and structured key events (DCS, tag `Fz`,
-  tmux/screen-friendly). Spec: [`docs/protocol/`](docs/protocol/README.md). Try it with
+  tmux/screen-friendly). Spec: [Fuzzball site](https://weirdbrains.github.io/fuzzball/), [repo docs](https://github.com/WeirdBrains/fuzzball/blob/main/docs/README.md). Try it with
   `tools/fuzzball-demo.py` inside Mouser.
 - **Kitty keyboard protocol** is supported as a fallback, for apps that don't speak
   Fuzzball yet. Compliance matrix: [`docs/kitty-compliance.md`](docs/kitty-compliance.md).
 - **Kitty graphics protocol** is supported as a fallback too (`kitten icat`, chafa, yazi, …),
   including Unicode placeholders and animation; Fuzzball takes precedence. Details and
-  limits: [`docs/protocol/graphics.md` §7](docs/protocol/graphics.md).
+  limits: [`graphics.md` §7](https://github.com/WeirdBrains/fuzzball/blob/main/docs/graphics.md).
 - iTerm2 `OSC 1337` images are **not** supported.
 
 ### Showing images: `mouser show`
@@ -236,7 +236,7 @@ clang, plus Vulkan headers and shaderc on Linux (docs/models.md §Building it).
 ### Shell integration
 
 Load the integration from your shell's rc file. It reports the directory (OSC 7) and
-lets commander change directory silently (docs/protocol/shell.md):
+lets commander change directory silently (https://github.com/WeirdBrains/fuzzball/blob/main/docs/shell.md):
 
 ```bash
 eval "$(mouser shell-integration zsh)"    # ~/.zshrc

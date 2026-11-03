@@ -37,7 +37,7 @@ DECCOLM 132-column · G2/G3/national charsets · protected areas · ENQ answerba
 OSC 133 UI.
 
 ## Fuzzball
-Spec v0.1 with resolved decisions in `docs/protocol/README.md` §10. OSC 1337 and xterm-kitty
+Spec v0.1 with resolved decisions in `fuzzball docs/README.md` §10. OSC 1337 and xterm-kitty
 were removed. Kitty keyboard and Kitty graphics are fallbacks; Fuzzball takes precedence.
 Placements follow their text (scroll regions, IL/DL, scrollback, resize) and are removed
 when their anchor row leaves the scrollback; abandoned uploads expire on a timer
