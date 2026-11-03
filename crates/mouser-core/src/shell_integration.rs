@@ -1,5 +1,5 @@
 //! Shell integration scripts (`mouser shell-integration SHELL`): OSC 7 and the
-//! Fuzzball `s` subsystem for silent directory changes (docs/protocol/shell.md).
+//! Fuzzball `s` subsystem for silent directory changes (fuzzball docs/shell.md).
 
 pub const ZSH: &str = include_str!("../shell/mouser.zsh");
 pub const BASH: &str = include_str!("../shell/mouser.bash");

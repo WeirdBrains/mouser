@@ -14,7 +14,7 @@ the same registry.
 | transport | what it is | lifetime | trust |
 |---|---|---|---|
 | `mcp` | a program speaking MCP over stdio (`run.command`) | started on demand | installed: asks, then remembers what you choose |
-| `fuzzball` | a program running *in* a tab, over Fuzzball `p` (docs/protocol/plugins.md) | while it runs, that tab only | untrusted; over ssh it asks every time |
+| `fuzzball` | a program running *in* a tab, over Fuzzball `p` (fuzzball docs/plugins.md) | while it runs, that tab only | untrusted; over ssh it asks every time |
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 | `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
@@ -193,7 +193,7 @@ MCP section (`plugin:<name>`). It starts once its `run` permission is granted
 ## Fuzzball plugins
 
 A program in a tab sends `ESC P = F z p h ; id=1,name=…,caps=a+b ESC \`, and
-Mouser answers after the popup (docs/protocol/plugins.md). Grants belong to
+Mouser answers after the popup (fuzzball docs/plugins.md). Grants belong to
 that tab and end with it. A `plugin.toml` with `transport = "fuzzball"` is
 optional; it only lists the plugin.
 

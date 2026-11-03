@@ -335,7 +335,7 @@ impl<W: Write> TerminalParser<W> {
 
     /// Remove the absolute rows `from..to` from the main screen, pulling what is
     /// below up (the cursor follows). Used to hide a typed `cd` and its echo so
-    /// one prompt remains (docs/protocol/shell.md §6). False (nothing changed)
+    /// one prompt remains (fuzzball docs/shell.md §6). False (nothing changed)
     /// on the alternate screen or when the rows already left the screen.
     pub fn erase_rows(&mut self, from: i64, to: i64) -> bool {
         if self.screen.in_alt_screen() || to <= from || from < self.lines_scrolled || to > self.cursor_abs_row() {
@@ -1476,7 +1476,7 @@ pub fn tcap(name: &str) -> Option<String> {
             "fd" => "\x1b[?1004l",
             "fe" => "\x1b[?1004h",
             "smxx" => "\x1b[9m",
-            // Fuzzball protocol version (docs/protocol/README.md §4).
+            // Fuzzball protocol version (fuzzball docs/README.md §4).
             "Fz" => "0",
             "rmxx" => "\x1b[29m",
             _ => return None,

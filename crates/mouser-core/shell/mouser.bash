@@ -1,4 +1,4 @@
-# Mouser shell integration for bash 4.4+ (docs/protocol/shell.md, Fuzzball `s`, v0).
+# Mouser shell integration for bash 4.4+ (fuzzball docs/shell.md, Fuzzball `s`, v0).
 # Load it from ~/.bashrc:   eval "$(mouser shell-integration bash)"
 # It reports the directory (OSC 7) and lets Mouser change directory silently,
 # keeping the line you are typing.

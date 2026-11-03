@@ -103,7 +103,7 @@ struct Cli {
 #[derive(clap::Subcommand, Debug)]
 enum Command {
     /// Print the shell integration for zsh, bash or fish (directory reports and
-    /// silent `cd` from commander; docs/protocol/shell.md). Load it from your rc file:
+    /// silent `cd` from commander; fuzzball docs/shell.md). Load it from your rc file:
     /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`
     /// or `mouser shell-integration fish | source`.
     ShellIntegration {
@@ -2468,7 +2468,7 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
                 session.shell_in_foreground() != Some(false) && session.parser.lock().unwrap().fuzzball.shell.as_ref().is_some_and(|s| s.has("cwd"));
             if silent {
                 // The integration changes directory without touching the line
-                // being typed and redraws its prompt (docs/protocol/shell.md).
+                // being typed and redraws its prompt (fuzzball docs/shell.md).
                 static ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
                 let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let mut w = session.writer.clone();

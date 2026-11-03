@@ -1,4 +1,4 @@
-//! `mouser show`: display images in the terminal (docs/protocol/graphics.md).
+//! `mouser show`: display images in the terminal (fuzzball docs/graphics.md).
 //!
 //! Fuzzball graphics come first; terminals that only answer the Kitty graphics
 //! query get Kitty graphics instead. Inside tmux (with `allow-passthrough on`)

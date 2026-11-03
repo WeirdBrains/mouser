@@ -266,7 +266,7 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
     Some(KeyInput { key, shifted, base, mods: bits, event, text })
 }
 
-/// Describe a winit key event for Fuzzball keyboard mode (docs/protocol/keyboard.md).
+/// Describe a winit key event for Fuzzball keyboard mode (fuzzball docs/keyboard.md).
 pub fn fuzzball_event(ev: &KeyEvent, m: ModifiersState) -> Option<mouser_core::fuzzball::KeyEvent> {
     use mouser_core::fuzzball::{KeyAction, KeyName, mods as fm};
     let PhysicalKey::Code(phys) = ev.physical_key else { return None };

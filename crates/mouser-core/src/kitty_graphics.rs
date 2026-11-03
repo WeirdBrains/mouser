@@ -5,7 +5,7 @@
 //! Commands arrive as APC strings `ESC _ G <keys> ; <payload> ESC \`. Images
 //! and placements live in their own [`Graphics`] store (Kitty ids are a separate
 //! namespace) and share the placement lifecycle, renderer, scale cache and the
-//! memory quota with Fuzzball. See `docs/protocol/graphics.md` §5 for what is
+//! memory quota with Fuzzball. See `fuzzball docs/graphics.md` §5 for what is
 //! supported and the deliberate limits.
 
 use crate::graphics::{Draw, Graphics, MAX_BYTES, MAX_DIM, OverLimit, Placement, base64_decode, decode_png};

@@ -1,5 +1,5 @@
 //! Image store shared by the Fuzzball graphics protocol (see `fuzzball.rs`
-//! and `docs/protocol/graphics.md`) and the Kitty graphics fallback
+//! and `fuzzball docs/graphics.md`) and the Kitty graphics fallback
 //! (`kitty_graphics.rs`): decoded images, cell-anchored placements, their
 //! lifecycle (scrolling, erasing, resizing), memory accounting and the
 //! base64 / PNG decoders.

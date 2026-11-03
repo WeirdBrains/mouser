@@ -1,4 +1,4 @@
-# Mouser shell integration for zsh (docs/protocol/shell.md, Fuzzball `s`, v0).
+# Mouser shell integration for zsh (fuzzball docs/shell.md, Fuzzball `s`, v0).
 # Load it from ~/.zshrc:   eval "$(mouser shell-integration zsh)"
 # It reports the directory (OSC 7) and lets Mouser change directory silently,
 # keeping the line you are typing.
