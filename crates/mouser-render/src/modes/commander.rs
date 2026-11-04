@@ -11,6 +11,7 @@ use crate::frame::PADDING;
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use mouser_core::commander::{self as cmdr, Action, Commander, Entry, Kind, Overlay, Sort, TILE_SIZES, View as Layout};
 use mouser_core::fetch;
+use mouser_core::markdown as md;
 use mouser_core::modes::{Binding, Keymap};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -485,6 +486,8 @@ pub struct CommanderMode {
     heads: HashMap<PathBuf, fetch::Handle>,
     /// Bytes of the open remote text shown so far.
     remote_text_at: u64,
+    /// The open markdown file laid out: (path, columns, source lines, rows).
+    md_cache: Option<(PathBuf, usize, usize, Arc<Vec<md::Line>>)>,
 }
 
 /// Zoom of the image in the file view: scale (1.0 = actual pixels) and the
@@ -743,6 +746,7 @@ impl CommanderMode {
             open_remote: None,
             heads: HashMap::new(),
             remote_text_at: 0,
+            md_cache: None,
         }
     }
 
@@ -808,6 +812,13 @@ impl CommanderMode {
                 o.texts.push(e.path.clone());
                 let cols = clip.w / cw.max(1);
                 let rows = (clip.h / ch.max(1)) as usize;
+                if md::is_markdown(&e.name) {
+                    // Rendered, not raw: headings, lists, code blocks (docs/markdown.md).
+                    let src = self.text_lines(&e.path).join("\n");
+                    let lines = md::layout(&src, cols.max(1) as usize);
+                    crate::markdown::items(&lines, 0, rows, clip.x, clip.y, (cw, ch), clip.w, &mut |_| UiAction::None, &mut o.items);
+                    return;
+                }
                 let lines: Vec<String> = self.text_lines(&e.path).iter().take(rows).map(|l| clip_text(l, cols)).collect();
                 for (i, l) in lines.into_iter().enumerate() {
                     o.items.push(item(Rect { x: clip.x, y: clip.y + i as i32 * ch, w: clip.w, h: ch }, l, PanelStyle::Hint, UiAction::None));
@@ -1049,20 +1060,33 @@ impl CommanderMode {
             return;
         }
         let mut rows = (body.h / ch.max(1)).max(1) as usize;
-        let long = lines.len() > rows;
+        let rendered = if md::is_markdown(&p.to_string_lossy()) {
+            let cols = ((body.w - 10) / cw.max(1)).max(8) as usize;
+            if self.md_cache.as_ref().is_none_or(|c| c.0 != p || c.1 != cols || c.2 != lines.len()) {
+                self.md_cache = Some((p.to_path_buf(), cols, lines.len(), Arc::new(md::layout(&lines.join("\n"), cols))));
+            }
+            self.md_cache.as_ref().map(|c| c.3.clone())
+        } else {
+            None
+        };
+        let total = rendered.as_ref().map_or(lines.len(), |r| r.len());
+        let long = total > rows;
         if long {
             // The last row says where we are.
             rows = rows.saturating_sub(1).max(1);
         }
-        let scroll = self.c.overlay_scroll.min(lines.len().saturating_sub(rows));
+        let scroll = self.c.overlay_scroll.min(total.saturating_sub(rows));
         self.c.overlay_scroll = scroll;
         let tw = if long { body.w - 10 } else { body.w };
         if long {
-            let total = lines.len();
             scrollbar(o, Rect { x: body.x + body.w - 5, y: body.y, w: 5, h: rows as i32 * ch }, scroll, rows, total);
             let t = format!("lines {}", range_label(scroll, rows, total));
             let lw = t.chars().count() as i32 * cw;
             o.items.push(item(Rect { x: body.x + body.w - lw, y: body.y + rows as i32 * ch, w: lw, h: ch }, t, PanelStyle::Hint, UiAction::None));
+        }
+        if let Some(r) = rendered {
+            crate::markdown::items(&r, scroll, rows, body.x, body.y, (cw, ch), tw, &mut |_| UiAction::None, &mut o.items);
+            return;
         }
         for (i, l) in lines.iter().skip(scroll).take(rows).enumerate() {
             o.items.push(item(

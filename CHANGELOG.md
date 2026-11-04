@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Commander: Markdown files preview rendered (headings, emphasis, lists, quotes, code blocks, links, tables) in the grid, carousel and file view. See docs/markdown.md.
+
 ## [1.2.0] - 2026-11-04
 
 ### Added

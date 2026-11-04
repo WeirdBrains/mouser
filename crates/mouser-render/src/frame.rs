@@ -539,8 +539,70 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 round_box(canvas, b.x, b.y, b.w, b.h, RADIUS, t, edge, mix(bg, panel, 0.5), panel);
             }
             ui::PanelStyle::FolderIcon => folder_icon(canvas, b, accent, mix(bg, panel, 0.5)),
+            ui::PanelStyle::Md { flags, heading } => md_text(canvas, fonts, b, &it.text, flags, heading, (fg, panel, accent)),
+            ui::PanelStyle::MdCode { top, bottom } => md_code(canvas, b, top, bottom, mix(panel, fg, 0.08), panel),
+            ui::PanelStyle::MdQuote => canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.55)),
+            ui::PanelStyle::MdRule => canvas.fill_rect(b.x, b.y + b.h / 2, b.w, 1, mix(panel, fg, 0.3)),
             // Drawn by draw_floats, after the images.
             ui::PanelStyle::FloatLabel | ui::PanelStyle::Badge(_) => {}
+        }
+    }
+}
+
+/// A markdown run: headings in the accent (level 1–2) or bold, links
+/// underlined in the accent, inline code on a rounded shade, list marks
+/// and placeholders muted.
+#[allow(clippy::too_many_arguments)]
+fn md_text(canvas: &mut dyn Draw, fonts: &mut FontStack, b: ui::Rect, text: &str, flags: u8, heading: u8, (fg, panel, accent): (u32, u32, u32)) {
+    use mouser_core::markdown::{BOLD, CODE, ITALIC, LINK, MUTED, STRIKE};
+    let (cw, ch) = (fonts.cell_w, fonts.cell_h);
+    let ty = b.y + (b.h - ch) / 2;
+    let max = (b.w / cw.max(1)).max(0) as usize;
+    let shown: String = text.chars().take(max).collect();
+    let n = mouser_core::markdown::width(&shown) as i32;
+    let mut color = match heading {
+        1 | 2 => accent,
+        0 => mix(panel, fg, 0.85),
+        _ => fg,
+    };
+    if flags & LINK != 0 {
+        color = accent;
+    }
+    if flags & MUTED != 0 {
+        color = mix(panel, fg, 0.5);
+    }
+    if flags & CODE != 0 {
+        round_rect(canvas, b.x - 1, ty - 1, n * cw + 2, ch + 2, 4.min(ch / 3), mix(panel, fg, 0.12), panel);
+        color = mix(fg, accent, 0.35);
+    }
+    let draw: String = if flags & ITALIC != 0 { shown.chars().map(crate::text::italic_key).collect() } else { shown };
+    let bold = flags & BOLD != 0 || heading > 0;
+    canvas.draw_text(fonts, b.x, ty, &draw, color);
+    if bold {
+        canvas.draw_text(fonts, b.x + 1, ty, &draw, color);
+    }
+    let under_y = ty + (fonts.ascent + 2).min(ch - 2);
+    if flags & LINK != 0 || heading == 1 {
+        canvas.fill_rect(b.x, under_y, n * cw, 1, color);
+    }
+    if flags & STRIKE != 0 {
+        canvas.fill_rect(b.x, ty + ch / 2, n * cw, 1, color);
+    }
+}
+
+/// A slice of a code block's background: rounded only at the block's ends.
+fn md_code(canvas: &mut dyn Draw, b: ui::Rect, top: bool, bottom: bool, fill: u32, under: u32) {
+    let r = RADIUS.min(b.h / 2);
+    match (top, bottom) {
+        (true, true) => round_rect(canvas, b.x, b.y, b.w, b.h, r, fill, under),
+        (false, false) => canvas.fill_rect(b.x, b.y, b.w, b.h, fill),
+        (true, false) => {
+            round_rect(canvas, b.x, b.y, b.w, b.h, r, fill, under);
+            canvas.fill_rect(b.x, b.y + b.h - r, b.w, r, fill);
+        }
+        (false, true) => {
+            round_rect(canvas, b.x, b.y, b.w, b.h, r, fill, under);
+            canvas.fill_rect(b.x, b.y, b.w, r, fill);
         }
     }
 }
