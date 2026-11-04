@@ -385,7 +385,13 @@ impl Setup {
                 let p = PRESETS.iter().find(|p| p.0 == *n).expect("preset");
                 let url = self.preset_url.clone().unwrap_or_else(|| p.2.to_string());
                 let m = if f.model.trim().is_empty() { p.3.to_string() } else { f.model.trim().to_string() };
-                (n.to_string(), p.1, url, m)
+                if *n == "grok" && self.preset_url.is_none() {
+                    let (api, url) = grok_target(&f.key);
+                    let m = if api == Api::CursorAgents && f.model.trim().is_empty() { String::new() } else { m };
+                    (n.to_string(), api, url.to_string(), m)
+                } else {
+                    (n.to_string(), p.1, url, m)
+                }
             }
             Kind::Custom => {
                 let url = f.url.trim().to_string();
@@ -409,7 +415,16 @@ impl Setup {
         self.step = Step::Testing(kind, f);
         self.spawn(move |_, cancel| {
             let k = (!key.is_empty()).then(|| key.clone());
-            let entry = ProviderEntry { name: name.clone(), api, url, key: None, models: vec![model.clone()], ca: None };
+            let mut model = model;
+            let mut entry = ProviderEntry { name: name.clone(), api, url, key: None, models: vec![model.clone()], ca: None };
+            if model.is_empty() {
+                // No model typed for a list-only provider: take the first it offers.
+                let list = list_models(&entry, k.as_deref()).map_err(|e| format!("listing models failed: {e:#}"))?;
+                model = list.first().map(|m| m.0.clone()).ok_or("the provider offers no models")?;
+                entry.models = list.into_iter().map(|m| m.0).collect();
+                entry.models.retain(|m| *m != model);
+                entry.models.insert(0, model.clone());
+            }
             test_connection(&entry, k.clone(), &model, cancel).map_err(|e| format!("connection test failed: {e:#}"))?;
             let warn = save_provider(entry, k).map_err(|e| format!("{e:#}"))?;
             let spec = set_default(&format!("{name}/{model}")).map_err(|e| format!("{e:#}"))?;
@@ -444,11 +459,25 @@ impl ChatSink for Probe<'_> {
 
 /// One short request with the key in memory; nothing is saved yet.
 pub fn test_connection(e: &ProviderEntry, key: Option<String>, model: &str, cancel: &AtomicBool) -> Result<()> {
-    crate::mcp::Target::parse(&e.url).context("url")?;
+    if e.api != Api::GrokDesktop {
+        crate::mcp::Target::parse(&e.url).context("url")?;
+    }
+    if let Some(k) = &key
+        && let Some(h) = keys::wrong_provider_hint(&e.name, &e.url, k)
+    {
+        bail!("{h}");
+    }
     let p: Box<dyn ModelProvider> = match e.api {
         Api::OpenAi => Box::new(openai::OpenAi { id: e.name.clone(), url: e.url.clone(), key, models: e.models.clone(), ca: None }),
         Api::Anthropic => Box::new(anthropic::Anthropic { id: e.name.clone(), url: e.url.clone(), key, models: e.models.clone(), ca: None }),
         Api::Google => Box::new(google::Google { id: e.name.clone(), url: e.url.clone(), key, models: e.models.clone(), ca: None }),
+        Api::CursorAgents => {
+            let c = cursor::CursorAgents { id: e.name.clone(), url: e.url.clone(), key, models: e.models.clone(), ca: e.ca.clone() };
+            // Checking the key is enough; a test run would start an agent.
+            c.me()?;
+            return Ok(());
+        }
+        Api::GrokDesktop => Box::new(grokbot::GrokDesktop { id: e.name.clone(), models: e.models.clone() }),
         Api::LlamaCpp => bail!("not a hosted provider"),
     };
     let req = ChatRequest { model: model.into(), messages: vec![Message::user("Reply with OK.")], max_tokens: Some(16), ..Default::default() };

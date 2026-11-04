@@ -236,7 +236,8 @@ enum McpCommand {
 enum ModelCommand {
     /// List providers (built-in, configured, plugins) and their models; * marks the default.
     List,
-    /// Add or update: `add openai --key-stdin`, or `add NAME --api openai|anthropic|google --url URL [--model M]…`.
+    /// Add or update: `add openai --key-stdin`, `add grok --key-stdin` (grok_… or xai-… key) or `add grok --desktop`,
+    /// or `add NAME --api openai|anthropic|google --url URL [--model M]…`. Without --model it lists the provider's models and asks.
     Add {
         name: String,
         #[arg(long)]
@@ -252,6 +253,9 @@ enum ModelCommand {
         /// PEM certificate/CA to trust for an https URL.
         #[arg(long)]
         ca: Option<String>,
+        /// grok only: use the signed-in Grok Bot desktop app's login (opt-in; no key).
+        #[arg(long, conflicts_with = "key_stdin")]
+        desktop: bool,
     },
     /// Remove a configured provider and its key.
     Remove { name: String },
@@ -823,7 +827,7 @@ fn main() -> Result<()> {
             ModelCommand::Remove { name } => Action::Remove(name.clone()),
             ModelCommand::Default { spec } => Action::Default(spec.clone()),
             ModelCommand::Test { spec, prompt, tool } => Action::Test { spec: spec.clone(), prompt: prompt.clone(), tool: *tool },
-            ModelCommand::Add { name, api, url, key_stdin, models, ca } => {
+            ModelCommand::Add { name, api, url, key_stdin, models, ca, desktop } => {
                 let key = if *key_stdin {
                     let mut t = String::new();
                     std::io::stdin().read_line(&mut t)?;
@@ -835,10 +839,15 @@ fn main() -> Result<()> {
                 } else {
                     None
                 };
-                Action::Add { name: name.clone(), api: api.clone(), url: url.clone(), key, models: models.clone(), ca: ca.clone() }
+                Action::Add { name: name.clone(), api: api.clone(), url: url.clone(), key, models: models.clone(), ca: ca.clone(), desktop: *desktop }
             }
         };
-        if let Err(e) = mouser_app::model_cli::run(&a, &mut std::io::stdout()) {
+        // `model add` without --model asks on the terminal (stdin may carry the key).
+        let mut tty = match &a {
+            Action::Add { models, .. } if models.is_empty() => mouser_app::model_cli::terminal_input(),
+            _ => None,
+        };
+        if let Err(e) = mouser_app::model_cli::run_io(&a, &mut std::io::stdout(), tty.as_mut().map(|t| t as &mut dyn std::io::BufRead)) {
             eprintln!("mouser model: {e:#}");
             std::process::exit(1);
         }

@@ -7,6 +7,8 @@ description = "Terminal core for Mouser: grid, parser, scrollback with compressi
 repository = ""
 
 [dependencies]
+# The grok provider's opt-in Grok Bot desktop login (docs/models.md §grok).
+grokbot_api = { version = "1.2", features = ["desktop-session"] }
 anyhow.workspace = true
 thiserror.workspace = true
 log.workspace = true
@@ -59,6 +61,13 @@ serial_test = "3.0.0"
 http = "1"
 bytes = "1"
 http-body-util = "0.1"
+# grok provider tests: encrypt a fake Grok Bot desktop session (Linux v10 Safe Storage).
+aes = "0.9.3"
+cbc = { version = "0.2.1", features = ["alloc"] }
+pbkdf2 = { version = "0.13.0", default-features = false }
+hmac = "0.13.0"
+sha1 = "0.11.0"
+base64 = "0.23.1"
 #[dev-dependencies]
 env_logger.workspace = true
 serde_json.workspace = true
