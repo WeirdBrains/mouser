@@ -13,6 +13,7 @@ pub mod grid;
 pub mod input;
 pub mod kitty;
 pub mod kitty_graphics;
+pub mod markdown;
 pub mod mcp;
 pub mod mcp_acme;
 pub mod mcp_client;

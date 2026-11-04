@@ -28,6 +28,8 @@ serde_json.workspace = true
 toml.workspace = true
 # Preferences mode: edit preferences.toml keeping comments and unknown keys.
 toml_edit = "0.22"
+# Markdown previews, chat replies and `mouser md` (docs/markdown.md).
+pulldown-cmark = { version = "0.13", default-features = false }
 dirs = "5.0.1"
 hex = "0.4"
 unicode-width = "0.1.14"

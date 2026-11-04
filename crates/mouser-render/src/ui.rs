@@ -380,6 +380,21 @@ pub enum PanelStyle {
         selected: bool,
         highlight: u64,
     },
+    /// A markdown text run (`mouser_core::markdown` span flags; `heading`
+    /// level, 0 for body text), laid out by [`crate::markdown`].
+    Md {
+        flags: u8,
+        heading: u8,
+    },
+    /// Markdown code block background, rounded at the block's `top` and `bottom`.
+    MdCode {
+        top: bool,
+        bottom: bool,
+    },
+    /// Markdown block quote bar.
+    MdQuote,
+    /// Markdown thematic break.
+    MdRule,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -248,3 +248,48 @@ fn carousel_floating_names_and_folder_icon() {
     assert_ne!(p & 0xFFFFFF, (g[0] as u32) << 16 | (g[1] as u32) << 8 | g[2] as u32, "label drawn after the image");
     assert!((p >> 8) & 0xFF > (p >> 16) & 0xFF, "the green shows through the label");
 }
+
+const RICH_MD: &str = "# Mouser\n\nA **GPU** terminal with *modes* and `commander`.\n\n## Features\n\n- grid and carousel\n- [docs](https://mouser.weirdbrains.com)\n\n> quoted note\n\n```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n\n| key | does |\n|-----|------|\n| t | view |\n\n---\n";
+
+/// Markdown files preview rendered (headings, code blocks, quotes), not as
+/// raw text: in the grid tile, the carousel box and the file view.
+#[test]
+fn markdown_previews_render() {
+    let t = tempfile::tempdir().unwrap();
+    std::fs::write(t.path().join("README.md"), RICH_MD).unwrap();
+    std::fs::write(t.path().join("zz.txt"), "# not markdown\n").unwrap();
+    let mut h = Host::builtin();
+    h.set_cwd(Some(t.path().to_path_buf()));
+    h.action("hidden", 0);
+    let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
+    let ctx = Context { viewport: vp, area: Rect { x: 0, y: PADDING, w: 1100, h: 760 - PADDING } };
+    let md_items = |h: &mut Host| -> Vec<ui::PanelItem> {
+        h.view(&ctx)
+            .dock
+            .unwrap()
+            .items
+            .into_iter()
+            .filter(|i| matches!(i.style, ui::PanelStyle::Md { .. } | ui::PanelStyle::MdCode { .. }))
+            .collect()
+    };
+    for (key, name) in [(&b"\x1bt"[..], "markdown-grid"), (&b"\x1bt"[..], "markdown-carousel")] {
+        h.key(key).unwrap();
+        settle(&mut h);
+        frame(&mut h, 0, name);
+        let items = md_items(&mut h);
+        assert!(items.iter().any(|i| i.text == "Mouser" && i.style == ui::PanelStyle::Md { flags: 1, heading: 1 }), "{name}: heading");
+        assert!(!items.iter().any(|i| i.text.contains('#')), "{name}: no raw markup");
+        assert!(!items.iter().any(|i| i.text == "not markdown"), "{name}: .txt stays raw");
+    }
+    // The file view: every block, the code block on its background.
+    h.action("open", 0);
+    settle(&mut h);
+    let (buf, _) = frame(&mut h, 0, "markdown-view");
+    let items = md_items(&mut h);
+    let code = items.iter().find(|i| matches!(i.style, ui::PanelStyle::MdCode { top: true, .. })).expect("code block").rect;
+    assert!(items.iter().any(|i| i.text == "println!(\"hi\");" || i.text.contains("println")), "code text");
+    assert!(items.iter().any(|i| i.text == "docs" && matches!(i.style, ui::PanelStyle::Md { flags, .. } if flags & 8 != 0)), "link");
+    assert!(items.iter().any(|i| i.text.contains("│")), "table");
+    let px = |x: i32, y: i32| buf[y as usize * 1100 + x as usize] & 0xFFFFFF;
+    assert_ne!(px(code.x + code.w - 4, code.y + code.h / 2), px(code.x + code.w - 4, code.y - 30), "code background drawn");
+}

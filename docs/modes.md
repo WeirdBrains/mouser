@@ -206,7 +206,7 @@ what you typed next.
 
 - **List**: `ls -lah` columns (attributes, size, name, last modified).
 - **Grid**: tiles with a preview by type (images scaled, a frame of each video, the
-  first lines of text files, a label for folders and audio) and the name below.
+  first lines of text files (Markdown rendered, [Markdown rendering](./markdown.md)), a label for folders and audio) and the name below.
 - **Carousel**: the focused item large in the middle and its two neighbours cut
   off at the edges. Every item's name floats over its box in the same place
   (near the bottom, centred): a slightly see-through rounded tag with a soft
