@@ -151,6 +151,12 @@ enum Command {
         #[command(subcommand)]
         action: ModelCommand,
     },
+    /// Windows: make Mouser the default terminal for console programs
+    /// (docs/windows.md §Default terminal). Needs Windows Terminal installed.
+    DefaultTerminal {
+        #[command(subcommand)]
+        action: DefaultTerminalCommand,
+    },
     /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
         /// Only this kind: mode, engine, model-provider, tool-provider, command.
@@ -160,6 +166,20 @@ enum Command {
         #[command(subcommand)]
         action: PluginCommand,
     },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum DefaultTerminalCommand {
+    /// Whether Mouser is registered and what the default terminal is.
+    Status,
+    /// Register Mouser's handoff for this user (the installer does this; the default is unchanged).
+    Register,
+    /// Remove Mouser's handoff (and put back the previous default if Mouser is it).
+    Unregister,
+    /// Make Mouser the default terminal, remembering the current one.
+    Set,
+    /// Put back the default terminal from before `set`.
+    Unset,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -593,7 +613,9 @@ fn attach_parent_console() {
     use windows_sys::Win32::System::Console::{
         ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle,
     };
-    if std::env::args_os().len() < 2 {
+    let args: Vec<String> = std::env::args().collect();
+    // COM started us to take a console session: no parent console to print to.
+    if args.len() < 2 || mouser_pty::handoff::is_com_embedding(&args) {
         return;
     }
     let unset = |id: STD_HANDLE| {
@@ -661,7 +683,52 @@ fn main() -> Result<()> {
             mouser_render::split::set_ui_command(me, vec!["__ui".into()]);
         }
     }
-    let cli = Cli::parse();
+    // COM started us as the default terminal (`-Embedding`): take the handed-off
+    // console session as the first tab (docs/windows.md §Default terminal).
+    let embedding = mouser_pty::handoff::is_com_embedding(&args);
+    let cli = if embedding { Cli::parse_from(["mouser"]) } else { Cli::parse() };
+    #[cfg(windows)]
+    let handoff = if embedding {
+        match mouser_pty::handoff_win::receive(std::time::Duration::from_secs(30)) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                log::error!("terminal handoff: {e:#}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(not(windows))]
+    let handoff: Option<mouser_pty::handoff::Handoff> = None;
+    if let Some(Command::DefaultTerminal { action }) = &cli.command {
+        use mouser_app::defterm_cli::Action;
+        let a = match action {
+            DefaultTerminalCommand::Status => Action::Status,
+            DefaultTerminalCommand::Register => Action::Register,
+            DefaultTerminalCommand::Unregister => Action::Unregister,
+            DefaultTerminalCommand::Set => Action::Set,
+            DefaultTerminalCommand::Unset => Action::Unset,
+        };
+        #[cfg(windows)]
+        {
+            let mut reg = mouser_pty::defterm_win::CurrentUser;
+            let lad = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+            let wt = mouser_pty::defterm::detect_windows_terminal(&reg, lad.as_deref(), &|p| p.exists());
+            let exe = std::env::current_exe()?;
+            if let Err(e) = mouser_app::defterm_cli::run(a, &mut reg, wt, &exe, &mut std::io::stdout()) {
+                eprintln!("mouser default-terminal: {e:#}");
+                std::process::exit(1);
+            }
+            return Ok(());
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = a;
+            eprintln!("mouser default-terminal: only on Windows");
+            std::process::exit(2);
+        }
+    }
     if let Some(Command::Show { files, width, height, fit: _, original, id }) = &cli.command {
         let o = mouser_app::show::Options { width: *width, height: *height, original: *original, id: *id };
         if let Err(e) = mouser_app::show::run(files, &o) {
@@ -787,8 +854,16 @@ fn main() -> Result<()> {
     // size is known, so its first prompt is drawn for the right width.
     let size = Size { cols: 100, rows: 30 };
     let tabs = Arc::new(Mutex::new(tabs::Tabs::default()));
-    let first = first_tab(&cli);
-    tabs.lock().unwrap().open(tabs::Session::new_in(first.name, first.launch, first.cwd, size, sb_cfg.clone()), wake);
+    let first_session = match handoff {
+        Some(h) => {
+            tabs::Session::handed_off(if h.title.trim().is_empty() { "console".to_string() } else { h.title }, h.handles, size, sb_cfg.clone())
+        }
+        None => {
+            let first = first_tab(&cli);
+            tabs::Session::new_in(first.name, first.launch, first.cwd, size, sb_cfg.clone())
+        }
+    };
+    tabs.lock().unwrap().open(first_session, wake);
     let parser = ActiveParser { tabs: tabs.clone(), dummy: tabs.lock().unwrap().list[0].parser.clone() };
     let shared_writer = tabs::ActiveWriter(tabs.clone());
 

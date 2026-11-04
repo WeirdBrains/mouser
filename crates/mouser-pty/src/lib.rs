@@ -1,3 +1,10 @@
+pub mod defterm;
+#[cfg(windows)]
+pub mod defterm_win;
+pub mod handoff;
+#[cfg(windows)]
+pub mod handoff_win;
+
 use anyhow::Result;
 pub use portable_pty;
 pub use portable_pty::{Child, MasterPty};
