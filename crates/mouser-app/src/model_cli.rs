@@ -315,7 +315,9 @@ fn add(
     if api != Api::GrokDesktop {
         mouser_core::mcp::Target::parse(&url)?;
     }
+    // An explicit Cursor agents API takes grok_ keys at any URL (a proxy, a mock).
     if let Some(k) = key
+        && !(api == Api::CursorAgents && k.starts_with("grok_"))
         && let Some(h) = keys::wrong_provider_hint(name, &url, k)
     {
         bail!("{h}");
