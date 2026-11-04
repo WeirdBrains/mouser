@@ -338,7 +338,9 @@ fn messages_render_markdown_with_links() {
     }
     let mut m = ChatMode::new(chat.clone());
     let keys = Keymap::new(m.bindings());
-    let c = Context { viewport: UiViewport { width: 1000, height: 900, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 30, w: 1000, h: 870 } };
+    // The app's geometry: the area starts under the padding (no tab strip).
+    let top = mouser_render::frame::PADDING;
+    let c = Context { viewport: UiViewport { width: 1000, height: 900, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: top, w: 1000, h: 900 - top } };
     let d = m.view(&c, &keys).dock.unwrap();
     let md = |t: &str| d.items.iter().find(|i| i.text == t && matches!(i.style, PanelStyle::Md { .. })).cloned();
     assert_eq!(md("Plan").expect("heading").style, PanelStyle::Md { flags: 1, heading: 2 });
@@ -375,7 +377,11 @@ fn save_png(d: &mouser_render::ui::Panel, c: &Context, path: &std::path::Path) {
     use mouser_render::{Canvas, FontStack, Frame, render_frame, ui};
     let (w, h) = (c.viewport.width as usize, c.viewport.height as usize);
     let mut layout = ui::without_sidebar(w as i32, h as i32);
-    layout.dock = Some(ui::Dock { panel: d.clone(), inset: d.rect.h + 8, fullscreen: false });
+    let dock = ui::Dock { panel: d.clone(), inset: d.rect.h + 8, fullscreen: false };
+    // The grid starts below the dock, so the prompt never sits on the panel.
+    let grid_top = mouser_render::frame::PADDING + dock.inset;
+    assert!(grid_top >= d.rect.y + d.rect.h, "grid top {grid_top} inside the dock {:?}", d.rect);
+    layout.dock = Some(dock);
     let lines = vec!["$ ".to_string()];
     let mut fonts = FontStack::embedded(15.0);
     let mut buf = vec![0u32; w * h];
