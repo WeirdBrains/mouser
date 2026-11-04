@@ -6,7 +6,7 @@
 use crate::events::{EventDecl, Listener};
 use crate::host_api::Call;
 use crate::mode::{Context, Effect};
-use crate::ui::Rect;
+use crate::ui::{Panel, Rect};
 use serde_json::Value;
 
 /// The newest protocol version this crate speaks. `0` while the protocol is
@@ -88,26 +88,31 @@ pub struct McpGrant {
     pub tools: Vec<String>,
 }
 
+/// What Mouser tells an accepted plugin.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Accepted {
+    pub api: u32,
+    pub session: String,
+    pub ctx: Context,
+    /// Permissions granted (manifest, pre-grant or the user).
+    pub granted: Vec<String>,
+    /// Listeners refused, with the reason (not fatal).
+    pub denied: Vec<(String, String)>,
+    /// `None`: send images inline.
+    pub shm: Option<ShmSpec>,
+    pub mcp: Option<McpGrant>,
+    /// Last [`Out::StateSave`] blob when restarted after a crash.
+    pub restore: Option<Vec<u8>>,
+}
+
 /// The host's answer to [`Hello`].
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[allow(clippy::large_enum_variant)] // sent once per connection
 pub enum Welcome {
-    Accepted {
-        api: u32,
-        session: String,
-        ctx: Context,
-        /// Permissions granted (manifest, pre-grant or the user).
-        granted: Vec<String>,
-        /// Listeners refused, with the reason (not fatal).
-        denied: Vec<(String, String)>,
-        /// `None`: send images inline.
-        shm: Option<ShmSpec>,
-        mcp: Option<McpGrant>,
-        /// Last [`Out::StateSave`] blob when restarted after a crash.
-        restore: Option<Vec<u8>>,
-    },
+    Accepted(Box<Accepted>),
     /// No shared version (or the plugin is disabled): the plugin should exit.
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -188,11 +193,10 @@ pub enum Handled {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Out {
     Hello(Hello),
-    /// The view changed (latest wins). Panels are carried as the host's JSON
-    /// panel model until the panel types move into this crate.
+    /// The view changed (latest wins).
     View {
-        dock: Option<Value>,
-        panel: Option<Value>,
+        dock: Option<Panel>,
+        panel: Option<Panel>,
         images: Vec<ImageRef>,
         fullscreen: bool,
     },

@@ -4,7 +4,7 @@
 //! full 10 s benchmark with no dropped frames allowed.
 use mouser_mode_api::codec::{self, Wire};
 use mouser_mode_api::events::{Event, Origin};
-use mouser_mode_api::protocol::{ApiRange, In, Out, Pixels, Welcome, negotiate};
+use mouser_mode_api::protocol::{Accepted, ApiRange, In, Out, Pixels, Welcome, negotiate};
 use mouser_mode_api::shm::Ring;
 use mouser_mode_api::{Context, Effect, Rect, Viewport};
 use serde_json::{Value, json};
@@ -39,7 +39,7 @@ fn accept(p: &mut Plugin, api: ApiRange, ring: Option<&Ring>) {
     codec::write(
         &mut p.tx,
         Wire::MsgPack,
-        &Welcome::Accepted {
+        &Welcome::Accepted(Box::new(Accepted {
             api,
             session: "t".into(),
             ctx: ctx(),
@@ -48,7 +48,7 @@ fn accept(p: &mut Plugin, api: ApiRange, ring: Option<&Ring>) {
             shm: ring.map(Ring::spec),
             mcp: None,
             restore: None,
-        },
+        })),
     )
     .unwrap();
 }

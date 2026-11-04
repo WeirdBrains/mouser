@@ -3,7 +3,9 @@
 `esc :p` opens the preferences mode (a built-in mode plugin, like commander
 and chat; `mouser plugin disable preferences` turns it off). It lists every
 setting in `$MOUSER_HOME/preferences.toml` by section: Appearance, Window,
-Keys, Chat, Models, Local model and MCP server.
+Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
+`plugins.max_restarts`: how many crashes within 30 s a plugin may have before
+it stays off (default 3; 0 never restarts; see [Mode plugin protocol](./mode-protocol.md)).
 
 Keys (alt+key by default; remap them in `modes.toml` under `[preferences.keys]`):
 

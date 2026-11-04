@@ -26,6 +26,7 @@ fn preferences_round_trip_including_sidebar() {
         models: None,
         chat: None,
         keys: None,
+        plugins: None,
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();
@@ -70,4 +71,17 @@ fn leader_timeout_defaults_reads_keys_and_clamps() {
     assert_eq!(leader_timeout(&p), Duration::from_millis(100), "clamped");
     // Saved back without a [keys] table when unset.
     assert!(!toml::to_string(&d).unwrap().contains("[keys]"));
+}
+
+#[test]
+fn max_restarts_defaults_reads_and_caps() {
+    use mouser_core::storage::{DEFAULT_MAX_RESTARTS, max_restarts};
+    assert_eq!(max_restarts(&Preferences::default()), DEFAULT_MAX_RESTARTS);
+    let p: Preferences = toml::from_str("[plugins]\nmax_restarts = 0\n").unwrap();
+    assert_eq!(max_restarts(&p), 0);
+    let p: Preferences = toml::from_str("[plugins]\nmax_restarts = 5000\n").unwrap();
+    assert_eq!(max_restarts(&p), 100);
+    assert!(!toml::to_string(&Preferences::default()).unwrap().contains("[plugins]"));
+    let f = mouser_core::prefs_edit::schema().into_iter().find(|f| f.key == "plugins.max_restarts").unwrap();
+    assert_eq!(f.default, "3");
 }

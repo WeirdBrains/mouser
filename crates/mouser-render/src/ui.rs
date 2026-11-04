@@ -319,18 +319,19 @@ pub fn add_mcp(layout: &mut UiLayout, servers: &[McpServerSpec], cell_h: i32) {
     layout.appearance_rect.y = layout.appearance_rect.y.max(y + 10);
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct PanelItem {
-    pub rect: Rect,
-    pub text: String,
-    pub style: PanelStyle,
-    pub action: UiAction,
-}
+/// A panel item or panel with Mouser's full action set (its own windows and
+/// the sidebar); a mode plugin's panels use `mouser_mode_api::Action` and are
+/// converted with [`Panel::map`](mouser_mode_api::ui::Panel::map).
+pub type PanelItem = mouser_mode_api::ui::PanelItem<UiAction>;
+pub type Panel = mouser_mode_api::ui::Panel<UiAction>;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Panel {
-    pub rect: Rect,
-    pub items: Vec<PanelItem>,
+impl From<mouser_mode_api::Action> for UiAction {
+    fn from(a: mouser_mode_api::Action) -> Self {
+        match a {
+            mouser_mode_api::Action::None => UiAction::None,
+            mouser_mode_api::Action::Mode { action, arg } => UiAction::Mode { action, arg },
+        }
+    }
 }
 
 pub const APPEARANCE_LABEL: &str = "Appearance";
