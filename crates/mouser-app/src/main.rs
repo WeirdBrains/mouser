@@ -1685,7 +1685,14 @@ fn open_link(uri: &str) {
         log::warn!("not opening link with unsupported scheme: {uri}");
         return;
     }
-    let _ = mouser_core::process::command("xdg-open").arg(uri).stdin(std::process::Stdio::null()).spawn();
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    let _ = mouser_core::process::command(opener).arg(uri).stdin(std::process::Stdio::null()).spawn();
 }
 
 /// Clipboard writers to try, in order: Wayland, X11, macOS.
@@ -2640,6 +2647,7 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
                 let _ = sw.write_all(mouser_core::modes::RESTORE_LINE);
             });
         }
+        Effect::OpenLink(u) => open_link(&u),
         Effect::Open(p) => {
             let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
             match mouser_core::process::command(opener)

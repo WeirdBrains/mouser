@@ -68,6 +68,9 @@ pub enum Effect {
     Cd(PathBuf),
     /// Hand a file to the desktop's opener (players etc.).
     Open(PathBuf),
+    /// Open a link (a Markdown link clicked in chat): web, mail and file
+    /// links only, never through a shell.
+    OpenLink(String),
     /// Show the key mappings window.
     ShowKeys,
     /// Status-bar message.

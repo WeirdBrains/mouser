@@ -3,6 +3,7 @@
 ### Added
 
 - Commander: Markdown files preview rendered (headings, emphasis, lists, quotes, code blocks, links, tables) in the grid, carousel and file view. See docs/markdown.md.
+- Chat: messages and replies render as Markdown, streaming replies included; links are clickable. See docs/chat.md.
 
 ## [1.2.0] - 2026-11-04
 

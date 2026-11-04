@@ -5,6 +5,11 @@ instead of showing the raw markup:
 
 - **Commander previews**: `.md`, `.markdown`, `.mdown` and `.mkd` files in the grid,
   the carousel and the file view ([Modes](./modes.md)).
+- **Chat**: your messages and the model's replies ([Chat](./chat.md)). Links are
+  clickable (web, mail and `file://` only, never through a shell). A reply still
+  streaming in is laid out as far as it has come: an open code fence is code to the
+  end, an unclosed `**` shows as typed until it closes, and the rows above the one
+  being written do not move.
 
 ## What is drawn
 
@@ -30,6 +35,6 @@ and theme colours as the rest of Mouser.
 `mouser_core::markdown` parses with [pulldown-cmark](https://crates.io/crates/pulldown-cmark)
 and lays the document out as rows of styled spans (bold, italic, code, link, strike,
 muted; heading level, quote depth, indent). Each surface draws those rows its own way:
-the frame draws them as panel items in the theme's colours.
+the frame draws them as panel items in the theme's colours (commander, chat).
 
 Control characters in the text are shown as `�`, never passed through.

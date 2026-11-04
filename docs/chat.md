@@ -22,6 +22,12 @@ All keys can be remapped in `modes.toml` under `[chat.keys]`; `ctrl+shift+k` lis
 | `alt+l` | new chat |
 | `alt+pageup` / `alt+pagedown`, wheel | scroll the transcript |
 | click a tool row | show or hide its output |
+| click a link in a message | open it (web, mail and file links only) |
+
+Your messages and the model's replies are drawn as Markdown: headings, bold and
+italic, inline code, code blocks on a background, lists, quotes, links and tables
+([Markdown rendering](./markdown.md)). A reply that is still streaming in is laid
+out as far as it has come; the rows above stay where they are.
 
 Cards are answered only with these alt keys or a click, so ordinary typing can never
 approve anything. With nothing running, `esc` leaves the input and keys go back to
