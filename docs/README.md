@@ -26,6 +26,7 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 ## Extending Mouser
 
 - [Plugins](./plugins.md): modes, engines, model and tool providers, commands
+- [Mode plugin protocol](./mode-protocol.md): how mode plugins talk to Mouser (stdio, MessagePack, shared-memory images, restarts)
 - [Models](./models.md): providers, grok (`xai-`, `grok_`, `--desktop`), the picker, local Gemma
 - [MCP](./mcp.md): Mouser's MCP server (HTTPS, Let's Encrypt) and MCP clients
 

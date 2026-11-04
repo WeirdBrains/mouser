@@ -56,6 +56,7 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_REMOTE_BACKEND` | `rsync`, `scp` or `cat`: force how remote files are fetched. |
 | `MOUSER_PLAYER_LOG` | Write the media player's log to this file. |
 | `MOUSER_LLM_TIMINGS` | Print llama.cpp timings for the built-in local model. |
+| `MOUSER_MODE_WIRE` | `json`: mode plugins speak JSON instead of MessagePack on stdio, for debugging ([Mode plugin protocol](./mode-protocol.md)). |
 | `RUST_LOG` | Log filter, e.g. `debug`. |
 
 ## Exit status

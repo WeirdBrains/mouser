@@ -4,6 +4,7 @@ members = [
   "crates/mouser-pty",
   "crates/mouser-render",
   "crates/mouser-engine-abi",
+  "crates/mouser-mode-api",
   "crates/mouser-engine-example",
   "crates/mouser-app",
   "crates/icon-tools",
