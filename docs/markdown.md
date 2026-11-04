@@ -20,7 +20,7 @@ instead of showing the raw markup:
 | `# Heading` | bold; levels 1–2 in the theme accent, level 1 underlined |
 | `**bold**`, `*italic*`, `~~strike~~` | bold, slanted, struck through |
 | `` `code` `` | on a small rounded shade |
-| fenced / indented code | monospaced on a rounded background box |
+| fenced / indented code | monospaced on a rounded background box; fenced blocks with a known language are syntax highlighted ([Code](#code-blocks)) |
 | `> quote` | an accent bar per level |
 | lists, `- [x]` tasks | `•` or `1.` marks, nested lists indented |
 | `[text](url)` | underlined in the accent |
@@ -31,6 +31,35 @@ instead of showing the raw markup:
 Text wraps at word boundaries to the width it is shown at (long words break).
 Everything is one cell grid with the terminal font, so previews use the same face
 and theme colours as the rest of Mouser.
+
+## Code blocks
+
+A fenced block's language tag picks the highlighter (only the first word counts,
+so `rust,ignore` and `py title=x.py` work):
+
+| Language | Tags |
+|----------|------|
+| Rust | `rust`, `rs` |
+| Python | `python`, `py` |
+| JavaScript / TypeScript | `js`, `jsx`, `ts`, `tsx`, `javascript`, `typescript` |
+| Shell | `sh`, `bash`, `zsh`, `shell`, `console`, `fish` |
+| JSON, TOML, YAML | `json`, `toml`, `yaml`, `yml` |
+| Go | `go` |
+| C / C++ | `c`, `h`, `cpp`, `c++`, `cc`, `hpp` |
+| HTML / XML, CSS | `html`, `xml`, `svg`, `css`, `scss` |
+| SQL | `sql` |
+| Markdown, diffs | `md`, `markdown`, `diff`, `patch` |
+
+Any other tag, or none, stays plain monospace. Keywords, types, strings, numbers,
+function calls, comments and diff `+`/`-` lines take colours from the active
+theme's ANSI palette (the bright slots on dark themes, the normal ones on light
+themes; comments are muted text), so every theme brings its own highlighting.
+`mouser md` writes the same classes as ANSI colours, which your terminal's theme
+resolves.
+
+The highlighter is a small built-in lexer (no extra dependencies). It works line
+by line and only carries state forward (an open `/* comment */`), so a code block
+that is still streaming in never recolours the rows above it.
 
 ## In the terminal: `mouser md`
 

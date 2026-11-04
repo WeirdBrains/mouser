@@ -391,6 +391,9 @@ pub enum PanelStyle {
         top: bool,
         bottom: bool,
     },
+    /// A highlighted run in a Markdown code block: its token class
+    /// (`mouser_core::highlight`), coloured from the theme's palette.
+    MdToken(u8),
     /// Markdown block quote bar.
     MdQuote,
     /// Markdown thematic break.

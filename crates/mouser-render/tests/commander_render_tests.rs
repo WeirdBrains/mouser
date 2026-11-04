@@ -269,7 +269,7 @@ fn markdown_previews_render() {
             .unwrap()
             .items
             .into_iter()
-            .filter(|i| matches!(i.style, ui::PanelStyle::Md { .. } | ui::PanelStyle::MdCode { .. }))
+            .filter(|i| matches!(i.style, ui::PanelStyle::Md { .. } | ui::PanelStyle::MdCode { .. } | ui::PanelStyle::MdToken(_)))
             .collect()
     };
     for (key, name) in [(&b"\x1bt"[..], "markdown-grid"), (&b"\x1bt"[..], "markdown-carousel")] {
@@ -288,6 +288,10 @@ fn markdown_previews_render() {
     let items = md_items(&mut h);
     let code = items.iter().find(|i| matches!(i.style, ui::PanelStyle::MdCode { top: true, .. })).expect("code block").rect;
     assert!(items.iter().any(|i| i.text == "println!(\"hi\");" || i.text.contains("println")), "code text");
+    // The rust block is highlighted: `fn` a keyword, the string a string.
+    use mouser_core::highlight::{KEYWORD, STRING};
+    assert!(items.iter().any(|i| i.text == "fn" && i.style == ui::PanelStyle::MdToken(KEYWORD)), "highlighted keyword");
+    assert!(items.iter().any(|i| i.text == "\"hi\"" && i.style == ui::PanelStyle::MdToken(STRING)), "highlighted string");
     assert!(items.iter().any(|i| i.text == "docs" && matches!(i.style, ui::PanelStyle::Md { flags, .. } if flags & 8 != 0)), "link");
     assert!(items.iter().any(|i| i.text.contains("│")), "table");
     let px = |x: i32, y: i32| buf[y as usize * 1100 + x as usize] & 0xFFFFFF;

@@ -307,7 +307,7 @@ fn clicking_the_model_name_in_the_header_opens_the_picker() {
     assert!(m.setup().is_some_and(|s| s.switch));
 }
 
-const REPLY: &str = "## Plan\n\nRun **this** with `ls`, see [docs](https://mouser.weirdbrains.com/docs):\n\n```sh\nls -la\necho done\n```\n\n- one\n- two\n\n> careful\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+const REPLY: &str = "## Plan\n\nRun **this** with `ls`, see [docs](https://mouser.weirdbrains.com/docs):\n\n```sh\nls -la\necho done\n```\n\n```rust\nfn main() { println!(\"hi\"); } // greet\n```\n\n- one\n- two\n\n> careful\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
 
 /// Replies (and your messages) render as Markdown; links are clickable;
 /// a reply streaming in keeps the rows it already has.
@@ -340,7 +340,8 @@ fn messages_render_markdown_with_links() {
     let keys = Keymap::new(m.bindings());
     // The app's geometry: the area starts under the padding (no tab strip).
     let top = mouser_render::frame::PADDING;
-    let c = Context { viewport: UiViewport { width: 1000, height: 900, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: top, w: 1000, h: 900 - top } };
+    let c =
+        Context { viewport: UiViewport { width: 1000, height: 1000, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: top, w: 1000, h: 1000 - top } };
     let d = m.view(&c, &keys).dock.unwrap();
     let md = |t: &str| d.items.iter().find(|i| i.text == t && matches!(i.style, PanelStyle::Md { .. })).cloned();
     assert_eq!(md("Plan").expect("heading").style, PanelStyle::Md { flags: 1, heading: 2 });
@@ -348,7 +349,21 @@ fn messages_render_markdown_with_links() {
     assert!(styled("ls", 2), "your message: italic");
     assert!(styled("ls", 4), "inline code");
     assert!(styled("this", 1), "bold");
-    assert!(md("ls -la").is_some() && md("echo done").is_some(), "code block rows");
+    // Code rows: highlighted runs (sh, rust) whose texts join to the source line.
+    let row = |t: &str| {
+        let it = d.items.iter().find(|i| i.text.starts_with(t) && matches!(i.style, PanelStyle::MdToken(_))).expect(t);
+        let mut v: Vec<_> =
+            d.items.iter().filter(|i| i.rect.y == it.rect.y && matches!(i.style, PanelStyle::Md { .. } | PanelStyle::MdToken(_))).collect();
+        v.sort_by_key(|i| i.rect.x);
+        v.iter().map(|i| i.text.as_str()).collect::<String>()
+    };
+    assert_eq!(row("ls"), "ls -la");
+    assert_eq!(row("echo"), "echo done");
+    assert_eq!(row("fn"), "fn main() { println!(\"hi\"); } // greet");
+    let tok = |t: &str| d.items.iter().find(|i| i.text == t).map(|i| i.style);
+    assert_eq!(tok("fn"), Some(PanelStyle::MdToken(mouser_core::highlight::KEYWORD)));
+    assert_eq!(tok("\"hi\""), Some(PanelStyle::MdToken(mouser_core::highlight::STRING)));
+    assert_eq!(tok("// greet"), Some(PanelStyle::MdToken(mouser_core::highlight::COMMENT)));
     assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::MdCode { top: true, bottom: false })));
     assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::MdCode { top: false, bottom: true })));
     assert!(d.items.iter().any(|i| i.style == PanelStyle::MdQuote));

@@ -8,6 +8,7 @@
 //! smuggle escape sequences through `mouser md`.
 
 use crate::grid::char_width;
+use crate::highlight::{self, Highlighter};
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 /// Span flags.
@@ -27,11 +28,13 @@ pub struct Span {
     pub flags: u8,
     /// Target of a link span.
     pub link: Option<String>,
+    /// Code block token class (`highlight::KEYWORD`, …; 0 plain).
+    pub hl: u8,
 }
 
 impl Span {
     fn new(text: impl Into<String>, flags: u8) -> Self {
-        Span { text: text.into(), flags, link: None }
+        Span { text: text.into(), flags, link: None, hl: 0 }
     }
     pub fn width(&self) -> usize {
         width(&self.text)
@@ -131,6 +134,8 @@ struct Layout {
     mark: Option<String>,
     heading: Option<u8>,
     code: Option<String>,
+    /// The open code block's highlighter (a known fence language).
+    hl: Option<Highlighter>,
     table: Option<Table>,
 }
 
@@ -151,11 +156,10 @@ impl Layout {
         }
         let flags = self.flags();
         let link = if flags & LINK != 0 { self.link.clone() } else { None };
-        if let Some(Span { text, flags: f, link: l }) = self.inline.last_mut().filter(|s| s.flags == flags && s.link == link) {
-            let _ = (f, l);
+        if let Some(Span { text, .. }) = self.inline.last_mut().filter(|s| s.flags == flags && s.link == link) {
             text.push_str(&t);
         } else {
-            self.inline.push(Span { text: t, flags, link });
+            self.inline.push(Span { text: t, flags, link, hl: 0 });
         }
     }
 
@@ -300,10 +304,10 @@ impl Layout {
 }
 
 fn add(row: &mut Vec<Span>, t: &str, like: &Span) {
-    if let Some(last) = row.last_mut().filter(|l| l.flags == like.flags && l.link == like.link) {
+    if let Some(last) = row.last_mut().filter(|l| l.flags == like.flags && l.link == like.link && l.hl == like.hl) {
         last.text.push_str(t);
     } else {
-        row.push(Span { text: t.to_string(), flags: like.flags, link: like.link.clone() });
+        row.push(Span { text: t.to_string(), flags: like.flags, link: like.link.clone(), hl: like.hl });
     }
 }
 
@@ -372,6 +376,7 @@ pub fn layout(src: &str, cols: usize) -> Vec<Line> {
         mark: None,
         heading: None,
         code: None,
+        hl: None,
         table: None,
     };
     for ev in Parser::new_ext(src, opts) {
@@ -403,10 +408,12 @@ pub fn layout(src: &str, cols: usize) -> Vec<Line> {
                 Tag::CodeBlock(k) => {
                     st.flush(Kind::Text);
                     st.gap();
-                    st.code = Some(match k {
+                    let info = match k {
                         CodeBlockKind::Fenced(l) => l.to_string(),
                         CodeBlockKind::Indented => String::new(),
-                    });
+                    };
+                    st.hl = highlight::lang(&info).map(Highlighter::new);
+                    st.code = Some(info);
                 }
                 Tag::List(start) => {
                     st.flush(Kind::Text);
@@ -473,6 +480,7 @@ pub fn layout(src: &str, cols: usize) -> Vec<Line> {
                 }
                 TagEnd::CodeBlock => {
                     st.code = None;
+                    st.hl = None;
                 }
                 TagEnd::List(_) => {
                     st.flush(Kind::Text);
@@ -512,21 +520,41 @@ pub fn layout(src: &str, cols: usize) -> Vec<Line> {
             },
             Event::Text(t) => {
                 if st.code.is_some() {
-                    let avail = st.avail();
+                    let avail = st.avail().max(1);
                     for raw in t.trim_end_matches('\n').split('\n') {
-                        let mut rest = clean(raw);
-                        loop {
-                            let (h, tail) = split_at_width(&rest, avail);
-                            let mut l = Line::new(Kind::Code, st.quote, st.indent);
-                            if !h.is_empty() {
-                                l.spans.push(Span::new(h, CODE));
+                        let runs = match st.hl.as_mut() {
+                            Some(h) => h.line(raw),
+                            None => vec![(raw.to_string(), highlight::PLAIN)],
+                        };
+                        // Wrap the runs at `avail` cells, a row at a time.
+                        let mut l = Line::new(Kind::Code, st.quote, st.indent);
+                        let mut used = 0;
+                        for (text, hl) in runs {
+                            let mut rest = clean(&text);
+                            while !rest.is_empty() {
+                                if used >= avail {
+                                    st.out.push(std::mem::replace(&mut l, Line::new(Kind::Code, st.quote, st.indent)));
+                                    used = 0;
+                                }
+                                let (h, tail) = split_at_width(&rest, avail - used);
+                                let (h, tail) = if h.is_empty() && used == 0 {
+                                    // A character wider than the row: it goes on a row alone.
+                                    let mut cs = rest.chars();
+                                    let c = cs.next().map(String::from).unwrap_or_default();
+                                    (c, cs.collect())
+                                } else {
+                                    (h, tail)
+                                };
+                                if h.is_empty() {
+                                    used = avail;
+                                    continue;
+                                }
+                                used += width(&h);
+                                add(&mut l.spans, &h, &Span { text: String::new(), flags: CODE, link: None, hl });
+                                rest = tail;
                             }
-                            st.out.push(l);
-                            if tail.is_empty() {
-                                break;
-                            }
-                            rest = tail;
                         }
+                        st.out.push(l);
                     }
                 } else {
                     st.text(&t);
@@ -582,9 +610,12 @@ pub fn to_ansi(lines: &[Line], cols: usize, links: bool) -> String {
         match l.kind {
             Kind::Rule => s.push_str(&format!("\x1b[2m{}\x1b[0m", "─".repeat(cols.saturating_sub(l.start()).max(3)))),
             Kind::Code => {
-                let t = l.text();
-                let pad = cols.saturating_sub(l.start() + width(&t));
-                s.push_str(&format!("\x1b[48;5;236;38;5;223m{t}{}\x1b[0m", " ".repeat(pad)));
+                // Token colours are the terminal's own ANSI palette (its theme).
+                let pad = cols.saturating_sub(l.width());
+                for sp in &l.spans {
+                    s.push_str(&format!("\x1b[0;48;5;236;{}m{}", code_sgr(sp.hl), sp.text));
+                }
+                s.push_str(&format!("\x1b[0;48;5;236m{}\x1b[0m", " ".repeat(pad)));
             }
             Kind::Heading(n) => {
                 let sgr = match n {
@@ -626,6 +657,23 @@ pub fn to_text(lines: &[Line], cols: usize) -> String {
         s.push('\n');
     }
     s
+}
+
+/// SGR foreground for a code token class: ANSI palette slots, so the
+/// terminal's theme picks the actual colours.
+fn code_sgr(hl: u8) -> &'static str {
+    match hl {
+        highlight::KEYWORD => "35",
+        highlight::TYPE => "33",
+        highlight::STRING => "32",
+        highlight::NUMBER => "36",
+        highlight::COMMENT => "3;90",
+        highlight::FUNC => "34",
+        highlight::ADDED => "32",
+        highlight::REMOVED => "31",
+        highlight::META => "1;36",
+        _ => "38;5;223",
+    }
 }
 
 fn span_sgr(f: u8) -> String {
