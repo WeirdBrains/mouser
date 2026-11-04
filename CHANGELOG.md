@@ -3,6 +3,7 @@
 ### Added
 
 - `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.4.0. See docs/mode-protocol.md.
+- Mode plugin protocol: plugins register event listeners in the handshake, emit their own events (heard by themselves too, with loop and rate limits), and call host files/process APIs that never exceed your rights — elevation only through sudo in your visible terminal, UAC or the macOS prompt. See docs/mode-protocol.md.
 
 ## [1.3.0] - 2026-11-04
 

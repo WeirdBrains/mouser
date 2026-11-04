@@ -5,7 +5,9 @@
 //! ([`codec`]), MessagePack by default or JSON with `MOUSER_MODE_WIRE=json`.
 //! The first exchange is a handshake ([`protocol::Hello`] /
 //! [`protocol::Welcome`]) that picks a shared protocol version
-//! ([`protocol::negotiate`]). Images travel through a shared-memory ring
+//! ([`protocol::negotiate`]) and registers the plugin's event listeners.
+//! Then events flow in ([`events`]) and views, effects, emits and host calls
+//! ([`host_api`]) flow out. Images travel through a shared-memory ring
 //! ([`shm`]) with inline bytes as the fallback. The host restarts a crashed
 //! plugin with back-off and gives up after a cap ([`supervisor`]). Plugins
 //! reach host features (remote files, preferences, models, permissions,
@@ -15,6 +17,8 @@
 //! third-party mode.
 
 pub mod codec;
+pub mod events;
+pub mod host_api;
 pub mod mode;
 pub mod protocol;
 pub mod services;

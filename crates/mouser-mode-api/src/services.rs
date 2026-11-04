@@ -1,5 +1,5 @@
 //! Host services a plugin may call. The host implements these traits and
-//! answers [`crate::protocol::ModeMsg::Request`]s with them, checking the
+//! answers [`crate::host_api::Call::Service`] requests with them, checking the
 //! permission named on each method first; the plugin SDK offers the same
 //! methods as RPC clients. Model calls go through [`AgentService`], so a
 //! plugin never sees an API key.
@@ -57,6 +57,7 @@ pub const METHODS: &[(&str, Option<&str>)] = &[
     ("permissions.granted", None),
     ("permissions.request", None),
     ("fetch", Some("net.fetch")),
+    ("agent.ask", Some("agent.use")),
 ];
 
 /// Whether `granted` allows calling `method`; unknown methods are refused.

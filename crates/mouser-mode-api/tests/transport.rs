@@ -3,9 +3,11 @@
 //! inline). `cargo test -p mouser-mode-api --release -- --ignored` runs the
 //! full 10 s benchmark with no dropped frames allowed.
 use mouser_mode_api::codec::{self, Wire};
-use mouser_mode_api::protocol::{ApiRange, HostMsg, ModeMsg, Pixels, Welcome, negotiate};
+use mouser_mode_api::events::{Event, Origin};
+use mouser_mode_api::protocol::{ApiRange, In, Out, Pixels, Welcome, negotiate};
 use mouser_mode_api::shm::Ring;
 use mouser_mode_api::{Context, Effect, Rect, Viewport};
+use serde_json::{Value, json};
 use std::io::{BufReader, BufWriter};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -24,7 +26,7 @@ fn spawn(args: &[&str]) -> (Plugin, ApiRange) {
     let tx = BufWriter::new(child.stdin.take().unwrap());
     let rx = BufReader::with_capacity(1 << 20, child.stdout.take().unwrap());
     let mut p = Plugin { child, tx, rx, buf: Vec::new() };
-    let Some(ModeMsg::Hello(h)) = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap() else { panic!("no hello") };
+    let Some(Out::Hello(h)) = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap() else { panic!("no hello") };
     (p, h.api)
 }
 
@@ -34,7 +36,29 @@ fn ctx() -> Context {
 
 fn accept(p: &mut Plugin, api: ApiRange, ring: Option<&Ring>) {
     let api = negotiate(ApiRange::CURRENT, api).unwrap();
-    codec::write(&mut p.tx, Wire::MsgPack, &Welcome::Accepted { api, ctx: ctx(), granted: vec![], shm: ring.map(Ring::spec) }).unwrap();
+    codec::write(
+        &mut p.tx,
+        Wire::MsgPack,
+        &Welcome::Accepted {
+            api,
+            session: "t".into(),
+            ctx: ctx(),
+            granted: vec![],
+            denied: vec![],
+            shm: ring.map(Ring::spec),
+            mcp: None,
+            restore: None,
+        },
+    )
+    .unwrap();
+}
+
+fn ev(seq: u64, name: &str, payload: Value) -> In {
+    In::Event(Event { seq, ts_us: 0, tab: None, name: name.into(), payload, origin: Origin::Host, cause: None, hops: 0, synthetic: false })
+}
+
+fn stop(p: &mut Plugin) {
+    codec::write(&mut p.tx, Wire::MsgPack, &In::Stopping { reason: "test".into() }).unwrap();
 }
 
 fn pct(v: &mut [f64], p: f64) -> f64 {
@@ -56,12 +80,12 @@ fn run(shm: bool, secs: u64) -> (u64, u64, f64, f64, f64) {
     for seq in 0..n {
         let deadline = start + period * (seq as u32 + 1);
         let t = Instant::now();
-        codec::write(&mut p.tx, Wire::MsgPack, &HostMsg::Tick { seq }).unwrap();
-        let Some(ModeMsg::View { images, .. }) = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap() else { panic!() };
+        codec::write(&mut p.tx, Wire::MsgPack, &ev(seq, "frame.tick", json!({"n": seq}))).unwrap();
+        let Some(Out::View { images, .. }) = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap() else { panic!() };
         let h = Instant::now();
         match &images[0].pixels {
             Pixels::Slot(s) => tex.copy_from_slice(&ring.as_ref().unwrap().slot(*s).unwrap()[..FRAME]),
-            Pixels::Inline(b) => tex.copy_from_slice(b),
+            Pixels::Inline { bytes, .. } => tex.copy_from_slice(bytes),
             Pixels::Cached => panic!(),
         }
         assert_eq!(tex[FRAME - 1], (seq & 0xff) as u8, "frame {seq} has the right pixels");
@@ -74,7 +98,7 @@ fn run(shm: bool, secs: u64) -> (u64, u64, f64, f64, f64) {
             std::thread::sleep(deadline - done);
         }
     }
-    codec::write(&mut p.tx, Wire::MsgPack, &HostMsg::Shutdown).unwrap();
+    stop(&mut p);
     p.child.wait().unwrap();
     let r50 = pct(&mut rtt, 0.5);
     let r99 = pct(&mut rtt, 0.99);
@@ -88,11 +112,15 @@ fn actions_round_trip_through_a_persistent_child() {
     let (mut p, api) = spawn(&[]);
     accept(&mut p, api, None);
     for i in 0..100 {
-        codec::write(&mut p.tx, Wire::MsgPack, &HostMsg::Action { id: format!("a{i}"), arg: i }).unwrap();
-        let m: ModeMsg = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap().unwrap();
-        assert_eq!(m, ModeMsg::Effect(Effect::Say(format!("a{i}"))));
+        codec::write(&mut p.tx, Wire::MsgPack, &ev(i, "ui.action", json!({"id": format!("a{i}"), "arg": i}))).unwrap();
+        let m: Out = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap().unwrap();
+        assert_eq!(m, Out::Effect(Effect::Say(format!("a{i}"))));
     }
-    codec::write(&mut p.tx, Wire::MsgPack, &HostMsg::Shutdown).unwrap();
+    codec::write(&mut p.tx, Wire::MsgPack, &ev(200, "echo.ping", json!({"x": 1}))).unwrap();
+    let m: Out = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap().unwrap();
+    assert_eq!(m, Out::Emit { name: "echo.pong".into(), payload: json!({"x": 1}) });
+    {}
+    stop(&mut p);
     assert!(p.child.wait().unwrap().success());
 }
 
@@ -108,7 +136,7 @@ fn incompatible_plugin_is_rejected_and_exits() {
 fn crash_is_seen_as_end_of_stream() {
     let (mut p, api) = spawn(&["--crash"]);
     accept(&mut p, api, None);
-    let m: Option<ModeMsg> = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap();
+    let m: Option<Out> = codec::read(&mut p.rx, Wire::MsgPack, &mut p.buf).unwrap();
     assert!(m.is_none());
     assert!(!p.child.wait().unwrap().success());
 }
