@@ -191,3 +191,60 @@ fn restore_picks_the_remembered_mode_or_none() {
     h.restore(Some("gone-plugin"));
     assert_eq!(h.current(), None, "a missing or disabled mode falls back to no mode");
 }
+
+/// Wait for the carousel's slide to finish, so a later view draws the same
+/// layout as the one the test reads.
+fn settle(h: &mut Host) {
+    let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
+    let ctx = Context { viewport: vp, area: Rect { x: 0, y: PADDING, w: 1100, h: 760 - PADDING } };
+    let rects = |h: &mut Host| h.view(&ctx).dock.map(|d| d.items.iter().map(|i| i.rect).collect::<Vec<_>>());
+    let mut last = rects(h);
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let now = rects(h);
+        if now == last {
+            return;
+        }
+        last = now;
+    }
+}
+
+/// Carousel names float over the preview (drawn after the image), and a
+/// folder shows a folder icon in the middle of its box.
+#[test]
+fn carousel_floating_names_and_folder_icon() {
+    let t = demo();
+    let mut h = Host::builtin();
+    h.set_cwd(Some(t.path().to_path_buf()));
+    h.action("hidden", 0);
+    h.key(b"\x1bt").unwrap();
+    h.key(b"\x1bt").unwrap();
+    // clip.mp4, photos: one step right is the folder.
+    h.key(b"\x1b[1;3C").unwrap();
+    settle(&mut h);
+    let (buf, _) = frame(&mut h, 0, "carousel-folder");
+    let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
+    let ctx = Context { viewport: vp, area: Rect { x: 0, y: PADDING, w: 1100, h: 760 - PADDING } };
+    let items = h.view(&ctx).dock.unwrap().items;
+    let icon = items.iter().find(|i| i.style == ui::PanelStyle::FolderIcon).expect("folder icon").rect;
+    let label = items.iter().find(|i| i.style == ui::PanelStyle::FloatLabel && i.text == "photos").expect("floating name").rect;
+    assert!(icon.y + icon.h <= label.y, "name under the icon");
+    let px = |x: i32, y: i32| buf[y as usize * 1100 + x as usize];
+    // The icon is drawn: its middle differs from the tile around it.
+    assert_ne!(px(icon.x + icon.w / 2, icon.y + icon.h * 3 / 4), px(icon.x - 4, icon.y + icon.h / 2));
+    // shot0, shot1: the label sits on top of the image, see-through.
+    for _ in 0..3 {
+        h.key(b"\x1b[1;3C").unwrap();
+    }
+    settle(&mut h);
+    let (buf, imgs) = frame(&mut h, 3, "carousel-file");
+    let centre = imgs.iter().max_by_key(|m| m.rect.w).unwrap().rect;
+    let items = h.view(&ctx).dock.unwrap().items;
+    let label = items.iter().find(|i| i.style == ui::PanelStyle::FloatLabel && i.text == "shot1.png").expect("floating name").rect;
+    let (x, y) = (label.x + 2, label.y + label.h / 2);
+    assert!(x >= centre.x && y < centre.y + centre.h, "label over the preview {label:?} {centre:?}");
+    let p = buf[y as usize * 1100 + x as usize];
+    let g = COLORS[1];
+    assert_ne!(p & 0xFFFFFF, (g[0] as u32) << 16 | (g[1] as u32) << 8 | g[2] as u32, "label drawn after the image");
+    assert!((p >> 8) & 0xFF > (p >> 16) & 0xFF, "the green shows through the label");
+}

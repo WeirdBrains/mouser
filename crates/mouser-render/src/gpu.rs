@@ -415,7 +415,7 @@ impl GpuPainter {
             let c = self.color(color);
             data.extend_from_slice(&rect);
             data.extend_from_slice(&uv);
-            data.extend_from_slice(&[c[0], c[1], c[2], 1.0]);
+            data.extend_from_slice(&[c[0], c[1], c[2], crate::text::opacity(color) as f32 / 255.0]);
         }
         let n = data.len() / INSTANCE_FLOATS;
         if n > start {

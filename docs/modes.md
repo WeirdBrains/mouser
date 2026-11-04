@@ -208,7 +208,21 @@ what you typed next.
 - **Grid**: tiles with a preview by type (images scaled, a frame of each video, the
   first lines of text files, a label for folders and audio) and the name below.
 - **Carousel**: the focused item large in the middle and its two neighbours cut
-  off at the edges.
+  off at the edges. Every item's name floats over its box in the same place
+  (near the bottom, centred): a slightly see-through rounded tag with a soft
+  shadow, drawn on top of the preview. Long names end in `…` inside the tag.
+  A folder shows a folder icon in the middle of its box, with its name tag
+  under it. The date, size and `n of N` are under the strip.
+
+**Type badges.** Every grid tile and carousel item has a small round badge for
+its type, centred exactly on the box's top-right corner and drawn on top of the
+preview: a folder shape for folders, else a short mark (`IMG` image, `VID`
+video, `AUD` audio, `TXT` text, `</>` code, `MD` Markdown, `PDF`, `ZIP`
+archive, `BIN` binary or executable, `{}` JSON/TOML/YAML config, `Aa` font,
+`DOC` document or spreadsheet, `…` anything else). The type comes from the file
+extension (the same detection the previews use); a file with an execute bit and
+no known type is a binary. Grid and carousel leave room above and between the
+boxes for the overhang. The badges are drawn by Mouser itself (no image assets).
 
 Previews load lazily on a worker thread: only what is on screen is requested
 (grid: the visible tiles; carousel: the focused item and its two neighbours) and

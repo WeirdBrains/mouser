@@ -296,6 +296,7 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
         let flat = ui::Panel { rect: ui::Rect { x: 0, y: 0, w: 0, h: 0 }, items: d.panel.items.clone() };
         draw_panel(canvas, fonts, &flat, bg, fg, panel, mix(bg, fg, 0.25), mix(panel, fg, 0.65), accent);
         draw_images(canvas, fonts, frame.images, i64::MIN..i64::MAX, frame.top(fonts.cell_h));
+        draw_floats(canvas, fonts, &flat, bg, fg);
         if let Some(layout) = frame.ui
             && let Some(p) = &layout.panel
         {
@@ -329,6 +330,9 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
         }
     }
     draw_images(canvas, fonts, frame.images, 0..i64::MAX, top0);
+    if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()) {
+        draw_floats(canvas, fonts, &d.panel, frame.bg, frame.fg);
+    }
     if let Some((cx, cy)) = frame.cursor {
         let x = PADDING + cx as i32 * cw;
         let y = top0 + cy as i32 * ch;
@@ -534,7 +538,90 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 drop_shadow(canvas, b.x, b.y, b.w, b.h, RADIUS, panel);
                 round_box(canvas, b.x, b.y, b.w, b.h, RADIUS, t, edge, mix(bg, panel, 0.5), panel);
             }
+            ui::PanelStyle::FolderIcon => folder_icon(canvas, b, accent, mix(bg, panel, 0.5)),
+            // Drawn by draw_floats, after the images.
+            ui::PanelStyle::FloatLabel | ui::PanelStyle::Badge(_) => {}
         }
+    }
+}
+
+/// A folder: a tab on the back sheet, a front sheet with a light rim.
+pub fn folder_icon(canvas: &mut dyn Draw, b: ui::Rect, accent: u32, under: u32) {
+    let (w, h) = (b.w, b.h);
+    if w < 6 || h < 6 {
+        return;
+    }
+    let r = (h / 10).max(2);
+    let back = mix(under, accent, 0.55);
+    let front = mix(under, accent, 0.8);
+    let tab_h = h / 5;
+    round_rect(canvas, b.x, b.y, w * 2 / 5, tab_h + r, r, back, under);
+    round_rect(canvas, b.x, b.y + tab_h / 2, w, h - tab_h / 2, r, back, under);
+    let fy = b.y + tab_h + h / 12;
+    round_rect(canvas, b.x, fy, w, b.y + h - fy, r, front, back);
+    canvas.fill_rect(b.x + r, fy + 1, w - 2 * r, (h / 40).max(1), mix(front, 0xFFFFFF, 0.35));
+}
+
+/// Rounded box in a [`text::translucent`] colour (no edge anti-aliasing:
+/// what is under it is not known).
+fn round_rect_translucent(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, h: i32, r: i32, color: u32) {
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let r = r.min(w / 2).min(h / 2).max(0);
+    let rf = r as f64;
+    for i in 0..r {
+        let dy = rf - i as f64 - 0.5;
+        let dx = (rf - (rf * rf - dy * dy).max(0.0).sqrt()).round() as i32;
+        canvas.fill_rect(x + dx, y + i, w - 2 * dx, 1, color);
+        canvas.fill_rect(x + dx, y + h - 1 - i, w - 2 * dx, 1, color);
+    }
+    canvas.fill_rect(x, y + r, w, h - 2 * r, color);
+}
+
+/// A type badge: a coloured disc with a white rim and the type's mark (a
+/// small folder for folders), drawn from rects like everything else.
+fn badge(canvas: &mut dyn Draw, fonts: &mut FontStack, b: ui::Rect, kind: mouser_core::commander::Badge, bg: u32) {
+    let c = kind.color();
+    for k in (1..=2).rev() {
+        round_rect_translucent(canvas, b.x - k + 1, b.y - k + 2, b.w + 2 * k - 2, b.h + 2 * k - 2, b.h / 2 + k, crate::text::translucent(0, 40));
+    }
+    round_rect(canvas, b.x, b.y, b.w, b.h, b.h / 2, 0xFFFFFF, bg);
+    round_rect(canvas, b.x + 2, b.y + 2, b.w - 4, b.h - 4, (b.h - 4) / 2, c, 0xFFFFFF);
+    if kind == mouser_core::commander::Badge::Folder {
+        let (w, h) = (b.w / 2, b.w * 2 / 5);
+        folder_icon(canvas, ui::Rect { x: b.x + (b.w - w) / 2, y: b.y + (b.h - h) / 2, w, h }, 0xFFFFFF, c);
+        return;
+    }
+    let t = kind.mark();
+    let tw = t.chars().count() as i32 * fonts.cell_w;
+    canvas.draw_text(fonts, b.x + (b.w - tw) / 2, b.y + (b.h - fonts.cell_h) / 2, t, 0xFFFFFF);
+}
+
+/// Floating name labels of a panel, on top of its images.
+pub fn draw_floats(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32) {
+    let dark = luminance(bg) < 128.0;
+    let fill = if dark { mix(bg, 0x000000, 0.25) } else { mix(bg, 0xFFFFFF, 0.6) };
+    for it in &p.items {
+        if let ui::PanelStyle::Badge(i) = it.style {
+            badge(canvas, fonts, it.rect, mouser_core::commander::Badge::from_index(i), bg);
+            continue;
+        }
+        if it.style != ui::PanelStyle::FloatLabel {
+            continue;
+        }
+        let b = it.rect;
+        let r = b.h / 2;
+        // Soft shadow: fading translucent layers, offset down.
+        for k in (1..=3).rev() {
+            let a = (if dark { 34 } else { 16 }) * (4 - k) / 3;
+            round_rect_translucent(canvas, b.x - k + 1, b.y - k + 3, b.w + 2 * k - 2, b.h + 2 * k - 2, r + k, crate::text::translucent(0, a as u8));
+        }
+        round_rect_translucent(canvas, b.x, b.y, b.w, b.h, r, crate::text::translucent(fill, 205));
+        let n = ((b.w - 2 * ui::BUTTON_PAD) / fonts.cell_w).max(0) as usize;
+        let t: String = it.text.chars().take(n).collect();
+        let tw = t.chars().count() as i32 * fonts.cell_w;
+        canvas.draw_text(fonts, b.x + (b.w - tw) / 2, b.y + (b.h - fonts.cell_h) / 2, &t, fg);
     }
 }
 

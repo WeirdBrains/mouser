@@ -396,7 +396,7 @@ impl FrameBuf {
             match *op {
                 DrawOp::Rect { x, y, w, h, color } => {
                     self.ops.push(abi::MouserOp { kind: abi::OP_RECT, index: self.rects.len() as u32 });
-                    self.rects.push(abi::MouserRect { x, y, w, h, color });
+                    self.rects.push(abi::MouserRect { x, y, w, h, color: color & 0xFF_FFFF });
                 }
                 DrawOp::Glyph { x, y, ch, color } => {
                     let g = fonts.glyph(ch);

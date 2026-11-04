@@ -356,6 +356,14 @@ pub enum PanelStyle {
     },
     /// Background of a dropdown drawn over the panel.
     Popup,
+    /// Name tag drawn on top of everything, previews included (commander
+    /// carousel): a slightly transparent rounded box with a soft shadow.
+    FloatLabel,
+    /// Folder icon filling the rect (commander carousel).
+    FolderIcon,
+    /// Type badge (`mouser_core::commander::Badge` index) on a grid tile or
+    /// carousel item, drawn on top like [`PanelStyle::FloatLabel`].
+    Badge(u8),
     /// Seek / volume bar: `done` and the hover mark (`u16::MAX`: none) in 1/1000.
     Progress {
         done: u16,

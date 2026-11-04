@@ -350,6 +350,18 @@ pub fn blend(dst: u32, src: u32, alpha: u32) -> u32 {
     (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
 
+/// `rgb` (0xRRGGBB) drawn `opacity`/255 opaque. The top byte holds the
+/// transparency (0 = opaque), so every plain 0xRRGGBB colour stays opaque.
+/// Renderers that cannot blend (engine plugins) draw it opaque.
+pub fn translucent(rgb: u32, opacity: u8) -> u32 {
+    ((255 - opacity as u32) << 24) | (rgb & 0xFF_FFFF)
+}
+
+/// Opacity of a colour made by [`translucent`] (255 for plain colours).
+pub fn opacity(c: u32) -> u32 {
+    255 - (c >> 24)
+}
+
 /// Linear mix of two colours, `t` in 0..=1 towards `b`.
 pub fn mix(a: u32, b: u32, t: f32) -> u32 {
     blend(a, b, (t.clamp(0.0, 1.0) * 255.0).round() as u32)
@@ -506,8 +518,14 @@ impl Canvas<'_> {
         let y0 = y.clamp(0, self.height as i32) as usize;
         let x1 = (x + w).clamp(0, self.width as i32) as usize;
         let y1 = (y + h).clamp(0, self.height as i32) as usize;
+        let a = opacity(color);
         for row in y0..y1 {
-            self.buf[row * self.width + x0..row * self.width + x1].fill(color);
+            let px = &mut self.buf[row * self.width + x0..row * self.width + x1];
+            if a == 255 {
+                px.fill(color);
+            } else {
+                px.iter_mut().for_each(|p| *p = blend(*p, color, a));
+            }
         }
     }
 
@@ -919,4 +937,21 @@ fn fit(img: image::RgbaImage, bw: u32, bh: u32) -> (Vec<u8>, u32, u32) {
     let mut out = image::RgbaImage::new(bw, bh);
     image::imageops::overlay(&mut out, &small, ((bw - tw.min(bw)) / 2) as i64, ((bh - th.min(bh)) / 2) as i64);
     (out.into_raw(), bw, bh)
+}
+
+#[cfg(test)]
+mod translucent_tests {
+    use super::*;
+
+    #[test]
+    fn translucent_fill_blends_and_plain_colours_stay_opaque() {
+        let mut buf = vec![0x000000u32; 4];
+        let mut c = Canvas::new(&mut buf, 2, 2);
+        c.fill_rect(0, 0, 1, 1, 0xFFFFFF);
+        c.fill_rect(1, 0, 1, 1, translucent(0xFFFFFF, 128));
+        assert_eq!(buf[0], 0xFFFFFF);
+        assert_eq!(buf[1], 0x808080);
+        assert_eq!(opacity(0x123456), 255);
+        assert_eq!(opacity(translucent(0x123456, 10)), 10);
+    }
 }
