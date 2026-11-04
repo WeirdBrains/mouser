@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-04
+
 ### Added
 
 - Windows: Mouser can be the default terminal for console programs. The installer registers Mouser's terminal handoff (ITerminalHandoff3) for the current user; `mouser default-terminal set` makes it the default and remembers the previous one, `unset` and uninstalling put it back, and `status` shows what is set. Needs Windows Terminal installed. See docs/windows.md.
