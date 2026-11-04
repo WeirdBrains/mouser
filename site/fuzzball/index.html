@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fuzzball — the terminal protocol crate from Mouser</title>
+<meta name="description" content="Fuzzball is a small family of terminal extensions for keyboard, graphics, shell actions and plugins, with a dependency-free Rust encoder and decoder crate.">
+<link rel="icon" href="../assets/fuzzball-logo-512.png">
+<link rel="stylesheet" href="../style.css">
+<style>.fz-logo{height:auto;width:min(240px,60%);display:block;margin:auto}.spec h3 a{color:inherit}</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../"><img class="logo" src="../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main">
+    <a href="../#features">Features</a>
+    <a href="../#install">Install</a>
+    <a href="../#start">Quick start</a>
+    <a href="./" aria-current="page">Fuzzball</a>
+    <a href="https://github.com/WeirdBrains/mouser">GitHub</a>
+  </nav>
+</header>
+<main id="main">
+<section class="hero light" id="top">
+  <div class="hero-text">
+    <p class="prompt wordmark"><img class="logo" src="../assets/fuzzball-logo.svg" alt="" width="48" height="48"><span>fuzzball</span></p>
+    <h1>A terminal protocol, <span>and the crate that speaks it.</span></h1>
+    <p class="lede">Fuzzball is a small family of terminal extensions, implemented first in Mouser: structured keyboard events, cell-anchored graphics, silent shell actions and plugins. The <code>fuzzball</code> crate encodes and decodes it, with no dependencies, no I/O and no terminal library: bring your own reader and writer.</p>
+    <p class="release"><a href="https://crates.io/crates/fuzzball">Version 1.0.0</a> · BSD-3-Clause · MSRV Rust 1.85</p>
+    <p class="cta">
+      <a class="btn" href="#get">Get the crate</a>
+      <a class="btn ghost" href="#spec">Read the spec</a>
+    </p>
+  </div>
+  <figure class="shot"><img class="fz-logo" src="../assets/fuzzball-logo-512.png" alt="Fuzzball logo: a matte, fuzzy pink pom-pom cat-toy ball" width="512" height="512"></figure>
+</section>
+
+<section id="benefits" aria-labelledby="b-h">
+  <h2 id="b-h">Why Fuzzball</h2>
+  <ul class="grid">
+    <li><h3>One way to do each thing</h3><p>No layered flag bits and no alternative spellings. One keyboard mode, one encoding of each graphics concept.</p></li>
+    <li><h3>Survives multiplexers</h3><p>Every message is a DCS string that travels through tmux and GNU screen passthrough unchanged. Nothing depends on files or shared memory.</p></li>
+    <li><h3>Detectable</h3><p>One capability query and a bounded wait tell an app whether Fuzzball is there, which version, and which subsystems.</p></li>
+    <li><h3>Bounded</h3><p>Terminals publish their limits in the capability reply, so applications can rely on them instead of guessing.</p></li>
+    <li><h3>Structured key events</h3><p>Press, repeat and release with physical key, logical key, modifiers, locks, text and IME, in a single opt-in mode.</p></li>
+    <li><h3>Graphics on the text grid</h3><p>Chunked uploads, cell-anchored placements, delete and query, with defined erase and reflow rules.</p></li>
+    <li><h3>Silent shell actions</h3><p>A shell integration can change directory without a visible <code>cd</code>, keeping the line being edited. Works over ssh, tmux and screen.</p></li>
+    <li><h3>User-approved plugins</h3><p>Programs in the terminal ask to become plugins; the terminal asks the user with its own UI. Remote hosts are untrusted by default.</p></li>
+    <li><h3>Small, stable crate</h3><p>No dependencies, no I/O. 1.x keeps the wire format and API compatible, and golden-byte tests lock every message it writes.</p></li>
+  </ul>
+</section>
+
+<section class="light" id="get" aria-labelledby="g-h">
+  <h2 id="g-h">Get the crate</h2>
+  <div class="cols">
+    <div>
+      <h3>Cargo</h3>
+<pre><code>cargo add fuzzball</code></pre>
+      <p>or in <code>Cargo.toml</code>:</p>
+<pre><code>[dependencies]
+fuzzball = "1"</code></pre>
+      <p class="lede">Version 1.0.0. Within 1.x there are no breaking changes to the wire format or the API.</p>
+    </div>
+    <div>
+      <h3>Links</h3>
+      <ul class="list">
+        <li><a href="https://crates.io/crates/fuzzball">crates.io/crates/fuzzball</a></li>
+        <li><a href="https://docs.rs/fuzzball">docs.rs/fuzzball</a> — API docs</li>
+        <li><a href="https://github.com/WeirdBrains/fuzzball">github.com/WeirdBrains/fuzzball</a> — source</li>
+        <li><a href="https://weirdbrains.github.io/fuzzball/examples">Examples</a></li>
+      </ul>
+      <h3>Decode key events</h3>
+<pre><code>use fuzzball::{Decoder, Item};
+use fuzzball::keyboard::KeyEvent;
+
+let mut d = Decoder::new();
+d.push(input);
+while let Some(item) = d.next() {
+    if let Item::Message(m) = item {
+        if let Some(ev) = KeyEvent::from_message(&amp;m) {
+            println!("{:?} {:?}", ev.key, ev.text);
+        }
+    }
+}</code></pre>
+    </div>
+  </div>
+</section>
+
+<section class="spec" id="spec" aria-labelledby="s-h">
+  <h2 id="s-h">The spec</h2>
+  <p class="lede">Every message shares one frame: a DCS string with the private marker <code>=</code> and the family tag <code>Fz</code>, then a one-letter subsystem and verb.</p>
+<pre><code>ESC P = F z &lt;subsystem&gt; &lt;verb&gt; ; &lt;params&gt; [: &lt;payload&gt;] ESC \</code></pre>
+  <ul class="grid">
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec">Common (<code>c</code>)</a></h3><p>Framing, capability negotiation, versioning, error replies, security rules, conformance and migration.</p></li>
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec/keyboard">Keyboard (<code>k</code>)</a></h3><p>One mode of structured key events, enabled per screen. While it is on, every press, repeat and release is one message.</p></li>
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec/graphics">Graphics (<code>g</code>)</a></h3><p>Upload, place, delete and query images. Placements are text-grid objects; limits are advertised.</p></li>
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec/shell">Shell actions (<code>s</code>)</a></h3><p>Silent actions such as change directory, sent on the shell's input and answered with a reply. Integrations for zsh, bash and fish.</p></li>
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec/plugins">Plugins (<code>p</code>)</a></h3><p>Hello, query and bye. The terminal asks the user before granting; grants are per tab.</p></li>
+    <li><h3><a href="https://weirdbrains.github.io/fuzzball/spec/wire-format">Wire format</a></h3><p>Exactly what implementations emit today, where it is more specific than the drafts.</p></li>
+  </ul>
+  <p>The spec source lives in the crate repo: <a href="https://github.com/WeirdBrains/fuzzball/tree/main/docs">github.com/WeirdBrains/fuzzball/docs</a>.</p>
+</section>
+</main>
+<footer class="light">
+  <p><a href="https://github.com/WeirdBrains/fuzzball">Fuzzball on GitHub</a> · <a href="https://weirdbrains.github.io/fuzzball/">Fuzzball site</a> · <a href="../">Mouser</a> · <a href="https://github.com/WeirdBrains/fuzzball/blob/main/LICENSE">BSD-3-Clause</a> · © 2026 Weird Brains</p>
+</footer>
+<script src="../main.js"></script>
+</body>
+</html>
