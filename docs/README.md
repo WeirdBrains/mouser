@@ -7,6 +7,7 @@
 - [Themes](./themes.md)
 - [Rendering and fonts](./rendering.md)
 - [Rendering engines](./engines.md)
+- [Windows (default terminal)](./windows.md)
 - [Storage](./storage.md)
 - [Release process](./release.md)
 

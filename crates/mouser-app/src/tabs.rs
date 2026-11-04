@@ -20,6 +20,9 @@ pub enum Launch {
     /// A program from the command line (`mouser -e ...`): closes when it
     /// exits unless `hold` is set.
     Exec { argv: Vec<String>, hold: bool },
+    /// A console session Windows handed to Mouser as the default terminal
+    /// (docs/windows.md §Default terminal); its handles are preset.
+    Handoff,
 }
 
 pub struct Session {
@@ -34,6 +37,8 @@ pub struct Session {
     pub cwd: Option<std::path::PathBuf>,
     master: Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn mouser_pty::Child + Send>>>,
+    /// `Launch::Handoff`: the handed-off console, taken by `start`.
+    preset: Mutex<Option<mouser_pty::PtyHandles>>,
     /// The child's pid (0 before start); `child` is locked while waiting.
     pid: std::sync::atomic::AtomicU32,
     /// Exit code once the process ended and the tab is kept open to show it.
@@ -56,7 +61,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 /// when they exit cleanly (so an ssh error stays readable).
 pub fn closes_on_exit(launch: &Launch, code: u32) -> bool {
     match launch {
-        Launch::Shell => true,
+        Launch::Shell | Launch::Handoff => true,
         Launch::Exec { hold, .. } => !hold,
         Launch::Command(_) => code == 0,
     }
@@ -85,6 +90,7 @@ impl Session {
             cwd,
             master: Mutex::new(None),
             child: Mutex::new(None),
+            preset: Mutex::new(None),
             pid: std::sync::atomic::AtomicU32::new(0),
             exited: Mutex::new(None),
             closed: AtomicBool::new(false),
@@ -188,11 +194,23 @@ impl Session {
         if t.trim().is_empty() { self.name.clone() } else { t }
     }
 
+    /// A tab for a console session handed over by Windows (`Launch::Handoff`).
+    pub fn handed_off(name: impl Into<String>, handles: mouser_pty::PtyHandles, size: Size, sb: ScrollbackConfig) -> Arc<Self> {
+        let s = Self::new(name, Launch::Handoff, size, sb);
+        *s.preset.lock().unwrap() = Some(handles);
+        s
+    }
+
     /// Spawn the process at the given size; output is fed on a reader thread.
     pub fn start(self: &Arc<Self>, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
         let spawned = match &self.launch {
             Launch::Shell => mouser_pty::spawn_shell_in(self.cwd.as_deref(), cols, rows, pw, ph),
             Launch::Command(argv) | Launch::Exec { argv, .. } => mouser_pty::spawn_argv_in(argv, self.cwd.as_deref(), cols, rows, pw, ph),
+            Launch::Handoff => match self.preset.lock().unwrap().take() {
+                // Tell the console the tab's real size before anything is drawn.
+                Some(mut h) => mouser_pty::set_master_winsize(&mut *h.master, cols, rows, pw, ph).map(|_| h),
+                None => Err(anyhow::anyhow!("no handed-off console")),
+            },
         };
         let handles = match spawned {
             Ok(h) => h,

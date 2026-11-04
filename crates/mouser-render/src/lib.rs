@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
-use winit::event::{ElementState, Event, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Event, WindowEvent};
 use winit::event_loop::{ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::CursorIcon;
@@ -25,6 +25,7 @@ pub mod skia;
 pub mod split;
 pub mod text;
 pub mod ui;
+pub mod wheel;
 
 pub use frame::{CellPaint, CursorShape, Frame, ImageDraw, KITTY_BELOW_BG, PADDING, grid_size, image_draws, layered_image_draws, render_frame};
 pub use scale::ImageScaler;
@@ -523,6 +524,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut font_gen = 0u64;
 
     let mut scrolled_back = 0usize;
+    let mut wheel = wheel::WheelAccum::default();
     let mut cursor_pos: Option<winit::dpi::PhysicalPosition<f64>> = None;
     let mut last_ui: Option<ui::UiLayout> = None;
     let mut modifiers = ModifiersState::empty();
@@ -862,10 +864,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::RedrawRequested | WindowEvent::Occluded(false) => dirty = true,
                 WindowEvent::MouseWheel { delta, .. } => {
-                    let lines = match delta {
-                        MouseScrollDelta::LineDelta(_, y) => (y * 3.0) as isize,
-                        MouseScrollDelta::PixelDelta(p) => (p.y / fonts.cell_h as f64) as isize,
-                    };
+                    let wheel::WheelStep { lines, reports } = wheel.feed(delta, fonts.cell_h as f32);
                     dirty = true;
                     // Over a mode's view the wheel goes to the mode ("scroll").
                     if let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
@@ -889,7 +888,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         use mouser_core::input::{MouseButton as B, MouseKind as K};
                         let b = if lines > 0 { B::WheelUp } else { B::WheelDown };
                         let mut used = false;
-                        for _ in 0..lines.unsigned_abs().div_ceil(3) {
+                        for _ in 0..reports.unsigned_abs() {
                             used |= on_mouse(mouse_event(K::Press, b, hit, modifiers));
                         }
                         if used {

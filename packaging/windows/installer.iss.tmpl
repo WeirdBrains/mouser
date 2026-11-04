@@ -33,3 +33,13 @@ Name: "{autodesktop}\Mouser"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopi
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop icon"; GroupDescription: "Additional icons:"
 
+
+; Default-terminal handoff (docs/windows.md): only registers Mouser's COM
+; handoff for this user; the default terminal is not changed. A no-op without
+; Windows Terminal. `mouser default-terminal set` makes Mouser the default.
+[Run]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "default-terminal register"; Flags: runhidden runasoriginaluser waituntilterminated
+
+[UninstallRun]
+; Puts back the previous default terminal if Mouser is it, then unregisters.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "default-terminal unregister"; Flags: runhidden waituntilterminated; RunOnceId: "MouserDefTermUnregister"
