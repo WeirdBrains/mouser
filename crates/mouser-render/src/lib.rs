@@ -33,13 +33,7 @@ pub use scale::ImageScaler;
 pub use text::{Canvas, DisplayList, Draw, FontStack};
 
 /// Pixel geometry handed to the UI model so it can lay out in real cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct UiViewport {
-    pub width: i32,
-    pub height: i32,
-    pub cell_w: i32,
-    pub cell_h: i32,
-}
+pub use mouser_mode_api::Viewport as UiViewport;
 
 pub type CursorHook = Arc<dyn Fn() -> Option<(usize, usize)> + Send + Sync>;
 /// `(scrolled_back, rows)` -> (lines, per-cell paint, clamped scrolled_back).

@@ -9,6 +9,7 @@ repository = ""
 [dependencies]
 anyhow.workspace = true
 mouser-core = { path = "../mouser-core" }
+mouser-mode-api = { path = "../mouser-mode-api" }
 log.workspace = true
 winit.workspace = true
 palette.workspace = true
