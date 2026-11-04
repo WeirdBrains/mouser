@@ -1,0 +1,50 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-md 1  "mouser-md 1.2.0" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-md \- Render Markdown into this terminal (headings, emphasis, code, lists, quotes, tables, OSC 8 links); see docs/markdown.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser md\fR [\fB\-\-width\fR] [\fB\-\-color\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIFILES\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Render Markdown into this terminal (headings, emphasis, code, lists, quotes, tables, OSC 8 links); see docs/markdown.md.
+.PP
+The output is ordinary styled text, so it scrolls back like any other output and works in any terminal, over SSH and in tmux.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-width\fR \fI<WIDTH>\fR
+Columns to lay out at (default: the terminal\*(Aqs width)
+.TP
+\fB\-\-color\fR \fI<COLOR>\fR [default: auto]
+When to style the output: auto (when stdout is a terminal), always, never
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto: Styled when stdout is a terminal
+.IP \(bu 2
+always
+.IP \(bu 2
+never
+.RE
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+[\fIFILES\fR]
+Markdown files; `\-` (or none) reads stdin. Shown one after another
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.2.0

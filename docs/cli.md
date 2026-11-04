@@ -21,6 +21,7 @@ command and environment variable is also in the man pages (`man mouser`,
 
 | Command | Guide |
 | --- | --- |
+| `mouser md [FILE…]` | Markdown formatted into the terminal, stdin when no file ([Markdown rendering](./markdown.md)) |
 | `mouser show FILE…` | Images in any Fuzzball or Kitty-graphics terminal ([Terminal](./terminal.md)) |
 | `mouser shell-integration zsh\|bash\|fish` | Directory reports and commander's silent `cd` ([Modes](./modes.md)) |
 | `mouser engine …` | Rendering engines ([Engines](./engines.md)) |
