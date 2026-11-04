@@ -67,6 +67,7 @@ pub fn schema() -> Vec<Field> {
         f("Window", "sidebar_collapsed", "Sidebar collapsed", Kind::Bool, "false", false),
         f("Window", "sidebar_width", "Sidebar width (px)", Kind::Int { min: 120, max: 4000 }, "auto", false),
         f("Keys", "keys.leader_timeout_ms", "Esc wait for : (ms)", Kind::Int { min: 100, max: 10_000 }, "1200", true),
+        f("Plugins", "plugins.max_restarts", "Crash restarts (within 30 s)", Kind::Int { min: 0, max: 100 }, "3", true),
         f("Chat", "chat.transcripts", "Keep transcripts", Kind::Bool, "true", true),
         f("Models", "models.default", "Default model", Kind::Text { url: false }, "(none)", true),
         f("Local model", "models.local.disabled", "Disabled", Kind::Bool, "false", true),

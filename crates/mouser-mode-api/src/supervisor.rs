@@ -22,13 +22,20 @@ pub enum Decision {
 #[derive(Debug, Clone)]
 pub struct Restarts {
     max: u32,
+    /// The first wait; each next one doubles (1 s, 2 s, 4 s).
+    unit: Duration,
     crashes: Vec<Instant>,
     gave_up: bool,
 }
 
 impl Restarts {
     pub fn new(max_restarts: u32) -> Self {
-        Self { max: max_restarts, crashes: Vec::new(), gave_up: false }
+        Self::with_unit(max_restarts, Duration::from_secs(1))
+    }
+
+    /// Shorter waits (tests).
+    pub fn with_unit(max_restarts: u32, unit: Duration) -> Self {
+        Self { max: max_restarts, unit, crashes: Vec::new(), gave_up: false }
     }
 
     /// The plugin crashed at `now`: wait and restart, or give up.
@@ -43,7 +50,7 @@ impl Restarts {
             self.gave_up = true;
             return Decision::GiveUp;
         }
-        Decision::Restart(Duration::from_secs(1 << (n - 1).min(6)))
+        Decision::Restart(self.unit * (1u32 << (n - 1).min(6)))
     }
 
     pub fn gave_up(&self) -> bool {

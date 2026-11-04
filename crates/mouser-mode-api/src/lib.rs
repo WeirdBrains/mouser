@@ -18,9 +18,11 @@
 
 pub mod codec;
 pub mod events;
+pub mod host;
 pub mod host_api;
 pub mod mode;
 pub mod protocol;
+pub mod serve;
 pub mod services;
 pub mod shm;
 pub mod supervisor;
@@ -28,4 +30,5 @@ pub mod ui;
 
 pub use mode::{Context, Effect};
 pub use protocol::{API_VERSION, ApiRange};
-pub use ui::{PanelStyle, Rect, Viewport};
+pub use serve::{Host, Mode, serve};
+pub use ui::{Action, Panel, PanelItem, PanelStyle, Rect, Viewport};

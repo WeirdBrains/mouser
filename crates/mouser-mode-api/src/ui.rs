@@ -95,3 +95,41 @@ pub enum PanelStyle {
     /// Markdown thematic break.
     MdRule,
 }
+
+/// What clicking a panel item a mode drew does. Mouser's own windows use a
+/// wider action set (`mouser_render::ui::UiAction`); a mode only ever gets
+/// its own actions back, as `ui.action` events.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum Action {
+    #[default]
+    None,
+    /// The mode's own action id and an argument (e.g. an item index).
+    Mode { action: String, arg: i32 },
+}
+
+/// One drawn item: a rectangle, its text, how it looks and what a click does.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PanelItem<A = Action> {
+    pub rect: Rect,
+    pub text: String,
+    pub style: PanelStyle,
+    pub action: A,
+}
+
+/// A dock or floating window: a frame and its items, drawn in order.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Panel<A = Action> {
+    pub rect: Rect,
+    pub items: Vec<PanelItem<A>>,
+}
+
+impl<A> Panel<A> {
+    /// The same panel with each item's action converted (a plugin's
+    /// [`Action`]s into the host's action type).
+    pub fn map<B>(self, mut f: impl FnMut(A) -> B) -> Panel<B> {
+        Panel {
+            rect: self.rect,
+            items: self.items.into_iter().map(|i| PanelItem { rect: i.rect, text: i.text, style: i.style, action: f(i.action) }).collect(),
+        }
+    }
+}

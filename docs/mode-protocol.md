@@ -14,6 +14,24 @@ the shipped modes, which are compiled in until Mouser 1.4.0.
 - The plugin runs as you, with your rights. It is not a sandbox. Mouser checks
   every request and effect against the permissions the plugin was granted.
 
+## Writing a plugin in Rust
+
+Implement `mouser_mode_api::Mode` and call `serve` from `main`. Only `hello`
+is required; `welcome`, `event`, `response` and `stopping` have defaults.
+`serve` sends the `Hello`, waits for the `Welcome`, maps the shared-memory
+ring and hands every event to your mode on one thread, in order. The `Host`
+handle it passes in sends views, effects, emits and host calls, and can be
+cloned into worker threads. A worker that emits an event gets it back
+through the mode's own listener, in order with input. A sync listener's
+`Handled`/`Pass` answer is sent back for you.
+
+Panels use the mode's own `Action`s (`None`, or `Mode {action, arg}`); a
+click on one comes back as a `ui.action` event. Mouser converts them into
+its own action type, so a plugin can't trigger Mouser's windows or
+approvals.
+
+`crates/mouser-mode-api/src/bin/echo.rs` is a complete small example.
+
 ## Framing
 
 Each message is a 4-byte little-endian length followed by the message body.
@@ -141,7 +159,7 @@ If a plugin exits or its pipe breaks, Mouser drops its view and starts it
 again after 1 s, then 2 s, then 4 s, and hands it the state it saved. After `max_restarts` crashes within
 30 seconds (a preference, 3 by default; 0 never restarts) Mouser stops
 trying. The plugin stays off, and the status bar shows it with a restart
-button, which starts the count again. Your shells keep running throughout,
+button, which starts the count again. Set it with `plugins.max_restarts` in preferences. Your shells keep running throughout,
 because they live in the session server, not in the plugin.
 
 See also: [Modes](./modes.md), [Plugins](./plugins.md).

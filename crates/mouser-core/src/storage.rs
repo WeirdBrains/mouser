@@ -62,6 +62,25 @@ pub struct Preferences {
     /// `[keys]`: keyboard timing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keys: Option<KeysPrefs>,
+    /// `[plugins]`: how plugins are supervised (docs/mode-protocol.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugins: Option<PluginsPrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PluginsPrefs {
+    /// Crashes within 30 s after which a plugin stays off until restarted
+    /// from the status bar. Default [`DEFAULT_MAX_RESTARTS`]; 0 never restarts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_restarts: Option<u32>,
+}
+
+/// Default `[plugins] max_restarts`.
+pub const DEFAULT_MAX_RESTARTS: u32 = 3;
+
+/// `[plugins] max_restarts`, at most 100.
+pub fn max_restarts(p: &Preferences) -> u32 {
+    p.plugins.as_ref().and_then(|x| x.max_restarts).unwrap_or(DEFAULT_MAX_RESTARTS).min(100)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
