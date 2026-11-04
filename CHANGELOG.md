@@ -11,6 +11,8 @@
 
 ### Changed
 
+- Commander carousel: each item's name floats over its preview in the same place (a see-through rounded tag with a soft shadow; long names end in …), and folders show a folder icon. See docs/modes.md.
+- Commander grid and carousel: a type badge (folder, image, video, audio, text, code, Markdown, PDF, archive, binary, config, font, document) on each item's top-right corner. See docs/modes.md.
 - Fuzzball encoding and parsing now come from the published [`fuzzball`](https://crates.io/crates/fuzzball) 1.0 crate, and the spec lives at https://weirdbrains.github.io/fuzzball/. The bytes on the wire are unchanged.
 
 ### Fixed

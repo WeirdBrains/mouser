@@ -614,6 +614,40 @@ fn act(id: &str, arg: i32) -> UiAction {
     UiAction::Mode { action: id.into(), arg }
 }
 
+/// Type badge diameter for cell size (`cw`, `ch`): room for a 3-character mark.
+fn badge_size(cw: i32, ch: i32) -> i32 {
+    (ch + 10).max(3 * cw + 8)
+}
+
+/// The badge of a box `b`: its centre exactly on the box's top-right corner.
+fn badge_rect(b: Rect, d: i32) -> Rect {
+    Rect { x: b.x + b.w - d / 2, y: b.y - d / 2, w: d, h: d }
+}
+
+/// Where a carousel folder's icon sits inside the preview box `b`: centred,
+/// about two fifths of the box, 5:4.
+fn folder_icon_rect(b: Rect) -> Rect {
+    let w = (b.w * 2 / 5).min(b.h * 2 / 5 * 5 / 4).max(0);
+    let h = w * 4 / 5;
+    Rect { x: b.x + (b.w - w) / 2, y: b.y + (b.h - h) / 2, w, h }
+}
+
+/// The floating name tag of a carousel item whose box is `full` (visible
+/// part `clip`): centred near the bottom of the box, as wide as the name
+/// (at most the box less a margin), cut to the visible part. Long names end
+/// in an ellipsis. None when too little of it is on screen.
+fn float_label(full: Rect, clip: Rect, name: &str, cw: i32, ch: i32) -> Option<(Rect, String)> {
+    let pad = crate::ui::BUTTON_PAD;
+    let room = full.w - 2 * (cw * 2);
+    let cols = ((room - 2 * pad) / cw.max(1)).max(1);
+    let text = clip_text(name, cols);
+    let w = (text.chars().count() as i32 * cw + 2 * pad).min(room.max(0));
+    let h = ch + 10;
+    let r = Rect { x: full.x + (full.w - w) / 2, y: full.y + full.h - h - 16, w, h };
+    // Only a label wholly on the strip: a cut one reads as noise.
+    (r.w > 0 && r.x >= clip.x && r.x + r.w <= clip.x + clip.w).then_some((r, text))
+}
+
 fn clip_text(s: &str, cols: i32) -> String {
     let cols = cols.max(1) as usize;
     if s.chars().count() <= cols {
@@ -674,6 +708,8 @@ struct Out {
     extra: Vec<Want>,
     /// The open ••• dropdown (images under it are hidden).
     menu: Option<Rect>,
+    /// Floating labels, put last so they sit on top (docs/commander.md).
+    floats: Vec<PanelItem>,
 }
 
 impl CommanderMode {
@@ -817,8 +853,11 @@ impl CommanderMode {
 
     fn grid(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
         let ts = TILE_SIZES[self.c.tile.min(TILE_SIZES.len() - 1)];
-        let (gap, label_h) = (10, ch + 4);
-        let per_row = ((body.w + gap) / (ts + gap)).max(1) as usize;
+        // Room for the badges that overhang each tile's top-right corner.
+        let d = badge_size(cw, ch);
+        let (gap, label_h) = ((d / 2 + 6).max(10), ch + 4);
+        let body = Rect { y: body.y + d / 2 + 2, h: body.h - d / 2 - 2, ..body };
+        let per_row = ((body.w - d / 2 - 6 + gap) / (ts + gap)).max(1) as usize;
         let cell_h = ts + label_h + gap;
         let vis_rows = ((body.h + gap) / cell_h).max(1) as usize;
         self.per_row = per_row;
@@ -843,6 +882,8 @@ impl CommanderMode {
             let label = if self.c.marks.contains(&e.path) { format!("* {}", e.name) } else { e.name.clone() };
             let label = clip_text(&label, ts / cw.max(1));
             o.items.push(item(Rect { x: tile.x, y: tile.y + ts + 2, w: ts, h: label_h }, label, PanelStyle::Label, act("item", n as i32)));
+            let b = cmdr::badge_of(&e.name, e.kind, &e.mode);
+            o.floats.push(item(badge_rect(tile, d), "", PanelStyle::Badge(b.index()), UiAction::None));
         }
     }
 
@@ -855,9 +896,12 @@ impl CommanderMode {
             self.keep_redrawing();
         }
         let label_h = ch + 6;
+        // Room above and between the boxes for the corner badges.
+        let d = badge_size(cw, ch);
+        let body = Rect { y: body.y + d / 2 + 2, h: body.h - d / 2 - 2, ..body };
         let ih = (body.h - label_h - 6).max(ch);
         let w = (body.w * 55 / 100).max(cw * 10);
-        let gap = 14;
+        let gap = (d / 2 + 8).max(14);
         let x_mid = body.x + (body.w - w) / 2;
         // Items sit on a strip; `pos` (fractional while sliding) is in the middle.
         // Neighbours are the same size, cut off by the edges (partial).
@@ -883,11 +927,29 @@ impl CommanderMode {
             let clip = Rect { x: l, y: full.y, w: r - l, h: ih };
             o.items.push(item(clip, "", PanelStyle::Tile { selected: i == self.c.selected }, act("item", i as i32)));
             let inner = |r: Rect| Rect { x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 };
-            self.content(&vis[i], (inner(full), inner(clip)), 1024, (cw, ch), o);
+            if vis[i].kind == Kind::Dir {
+                // A folder icon in the middle (only once it is wholly on the strip).
+                let icon = folder_icon_rect(inner(full));
+                if icon.x >= clip.x && icon.x + icon.w <= clip.x + clip.w {
+                    o.items.push(item(icon, "", PanelStyle::FolderIcon, UiAction::None));
+                }
+            } else {
+                self.content(&vis[i], (inner(full), inner(clip)), 1024, (cw, ch), o);
+            }
+            // The name floats over the preview, at the same place on every item.
+            let mk = if self.c.marks.contains(&vis[i].path) { "* " } else { "" };
+            if let Some((r, t)) = float_label(full, clip, &format!("{mk}{}", vis[i].name), cw, ch) {
+                o.floats.push(item(r, t, PanelStyle::FloatLabel, UiAction::None));
+            }
+            // Its type badge, when the corner is on the strip.
+            let br = badge_rect(full, d);
+            if br.x >= body.x && br.x + br.w <= body.x + body.w {
+                let b = cmdr::badge_of(&vis[i].name, vis[i].kind, &vis[i].mode);
+                o.floats.push(item(br, "", PanelStyle::Badge(b.index()), UiAction::None));
+            }
         }
         let t = e.modified.map(cmdr::format_time).unwrap_or_default();
-        let mk = if self.c.marks.contains(&e.path) { "* " } else { "" };
-        let label = format!("{mk}{}   {}   {}   {} of {}", e.name, t, self.size(&e), self.c.selected + 1, vis.len());
+        let label = format!("{}   {}   {} of {}", t, self.size(&e), self.c.selected + 1, vis.len());
         self.range = None;
         if vis.len() > 1 {
             // Where we are along the strip.
@@ -898,7 +960,7 @@ impl CommanderMode {
         o.items.push(item(
             Rect { x: body.x + (body.w - lw) / 2, y: body.y + ih + 6, w: lw, h: label_h },
             clip_text(&label, body.w / cw.max(1)),
-            PanelStyle::Label,
+            PanelStyle::Hint,
             UiAction::None,
         ));
     }
@@ -1740,7 +1802,8 @@ impl Mode for CommanderMode {
         if self.player.as_ref().is_some_and(|pl| !matches!(&self.c.overlay, Some(Overlay::Preview(p)) if *p == pl.path)) {
             self.player = None;
         }
-        let mut o = Out { items: Vec::new(), frames: Vec::new(), slots: Vec::new(), texts: Vec::new(), extra: Vec::new(), menu: None };
+        let mut o =
+            Out { items: Vec::new(), frames: Vec::new(), slots: Vec::new(), texts: Vec::new(), extra: Vec::new(), menu: None, floats: Vec::new() };
         let row_h = ch + 8;
         let (x0, y0, w) = (rect.x + 10, rect.y + 6, rect.w - 20);
         // Header: where we are, then the buttons.
@@ -2006,8 +2069,11 @@ impl Mode for CommanderMode {
             images.retain(|(i, c)| !overlaps(intersect(i.rect, *c), m));
             frames.retain(|f| !overlaps(f.rect, m));
         }
+        let mut items = o.items;
+        // Floating labels are drawn over the images; not over the ••• menu.
+        items.extend(o.floats.into_iter().filter(|f| menu.is_none_or(|m| !overlaps(f.rect, m))));
         View {
-            dock: Some(Panel { rect, items: o.items }),
+            dock: Some(Panel { rect, items }),
             panel,
             images: images.into_iter().chain(frames.into_iter().map(|f| (f, inner))).filter_map(|(i, clip)| crop(i, clip)).collect(),
             fullscreen: self.fullscreen,
@@ -2113,7 +2179,7 @@ pub(crate) mod tests {
 
     #[test]
     fn scrollbar_only_when_overflowing() {
-        let mut o = Out { items: vec![], frames: vec![], slots: vec![], texts: vec![], extra: vec![], menu: None };
+        let mut o = Out { items: vec![], frames: vec![], slots: vec![], texts: vec![], extra: vec![], menu: None, floats: vec![] };
         let r = Rect { x: 0, y: 0, w: 4, h: 100 };
         scrollbar(&mut o, r, 0, 10, 5);
         assert!(o.items.is_empty());
@@ -2143,6 +2209,99 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         m.view(&ctx(), &k)
+    }
+
+    #[test]
+    fn badge_centre_sits_on_the_top_right_corner() {
+        let b = Rect { x: 100, y: 50, w: 200, h: 120 };
+        for d in [26, 33, 40] {
+            let r = badge_rect(b, d);
+            assert_eq!((r.x + r.w / 2, r.y + r.h / 2), (b.x + b.w, b.y), "d={d}");
+        }
+        assert!(badge_size(9, 18) >= 3 * 9 + 8);
+    }
+
+    #[test]
+    fn grid_and_carousel_badges_have_room() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("dir")).unwrap();
+        for n in ["a.png", "b.rs", "c.md", "d.pdf", "e.zip", "f.json", "g.ttf", "h.docx", "i.qqq"] {
+            std::fs::write(t.path().join(n), "x").unwrap();
+        }
+        let mut m = CommanderMode::new();
+        m.c.flags.all = false;
+        m.cwd_changed(t.path());
+        let k = Keymap::new(cmdr::BINDINGS);
+        for view in [1, 2] {
+            m.action("view", view);
+            m.c.selected = 1;
+            m.slide = Default::default();
+            let v = m.view(&ctx(), &k);
+            let d = v.dock.unwrap();
+            let tiles: Vec<Rect> = d.items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).map(|i| i.rect).collect();
+            let badges: Vec<&PanelItem> = d.items.iter().filter(|i| matches!(i.style, PanelStyle::Badge(_))).collect();
+            assert!(!badges.is_empty(), "view {view}");
+            for b in &badges {
+                let r = b.rect;
+                // Inside the view, centred on some tile's corner, clear of other tiles.
+                assert!(r.y >= d.rect.y && r.x + r.w <= d.rect.x + d.rect.w, "view {view}: {r:?} in {:?}", d.rect);
+                let own = tiles.iter().find(|t| t.x + t.w == r.x + r.w / 2 && t.y == r.y + r.h / 2);
+                assert!(own.is_some() || view == 2, "view {view}: badge on a corner");
+                for t in tiles.iter().filter(|t| Some(*t) != own && t.x + t.w != r.x + r.w / 2) {
+                    assert!(!overlaps(*t, r), "view {view}: badge {r:?} hits tile {t:?}");
+                }
+            }
+            if view == 1 {
+                assert_eq!(badges.len(), tiles.len(), "one per grid tile");
+                assert!(badges.iter().any(|b| b.style == PanelStyle::Badge(cmdr::Badge::Folder.index())));
+            }
+        }
+    }
+
+    #[test]
+    fn carousel_names_float_and_folders_get_an_icon() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::create_dir(t.path().join("a folder")).unwrap();
+        std::fs::write(t.path().join("b.txt"), "hello\n").unwrap();
+        let long = format!("c{}.txt", "x".repeat(200));
+        std::fs::write(t.path().join(&long), "x\n").unwrap();
+        let mut m = CommanderMode::new();
+        m.c.flags.all = false;
+        m.cwd_changed(t.path());
+        m.action("view", 2);
+        let mut seen = Vec::new();
+        for (n, name) in ["a folder", "b.txt"].iter().enumerate() {
+            m.c.selected = n;
+            m.slide = Default::default();
+            let v = m.view(&ctx(), &Keymap::new(cmdr::BINDINGS));
+            let d = v.dock.unwrap();
+            let tile = d.items.iter().find(|i| matches!(i.style, PanelStyle::Tile { selected: true })).unwrap().rect;
+            let fl = d.items.iter().find(|i| i.style == PanelStyle::FloatLabel && i.text == *name).expect("floating name");
+            // Inside the box, after (on top of) everything else.
+            assert!(fl.rect.x > tile.x && fl.rect.x + fl.rect.w < tile.x + tile.w && fl.rect.y + fl.rect.h < tile.y + tile.h);
+            let last_plain = d.items.iter().rposition(|i| !matches!(i.style, PanelStyle::FloatLabel | PanelStyle::Badge(_))).unwrap();
+            assert!(d.items.iter().position(|i| i.style == PanelStyle::FloatLabel).unwrap() > last_plain);
+            // The old name line under the strip is gone.
+            assert!(!d.items.iter().any(|i| i.style != PanelStyle::FloatLabel && i.text.contains(name)), "{name} only in the float");
+            let icon = d.items.iter().find(|i| i.style == PanelStyle::FolderIcon);
+            if n == 0 {
+                let ic = icon.expect("folder icon").rect;
+                let (cx, cy) = (ic.x + ic.w / 2, ic.y + ic.h / 2);
+                assert!((cx - (tile.x + tile.w / 2)).abs() <= 8 && (cy - (tile.y + tile.h / 2)).abs() <= 8, "centred");
+                assert!(ic.y + ic.h <= fl.rect.y, "name under the icon");
+            } else {
+                assert!(icon.is_none(), "files keep their preview");
+            }
+            seen.push((fl.rect.y - tile.y, fl.rect.x + fl.rect.w / 2 - tile.x));
+        }
+        assert!(seen[0].0 == seen[1].0 && (seen[0].1 - seen[1].1).abs() <= 1, "same place for every item: {seen:?}");
+        m.c.selected = 2;
+        m.slide = Default::default();
+        let d = m.view(&ctx(), &Keymap::new(cmdr::BINDINGS)).dock.unwrap();
+        let fl = d.items.iter().find(|i| i.style == PanelStyle::FloatLabel && i.text.starts_with('c')).unwrap();
+        assert!(fl.text.ends_with('…') && fl.text.chars().count() < 200);
+        let tile = d.items.iter().find(|i| matches!(i.style, PanelStyle::Tile { selected: true })).unwrap().rect;
+        assert!(fl.rect.w < tile.w);
     }
 
     #[test]
@@ -2238,6 +2397,8 @@ pub(crate) mod tests {
             m.action("mark", 0);
             // Mark moves on in list and carousel; go back so f00 is on screen.
             m.action("first", 0);
+            // The carousel's names ride on the boxes: let the slide finish.
+            m.slide = Default::default();
             let v = m.view(&ctx(), &k);
             assert!(v.dock.unwrap().items.iter().any(|i| i.text.contains("* f00.txt") || i.text.starts_with("*-")), "view {view}: marks shown");
             m.action("pipe", 0);

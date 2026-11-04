@@ -182,7 +182,7 @@ impl Drop for SkiaEngine {
 }
 
 fn color(c: u32) -> Color {
-    Color::from_rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
+    Color::from_argb(crate::text::opacity(c) as u8, (c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
 impl Engine for SkiaEngine {

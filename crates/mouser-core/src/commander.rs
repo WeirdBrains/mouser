@@ -44,6 +44,128 @@ pub fn kind_of(name: &str) -> Kind {
     }
 }
 
+/// The small type badge on a grid tile or carousel item (docs/modes.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Badge {
+    Folder,
+    Image,
+    Video,
+    Audio,
+    Text,
+    Code,
+    Markdown,
+    Pdf,
+    Archive,
+    Binary,
+    Config,
+    Font,
+    Document,
+    Generic,
+}
+
+impl Badge {
+    pub const ALL: [Badge; 14] = [
+        Badge::Folder,
+        Badge::Image,
+        Badge::Video,
+        Badge::Audio,
+        Badge::Text,
+        Badge::Code,
+        Badge::Markdown,
+        Badge::Pdf,
+        Badge::Archive,
+        Badge::Binary,
+        Badge::Config,
+        Badge::Font,
+        Badge::Document,
+        Badge::Generic,
+    ];
+
+    /// The short mark drawn on the badge (at most 3 characters; the folder
+    /// is drawn as a shape instead).
+    pub fn mark(self) -> &'static str {
+        match self {
+            Badge::Folder => "",
+            Badge::Image => "IMG",
+            Badge::Video => "VID",
+            Badge::Audio => "AUD",
+            Badge::Text => "TXT",
+            Badge::Code => "</>",
+            Badge::Markdown => "MD",
+            Badge::Pdf => "PDF",
+            Badge::Archive => "ZIP",
+            Badge::Binary => "BIN",
+            Badge::Config => "{}",
+            Badge::Font => "Aa",
+            Badge::Document => "DOC",
+            Badge::Generic => "…",
+        }
+    }
+
+    /// Badge colour (0xRRGGBB), one per type.
+    pub fn color(self) -> u32 {
+        match self {
+            Badge::Folder => 0x4F9DDE,
+            Badge::Image => 0x3FB27F,
+            Badge::Video => 0xE0566B,
+            Badge::Audio => 0xB46EE0,
+            Badge::Text => 0x8A96A3,
+            Badge::Code => 0x2FB8C9,
+            Badge::Markdown => 0x5B7BE0,
+            Badge::Pdf => 0xD9443A,
+            Badge::Archive => 0xC9902B,
+            Badge::Binary => 0x6B7280,
+            Badge::Config => 0xE0A93A,
+            Badge::Font => 0xD0679E,
+            Badge::Document => 0x3A7BD5,
+            Badge::Generic => 0x7C8794,
+        }
+    }
+
+    pub fn index(self) -> u8 {
+        Badge::ALL.iter().position(|b| *b == self).unwrap_or(13) as u8
+    }
+
+    pub fn from_index(i: u8) -> Badge {
+        Badge::ALL.get(i as usize).copied().unwrap_or(Badge::Generic)
+    }
+}
+
+/// The badge for an entry: from its extension (the same names [`kind_of`]
+/// knows, plus documents, archives, fonts, PDFs), else its kind; files with
+/// an execute bit and no known type are binaries.
+pub fn badge_of(name: &str, kind: Kind, mode: &str) -> Badge {
+    if kind == Kind::Dir {
+        return Badge::Folder;
+    }
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let by_ext = match ext.as_str() {
+        "md" | "markdown" => Some(Badge::Markdown),
+        "pdf" => Some(Badge::Pdf),
+        "zip" | "tar" | "gz" | "tgz" | "xz" | "zst" | "bz2" | "7z" | "rar" | "deb" | "rpm" => Some(Badge::Archive),
+        "json" | "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "lock" | "xml" | "env" => Some(Badge::Config),
+        "ttf" | "otf" | "woff" | "woff2" => Some(Badge::Font),
+        "doc" | "docx" | "odt" | "rtf" | "xls" | "xlsx" | "ods" | "csv" | "ppt" | "pptx" | "odp" => Some(Badge::Document),
+        "rs" | "sh" | "py" | "js" | "ts" | "c" | "h" | "cpp" | "go" | "html" | "css" | "java" | "rb" | "lua" | "zig" | "swift" | "kt" => {
+            Some(Badge::Code)
+        }
+        "exe" | "dll" | "so" | "dylib" | "bin" | "o" | "a" | "wasm" => Some(Badge::Binary),
+        _ => None,
+    };
+    if let Some(b) = by_ext {
+        return b;
+    }
+    let exec = mode.len() == 10 && mode[1..].contains('x');
+    match kind {
+        Kind::Image => Badge::Image,
+        Kind::Video => Badge::Video,
+        Kind::Audio => Badge::Audio,
+        _ if exec => Badge::Binary,
+        Kind::Text => Badge::Text,
+        _ => Badge::Generic,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub name: String,
@@ -1024,5 +1146,42 @@ mod remote_tests {
         c.set_cwd(Some(t.path().to_path_buf()));
         assert!(c.remote.is_none());
         assert_eq!(c.visible()[0].name, "local.txt");
+    }
+}
+
+#[cfg(test)]
+mod badge_tests {
+    use super::*;
+
+    #[test]
+    fn every_type_has_its_badge() {
+        let b = |n: &str| badge_of(n, kind_of(n), "-rw-r--r--");
+        assert_eq!(badge_of("src", Kind::Dir, "drwxr-xr-x"), Badge::Folder);
+        for (n, want) in [
+            ("a.png", Badge::Image),
+            ("a.mkv", Badge::Video),
+            ("a.flac", Badge::Audio),
+            ("notes.txt", Badge::Text),
+            ("main.rs", Badge::Code),
+            ("README.md", Badge::Markdown),
+            ("paper.PDF", Badge::Pdf),
+            ("x.tar.gz", Badge::Archive),
+            ("app.exe", Badge::Binary),
+            ("Cargo.toml", Badge::Config),
+            ("a.json", Badge::Config),
+            ("Inter.ttf", Badge::Font),
+            ("sheet.xlsx", Badge::Document),
+            ("a.csv", Badge::Document),
+            ("thing.qqq", Badge::Generic),
+        ] {
+            assert_eq!(b(n), want, "{n}");
+        }
+        // An executable with no known type is a binary; a plain one is text.
+        assert_eq!(badge_of("mouser", kind_of("mouser"), "-rwxr-xr-x"), Badge::Binary);
+        assert_eq!(badge_of("Makefile", kind_of("Makefile"), "-rw-r--r--"), Badge::Text);
+        for x in Badge::ALL {
+            assert_eq!(Badge::from_index(x.index()), x);
+            assert!(x.mark().chars().count() <= 3);
+        }
     }
 }
