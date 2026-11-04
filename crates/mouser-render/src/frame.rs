@@ -540,6 +540,7 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
             }
             ui::PanelStyle::FolderIcon => folder_icon(canvas, b, accent, mix(bg, panel, 0.5)),
             ui::PanelStyle::Md { flags, heading } => md_text(canvas, fonts, b, &it.text, flags, heading, (fg, panel, accent)),
+            ui::PanelStyle::MdToken(hl) => md_token(canvas, fonts, b, &it.text, hl, fg, panel),
             ui::PanelStyle::MdCode { top, bottom } => md_code(canvas, b, top, bottom, mix(panel, fg, 0.08), panel),
             ui::PanelStyle::MdQuote => canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.55)),
             ui::PanelStyle::MdRule => canvas.fill_rect(b.x, b.y + b.h / 2, b.w, 1, mix(panel, fg, 0.3)),
@@ -588,6 +589,17 @@ fn md_text(canvas: &mut dyn Draw, fonts: &mut FontStack, b: ui::Rect, text: &str
     if flags & STRIKE != 0 {
         canvas.fill_rect(b.x, ty + ch / 2, n * cw, 1, color);
     }
+}
+
+/// A highlighted code run (no shade of its own: it sits on the block).
+fn md_token(canvas: &mut dyn Draw, fonts: &mut FontStack, b: ui::Rect, text: &str, hl: u8, fg: u32, panel: u32) {
+    let ch = fonts.cell_h;
+    let ty = b.y + (b.h - ch) / 2;
+    let max = (b.w / fonts.cell_w.max(1)).max(0) as usize;
+    let shown: String = text.chars().take(max).collect();
+    let color = crate::markdown::token_color(hl, mix(panel, fg, 0.85), panel);
+    let draw: String = if hl == mouser_core::highlight::COMMENT { shown.chars().map(crate::text::italic_key).collect() } else { shown };
+    canvas.draw_text(fonts, b.x, ty, &draw, color);
 }
 
 /// A slice of a code block's background: rounded only at the block's ends.

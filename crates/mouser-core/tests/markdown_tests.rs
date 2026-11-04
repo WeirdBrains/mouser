@@ -108,7 +108,7 @@ fn ansi_styles_and_osc8_links() {
     assert!(out.contains("\x1b[1;4;35"), "h1 bold underlined");
     assert!(out.contains("\x1b[0;1mb"), "bold");
     assert!(out.contains("\x1b]8;;https://e.com\x1b\\"), "OSC 8 link");
-    assert!(out.contains("\x1b[48;5;236;38;5;223mc                   \x1b[0m"), "code row padded");
+    assert!(out.contains("\x1b[0;48;5;236;38;5;223mc\x1b[0;48;5;236m                   \x1b[0m"), "code row padded");
     let plain = markdown::to_ansi(&markdown::layout("[l](https://e.com)", 20), 20, false);
     assert!(!plain.contains("\x1b]8"));
 }

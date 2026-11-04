@@ -10,6 +10,7 @@ pub mod fuzzball;
 pub mod fuzzy;
 pub mod graphics;
 pub mod grid;
+pub mod highlight;
 pub mod input;
 pub mod kitty;
 pub mod kitty_graphics;

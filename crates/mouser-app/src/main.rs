@@ -978,6 +978,8 @@ fn main() -> Result<()> {
         let app_state = app_state.clone();
         Arc::new(move |scrolled_back: usize, rows: usize| -> (Vec<String>, Vec<Vec<mouser_render::CellPaint>>, usize) {
             let theme = app_state.lock().unwrap().look.theme_colors();
+            // Code blocks in Markdown (chat, commander) take the theme's palette.
+            mouser_render::markdown::set_palette(theme.palette);
             let session = parser.session();
             let pa = parser.get();
             let mut p = pa.lock().unwrap();

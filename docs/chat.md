@@ -25,7 +25,8 @@ All keys can be remapped in `modes.toml` under `[chat.keys]`; `ctrl+shift+k` lis
 | click a link in a message | open it (web, mail and file links only) |
 
 Your messages and the model's replies are drawn as Markdown: headings, bold and
-italic, inline code, code blocks on a background, lists, quotes, links and tables
+italic, inline code, code blocks on a background (syntax highlighted by their
+language tag), lists, quotes, links and tables
 ([Markdown rendering](./markdown.md)). A reply that is still streaming in is laid
 out as far as it has come; the rows above stay where they are.
 
