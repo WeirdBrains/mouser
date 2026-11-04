@@ -4,6 +4,7 @@
 
 - Commander: Markdown files preview rendered (headings, emphasis, lists, quotes, code blocks, links, tables) in the grid, carousel and file view. See docs/markdown.md.
 - Chat: messages and replies render as Markdown, streaming replies included; links are clickable. See docs/chat.md.
+- `mouser md [FILE…]`: Markdown (files or stdin) formatted into the terminal with SGR styles and OSC 8 links; it stays in the scrollback. `--width`, `--color auto|always|never`. See docs/markdown.md.
 
 ## [1.2.0] - 2026-11-04
 

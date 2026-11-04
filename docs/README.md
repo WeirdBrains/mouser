@@ -10,7 +10,7 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 - [Terminal emulation](./terminal.md): input, scrolling and trackpads, sequences, `mouser show`
 - [Modes](./modes.md): input modes, commander (list, grid, carousel), remote files
 - [Chat](./chat.md): the agent chat mode
-- [Markdown rendering](./markdown.md): commander previews, chat replies
+- [Markdown rendering](./markdown.md): commander previews, chat replies, `mouser md`
 - [Connection manager](./connection-manager.md): SSH hosts
 - [Themes](./themes.md)
 - [Preferences](./preferences.md)

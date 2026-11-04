@@ -136,6 +136,21 @@ enum Command {
         #[arg(long)]
         id: Option<u32>,
     },
+    /// Render Markdown into this terminal (headings, emphasis, code, lists,
+    /// quotes, tables, OSC 8 links); see docs/markdown.md.
+    ///
+    /// The output is ordinary styled text, so it scrolls back like any other
+    /// output and works in any terminal, over SSH and in tmux.
+    Md {
+        /// Markdown files; `-` (or none) reads stdin. Shown one after another.
+        files: Vec<String>,
+        /// Columns to lay out at (default: the terminal's width).
+        #[arg(long)]
+        width: Option<usize>,
+        /// When to style the output: auto (when stdout is a terminal), always, never.
+        #[arg(long, value_enum, default_value_t = mouser_app::md_cli::Color::Auto)]
+        color: mouser_app::md_cli::Color,
+    },
     /// Manage GPU rendering engines (mouser, skia, custom); the same as
     /// `mouser plugin … --kind engine` (engines are plugins); see docs/engines.md.
     Engine {
@@ -829,6 +844,13 @@ fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
+    }
+    if let Some(Command::Md { files, width, color }) = &cli.command {
+        if let Err(e) = mouser_app::md_cli::run(files, *width, *color, &mut std::io::stdout().lock()) {
+            eprintln!("mouser md: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
     }
     if let Some(Command::Man { out }) = &cli.command {
         let n = man::generate(out)?;

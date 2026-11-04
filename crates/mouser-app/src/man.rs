@@ -59,6 +59,7 @@ Pass keys on stdin (\fB\-\-key\-stdin\fR), not as arguments. The MCP server list
 mouser \-e btop
 mouser \-\-working\-directory ~/src \-\- nvim .
 mouser show photo.png
+mouser md README.md
 printf %s "$XAI_KEY" | mouser model add grok \-\-key\-stdin
 mouser mcp cert status
 mouser default\-terminal set

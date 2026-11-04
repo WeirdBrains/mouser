@@ -56,6 +56,9 @@ Print the shell integration for zsh, bash or fish (directory reports and silent 
 mouser\-show(1)
 Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow\-passthrough)
 .TP
+mouser\-md(1)
+Render Markdown into this terminal (headings, emphasis, code, lists, quotes, tables, OSC 8 links); see docs/markdown.md
+.TP
 mouser\-engine(1)
 Manage GPU rendering engines (mouser, skia, custom); the same as `mouser plugin … \-\-kind engine` (engines are plugins); see docs/engines.md
 .TP
@@ -159,6 +162,7 @@ Pass keys on stdin (\fB\-\-key\-stdin\fR), not as arguments. The MCP server list
 mouser \-e btop
 mouser \-\-working\-directory ~/src \-\- nvim .
 mouser show photo.png
+mouser md README.md
 printf %s "$XAI_KEY" | mouser model add grok \-\-key\-stdin
 mouser mcp cert status
 mouser default\-terminal set
