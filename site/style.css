@@ -25,9 +25,9 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 .btn{display:inline-block;padding:.65rem 1.2rem;background:var(--cyan);color:var(--bg);text-decoration:none;font-weight:700;margin-right:.6rem}
 .btn.ghost{background:none;color:var(--cyan);border:1px solid var(--cyan)}
 .shot{margin:0}.shot img{width:100%;height:auto;border:1px solid var(--line);box-shadow:0 0 40px rgba(63,216,232,.12)}
-.grid{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:1rem}
+.grid{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:1rem}
 .grid li{background:var(--panel);border:1px solid var(--line);padding:1.1rem}.grid p{margin:0;color:var(--dim);font-size:.92rem}
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr));gap:1.5rem}
 pre{background:var(--panel);border:1px solid var(--line);padding:1rem;overflow-x:auto;font-size:.82rem}
 code{color:var(--code,#bfefff)}.list{padding-left:1.2rem;color:var(--dim)}
 table{border-collapse:collapse;width:100%;max-width:720px}caption{text-align:left;color:var(--dim);margin-bottom:.5rem}
@@ -37,7 +37,20 @@ footer{text-align:center;padding:2rem;color:var(--dim);background:linear-gradien
 @media (max-width:820px){.hero{grid-template-columns:1fr}.menu{display:block}nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border-bottom:1px solid var(--line);padding:.5rem 1rem}nav.open{display:flex;flex-direction:column}nav a{margin:.4rem 0}}
 .logo{height:1.9em;width:auto;display:block;flex:none}.wordmark{display:flex;align-items:center;gap:.5rem}.wordmark{font-size:1.5rem;font-weight:700;color:var(--fg)}.wordmark .logo{height:2.2em}
 .btn,.grid li,pre,.shot img,.logo,.menu,kbd,table,input,button{border-radius:var(--radius)}
-.grid li,pre,.shot{overflow:hidden}.shot{border-radius:var(--radius)}
+.grid li,.shot{overflow:hidden}.shot{border-radius:var(--radius)}
 table{border-collapse:separate;border-spacing:0;border:1px solid var(--line);overflow:hidden}tbody tr:last-child td{border-bottom:0}
 kbd{border-radius:calc(var(--radius)/2.5)}
 pre{padding:1rem 1.25rem}
+/* Code blocks: scroll sideways instead of clipping; copy button. */
+.cols>*,.grid>*,.hero>*{min-width:0}
+.code{position:relative}
+.code pre{margin:0;overflow-x:auto;scrollbar-width:thin;scrollbar-color:var(--dim) transparent;padding-top:2.4rem}
+pre::-webkit-scrollbar{height:8px}pre::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}pre::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+pre code{white-space:pre;display:block;width:max-content;min-width:100%}
+.copy{position:absolute;top:.5rem;right:.5rem;font:inherit;font-size:.75rem;padding:.25rem .6rem;cursor:pointer;color:var(--dim);background:var(--bg2);border:1px solid var(--line);opacity:.85}
+.copy:hover,.copy:focus-visible{opacity:1;color:var(--fg)}.copy:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.copy.done{color:var(--cyan);border-color:var(--cyan)}
+@media (max-width:480px){pre{font-size:.75rem}}
+/* Install commands are long: one card per row so they show in full on wide screens. */
+.cols.install{grid-template-columns:1fr}
+p,li,td{overflow-wrap:anywhere}
