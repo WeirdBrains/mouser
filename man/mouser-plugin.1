@@ -1,0 +1,66 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-plugin 1  "mouser-plugin 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-plugin \- Manage plugins (mode, model\-provider, tool\-provider, command; engines too); see docs/plugins.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser plugin\fR [\fB\-\-kind\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Manage plugins (mode, model\-provider, tool\-provider, command; engines too); see docs/plugins.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-kind\fR \fI<KIND>\fR
+Only this kind: mode, engine, model\-provider, tool\-provider, command. With `engine` this is `mouser engine …`
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-plugin\-list(1)
+List plugins (or engines) by priority, with what each provides and its state
+.TP
+mouser\-plugin\-install(1)
+Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
+.TP
+mouser\-plugin\-uninstall(1)
+Remove an installed plugin or engine (and a plugin\*(Aqs saved permissions)
+.TP
+mouser\-plugin\-enable(1)
+Turn a plugin or engine on (built\-ins included)
+.TP
+mouser\-plugin\-disable(1)
+Turn a plugin or engine off without removing it (not the mouser engine)
+.TP
+mouser\-plugin\-use(1)
+Engines: put this engine first in the priority order (and unskip it)
+.TP
+mouser\-plugin\-priority(1)
+Set the priority order (the rest keep their order; for engines mouser stays last)
+.TP
+mouser\-plugin\-move(1)
+Move one: first, last, up, down or a 1\-based position
+.TP
+mouser\-plugin\-unskip(1)
+Engines: stop skipping one that crashed Mouser (and clear its failure) without selecting it
+.TP
+mouser\-plugin\-permissions(1)
+List every saved permission (no NAME), show or set one (`cap=allow|ask|never ...`, `*=never` for all), or `NAME revoke`
+.TP
+mouser\-plugin\-probe(1)
+Start an MCP plugin, do the handshake and list its tools
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

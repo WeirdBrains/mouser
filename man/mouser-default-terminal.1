@@ -1,0 +1,45 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-default-terminal 1  "mouser-default-terminal 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-default\-terminal \- Windows: make Mouser the default terminal for console programs (docs/windows.md §Default terminal). Needs Windows Terminal installed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser default\-terminal\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Windows: make Mouser the default terminal for console programs (docs/windows.md §Default terminal). Needs Windows Terminal installed
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-default\-terminal\-status(1)
+Whether Mouser is registered and what the default terminal is
+.TP
+mouser\-default\-terminal\-register(1)
+Register Mouser\*(Aqs handoff for this user (the installer does this; the default is unchanged)
+.TP
+mouser\-default\-terminal\-unregister(1)
+Remove Mouser\*(Aqs handoff (and put back the previous default if Mouser is it)
+.TP
+mouser\-default\-terminal\-set(1)
+Make Mouser the default terminal, remembering the current one
+.TP
+mouser\-default\-terminal\-unset(1)
+Put back the default terminal from before `set`
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

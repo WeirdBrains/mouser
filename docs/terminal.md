@@ -16,6 +16,7 @@ Mouser emulates a modern xterm (VT220+ with xterm and ECMA-48 extensions).
 | Ctrl+click | Open an OSC 8 hyperlink under the pointer (`http`, `https`, `mailto`, `file` only, via `xdg-open`). |
 | Shift+mouse | Bypass mouse reporting when an app (vim, tmux…) has grabbed the mouse. |
 | Mouse wheel | Scrollback; reported to the app in mouse modes; arrow keys on the alternate screen. |
+| Trackpad | Same as the wheel. Small pixel deltas (Wayland, macOS) add up until they make a whole line, so slow two-finger scrolls move too; programs with mouse reporting get one wheel report per line. |
 
 Resizing the window re-wraps the main screen and the scrollback: lines that wrapped
 because they were too long are joined and split again at the new width, hard line breaks

@@ -59,6 +59,7 @@ struct AppState {
     /// Plugin approval popups (always on top; own the keyboard while open).
     approvals: approval_ui::Approvals,
 }
+mod man;
 use mouser_render::ui;
 use mouser_render::{RenderHooks, Renderer, run as run_renderer};
 use serde::Deserialize;
@@ -69,7 +70,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Parser, Debug)]
 #[command(name = "mouser")]
-#[command(version, about = "Mouser terminal emulator", long_about = None)]
+#[command(version, about = "Mouser terminal emulator", long_about = None, disable_help_subcommand = true)]
 #[command(after_help = "Examples:\n  mouser -e btop\n  mouser --working-directory ~/src -- nvim .\n  mouser --hold -e make test")]
 struct Cli {
     /// Run a command instead of the login shell; everything after it is its arguments.
@@ -156,6 +157,18 @@ enum Command {
     DefaultTerminal {
         #[command(subcommand)]
         action: DefaultTerminalCommand,
+    },
+    /// Show a help topic: the guides in docs/, built in (`mouser help` lists them,
+    /// `mouser help search WORDS` finds them; a command name shows its usage); see docs/help.md.
+    Help {
+        /// Topic id (`models`, `mcp`, …), a command name, or `search` and words.
+        args: Vec<String>,
+    },
+    /// Write the man pages (mouser.1 and one per subcommand) into DIR; see docs/cli.md.
+    Man {
+        /// Output directory.
+        #[arg(long, value_name = "DIR", default_value = "man")]
+        out: PathBuf,
     },
     /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
@@ -787,6 +800,39 @@ fn main() -> Result<()> {
             eprintln!("mouser mcp: {e:#}");
             std::process::exit(1);
         }
+        return Ok(());
+    }
+    if let Some(Command::Help { args }) = &cli.command {
+        // A command name: its clap usage (what `mouser help CMD` used to show).
+        if let [name, rest @ ..] = args.as_slice()
+            && mouser_app::help::topic(name).is_none()
+        {
+            let mut cmd = <Cli as clap::CommandFactory>::command();
+            let mut path = vec![name.as_str()];
+            path.extend(rest.iter().map(String::as_str));
+            let mut sub = cmd.find_subcommand_mut(path[0]).cloned();
+            for p in &path[1..] {
+                sub = sub.and_then(|mut s| s.find_subcommand_mut(p).cloned());
+            }
+            if let Some(mut s) = sub {
+                s.print_long_help()?;
+                return Ok(());
+            }
+        }
+        match mouser_app::help::run(args) {
+            Ok(t) => {
+                print!("{t}");
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("mouser help: {e}");
+                std::process::exit(2);
+            }
+        }
+    }
+    if let Some(Command::Man { out }) = &cli.command {
+        let n = man::generate(out)?;
+        println!("wrote {n} man pages to {}", out.display());
         return Ok(());
     }
     if let Some(Command::ShellIntegration { shell }) = &cli.command {

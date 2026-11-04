@@ -1,0 +1,47 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-show 1  "mouser-show 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-show \- Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow\-passthrough)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser show\fR [\fB\-\-width\fR] [\fB\-\-height\fR] [\fB\-\-fit\fR] [\fB\-\-original\fR] [\fB\-\-id\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIFILES\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow\-passthrough).
+.PP
+Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not supported. Works in Mouser, other Fuzzball terminals and Kitty\-graphics terminals; inside tmux it uses Kitty Unicode placeholders.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-width\fR \fI<WIDTH>\fR
+Width in cells (height follows the aspect ratio)
+.TP
+\fB\-\-height\fR \fI<HEIGHT>\fR
+Height in cells (width follows the aspect ratio)
+.TP
+\fB\-\-fit\fR
+Fit the terminal width (default)
+.TP
+\fB\-\-original\fR
+Natural size: one image pixel per screen pixel (the terminal still fits it to the screen)
+.TP
+\fB\-\-id\fR \fI<ID>\fR
+Image id to use (default: derived from the process id)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help (see a summary with \*(Aq\-h\*(Aq)
+.TP
+<\fIFILES\fR>
+Image files; `\-` reads stdin. Shown one after another
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

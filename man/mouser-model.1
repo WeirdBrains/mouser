@@ -1,0 +1,48 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-model 1  "mouser-model 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-model \- Model providers (OpenAI\-compatible, Anthropic, Google, local); see docs/models.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser model\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Model providers (OpenAI\-compatible, Anthropic, Google, local); see docs/models.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-model\-list(1)
+List providers (built\-in, configured, plugins) and their models; * marks the default
+.TP
+mouser\-model\-add(1)
+Add or update: `add openai \-\-key\-stdin`, `add grok \-\-key\-stdin` (grok_… or xai\-… key) or `add grok \-\-desktop`, or `add NAME \-\-api openai|anthropic|google \-\-url URL [\-\-model M]…`. Without \-\-model it lists the provider\*(Aqs models and asks
+.TP
+mouser\-model\-remove(1)
+Remove a configured provider and its key
+.TP
+mouser\-model\-test(1)
+Stream one reply from PROVIDER[/MODEL] (default: the default model)
+.TP
+mouser\-model\-default(1)
+Set the default model: PROVIDER[/MODEL]
+.TP
+mouser\-model\-local(1)
+The built\-in local model (gemma\-local): status, download, delete, url, dir
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5
