@@ -1,0 +1,48 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-model-add 1  "mouser-model-add 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-model\-add \- Add or update: `add openai \-\-key\-stdin`, `add grok \-\-key\-stdin` (grok_… or xai\-… key) or `add grok \-\-desktop`, or `add NAME \-\-api openai|anthropic|google \-\-url URL [\-\-model M]…`. Without \-\-model it lists the provider\*(Aqs models and asks
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser model add\fR [\fB\-\-api\fR] [\fB\-\-url\fR] [\fB\-\-key\-stdin\fR] [\fB\-\-model\fR] [\fB\-\-ca\fR] [\fB\-\-desktop\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Add or update: `add openai \-\-key\-stdin`, `add grok \-\-key\-stdin` (grok_… or xai\-… key) or `add grok \-\-desktop`, or `add NAME \-\-api openai|anthropic|google \-\-url URL [\-\-model M]…`. Without \-\-model it lists the provider\*(Aqs models and asks
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-api\fR \fI<API>\fR
+
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+
+.TP
+\fB\-\-key\-stdin\fR
+Read the API key from stdin (stored in the OS keychain, never in preferences)
+.TP
+\fB\-\-model\fR \fI<MODELS>\fR
+Models it offers, first is its default (repeatable)
+.TP
+\fB\-\-ca\fR \fI<CA>\fR
+PEM certificate/CA to trust for an https URL
+.TP
+\fB\-\-desktop\fR
+grok only: use the signed\-in Grok Bot desktop app\*(Aqs login (opt\-in; no key)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

@@ -4,14 +4,18 @@
 
 - Windows: Mouser can be the default terminal for console programs. The installer registers Mouser's terminal handoff (ITerminalHandoff3) for the current user; `mouser default-terminal set` makes it the default and remembers the previous one, `unset` and uninstalling put it back, and `status` shows what is set. Needs Windows Terminal installed. See docs/windows.md.
 - MCP server: Let's Encrypt certificates (`[mcp.server.tls] source = "acme"`). tls-alpn-01 on the HTTPS port, http-01 on an optional port-80 listener, or dns-01 through a hook command or by hand. Renews 30 days before expiry and swaps the certificate in without a restart; failures keep the old one and back off. `mouser mcp cert status|renew`, preferences-mode settings, and `bind` to listen beyond 127.0.0.1 (HTTPS and token only). See docs/mcp.md.
-
-### Fixed
-
-- Trackpad scrolling works: small pixel scroll deltas (Wayland, macOS) are accumulated into whole lines instead of being dropped, and are sent to mouse-reporting programs one wheel report per line.
+- Grok provider: `mouser model add grok` takes a console.x.ai key (`xai-…`), a grok.com key (`grok_…`, Cursor agents API) or the Grok Bot desktop login (`--desktop`). Without `--model` an interactive picker lists the models. Keys sent to the wrong provider are refused with a hint. See docs/models.md.
+- Built-in help: `mouser help [TOPIC | search WORDS]` shows the docs/ guides. See docs/help.md.
+- Man pages: `mouser man --out DIR` writes mouser(1) and one page per command, with every flag and environment variable. See docs/cli.md.
+- Docs: a guide per feature indexed in docs/README.md, command-line and deploy guides (MCP server, website). Finished plans moved to docs/historical/.
 
 ### Changed
 
 - Fuzzball encoding and parsing now come from the published [`fuzzball`](https://crates.io/crates/fuzzball) 1.0 crate, and the spec lives at https://weirdbrains.github.io/fuzzball/. The bytes on the wire are unchanged.
+
+### Fixed
+
+- Trackpad scrolling works: small pixel scroll deltas (Wayland, macOS) are accumulated into whole lines instead of being dropped, and are sent to mouse-reporting programs one wheel report per line.
 
 ## [1.1.5] - 2026-11-02
 

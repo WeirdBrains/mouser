@@ -1,0 +1,45 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-mcp-servers-add 1  "mouser-mcp-servers-add 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-mcp\-servers\-add \- Add or update: `add NAME \-\-url URL [\-\-token\-stdin] [\-\-ca PEM]` or `add NAME \-\- COMMAND ARGS…`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser mcp servers add\fR [\fB\-\-url\fR] [\fB\-\-token\-stdin\fR] [\fB\-\-ca\fR] [\fB\-\-env\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> [\fICOMMAND\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Add or update: `add NAME \-\-url URL [\-\-token\-stdin] [\-\-ca PEM]` or `add NAME \-\- COMMAND ARGS…`
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-url\fR \fI<URL>\fR
+
+.TP
+\fB\-\-token\-stdin\fR
+Read a bearer token from stdin (stored in the OS keychain, never in preferences)
+.TP
+\fB\-\-ca\fR \fI<CA>\fR
+PEM certificate/CA to trust for an https URL
+.TP
+\fB\-\-env\fR \fI<ENV>\fR
+Environment for a stdio server, K=V (V may be keychain:NAME); repeatable
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fINAME\fR>
+
+.TP
+[\fICOMMAND\fR]
+
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

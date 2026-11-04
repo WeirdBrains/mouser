@@ -1,0 +1,51 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-mcp 1  "mouser-mcp 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-mcp \- Mouser\*(Aqs MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser mcp\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Mouser\*(Aqs MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-mcp\-serve(1)
+Speak MCP on stdin/stdout, bridged to the running Mouser (for clients that start servers)
+.TP
+mouser\-mcp\-status(1)
+Show whether it\*(Aqs on, the endpoints, the certificate and where the token is
+.TP
+mouser\-mcp\-enable(1)
+Turn the server on (loopback HTTP; `\-\-https` adds TLS with a self\-signed or your cert)
+.TP
+mouser\-mcp\-disable(1)
+Turn it off
+.TP
+mouser\-mcp\-cert(1)
+The HTTPS certificate: `status`, or `renew` a Let\*(Aqs Encrypt one now
+.TP
+mouser\-mcp\-token(1)
+Print (`\-\-show`) or replace (`\-\-rotate`) the bearer token
+.TP
+mouser\-mcp\-servers(1)
+MCP servers Mouser connects to (`[[mcp.servers]]`; tools in the sidebar)
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5

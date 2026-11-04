@@ -1,0 +1,42 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-mcp-servers 1  "mouser-mcp-servers 1.1.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-mcp\-servers \- MCP servers Mouser connects to (`[[mcp.servers]]`; tools in the sidebar)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser mcp servers\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+MCP servers Mouser connects to (`[[mcp.servers]]`; tools in the sidebar)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-mcp\-servers\-add(1)
+Add or update: `add NAME \-\-url URL [\-\-token\-stdin] [\-\-ca PEM]` or `add NAME \-\- COMMAND ARGS…`
+.TP
+mouser\-mcp\-servers\-list(1)
+List configured servers and MCP plugins
+.TP
+mouser\-mcp\-servers\-remove(1)
+Remove a server, its token and its permissions
+.TP
+mouser\-mcp\-servers\-test(1)
+Connect and list its tools; `\-\-call TOOL [\-\-args JSON]` calls one (asks first)
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.1.5
