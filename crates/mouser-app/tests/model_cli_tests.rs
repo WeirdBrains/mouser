@@ -62,6 +62,7 @@ fn model_add_list_test_default_remove() {
             key: key.map(Into::into),
             models: models.iter().map(|m| m.to_string()).collect(),
             ca: None,
+            desktop: false,
         })
     };
     let l = cli(Action::List).unwrap();
@@ -178,4 +179,83 @@ fn model_local_dir_download_delete_url() {
     assert!(l(LocalAction::Url { url: Some(u.clone()), api: Some("google".into()), model: None, key: None }).is_err());
     l(LocalAction::Url { url: None, api: None, model: None, key: None }).unwrap();
     assert!(cli(Action::List).unwrap().contains("not in this build"));
+}
+
+/// A JSON mock answering `n` requests with `body`.
+fn json_mock(n: usize, body: &'static str) -> String {
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://127.0.0.1:{}", l.local_addr().unwrap().port());
+    std::thread::spawn(move || {
+        for _ in 0..n {
+            let (s, _) = l.accept().unwrap();
+            let mut r = BufReader::new(s.try_clone().unwrap());
+            loop {
+                let mut h = String::new();
+                if r.read_line(&mut h).unwrap() == 0 || h == "\r\n" {
+                    break;
+                }
+            }
+            let mut w = s;
+            write!(w, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+                .unwrap();
+        }
+    });
+    url
+}
+
+const FAKE_GROK: &str = "grok_0123456789abcdef0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[test]
+#[serial_test::serial]
+fn model_add_without_model_lists_and_asks() {
+    let t = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("MOUSER_HOME", t.path());
+        std::env::set_var("MOUSER_SECRET_STORE", "file");
+    }
+    let url = json_mock(1, r#"{"items":[{"id":"grok-4.7"},{"id":"grok-4.6"},{"id":"grok-4.5"}]}"#);
+    let a = Action::Add {
+        name: "mygrok".into(),
+        api: Some("cursor-agents".into()),
+        url: Some(url),
+        key: Some(FAKE_GROK.into()),
+        models: vec![],
+        ca: None,
+        desktop: false,
+    };
+    let mut out = Vec::new();
+    let mut input = std::io::Cursor::new(b"9\n2\n".to_vec());
+    mouser_app::model_cli::run_io(&a, &mut out, Some(&mut input)).unwrap();
+    let s = String::from_utf8(out).unwrap();
+    assert!(s.contains("Models offered:") && s.contains("not one of the list: 9"), "{s}");
+    assert!(s.contains("model: grok-4.6"), "{s}");
+    assert!(!s.contains(FAKE_GROK));
+    let l = cli(Action::List).unwrap();
+    assert!(l.contains("grok-4.6"), "{l}");
+}
+
+#[test]
+#[serial_test::serial]
+fn model_add_wrong_key_hints_without_the_key() {
+    let t = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("MOUSER_HOME", t.path());
+        std::env::set_var("MOUSER_SECRET_STORE", "file");
+    }
+    let a = |name: &str, key: &str| Action::Add {
+        name: name.into(),
+        api: None,
+        url: None,
+        key: Some(key.into()),
+        models: vec!["m".into()],
+        ca: None,
+        desktop: false,
+    };
+    let e = format!("{:#}", cli(a("xai", FAKE_GROK)).unwrap_err());
+    assert!(e.contains("grok provider") && !e.contains(FAKE_GROK), "{e}");
+    let e = format!("{:#}", cli(a("openai", "xai-FAKEfakeFAKE0000")).unwrap_err());
+    assert!(e.contains("console.x.ai") && !e.contains("xai-FAKE"), "{e}");
+    // grok routes by shape: an xai- key goes to api.x.ai.
+    let s = cli(a("grok", "xai-FAKEfakeFAKE0000")).unwrap();
+    assert!(s.contains("xAI key → api.x.ai"), "{s}");
 }

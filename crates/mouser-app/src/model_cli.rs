@@ -18,6 +18,8 @@ pub enum Action {
         key: Option<String>,
         models: Vec<String>,
         ca: Option<String>,
+        /// Use the Grok Bot desktop app's saved login (opt-in; `grok --desktop`).
+        desktop: bool,
     },
     Remove(String),
     /// Stream one reply: `spec` is `provider[/model]` (default: the default model).
@@ -249,11 +251,235 @@ fn run_local_rest(a: &LocalAction, out: &mut dyn Write) -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn add(
+    name: &str,
+    api: Option<&str>,
+    url: Option<&str>,
+    key: Option<&str>,
+    ms: &[String],
+    ca: Option<&str>,
+    desktop: bool,
+    out: &mut dyn Write,
+    input: Option<&mut dyn std::io::BufRead>,
+) -> Result<()> {
+    use mouser_core::models::{cursor, grokbot, keys};
+    if !mouser_core::engines::valid_name(name) {
+        bail!("name must be a-z, 0-9, - or _");
+    }
+    if name == "gemma-local" {
+        bail!("gemma-local is the built-in local model; see `mouser model local` (switch with `mouser model default gemma-local/gemma-4-e4b`)");
+    }
+    let key = key.map(str::trim).filter(|k| !k.is_empty());
+    if desktop && key.is_some() {
+        bail!("--desktop uses the Grok Bot app's login; leave out --key-stdin");
+    }
+    let mut prefs = models::prefs();
+    let old = prefs.providers.iter().position(|p| p.name == name);
+    let preset = PRESETS.iter().find(|p| p.0 == name);
+    let prev = old.map(|i| prefs.providers[i].clone());
+    // `grok` picks its API from the key's shape (or the desktop login).
+    let grok = if name == "grok" && api.is_none() && url.is_none() {
+        if desktop { Some((Api::GrokDesktop, grokbot::URL)) } else { key.map(models::grok_target) }
+    } else {
+        None
+    };
+    if name == "grok" && grok.is_none() && prev.is_none() && api.is_none() {
+        bail!(
+            "grok needs a key or the desktop login:\n  printf %s \"$KEY\" | mouser model add grok --key-stdin   # grok_… (grok.com/dashboard/api-keys) or xai-… (console.x.ai)\n  mouser model add grok --desktop   # the signed-in Grok Bot desktop app"
+        );
+    }
+    let api = match api {
+        Some(s) => Api::parse(s).ok_or_else(|| anyhow::anyhow!("--api must be openai, anthropic, google or cursor-agents"))?,
+        None if desktop => Api::GrokDesktop,
+        None => match (grok, &prev, preset) {
+            (Some((a, _)), _, _) => a,
+            (None, Some(p), _) => p.api,
+            (None, None, Some(p)) => p.1,
+            (None, None, None) => bail!("{name} is not a built-in provider; give --api openai|anthropic|google and --url"),
+        },
+    };
+    if api == Api::LlamaCpp {
+        bail!("llama.cpp is built in as gemma-local; see `mouser model local`");
+    }
+    let url = match (url, grok, &prev, preset) {
+        _ if api == Api::GrokDesktop => grokbot::URL.to_string(),
+        (Some(u), ..) => u.to_string(),
+        (None, Some((_, u)), ..) => u.to_string(),
+        (None, None, Some(p), _) if p.api == api => p.url.clone(),
+        (None, None, _, Some(p)) if p.1 == api => p.2.to_string(),
+        (None, None, _, _) if api == Api::CursorAgents => cursor::URL.to_string(),
+        (None, None, _, _) if name == "grok" && api == Api::OpenAi => models::XAI_URL.to_string(),
+        _ => bail!("--url is required for a custom provider"),
+    };
+    if api != Api::GrokDesktop {
+        mouser_core::mcp::Target::parse(&url)?;
+    }
+    if let Some(k) = key
+        && let Some(h) = keys::wrong_provider_hint(name, &url, k)
+    {
+        bail!("{h}");
+    }
+    if api == Api::GrokDesktop && !grokbot::present() {
+        bail!("no Grok Bot desktop login found on this machine: install the Grok Bot app and sign in, then run this again");
+    }
+    let ca = match ca {
+        Some(p) => Some(std::fs::canonicalize(p).map_err(|e| anyhow::anyhow!("{p}: {e}"))?.display().to_string()),
+        None => prev.as_ref().and_then(|p| p.ca.clone()),
+    };
+    let same_target = prev.as_ref().is_some_and(|p| p.api == api && p.url == url);
+    let preset_default = preset.filter(|p| p.1 == api || name == "grok").map(|p| p.3.to_string()).filter(|_| api != Api::CursorAgents);
+    let models = if !ms.is_empty() {
+        ms.to_vec()
+    } else if input.is_some() || api == Api::GrokDesktop {
+        // Ask the provider what it offers (key in memory only) and pick.
+        let probe = ProviderEntry { name: name.to_string(), api, url: url.clone(), key: None, models: vec![], ca: ca.clone() };
+        let stored = if key.is_none() && same_target {
+            prev.as_ref().and_then(|p| p.key.as_deref()).map(mouser_core::mcp_client::resolve_token).transpose().ok().flatten()
+        } else {
+            None
+        };
+        let k = key.map(String::from).or(stored);
+        writeln!(out, "asking {name} which models it offers…")?;
+        match models::list_models(&probe, k.as_deref()) {
+            Ok(list) if !list.is_empty() => {
+                let want = prev.as_ref().filter(|_| same_target).and_then(|p| p.models.first().cloned()).or(preset_default.clone());
+                let d = want.and_then(|w| list.iter().position(|m| m.0 == w)).unwrap_or(0);
+                match input {
+                    Some(i) => vec![pick_model(&list, d, out, i)?],
+                    None => {
+                        writeln!(
+                            out,
+                            "using {} (pass --model to choose; offered: {})",
+                            list[d].0,
+                            list.iter().map(|m| m.0.as_str()).collect::<Vec<_>>().join(", ")
+                        )?;
+                        vec![list[d].0.clone()]
+                    }
+                }
+            }
+            Ok(_) if api == Api::GrokDesktop => bail!("no Grok Bot agents found for this login"),
+            Err(e) if api == Api::GrokDesktop => return Err(e),
+            r => {
+                let why = match r {
+                    Err(e) => format!("{e:#}"),
+                    Ok(_) => "the list is empty".into(),
+                };
+                let fallback = prev
+                    .as_ref()
+                    .filter(|_| same_target)
+                    .map(|p| p.models.clone())
+                    .filter(|m| !m.is_empty())
+                    .or(preset_default.clone().map(|m| vec![m]));
+                match fallback {
+                    Some(f) => {
+                        writeln!(out, "could not list the models ({why}); using {}", f[0])?;
+                        f
+                    }
+                    None => bail!("could not list {name}'s models ({why}); name one with --model MODEL"),
+                }
+            }
+        }
+    } else if let Some(p) = prev.as_ref().filter(|_| same_target) {
+        p.models.clone()
+    } else {
+        preset_default.map(|m| vec![m]).unwrap_or_default()
+    };
+    let key_ref = match key {
+        Some(k) => {
+            let st = mouser_core::secrets::set(&key_secret(name), k)?;
+            if let mouser_core::secrets::Store::File(p) = &st {
+                writeln!(out, "warning: no OS keychain available; the key is stored in {} (0600)", p.display())?;
+            }
+            Some(format!("keychain:{}", key_secret(name)))
+        }
+        None if api == Api::GrokDesktop => {
+            mouser_core::secrets::delete(&key_secret(name));
+            None
+        }
+        None => prev.as_ref().and_then(|p| p.key.clone()),
+    };
+    let e = ProviderEntry { name: name.to_string(), api, url, key: key_ref, models, ca };
+    let how = match (api, keys::kind(key.unwrap_or(""))) {
+        (Api::GrokDesktop, _) => " (Grok Bot desktop login)".to_string(),
+        (Api::CursorAgents, _) => " (grok.com key → api.cursor.com agents)".to_string(),
+        (Api::OpenAi, keys::KeyKind::Xai) if name == "grok" => " (xAI key → api.x.ai)".to_string(),
+        _ => String::new(),
+    };
+    match old {
+        Some(i) => prefs.providers[i] = e.clone(),
+        None => prefs.providers.push(e.clone()),
+    }
+    models::save(&prefs)?;
+    if let Some(m) = e.models.first() {
+        writeln!(out, "model: {m}")?;
+    }
+    writeln!(out, "{} model provider {name}{how}; try: mouser model test {name}", if old.is_some() { "updated" } else { "added" })?;
+    Ok(())
+}
+
 pub fn key_secret(name: &str) -> String {
     format!("model-{name}")
 }
 
+/// The terminal to ask on, when there is one: stdin if it is a terminal, else
+/// the controlling terminal (`--key-stdin` pipes the key in).
+pub fn terminal_input() -> Option<std::io::BufReader<Box<dyn std::io::Read>>> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        return Some(std::io::BufReader::new(Box::new(std::io::stdin())));
+    }
+    if !std::io::stdout().is_terminal() {
+        return None;
+    }
+    #[cfg(unix)]
+    let tty = std::fs::File::open("/dev/tty").ok();
+    #[cfg(windows)]
+    let tty = std::fs::File::open("CONIN$").ok();
+    #[cfg(not(any(unix, windows)))]
+    let tty: Option<std::fs::File> = None;
+    tty.map(|f| std::io::BufReader::new(Box::new(f) as Box<dyn std::io::Read>))
+}
+
+/// Ask which model to use: a numbered list, Enter takes `default`.
+pub fn pick_model(list: &[(String, String)], default: usize, out: &mut dyn Write, input: &mut dyn std::io::BufRead) -> Result<String> {
+    writeln!(out, "Models offered:")?;
+    for (i, (_, label)) in list.iter().enumerate() {
+        writeln!(out, "{}{:>3}) {label}", if i == default { "*" } else { " " }, i + 1)?;
+    }
+    loop {
+        write!(out, "Pick a model [1-{}, Enter = {}]: ", list.len(), default + 1)?;
+        out.flush()?;
+        let mut a = String::new();
+        if input.read_line(&mut a)? == 0 {
+            bail!("no model picked (pass --model MODEL)");
+        }
+        let a = a.trim();
+        if a.is_empty() {
+            return Ok(list[default].0.clone());
+        }
+        if let Ok(n) = a.parse::<usize>()
+            && (1..=list.len()).contains(&n)
+        {
+            return Ok(list[n - 1].0.clone());
+        }
+        if let Some(m) = list.iter().find(|m| m.0 == a) {
+            return Ok(m.0.clone());
+        }
+        writeln!(out, "not one of the list: {a}")?;
+    }
+}
+
 pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
+    run_io(a, out, None)
+}
+
+/// [`run`] with a terminal to ask on: `mouser model add P` without `--model`
+/// then lists the provider's models and asks which one to use.
+pub fn run_io(a: &Action, out: &mut dyn Write, input: Option<&mut dyn std::io::BufRead>) -> Result<()> {
+    if let Action::Add { name, api, url, key, models: ms, ca, desktop } = a {
+        return add(name, api.as_deref(), url.as_deref(), key.as_deref(), ms, ca.as_deref(), *desktop, out, input);
+    }
     match a {
         Action::List => {
             let d = models::default_choice();
@@ -296,67 +522,7 @@ pub fn run(a: &Action, out: &mut dyn Write) -> Result<()> {
             }
             Ok(())
         }
-        Action::Add { name, api, url, key, models: ms, ca } => {
-            if !mouser_core::engines::valid_name(name) {
-                bail!("name must be a-z, 0-9, - or _");
-            }
-            if name == "gemma-local" {
-                bail!(
-                    "gemma-local is the built-in local model; see `mouser model local` (switch with `mouser model default gemma-local/gemma-4-e4b`)"
-                );
-            }
-            let mut prefs = models::prefs();
-            let old = prefs.providers.iter().position(|p| p.name == *name);
-            let preset = PRESETS.iter().find(|p| p.0 == *name);
-            let prev = old.map(|i| prefs.providers[i].clone());
-            let api = match api.as_deref() {
-                Some(s) => Api::parse(s).ok_or_else(|| anyhow::anyhow!("--api must be openai, anthropic or google"))?,
-                None => match (&prev, preset) {
-                    (Some(p), _) => p.api,
-                    (None, Some(p)) => p.1,
-                    (None, None) => bail!("{name} is not a built-in provider; give --api openai|anthropic|google and --url"),
-                },
-            };
-            if api == Api::LlamaCpp {
-                bail!("llama.cpp is built in as gemma-local; see `mouser model local`");
-            }
-            let url = match (url, &prev, preset) {
-                (Some(u), _, _) => u.clone(),
-                (None, Some(p), _) => p.url.clone(),
-                (None, None, Some(p)) => p.2.to_string(),
-                (None, None, None) => bail!("--url is required for a custom provider"),
-            };
-            mouser_core::mcp::Target::parse(&url)?;
-            let models = if !ms.is_empty() {
-                ms.clone()
-            } else if let Some(p) = &prev {
-                p.models.clone()
-            } else {
-                preset.map(|p| vec![p.3.to_string()]).unwrap_or_default()
-            };
-            let key_ref = match key {
-                Some(k) => {
-                    let st = mouser_core::secrets::set(&key_secret(name), k.trim())?;
-                    if let mouser_core::secrets::Store::File(p) = &st {
-                        writeln!(out, "warning: no OS keychain available; the key is stored in {} (0600)", p.display())?;
-                    }
-                    Some(format!("keychain:{}", key_secret(name)))
-                }
-                None => prev.as_ref().and_then(|p| p.key.clone()),
-            };
-            let ca = match ca {
-                Some(p) => Some(std::fs::canonicalize(p).map_err(|e| anyhow::anyhow!("{p}: {e}"))?.display().to_string()),
-                None => prev.as_ref().and_then(|p| p.ca.clone()),
-            };
-            let e = ProviderEntry { name: name.clone(), api, url, key: key_ref, models, ca };
-            match old {
-                Some(i) => prefs.providers[i] = e,
-                None => prefs.providers.push(e),
-            }
-            models::save(&prefs)?;
-            writeln!(out, "{} model provider {name}; try: mouser model test {name}", if old.is_some() { "updated" } else { "added" })?;
-            Ok(())
-        }
+        Action::Add { .. } => unreachable!("handled by run_io"),
         Action::Remove(name) => {
             let mut prefs = models::prefs();
             let Some(i) = prefs.providers.iter().position(|p| p.name == *name) else {

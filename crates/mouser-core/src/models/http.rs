@@ -44,7 +44,7 @@ impl std::fmt::Display for HttpError {
             .ok()
             .and_then(|v| v["error"]["message"].as_str().or(v["error"].as_str()).or(v["message"].as_str()).map(String::from))
             .unwrap_or_else(|| self.body.chars().take(300).collect());
-        write!(f, "HTTP {}: {}", self.status, msg.trim())
+        write!(f, "HTTP {}: {}", self.status, super::keys::redact(msg.trim(), &[]))
     }
 }
 impl std::error::Error for HttpError {}
@@ -231,4 +231,28 @@ impl Default for Sse {
 /// Join a base URL and a path without doubling slashes.
 pub fn join(base: &str, path: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), path.trim_start_matches('/'))
+}
+
+/// Read a whole JSON reply (capped); non-2xx becomes [`HttpError`].
+pub fn json(r: Response) -> Result<serde_json::Value> {
+    let status = r.status;
+    let mut b = String::new();
+    let _ = r.body.take(4 * 1024 * 1024).read_to_string(&mut b);
+    if !(200..300).contains(&status) {
+        return Err(HttpError { status, body: b.trim().to_string() }.into());
+    }
+    if b.trim().is_empty() {
+        return Ok(serde_json::Value::Null);
+    }
+    serde_json::from_str(&b).with_context(|| format!("bad JSON reply: {}", super::keys::redact(&b.chars().take(120).collect::<String>(), &[])))
+}
+
+/// GET `url` and parse the JSON reply.
+pub fn get_json(url: &str, headers: &[(&str, String)], ca: Option<&std::path::Path>) -> Result<serde_json::Value> {
+    json(get(url, headers, ca)?)
+}
+
+/// POST JSON and parse the JSON reply.
+pub fn post_json(url: &str, headers: &[(&str, String)], body: &serde_json::Value, ca: Option<&std::path::Path>) -> Result<serde_json::Value> {
+    json(request("POST", url, headers, Some(&body.to_string()), ca)?)
 }

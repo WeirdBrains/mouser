@@ -7,6 +7,7 @@ calls. Every model is a plugin of kind `model-provider` (decision 5):
 | Provider | Kind of plugin | Wire API | Default URL |
 |---|---|---|---|
 | `openai` | built in | OpenAI Chat Completions | `https://api.openai.com/v1` |
+| `grok` | built in | by key: xAI (OpenAI-compatible), Cursor agents API, or the Grok Bot desktop login | see §grok |
 | `xai` | built in | OpenAI-compatible | `https://api.x.ai/v1` |
 | `openrouter` | built in | OpenAI-compatible | `https://openrouter.ai/api/v1` |
 | `moonshot` (Kimi) | built in | OpenAI-compatible | `https://api.moonshot.ai/v1` |
@@ -44,6 +45,37 @@ mouser model test                                  # stream one reply from the d
 mouser model test local/qwen3 --prompt "hi" --tool # --tool offers get_time and requires a call
 mouser model remove local                          # also deletes its key
 ```
+
+Without `--model`, `mouser model add` asks the provider for its models (key in
+memory only) and shows a numbered list to pick from on the terminal; Enter takes the
+marked one. `--model` skips the question. With no terminal it uses the provider's
+default and says which models it offers.
+
+Keys are checked by shape: a key sent to the wrong provider (a `grok_…` key to
+`xai`, an `xai-…` key to `openai`, …) is refused with a hint naming the right one.
+Keys and bearer tokens are redacted from every error and log line.
+
+## grok
+
+One provider, three ways to sign in:
+
+```sh
+# (a) console.x.ai key (xai-…): https://api.x.ai/v1, OpenAI-compatible
+printf %s "$XAI_KEY" | mouser model add grok --key-stdin
+# (b) grok.com key (grok_…, grok.com/dashboard/api-keys): a Cursor API key, so
+#     https://api.cursor.com agents (GET /v1/me checks it, GET /v1/models lists models;
+#     each chat is an agent, follow-ups are runs, replies stream over SSE)
+printf %s "$GROK_KEY" | mouser model add grok --key-stdin
+# (c) the signed-in Grok Bot desktop app (opt-in): pick one of your agents;
+#     Mouser sends with sendPrompt and polls its transcript for the reply
+mouser model add grok --desktop
+mouser model test grok --prompt "hi"
+```
+
+The desktop login reads the Grok Bot app's saved session only when you run
+`--desktop` and on each chat, sends it only to Cursor hosts, and re-reads the app's
+files once after a 401/417 (sign in again in the app if it still fails). `xai` stays
+as before for xai- keys.
 
 ## Configuration
 

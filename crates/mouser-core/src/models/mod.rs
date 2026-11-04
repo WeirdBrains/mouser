@@ -5,8 +5,11 @@
 //! compatible URL), and installed plugins with a `[model]` table.
 
 pub mod anthropic;
+pub mod cursor;
 pub mod google;
+pub mod grokbot;
 pub mod http;
+pub mod keys;
 pub mod local;
 pub mod openai;
 pub mod setup;
@@ -198,6 +201,12 @@ pub enum Api {
     Anthropic,
     #[serde(rename = "google")]
     Google,
+    /// Cursor's agents API (grok.com `grok_…` keys).
+    #[serde(rename = "cursor-agents")]
+    CursorAgents,
+    /// The Grok Bot desktop app's saved session (opt-in).
+    #[serde(rename = "grokbot-desktop")]
+    GrokDesktop,
     /// Built into Mouser (P4b; not built yet).
     #[serde(rename = "llama.cpp")]
     LlamaCpp,
@@ -209,6 +218,8 @@ impl Api {
             "openai" | "openai-compatible" => Api::OpenAi,
             "anthropic" | "anthropic-compatible" => Api::Anthropic,
             "google" | "gemini" => Api::Google,
+            "cursor-agents" | "cursor" => Api::CursorAgents,
+            "grokbot-desktop" | "desktop" => Api::GrokDesktop,
             "llama.cpp" => Api::LlamaCpp,
             _ => return None,
         })
@@ -218,6 +229,8 @@ impl Api {
             Api::OpenAi => "openai",
             Api::Anthropic => "anthropic",
             Api::Google => "google",
+            Api::CursorAgents => "cursor-agents",
+            Api::GrokDesktop => "grokbot-desktop",
             Api::LlamaCpp => "llama.cpp",
         }
     }
@@ -266,7 +279,8 @@ pub struct ModelSection {
 }
 
 /// Built-in model-provider plugins: (name, api, url, default model, description).
-pub const PRESETS: [(&str, Api, &str, &str, &str); 6] = [
+pub const PRESETS: [(&str, Api, &str, &str, &str); 7] = [
+    ("grok", Api::CursorAgents, cursor::URL, "grok-4.7", "Grok: grok.com key (grok_…), console.x.ai key (xai-…) or Grok Bot desktop login"),
     ("openai", Api::OpenAi, "https://api.openai.com/v1", "gpt-5", "OpenAI (Chat Completions)"),
     ("xai", Api::OpenAi, "https://api.x.ai/v1", "grok-4", "xAI Grok (OpenAI-compatible)"),
     ("openrouter", Api::OpenAi, "https://openrouter.ai/api/v1", "openrouter/auto", "OpenRouter (OpenAI-compatible)"),
@@ -429,14 +443,81 @@ pub fn open(name: &str) -> Result<Box<dyn ModelProvider>> {
         Origin::Preset => bail!("{name} needs an API key first: mouser model add {name} --key-stdin"),
         _ => {}
     }
+    if p.entry.api == Api::GrokDesktop {
+        return Ok(Box::new(grokbot::GrokDesktop { id: p.entry.name.clone(), models: p.entry.models.clone() }));
+    }
     let key = p.entry.key.as_deref().map(crate::mcp_client::resolve_token).transpose()?;
     let e = p.entry;
     crate::mcp::Target::parse(&e.url).with_context(|| format!("{name}: url"))?;
+    if let Some(k) = &key
+        && let Some(h) = keys::wrong_provider_hint(&e.name, &e.url, k)
+    {
+        bail!("{name}: {h}");
+    }
     Ok(match e.api {
         Api::OpenAi => Box::new(openai::OpenAi { id: e.name, url: e.url, key, models: e.models, ca: e.ca }),
         Api::Anthropic => Box::new(anthropic::Anthropic { id: e.name, url: e.url, key, models: e.models, ca: e.ca }),
         Api::Google => Box::new(google::Google { id: e.name, url: e.url, key, models: e.models, ca: e.ca }),
+        Api::CursorAgents => Box::new(cursor::CursorAgents { id: e.name, url: e.url, key, models: e.models, ca: e.ca }),
+        Api::GrokDesktop => unreachable!("handled above"),
         Api::LlamaCpp => bail!("{name}: llama.cpp providers are P4b"),
+    })
+}
+
+/// The xAI API (console.x.ai keys).
+pub const XAI_URL: &str = "https://api.x.ai/v1";
+
+/// Where the `grok` provider sends a key: (api, url) by its shape.
+/// `xai-…` → the xAI API; anything else (`grok_…`) → Cursor's agents API.
+pub fn grok_target(key: &str) -> (Api, &'static str) {
+    match keys::kind(key) {
+        keys::KeyKind::Xai => (Api::OpenAi, XAI_URL),
+        _ => (Api::CursorAgents, cursor::URL),
+    }
+}
+
+/// The models a provider offers right now: (id, label). Uses the key in memory.
+pub fn list_models(e: &ProviderEntry, key: Option<&str>) -> Result<Vec<(String, String)>> {
+    let ca = e.ca.as_deref().map(std::path::Path::new);
+    let secrets: Vec<&str> = key.into_iter().collect();
+    let red = |r: Result<Value>| r.map_err(|err| anyhow::anyhow!("{}", keys::redact(&format!("{err:#}"), &secrets)));
+    let ids = |v: &Value, k: &str| -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = v[k]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m["id"].as_str().or(m["name"].as_str()))
+            .map(|id| id.trim_start_matches("models/").to_string())
+            .map(|id| (id.clone(), id))
+            .collect();
+        out.sort();
+        out
+    };
+    Ok(match e.api {
+        Api::OpenAi => {
+            let h: Vec<(&str, String)> = key.map(|k| ("Authorization", format!("Bearer {}", k.trim()))).into_iter().collect();
+            ids(&red(http::get_json(&http::join(&e.url, "models"), &h, ca))?, "data")
+        }
+        Api::Anthropic => {
+            let mut h = vec![("anthropic-version", "2023-06-01".to_string())];
+            if let Some(k) = key {
+                h.push(("x-api-key", k.trim().to_string()));
+            }
+            ids(&red(http::get_json(&http::join(&e.url, "v1/models"), &h, ca))?, "data")
+        }
+        Api::Google => {
+            let h: Vec<(&str, String)> = key.map(|k| ("x-goog-api-key", k.trim().to_string())).into_iter().collect();
+            ids(&red(http::get_json(&http::join(&e.url, "v1beta/models"), &h, ca))?, "models")
+        }
+        Api::CursorAgents => {
+            cursor::CursorAgents { id: e.name.clone(), url: e.url.clone(), key: key.map(String::from), models: vec![], ca: e.ca.clone() }
+                .list()?
+                .into_iter()
+                .map(|m| (m.clone(), m))
+                .collect()
+        }
+        Api::GrokDesktop => grokbot::agents()?,
+        Api::LlamaCpp => e.models.iter().map(|m| (m.clone(), m.clone())).collect(),
     })
 }
 
