@@ -2,11 +2,16 @@
 
 ### Added
 
+- `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.4.0. See docs/mode-protocol.md.
+
+## [1.3.0] - 2026-11-04
+
+### Added
+
 - Commander: Markdown files preview rendered (headings, emphasis, lists, quotes, code blocks, links, tables) in the grid, carousel and file view. See docs/markdown.md.
 - Chat: messages and replies render as Markdown, streaming replies included; links are clickable. See docs/chat.md.
 - Markdown code blocks are syntax highlighted by their fence language (Rust, Python, JS/TS, shell, JSON, TOML, YAML, Go, C/C++, HTML, CSS, SQL, Markdown, diff) in chat, commander previews and `mouser md`, in the theme's palette colours. See docs/markdown.md.
 - `mouser md [FILE…]`: Markdown (files or stdin) formatted into the terminal with SGR styles and OSC 8 links; it stays in the scrollback. `--width`, `--color auto|always|never`. See docs/markdown.md.
-- `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.3.0. See docs/mode-protocol.md.
 
 ## [1.2.0] - 2026-11-04
 
