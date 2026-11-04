@@ -7,6 +7,7 @@ use crate::Waker;
 use crate::frame::PADDING;
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use mouser_core::agent::{Answer, Chat, Entry, ToolState};
+use mouser_core::markdown as md;
 use mouser_core::models::setup::{self, Field, Kind, Setup, Step};
 use mouser_core::modes::{Binding, Keymap};
 use std::collections::BTreeSet;
@@ -36,6 +37,8 @@ pub struct ChatMode {
     /// The message typed before a model was picked; sent once one is.
     held: Option<String>,
     waker: Option<Waker>,
+    /// Link targets in the transcript as drawn (click action `link`, index).
+    links: Vec<String>,
     /// Tests: a picker made with these (download/preset URLs, local built in).
     pub make_setup: Option<Box<dyn Fn() -> Setup + Send>>,
 }
@@ -51,6 +54,7 @@ impl ChatMode {
             setup: None,
             held: None,
             waker: None,
+            links: Vec::new(),
             make_setup: None,
         }
     }
@@ -176,21 +180,52 @@ pub fn wrap(text: &str, cols: usize) -> Vec<String> {
     out
 }
 
-/// One transcript row: text, style, click action.
-type Row = (String, PanelStyle, UiAction);
+/// One transcript row.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Row {
+    /// Text, style, click action.
+    Plain(String, PanelStyle, UiAction),
+    /// A Markdown row of a message (docs/markdown.md): the `you` / `ai`
+    /// prefix (blank after the first row) in `style`, the row, and whether
+    /// the rows around it are code (one background box per block).
+    Md { prefix: String, style: PanelStyle, line: md::Line, code: (bool, bool) },
+}
 
-fn rows(entries: &[Entry], open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
+/// Prefix width of transcript rows (`you  `, `ai   `).
+const PREFIX: usize = 5;
+
+/// Transcript rows for `entries` at `cols` columns. User and assistant
+/// messages are Markdown; a reply still streaming in lays out as far as it
+/// has come (rows above the end stay put as more arrives).
+pub fn rows(entries: &[Entry], open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
     let mut v: Vec<Row> = Vec::new();
-    let mut add = |text: &str, prefix: &str, style: PanelStyle, a: UiAction| {
+    let add = |v: &mut Vec<Row>, text: &str, prefix: &str, style: PanelStyle, a: UiAction| {
         let pad: String = " ".repeat(prefix.chars().count());
         for (i, l) in wrap(text, cols.saturating_sub(prefix.chars().count())).into_iter().enumerate() {
-            v.push((format!("{}{l}", if i == 0 { prefix } else { &pad }), style, a.clone()));
+            v.push(Row::Plain(format!("{}{l}", if i == 0 { prefix } else { &pad }), style, a.clone()));
         }
+    };
+    let markdown = |v: &mut Vec<Row>, text: &str, prefix: &str, style: PanelStyle| {
+        let lines = md::layout(text, cols.saturating_sub(PREFIX));
+        let code = |i: usize| lines.get(i).is_some_and(|l| l.kind == md::Kind::Code);
+        for (i, l) in lines.iter().enumerate() {
+            let prefix = if i == 0 { prefix.to_string() } else { String::new() };
+            v.push(Row::Md { prefix, style, line: l.clone(), code: (i > 0 && code(i - 1), code(i + 1)) });
+        }
+        !lines.is_empty()
     };
     for (i, e) in entries.iter().enumerate() {
         match e {
-            Entry::User(t) => add(t, "you  ", PanelStyle::Title, UiAction::None),
-            Entry::Assistant(t) => add(if t.is_empty() { "…" } else { t }, "ai   ", PanelStyle::Label, UiAction::None),
+            Entry::User(t) => {
+                if !markdown(&mut v, t, "you  ", PanelStyle::Title) {
+                    add(&mut v, t, "you  ", PanelStyle::Title, UiAction::None);
+                }
+            }
+            Entry::Assistant(t) => {
+                if !markdown(&mut v, t, "ai   ", PanelStyle::Label) {
+                    add(&mut v, "…", "ai   ", PanelStyle::Label, UiAction::None);
+                }
+            }
             Entry::Tool { display, args, state, output } => {
                 let st = match state {
                     ToolState::Waiting => "waiting for you",
@@ -210,13 +245,13 @@ fn rows(entries: &[Entry], open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
                 };
                 let style = if matches!(state, ToolState::Failed | ToolState::Denied) { PanelStyle::Error } else { PanelStyle::Hint };
                 let a: String = args.chars().take(160).collect();
-                add(&format!("{mark} {display} {a} — {st}"), "tool ", style, act("toggle", i as i32));
+                add(&mut v, &format!("{mark} {display} {a} — {st}"), "tool ", style, act("toggle", i as i32));
                 if shown && !output.is_empty() {
-                    add(output, "     │ ", PanelStyle::Hint, act("toggle", i as i32));
+                    add(&mut v, output, "     │ ", PanelStyle::Hint, act("toggle", i as i32));
                 }
             }
-            Entry::Note(t) => add(t, "note ", PanelStyle::Hint, UiAction::None),
-            Entry::Error(t) => add(t, "err  ", PanelStyle::Error, UiAction::None),
+            Entry::Note(t) => add(&mut v, t, "note ", PanelStyle::Hint, UiAction::None),
+            Entry::Error(t) => add(&mut v, t, "err  ", PanelStyle::Error, UiAction::None),
         }
     }
     v
@@ -447,6 +482,11 @@ impl Mode for ChatMode {
                 self.open.clear();
                 self.scroll = 0;
             }
+            "link" => {
+                if let Some(u) = self.links.get(arg.max(0) as usize) {
+                    return Effect::OpenLink(u.clone());
+                }
+            }
             "toggle" => {
                 let i = arg.max(0) as usize;
                 if !self.open.remove(&i) {
@@ -633,8 +673,24 @@ impl Mode for ChatMode {
                 items.push(item(Rect { x: x0, y: y + i as i32 * row_h, w, h: row_h }, l, PanelStyle::Hint, UiAction::None));
             }
         }
-        for (i, (t, st, a)) in all[start..end].iter().enumerate() {
-            items.push(item(Rect { x: x0, y: y + i as i32 * row_h, w, h: row_h }, t.clone(), *st, a.clone()));
+        self.links.clear();
+        let links = &mut self.links;
+        let mut link = |u: &str| {
+            links.push(u.to_string());
+            act("link", links.len() as i32 - 1)
+        };
+        for (i, r) in all[start..end].iter().enumerate() {
+            let ry = y + i as i32 * row_h;
+            match r {
+                Row::Plain(t, st, a) => items.push(item(Rect { x: x0, y: ry, w, h: row_h }, t.clone(), *st, a.clone())),
+                Row::Md { prefix, style, line, code } => {
+                    let pw = PREFIX as i32 * cw;
+                    if !prefix.is_empty() {
+                        items.push(item(Rect { x: x0, y: ry, w: pw, h: row_h }, prefix.clone(), *style, UiAction::None));
+                    }
+                    crate::markdown::line_items(line, *code, x0 + pw, ry, (cw, row_h), w - pw, &mut link, &mut items);
+                }
+            }
         }
         if start > 0 {
             items.push(item(Rect { x: x0 + w - 12 * cw, y, w: 12 * cw, h: row_h }, format!("↑ {start} more"), PanelStyle::Hint, act("up", 0)));

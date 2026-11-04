@@ -29,6 +29,11 @@ impl AgentHost for NoModel {
     }
 }
 
+/// A message row: its text drawn as Markdown.
+fn said(text: &str, style: &PanelStyle, want: &str) -> bool {
+    text == want && matches!(style, PanelStyle::Md { .. })
+}
+
 fn ctx() -> Context {
     Context { viewport: UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 30, w: 1000, h: 770 } }
 }
@@ -82,7 +87,7 @@ fn the_dock_has_a_header_an_input_and_shows_the_transcript() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let v = m.view(&ctx(), &keys).dock.unwrap();
-    assert!(v.items.iter().any(|i| i.text.starts_with("you  hi")));
+    assert!(v.items.iter().any(|i| said(&i.text, &i.style, "hi")));
     assert!(v.items.iter().any(|i| i.style == PanelStyle::Error && i.text.contains("no model configured")), "{:#?}", v.items);
     // Esc lets go of the input (nothing running); a second Esc is not the mode's.
     assert!(m.escape() && !m.wants_text() && !m.escape());
@@ -184,7 +189,7 @@ fn no_model_opens_the_picker_and_the_held_message_follows() {
     let t = Instant::now();
     loop {
         let d = m.view(&ctx(), &keys).dock.unwrap();
-        if d.items.iter().any(|i| i.text.starts_with("you  hi")) {
+        if d.items.iter().any(|i| said(&i.text, &i.style, "hi")) {
             assert!(d.items.iter().any(|i| i.text.contains("using xai/grok-4")), "{:#?}", d.items);
             break;
         }
@@ -300,4 +305,95 @@ fn clicking_the_model_name_in_the_header_opens_the_picker() {
     let UiAction::Mode { action, arg } = h.action.clone() else { unreachable!() };
     m.action(&action, arg);
     assert!(m.setup().is_some_and(|s| s.switch));
+}
+
+const REPLY: &str = "## Plan\n\nRun **this** with `ls`, see [docs](https://mouser.weirdbrains.com/docs):\n\n```sh\nls -la\necho done\n```\n\n- one\n- two\n\n> careful\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+
+/// Replies (and your messages) render as Markdown; links are clickable;
+/// a reply streaming in keeps the rows it already has.
+#[test]
+fn messages_render_markdown_with_links() {
+    use mouser_core::agent::Entry;
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    mouser_core::models::setup::save_provider(
+        mouser_core::models::ProviderEntry {
+            name: "custom".into(),
+            api: mouser_core::models::Api::OpenAi,
+            url: "http://127.0.0.1:9/v1".into(),
+            key: None,
+            models: vec!["m".into()],
+            ca: None,
+        },
+        None,
+    )
+    .unwrap();
+    mouser_core::models::setup::set_default("custom/m").unwrap();
+    let chat = Chat::new(Arc::new(NoModel));
+    {
+        let mut s = chat.state.lock().unwrap();
+        s.entries.push(Entry::User("what does *ls* do?".into()));
+        s.entries.push(Entry::Assistant(REPLY.into()));
+    }
+    let mut m = ChatMode::new(chat.clone());
+    let keys = Keymap::new(m.bindings());
+    let c = Context { viewport: UiViewport { width: 1000, height: 900, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 30, w: 1000, h: 870 } };
+    let d = m.view(&c, &keys).dock.unwrap();
+    let md = |t: &str| d.items.iter().find(|i| i.text == t && matches!(i.style, PanelStyle::Md { .. })).cloned();
+    assert_eq!(md("Plan").expect("heading").style, PanelStyle::Md { flags: 1, heading: 2 });
+    let styled = |t: &str, f: u8| d.items.iter().any(|i| i.text == t && i.style == PanelStyle::Md { flags: f, heading: 0 });
+    assert!(styled("ls", 2), "your message: italic");
+    assert!(styled("ls", 4), "inline code");
+    assert!(styled("this", 1), "bold");
+    assert!(md("ls -la").is_some() && md("echo done").is_some(), "code block rows");
+    assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::MdCode { top: true, bottom: false })));
+    assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::MdCode { top: false, bottom: true })));
+    assert!(d.items.iter().any(|i| i.style == PanelStyle::MdQuote));
+    assert!(!d.items.iter().any(|i| i.text.contains("**") || i.text.contains("```")), "no raw markup");
+    let link = md("docs").expect("link");
+    assert_eq!(link.action, UiAction::Mode { action: "link".into(), arg: 0 });
+    assert_eq!(m.action("link", 0), Effect::OpenLink("https://mouser.weirdbrains.com/docs".into()));
+    assert!(d.items.iter().any(|i| i.text == "you  ") && d.items.iter().any(|i| i.text == "ai   "));
+    if let Some(dir) = std::env::var_os("MOUSER_TEST_PNG_DIR") {
+        save_png(&d, &c, &std::path::Path::new(&dir).join("chat-markdown.png"));
+    }
+    // Streaming: as the reply grows, finished rows above stay as they were.
+    let rows = |t: &str| mouser_render::modes::chat::rows(&[Entry::Assistant(t.into())], &Default::default(), 60);
+    let mut prev = rows("");
+    for n in (1..=REPLY.len()).filter(|n| REPLY.is_char_boundary(*n)) {
+        let cur = rows(&REPLY[..n]);
+        // All but the last two rows (the block being typed and the gap before it).
+        let keep = prev.len().saturating_sub(2);
+        let changed = (0..keep).filter(|&i| prev[i] != cur[i]).count();
+        assert!(changed <= 1, "at {n}: rows above reflowed\n{prev:#?}\n{cur:#?}");
+        prev = cur;
+    }
+}
+
+fn save_png(d: &mouser_render::ui::Panel, c: &Context, path: &std::path::Path) {
+    use mouser_render::{Canvas, FontStack, Frame, render_frame, ui};
+    let (w, h) = (c.viewport.width as usize, c.viewport.height as usize);
+    let mut layout = ui::without_sidebar(w as i32, h as i32);
+    layout.dock = Some(ui::Dock { panel: d.clone(), inset: d.rect.h + 8, fullscreen: false });
+    let lines = vec!["$ ".to_string()];
+    let mut fonts = FontStack::embedded(15.0);
+    let mut buf = vec![0u32; w * h];
+    let fr = Frame {
+        lines: &lines,
+        cursor: Some((2, 0)),
+        bg: 0x0B1E2A,
+        fg: 0xD8E6EE,
+        ui: Some(&layout),
+        status: None,
+        accent: Some(0x2FD8E5),
+        cursor_color: None,
+        images: &[],
+        styles: &[],
+        cursor_shape: Default::default(),
+        tabs: None,
+    };
+    render_frame(&mut Canvas::new(&mut buf, w, h), &mut fonts, &fr);
+    let rgba: Vec<u8> = buf.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8, 255]).collect();
+    image::save_buffer(path, &rgba, w as u32, h as u32, image::ColorType::Rgba8).unwrap();
 }
