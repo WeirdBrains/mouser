@@ -1,14 +1,14 @@
 class Mouser < Formula
   desc "Mouser terminal emulator"
   homepage "https://github.com/WeirdBrains/mouser"
-  version "1.2.0"
+  version "1.3.0"
   on_macos do
     on_arm do
-      url "https://github.com/WeirdBrains/mouser/releases/download/v1.2.0/mouser-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/WeirdBrains/mouser/releases/download/v1.3.0/mouser-aarch64-apple-darwin.tar.gz"
       sha256 ""
     end
     on_intel do
-      url "https://github.com/WeirdBrains/mouser/releases/download/v1.2.0/mouser-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/WeirdBrains/mouser/releases/download/v1.3.0/mouser-x86_64-apple-darwin.tar.gz"
       sha256 ""
     end
   end
