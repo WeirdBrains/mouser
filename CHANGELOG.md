@@ -43,6 +43,7 @@
 
 ### Changed
 
+- plugins.lock pins commander 0.1.2 (the navigation stack), chat, preferences and the mouser and skia engines at 0.1.1 (Linux builds on Ubuntu 22.04, so they load on glibc 2.35+).
 - Releases: Linux builds run on Ubuntu 22.04 (glibc 2.35) with glslc and Vulkan headers from the LunarG SDK, so the binary runs on older distributions. A manual run of the release workflow builds and packages everything as v0.0.0 and publishes nothing.
 - CI: the commander player fps test holds the plugin to 20 fps on CI runners (30 locally); keeping up with the built-in player on the same machine is still required.
 
