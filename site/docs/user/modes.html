@@ -372,21 +372,23 @@ plus the selection's neighbours, so the incoming item loads during the slide.</p
   double-click on the picture or video. Commander's image viewer or player then fills
   the whole window, local or remote. The shell, tab bar and sidebar are hidden, and the
   terminal keeps its size, so nothing is resized under the shell. Esc or <code>alt+e</code> again
-  leaves.</li>
+  leaves.<ul>
 <li>Images are fitted whole and letterboxed on a dark backdrop, and keep zoom and pan.
-    Video is letterboxed the same way and keeps play/pause, seeking and the clickable
-    seek and volume bars.</li>
+Video is letterboxed the same way and keeps play/pause, seeking and the clickable
+seek and volume bars.</li>
 <li>A title strip with <code>exit fullscreen</code>, plus the player's controls for video, shows on
-    entry and after any pointer move or key. It hides after 2.5 s, and the picture then
-    takes the whole window.</li>
+entry and after any pointer move or key. It hides after 2.5 s, and the picture then
+takes the whole window.</li>
 <li>Audio gets a centred full-window controls view, always shown.</li>
 <li>Keys while fullscreen: Space plays or pauses, ←/→ seek 10 s, ↑/↓ change the volume.
-    In the image view the arrows step or pan. Other typing is swallowed rather than sent
-    to the hidden shell, and alt keys still work. Outside fullscreen the usual rule
-    applies (only alt keys act).</li>
+In the image view the arrows step or pan. Other typing is swallowed rather than sent
+to the hidden shell, and alt keys still work. Outside fullscreen the usual rule
+applies (only alt keys act).</li>
 <li>The view follows window resizes. Sizes are physical pixels, so HiDPI is sharp.</li>
 <li>The view is closed (and fullscreen dropped) by alt+q, Back or opening something
-    else.</li>
+else.</li>
+</ul>
+</li>
 <li>Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a <code>•••</code> menu (<code>menu</code>, default <code>alt+i</code>).</li>
 <li>Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.</li>
 </ul>

@@ -13,16 +13,18 @@
 <main id="main"><section class="light doc"><h1 id="releases">Releases</h1>
 <p>CI</p>
 <ul>
-<li><code>.github/workflows/ci.yml</code> runs on pushes to <code>main</code> across Ubuntu, macOS and Windows:</li>
+<li><code>.github/workflows/ci.yml</code> runs on pushes to <code>main</code> across Ubuntu, macOS and Windows:<ul>
 <li><code>cargo fmt --check</code></li>
 <li><code>cargo clippy --all-targets -- -D warnings</code></li>
 <li><code>cargo build --release</code></li>
 <li><code>cargo test --workspace</code></li>
 <li>Linux installs X11/Wayland/fontconfig dev packages.</li>
 </ul>
+</li>
+</ul>
 <p>Release workflow</p>
 <ul>
-<li><code>.github/workflows/release.yml</code> runs on <code>v*</code> tag pushes and:</li>
+<li><code>.github/workflows/release.yml</code> runs on <code>v*</code> tag pushes and:<ul>
 <li>Builds release binaries for Linux (x86_64), macOS (x86_64 + arm64) and Windows (x86_64)</li>
 <li>Produces installable packages from the prebuilt binaries (no Rust toolchain required to install):<ul>
 <li>Debian/Ubuntu: <code>.deb</code> via <code>nfpm</code> (maps <code>/usr/bin/mouser</code>, <code>.desktop</code>, icons, AppStream)</li>
@@ -35,14 +37,18 @@
 <li>Validates desktop integration on Linux: <code>desktop-file-validate</code> and <code>appstreamcli validate</code></li>
 <li>Publishes a GitHub Release with the CHANGELOG section for that version as notes and uploads all artifacts with checksums</li>
 </ul>
+</li>
+</ul>
 <p>Engines in packages</p>
 <ul>
 <li>Mouser's renderers are libraries (<code>mouser_engine_wgpu</code>, <code>mouser_engine_skia</code>); <code>cargo build --release</code> builds them next to <code>mouser-app</code>.</li>
-<li><code>mouser engine bundle --from target/&lt;triple&gt;/release --out DIR</code> copies them into <code>DIR/&lt;name&gt;/</code> with their <code>engine.toml</code> (<code>--from</code> defaults to the folder of the running mouser). The release workflow runs it once per target and ships the result:</li>
+<li><code>mouser engine bundle --from target/&lt;triple&gt;/release --out DIR</code> copies them into <code>DIR/&lt;name&gt;/</code> with their <code>engine.toml</code> (<code>--from</code> defaults to the folder of the running mouser). The release workflow runs it once per target and ships the result:<ul>
 <li><code>.tar.gz</code>/<code>.zip</code>: <code>engines/</code> beside <code>mouser-app</code></li>
 <li><code>.deb</code>/<code>.rpm</code>/Arch: <code>/usr/lib/mouser/engines/</code></li>
 <li><code>Mouser.app</code>: <code>Contents/Resources/engines/</code>; Homebrew formula: <code>lib/mouser/engines/</code></li>
 <li>Windows installer: <code>{app}\engines\</code></li>
+</ul>
+</li>
 <li>Mouser looks in <code>engines/</code> beside itself, <code>../Resources/engines</code> (macOS) and <code>../lib/mouser/engines</code> (Unix); <code>MOUSER_ENGINE_DIRS</code> replaces those (<a href="../developer/engines.html">Engines</a>).</li>
 </ul>
 <p>Signing</p>
@@ -69,26 +75,36 @@
 </ul>
 <h2 id="install">Install</h2>
 <ul>
-<li>Debian/Ubuntu:</li>
+<li>Debian/Ubuntu:<ul>
 <li>Download <code>mouser_&lt;ver&gt;_amd64.deb</code> from the Release and install:<ul>
 <li><code>sudo apt install ./mouser_&lt;ver&gt;_amd64.deb</code></li>
 </ul>
 </li>
-<li>Fedora:</li>
+</ul>
+</li>
+<li>Fedora:<ul>
 <li>Download <code>mouser-&lt;ver&gt;-1.x86_64.rpm</code> and install:<ul>
 <li><code>sudo rpm -Uvh mouser-&lt;ver&gt;-1.x86_64.rpm</code></li>
 </ul>
 </li>
-<li>Arch (see "Arch packages" below):</li>
+</ul>
+</li>
+<li>Arch (see "Arch packages" below):<ul>
 <li>Prebuilt: <code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v&lt;ver&gt;/mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst &amp;&amp; sudo pacman -U mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> (download first; URL installs look for a .sig we do not publish)</li>
 <li>From source: <code>cd packaging/arch/mouser-git &amp;&amp; makepkg -si</code></li>
 <li>Planned: <code>yay -S mouser-git</code> (or <code>mouser-bin</code>) once published to the AUR.</li>
-<li>macOS:</li>
+</ul>
+</li>
+<li>macOS:<ul>
 <li>CLI: <code>brew install --formula https://raw.githubusercontent.com/WeirdBrains/mouser/main/Formula/mouser.rb</code></li>
 <li>App: <code>brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Casks/mouser.rb</code></li>
 <li>Or download the <code>.dmg</code> and drag <code>Mouser.app</code> to Applications.</li>
-<li>Windows:</li>
+</ul>
+</li>
+<li>Windows:<ul>
 <li>Download and run <code>MouserSetup-&lt;ver&gt;.exe</code> (Start Menu shortcut installed), or unzip the portable <code>.zip</code>.</li>
+</ul>
+</li>
 </ul>
 <h2 id="arch-packages">Arch packages</h2>
 <p><code>packaging/arch/</code> holds two AUR-ready packages:</p>

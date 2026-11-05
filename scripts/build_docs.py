@@ -99,7 +99,7 @@ def main():
     def list_breaks(t):
         # GitHub (CommonMark) lets a list start right under a paragraph line; Python-Markdown
         # needs a blank line first, or the items run on as text. Add it, outside code fences.
-        out_lines, fence, prev = [], False, ""
+        out_lines, fence, prev, stack = [], False, "", []
         item = re.compile(r"([-*+]|1[.)])\s")
         any_item = re.compile(r"\s*([-*+]|\d+[.)])\s")
         for line in t.split("\n"):
@@ -108,6 +108,18 @@ def main():
             elif (not fence and item.match(line) and prev.strip() and not prev[0].isspace()
                   and not any_item.match(prev) and not prev.lstrip().startswith(("|", ">", "#"))):
                 out_lines.append("")
+            if not fence and any_item.match(line):
+                # GitHub nests by the marker's indent (often 2 spaces); Python-Markdown wants 4.
+                ind = len(line) - len(line.lstrip())
+                if not any_item.match(prev) and not prev[:1].isspace():
+                    stack = [ind]
+                while stack and ind < stack[-1]:
+                    stack.pop()
+                if not stack or ind > stack[-1]:
+                    stack.append(ind)
+                line = "    " * (len(stack) - 1) + line.lstrip()
+            elif not line.strip() or not line[:1].isspace():
+                stack = []
             out_lines.append(line)
             prev = line
         return "\n".join(out_lines)

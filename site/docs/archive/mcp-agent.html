@@ -126,13 +126,15 @@ run side by side once P1 has landed, and P4 can overlap with them.</p>
   <code>mouser_core::engines</code>.</li>
 <li>CLI: <code>mouser plugin list | install &lt;dir|plugin.toml&gt; | uninstall &lt;name&gt; |
   enable/disable &lt;name&gt; | priority … | move … | unskip … | permissions &lt;name&gt;</code>.</li>
-<li>Three transports (decision 1), plus <em>builtin</em> for code compiled into Mouser:</li>
+<li>Three transports (decision 1), plus <em>builtin</em> for code compiled into Mouser:<ul>
 <li><strong>MCP</strong>, an out-of-band process over stdio (a local URL comes with P3);</li>
 <li><strong>Fuzzball</strong>, in-band escape sequences from a program running <em>in</em> the terminal,
-    so it works over ssh and tmux;</li>
+so it works over ssh and tmux;</li>
 <li><strong>command</strong>, an executable that adds commands to the <code>[mouser]</code> line (JSON on
-    stdin, JSON on stdout).</li>
+stdin, JSON on stdout).</li>
 <li>No native-library plugins in v1.</li>
+</ul>
+</li>
 <li>A permission model with approval prompts drawn by Mouser itself (they can't be
   forged by terminal output).</li>
 <li>Plugin types: <code>mode</code>, <code>engine</code>, <code>model-provider</code>, <code>tool-provider</code>, plus reserved
@@ -174,23 +176,27 @@ models = &quot;ask&quot;                # may start / download a model
   keeps a priority order per kind (<code>plugins.order.mode = [...]</code> in
   preferences.toml), and keeps skip/failure records (shared code with
   <code>engines::skips</code>).</li>
-<li><strong>Provider traits</strong> (<code>mouser_render::plugins</code>):</li>
+<li><strong>Provider traits</strong> (<code>mouser_render::plugins</code>):<ul>
 <li><code>ModeProvider</code> creates a <code>Box&lt;dyn Mode&gt;</code>, the existing trait;</li>
 <li><code>EngineProvider</code> is the existing <code>Engine</code> factory;</li>
 <li><code>ToolProvider</code> lists and calls tools (MCP-shaped: name, JSON schema, call → content);</li>
 <li><code>ModelProvider</code> is defined in P4.</li>
-<li><strong>Adapters per transport:</strong></li>
+</ul>
+</li>
+<li><strong>Adapters per transport:</strong><ul>
 <li><em>builtin</em> is a direct Rust impl;</li>
 <li><em>command</em> runs the executable once per <code>[mouser]</code> command: one JSON request
-    on stdin, one JSON reply on stdout, with a timeout;</li>
+on stdin, one JSON reply on stdout, with a timeout;</li>
 <li><em>mcp</em> runs an rmcp client (P3) and maps the plugin's MCP tools and resources
-    onto <code>ToolProvider</code>; a mode over MCP gets <code>view</code>/<code>action</code>/<code>key</code> as tools that
-    return a panel description (JSON of <code>Panel</code>, already serde);</li>
+onto <code>ToolProvider</code>; a mode over MCP gets <code>view</code>/<code>action</code>/<code>key</code> as tools that
+return a panel description (JSON of <code>Panel</code>, already serde);</li>
 <li><em>fuzzball</em> adds a new Fuzzball sub-protocol <code>p</code> (plugin):
-    <code>DCS = F z p r ; name=…,kind=tool-provider ST</code> registers a session-scoped plugin.
-    Tool calls go back to the program as DCS replies on the PTY. A Fuzzball plugin
-    cannot be "installed"; it lives only while its program runs in that tab and is
-    always treated as untrusted (all actions ask).</li>
+<code>DCS = F z p r ; name=…,kind=tool-provider ST</code> registers a session-scoped plugin.
+Tool calls go back to the program as DCS replies on the PTY. A Fuzzball plugin
+cannot be "installed"; it lives only while its program runs in that tab and is
+always treated as untrusted (all actions ask).</li>
+</ul>
+</li>
 <li><strong>Permission broker.</strong> One <code>Grants</code> store at <code>$MOUSER_HOME/plugins/grants.toml</code>
   (plugin → permission → <code>allow | ask | never</code>, with an optional expiry). Every
   provider call that needs a capability goes through <code>broker.check(plugin, cap,
@@ -216,23 +222,27 @@ models = &quot;ask&quot;                # may start / download a model
 </ul>
 <h3 id="testing">Testing</h3>
 <ul>
-<li>Unit tests:</li>
+<li>Unit tests:<ul>
 <li>manifest parse and validation;</li>
 <li>registry order, skip and failure;</li>
 <li>grants: allow, ask, never and expiry;</li>
 <li>the Fuzzball <code>p</code> parser with fuzzed bodies;</li>
 <li>the approval popup layout, hit-tested like the options window.</li>
+</ul>
+</li>
 <li>Integration: a fake MCP plugin (a tiny Rust test binary over stdio) and a fake
   Fuzzball plugin (a shell script printing DCS), all under a temporary MOUSER_HOME.</li>
 </ul>
 <h3 id="size-and-open-questions">Size and open questions</h3>
 <ul>
 <li>Size: <strong>L, 3-4 weeks.</strong></li>
-<li>Questions for Michael:
-  1. ~~C ABI for non-engine plugins?~~ Decided: no native libraries in v1.
-  2. Should remote (ssh) Fuzzball plugins be allowed at all by default?
-  3. Is <code>plugins/</code> next to <code>engines/</code> fine, with engines later moving under
-     <code>plugins/</code>?</li>
+<li>Questions for Michael:<ol>
+<li>~~C ABI for non-engine plugins?~~ Decided: no native libraries in v1.</li>
+<li>Should remote (ssh) Fuzzball plugins be allowed at all by default?</li>
+<li>Is <code>plugins/</code> next to <code>engines/</code> fine, with engines later moving under
+ <code>plugins/</code>?</li>
+</ol>
+</li>
 </ul>
 <h2 id="3-p2-mouser-as-an-mcp-server">3. P2: Mouser as an MCP server</h2>
 <h3 id="scope_1">Scope</h3>
@@ -288,11 +298,13 @@ own chat mode).</p>
 <ul>
 <li><code>mouser-mcp</code> crate on <code>rmcp</code> (official SDK; 3.8.0 implements spec 2026-07-28 and
   stays compatible with 2025-11-25).</li>
-<li>Transports:</li>
+<li>Transports:<ul>
 <li><strong>stdio</strong> via <code>mouser mcp serve --stdio</code>. Clients start it, and it attaches to
-    the running Mouser over a local socket (<code>$MOUSER_HOME/run/mcp.sock</code>, 0600; a
-    named pipe on Windows).</li>
+the running Mouser over a local socket (<code>$MOUSER_HOME/run/mcp.sock</code>, 0600; a
+named pipe on Windows).</li>
 <li><strong>Streamable HTTP</strong>, in-app, on <code>127.0.0.1:&lt;port&gt;</code> only, when enabled.</li>
+</ul>
+</li>
 <li>The app side is a request queue into the event loop (the same path as UI
   actions), so tools never touch terminal state from another thread.</li>
 </ul>
@@ -318,23 +330,27 @@ own chat mode).</p>
 <ul>
 <li>An rmcp client in tests drives the server over stdio and HTTP under a temporary
   MOUSER_HOME.</li>
-<li>Checks:</li>
+<li>Checks:<ul>
 <li>wrong or missing token gives 401;</li>
 <li>a bad <code>Origin</code> gives 403;</li>
 <li>mutating calls block until a scripted approval;</li>
 <li><code>shell.run</code> is checked against a fake PTY.</li>
+</ul>
+</li>
 <li>Live: Claude Desktop or the MCP Inspector against <code>mouser mcp serve</code>, with forced
   focus and screenshots of the approval popup.</li>
 </ul>
 <h3 id="size-and-open-questions_1">Size and open questions</h3>
 <ul>
 <li>Size: <strong>M, 1.5-2 weeks.</strong></li>
-<li>Questions:
-  4. ~~HTTP at all?~~ Decided: stdio, loopback HTTP, and an HTTPS option (user cert
-     or self-signed).
-  5. Should <code>shell.run</code> be allowed in a tab running a full-screen program? (Proposed:
-     no, as with the <code>[mouser]</code> command line.)
-  6. For <code>files.trash</code>, use the OS trash, or a Mouser trash under $MOUSER_HOME?</li>
+<li>Questions:<ol start="4">
+<li>~~HTTP at all?~~ Decided: stdio, loopback HTTP, and an HTTPS option (user cert
+ or self-signed).</li>
+<li>Should <code>shell.run</code> be allowed in a tab running a full-screen program? (Proposed:
+ no, as with the <code>[mouser]</code> command line.)</li>
+<li>For <code>files.trash</code>, use the OS trash, or a Mouser trash under $MOUSER_HOME?</li>
+</ol>
+</li>
 </ul>
 <h2 id="4-p3-mcp-client-and-the-sidebar">4. P3: MCP client and the sidebar</h2>
 <blockquote>
@@ -387,19 +403,23 @@ auth = &quot;keychain:docs-token&quot;                 # or &quot;oauth&quot; (r
 </ul>
 <h3 id="testing_2">Testing</h3>
 <ul>
-<li>A fake stdio MCP server binary, plus rmcp's HTTP server in a test. Checks:</li>
+<li>A fake stdio MCP server binary, plus rmcp's HTTP server in a test. Checks:<ul>
 <li>reconnect and failure states;</li>
 <li>list-changed handling;</li>
 <li>the sidebar layout via the existing panel tests;</li>
 <li>secrets never written to preferences.toml (round-trip test).</li>
 </ul>
+</li>
+</ul>
 <h3 id="size-and-open-questions_2">Size and open questions</h3>
 <ul>
 <li>Size: <strong>M, 1.5 weeks.</strong></li>
-<li>Questions:
-  7. Should OAuth for remote MCP servers be in v1? (rmcp has an auth feature.)
-  8. Should a project-local <code>.mouser/mcp.toml</code> be supported (like editors do), or
-     global only?</li>
+<li>Questions:<ol start="7">
+<li>Should OAuth for remote MCP servers be in v1? (rmcp has an auth feature.)</li>
+<li>Should a project-local <code>.mouser/mcp.toml</code> be supported (like editors do), or
+ global only?</li>
+</ol>
+</li>
 </ul>
 <h2 id="5-p4-model-providers-as-plugins">5. P4: model providers as plugins</h2>
 <blockquote>
@@ -422,13 +442,15 @@ auth = &quot;keychain:docs-token&quot;                 # or &quot;oauth&quot; (r
 }
 </code></pre>
 <ul>
-<li>Hosted providers share two wire adapters:</li>
+<li>Hosted providers share two wire adapters:<ul>
 <li><strong>OpenAI-compatible</strong> Chat Completions or Responses: OpenAI, xAI, OpenRouter,
-    Moonshot/Kimi (<code>https://api.moonshot.ai/v1</code>), and local servers such as
-    <code>llama-server</code>;</li>
+Moonshot/Kimi (<code>https://api.moonshot.ai/v1</code>), and local servers such as
+<code>llama-server</code>;</li>
 <li><strong>Anthropic Messages</strong>.</li>
 <li>Google Gemini gets its own adapter, or its OpenAI-compatible endpoint (open
-    question).</li>
+question).</li>
+</ul>
+</li>
 <li><strong>Kimi K2</strong> is about 1T parameters (MoE), so it is hosted-only. Its K2.6 API fixes
   some sampling parameters (no temperature/top_p) and rejects
   <code>tool_choice="required"</code>; the adapter has per-model quirks for these.</li>
@@ -438,10 +460,12 @@ auth = &quot;keychain:docs-token&quot;                 # or &quot;oauth&quot; (r
 </ul>
 <h3 id="api-keys">API keys</h3>
 <ul>
-<li>Stored in the OS keychain through the <code>keyring</code> crate:</li>
+<li>Stored in the OS keychain through the <code>keyring</code> crate:<ul>
 <li>macOS Keychain;</li>
 <li>Windows Credential Manager;</li>
 <li>Linux Secret Service, with kernel keyutils as the fallback.</li>
+</ul>
+</li>
 <li><code>preferences.toml</code> holds only <code>key = "keychain:anthropic"</code>.</li>
 <li><code>mouser model key set anthropic</code> reads the key from a no-echo prompt and stores it.</li>
 <li>If no keychain is available (a headless Linux box), fall back to
@@ -484,32 +508,38 @@ later (open question).</p>
   architecture coverage, and llama.cpp supports Gemma tool calls and grammar-forced
   JSON.</li>
 <li><code>LlamaContext</code> is <code>!Send</code>, so inference runs on a dedicated thread with channels.</li>
-<li>Alternatives considered:</li>
+<li>Alternatives considered:<ul>
 <li><strong>mistral.rs</strong>: a full Rust stack, GGUF and tool calling; but architecture
-    support has lagged and one project reported Gemma 4 GGUF and CPU issues.</li>
+support has lagged and one project reported Gemma 4 GGUF and CPU issues.</li>
 <li><strong>candle</strong>: too low-level, since we would write the model ourselves.</li>
 <li><strong>Talk to <code>llama-server</code> or Ollama over the OpenAI-compatible API</strong>: no build
-    deps at all. Proposed as the <em>first</em> local option, because it reuses the P4
-    adapter.</li>
+deps at all. Proposed as the <em>first</em> local option, because it reuses the P4
+adapter.</li>
+</ul>
+</li>
 </ul>
 <h3 id="consent">Consent</h3>
 <ul>
 <li>Nothing is downloaded until the user picks a model in the model panel. The panel
   shows size, licence (Apache-2.0 / Gemma Terms) and the source URL (Hugging Face).
-  Then:</li>
+  Then:<ul>
 <li>the download goes to <code>$MOUSER_HOME/models/</code> with a checksum;</li>
 <li>it is resumable and cancellable;</li>
 <li><code>mouser model rm &lt;name&gt;</code> deletes it.</li>
+</ul>
+</li>
 </ul>
 <h3 id="dependencies-need-michaels-approval">Dependencies ⚠ (need Michael's approval)</h3>
 <ul>
 <li>Building llama.cpp from source: <strong>cmake, clang/libclang (bindgen), a C++ compiler</strong>.
   Arch: <code>cmake clang</code>; gcc is already there.</li>
-<li>GPU, optional feature flags:</li>
+<li>GPU, optional feature flags:<ul>
 <li><strong>Vulkan</strong>: <code>vulkan-headers</code>, <code>shaderc</code>/<code>glslc</code> and <code>spirv-headers</code> on Arch,
-    which suits the RTX 3060 without CUDA;</li>
+which suits the RTX 3060 without CUDA;</li>
 <li>or <strong>CUDA</strong>: the <code>cuda</code> toolkit, which is large.</li>
 <li>macOS uses Metal (no extra install). Windows needs MSVC + CMake in CI.</li>
+</ul>
+</li>
 <li>CI: the local-model crate is behind a cargo feature (<code>local-llm</code>) that is off by
   default, so the three-OS CI does not need these. A separate job builds it on Linux
   (CPU only).</li>
@@ -531,34 +561,40 @@ later (open question).</p>
 <h3 id="size-and-open-questions_3">Size and open questions</h3>
 <ul>
 <li>Size: <strong>M, 1.5-2 weeks</strong> (plus CI work).</li>
-<li>Questions:
-  9. ~~Which local route first?~~ Decided: llama.cpp built in, plus an
-     OpenAI/Anthropic-compatible inference URL option.
-  10. ~~E2B or E4B?~~ Decided: E2B default, a setting switches to E4B.
-  11. Is a FunctionGemma fine-tune on Mouser's own tools wanted later?</li>
+<li>Questions:<ol start="9">
+<li>~~Which local route first?~~ Decided: llama.cpp built in, plus an
+ OpenAI/Anthropic-compatible inference URL option.</li>
+<li>~~E2B or E4B?~~ Decided: E2B default, a setting switches to E4B.</li>
+<li>Is a FunctionGemma fine-tune on Mouser's own tools wanted later?</li>
+</ol>
+</li>
 </ul>
 <h2 id="7-p5-the-agent-chat-mode">7. P5: the agent chat mode</h2>
 <h3 id="scope_3">Scope</h3>
 <ul>
 <li>A mode plugin <code>chat</code> (hotkey <code>a</code>; open question). Like commander it is stateful,
   and only one mode is active at a time, so opening chat swaps commander out.</li>
-<li>The chat docks above the prompt in the same dock slot commander uses, and shows:</li>
+<li>The chat docks above the prompt in the same dock slot commander uses, and shows:<ul>
 <li>a transcript of user and assistant messages, tool calls and results, with
-    collapsible tool output;</li>
+collapsible tool output;</li>
 <li>an input field;</li>
 <li>a provider/model picker;</li>
 <li>Cancel.</li>
+</ul>
+</li>
 </ul>
 <h3 id="architecture_3">Architecture</h3>
 <ul>
 <li><strong>Context.</strong> By default it is the active tab's visible screen plus the last N
   scrollback lines, the cwd/place and the commander selection, through Mouser's own
   tools (the same ones as the P2 MCP server, called in-process).</li>
-<li><strong>Tools</strong> come from:</li>
+<li><strong>Tools</strong> come from:<ul>
 <li>Mouser's tools (P2, in-process);</li>
 <li>tools of the enabled MCP servers (P3);</li>
 <li>tool-provider plugins (P1).
   All are namespaced (<code>mouser.shell.run</code>, <code>github.create_issue</code>).</li>
+</ul>
+</li>
 <li><strong>Loop.</strong> Send to the <code>ModelProvider</code> and stream into the transcript. On a tool
   call, run the broker check, then the approval card <em>in the dock</em> (command, args
   and target tab; Allow once / Always for this chat / Deny / Edit), then run the
@@ -592,10 +628,12 @@ later (open question).</p>
 <h3 id="size-and-open-questions_4">Size and open questions</h3>
 <ul>
 <li>Size: <strong>L, about 3 weeks.</strong></li>
-<li>Questions:
-  12. Hotkey and name: "chat" on <code>a</code>?
-  13. Context default: the screen only, or the screen plus 200 lines of scrollback?
-  14. Should transcripts be kept by default?</li>
+<li>Questions:<ol start="12">
+<li>Hotkey and name: "chat" on <code>a</code>?</li>
+<li>Context default: the screen only, or the screen plus 200 lines of scrollback?</li>
+<li>Should transcripts be kept by default?</li>
+</ol>
+</li>
 </ul>
 <h2 id="8-p6-modes-and-engines-become-plugins-t189u">8. P6: modes and engines become plugins (t189u)</h2>
 <h3 id="scope_4">Scope</h3>
@@ -624,9 +662,11 @@ plus a migration test for old preferences.</p>
 <h3 id="size-and-open-questions_5">Size and open questions</h3>
 <ul>
 <li>Size: <strong>M-L, 2-3 weeks.</strong></li>
-<li>Questions:
-  15. Should the <code>mouser engine</code> CLI stay as an alias for good?
-  16. Should skia move out of the main package once it is a plugin?</li>
+<li>Questions:<ol start="15">
+<li>Should the <code>mouser engine</code> CLI stay as an alias for good?</li>
+<li>Should skia move out of the main package once it is a plugin?</li>
+</ol>
+</li>
 </ul>
 <h3 id="as-built-p6">As built (P6)</h3>
 <ul>
@@ -651,14 +691,16 @@ plus a migration test for old preferences.</p>
 </ul>
 <h2 id="9-sources-checked-2026-10-31">9. Sources (checked 2026-10-31)</h2>
 <ul>
-<li><strong>MCP specification 2026-07-28 (latest):</strong></li>
+<li><strong>MCP specification 2026-07-28 (latest):</strong><ul>
 <li>transports: stdio and Streamable HTTP; POST-only, with per-request SSE; the
-    <code>MCP-Protocol-Version</code> header; <code>Origin</code> validation and binding to localhost —
-    https://modelcontextprotocol.io/specification/2026-07-28/basic/transports and
-    https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http</li>
+<code>MCP-Protocol-Version</code> header; <code>Origin</code> validation and binding to localhost —
+https://modelcontextprotocol.io/specification/2026-07-28/basic/transports and
+https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http</li>
 <li>changelog: stateless; <code>server/discover</code> replaces <code>initialize</code>;
-    <code>subscriptions/listen</code>; multi-round-trip requests; tasks moved to an extension —
-    https://modelcontextprotocol.io/specification/2026-07-28/changelog</li>
+<code>subscriptions/listen</code>; multi-round-trip requests; tasks moved to an extension —
+https://modelcontextprotocol.io/specification/2026-07-28/changelog</li>
+</ul>
+</li>
 <li><strong>rmcp 3.8.0</strong>, the official Rust SDK (Apache-2.0, MSRV 1.88; implements 2026-07-28
   and is compatible with 2025-11-25) — https://crates.io/crates/rmcp and
   https://github.com/modelcontextprotocol/rust-sdk</li>
