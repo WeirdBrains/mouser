@@ -42,6 +42,7 @@
 
 ### Changed
 
+- Releases: Linux builds run on Ubuntu 22.04 (glibc 2.35) with glslc and Vulkan headers from the LunarG SDK, so the binary runs on older distributions. A manual run of the release workflow builds everything and publishes nothing.
 - CI: the commander player fps test holds the plugin to 20 fps on CI runners (30 locally); keeping up with the built-in player on the same machine is still required.
 
 ## [1.3.0] - 2026-11-04
