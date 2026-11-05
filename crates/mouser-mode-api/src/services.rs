@@ -48,16 +48,21 @@ pub trait FetchService {
 pub const METHODS: &[(&str, Option<&str>)] = &[
     ("remote.location", Some("remote.read")),
     ("remote.list", Some("remote.read")),
+    ("remote.read", Some("remote.read")),
     ("prefs.schema", None),
     ("prefs.get", None),
     ("prefs.set", Some("prefs.write")),
+    ("prefs.reset", Some("prefs.write")),
+    ("prefs.secret_prompt", Some("prefs.write")),
     ("agent.models", Some("agent.use")),
+    ("agent.set_default", Some("agent.use")),
     ("agent.send", Some("agent.use")),
     ("agent.cancel", Some("agent.use")),
+    ("agent.clear", Some("agent.use")),
+    ("agent.state", Some("agent.use")),
     ("permissions.granted", None),
     ("permissions.request", None),
     ("fetch", Some("net.fetch")),
-    ("agent.ask", Some("agent.use")),
 ];
 
 /// Whether `granted` allows calling `method`; unknown methods are refused.

@@ -1138,6 +1138,14 @@ fn main() -> Result<()> {
             for e in st.modes.take_effects() {
                 apply_mode_effect(&mut st, e, &writer);
             }
+            // Their questions go to Mouser's own popup.
+            let prompts = st.modes.take_prompts();
+            if !prompts.is_empty() {
+                for p in prompts {
+                    st.approvals.push(approval_ui::Request::from_prompt(p));
+                }
+                wake();
+            }
             layout
         })
     };
@@ -1337,6 +1345,12 @@ fn main() -> Result<()> {
             }
             _ => None,
         });
+        let mut modes = modes;
+        {
+            // Mode plugins with agent.use get sessions on the same host as chat (keys stay here).
+            let (tabs, app_state) = (tabs.clone(), app_state.clone());
+            modes.set_agent(Arc::new(move || mouser_core::agent::Chat::new(Arc::new(chat_host::ChatHost::new(tabs.clone(), app_state.clone())))));
+        }
         log::info!("modes: {}", if modes.names().is_empty() { "none (plain terminal)".to_string() } else { modes.names().join(", ") });
         let mut modes = modes;
         // Back in the mode (or no mode) the last window closed in.
@@ -2310,11 +2324,23 @@ fn fuzzball_answer(s: &tabs::Session, id: u32, name: &str, granted: Option<&[Str
 }
 
 /// Apply the user's answer to a popup.
-fn resolve_approval(st: &mut AppState, req: approval_ui::Request, a: mouser_core::permissions::Answer, app_state: &Arc<Mutex<AppState>>) {
+fn resolve_approval(st: &mut AppState, mut req: approval_ui::Request, a: mouser_core::permissions::Answer, app_state: &Arc<Mutex<AppState>>) {
+    if let approval_ui::Origin::ModePrompt { .. } = &req.origin {
+        let ans = approval_ui::prompt_answer(&mut req, a);
+        if !req.once_only {
+            let _ = mouser_core::permissions::Broker::answer(&req.plugin, &req.caps, &req.scope, a);
+        }
+        if let approval_ui::Origin::ModePrompt { reply, .. } = req.origin {
+            let _ = reply.send(ans);
+        }
+        wake();
+        return;
+    }
     if !req.once_only {
         let _ = mouser_core::permissions::Broker::answer(&req.plugin, &req.caps, &req.scope, a);
     }
     match req.origin {
+        approval_ui::Origin::ModePrompt { .. } => {}
         approval_ui::Origin::ModelDownload { id } => {
             if a.granted() {
                 spawn_model_download(&id, app_state);

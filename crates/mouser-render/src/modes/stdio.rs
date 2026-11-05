@@ -14,13 +14,21 @@
 //!   Mouser through [`Mode::take_effects`];
 //! - emits come back to the plugin's own matching listeners (self-delivery),
 //!   with the emit rules and hop limit of `mouser_mode_api::events`;
-//! - host calls are answered by [`super::services`].
+//! - host calls are answered by [`super::services`] (slow ones on a worker
+//!   thread, answered when done); `Approve`, `permissions.request` and
+//!   `prefs.secret_prompt` become questions in Mouser's own popup
+//!   ([`super::prompt`]), and `agent.*` drives an agent session that runs in
+//!   Mouser (models, keys, tools and their approval cards stay here; the
+//!   plugin gets `agent.state` events with the transcript);
+//! - typing reaches the plugin only while its view has a focused `Field`.
 //!
 //! The program only starts once `run` is allowed (`mouser plugin permissions
 //! NAME run=allow`), like command plugins. If it keeps crashing the dock
 //! shows why, with a Restart button.
 
-use super::{Context, Effect, Mode, ModeImage, View};
+use super::prompt::{Prompt, PromptAnswer, PromptKind};
+use super::services::{self, Answer, Env, Reply};
+use super::{AgentFactory, Context, Effect, Mode, ModeImage, View};
 use crate::Waker;
 use crate::frame::PADDING;
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
@@ -35,6 +43,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// The click on the "Restart" button of a plugin that gave up.
@@ -64,6 +73,26 @@ pub struct StdioMode {
     /// The mode is current (replayed as `mode.activated` after a (re)start).
     active: bool,
     was_running: bool,
+    /// Calls being answered elsewhere (a worker thread, Mouser's popup).
+    waiting: Vec<(u64, Waiting)>,
+    prompts: Vec<Prompt>,
+    agent_factory: Option<AgentFactory>,
+    agent: Option<mouser_core::agent::Chat>,
+    /// The tool card already handed to the popup (by display + lines).
+    agent_card: Option<String>,
+    agent_sent: Option<Value>,
+    ssh: Option<mouser_core::remote::SshTarget>,
+    remote_dir: Option<std::path::PathBuf>,
+}
+
+enum Waiting {
+    Worker(Receiver<Answer>),
+    /// Mouser's popup; `secret` = the preference to save a typed value to.
+    Popup {
+        rx: Receiver<PromptAnswer>,
+        secret: Option<String>,
+        permission: bool,
+    },
 }
 
 impl StdioMode {
@@ -93,6 +122,14 @@ impl StdioMode {
             last_status: None,
             active: false,
             was_running: false,
+            waiting: Vec::new(),
+            prompts: Vec::new(),
+            agent_factory: None,
+            agent: None,
+            agent_card: None,
+            agent_sent: None,
+            ssh: None,
+            remote_dir: None,
         })
     }
 
@@ -211,12 +248,7 @@ impl StdioMode {
                 }
             }
             Out::Emit { name, payload } => self.self_deliver(name, payload),
-            Out::Request { id, call } => {
-                let result = super::services::answer(&call, &self.granted());
-                if let Some(s) = &mut self.sup {
-                    s.send(&In::Response { id, result }, Instant::now());
-                }
-            }
+            Out::Request { id, call } => self.request(id, call),
             Out::Log { level, text } => match level {
                 LogLevel::Error => log::error!("{}: {text}", self.name),
                 LogLevel::Warn => log::warn!("{}: {text}", self.name),
@@ -225,6 +257,188 @@ impl StdioMode {
             },
             _ => {}
         }
+    }
+
+    fn respond(&mut self, id: u64, result: Answer) {
+        if let Some(s) = &mut self.sup {
+            s.send(&In::Response { id, result }, Instant::now());
+        }
+    }
+
+    fn ask(&mut self, id: u64, kind: PromptKind, secret: Option<String>, permission: bool) {
+        if self.waiting.iter().filter(|(_, w)| matches!(w, Waiting::Popup { .. })).count() >= 4 {
+            return self.respond(id, Err("too many questions open".into()));
+        }
+        let (p, rx) = Prompt::new(self.name, kind);
+        self.prompts.push(p);
+        self.waiting.push((id, Waiting::Popup { rx, secret, permission }));
+        if let Some(w) = &self.waker {
+            w();
+        }
+    }
+
+    fn request(&mut self, id: u64, call: mouser_mode_api::host_api::Call) {
+        use mouser_mode_api::host_api::Call;
+        let granted = self.granted();
+        match &call {
+            Call::Approve { title, detail, .. } => {
+                let detail = detail.lines().map(str::to_string).collect();
+                return self.ask(id, PromptKind::Approve { title: title.clone(), detail }, None, false);
+            }
+            Call::Service { method, params } if mouser_mode_api::services::allowed(method, &granted) => match method.as_str() {
+                "prefs.secret_prompt" => {
+                    return match services::secret_field(params) {
+                        Ok((key, label)) => self.ask(id, PromptKind::Secret { key: key.clone(), label }, Some(key), false),
+                        Err(e) => self.respond(id, Err(e)),
+                    };
+                }
+                "permissions.request" => {
+                    let cap = params["permission"].as_str().unwrap_or_default().to_string();
+                    if !self.plugin.manifest.permissions.contains(&cap) {
+                        return self.respond(id, Err(format!("{cap:?} is not declared in plugin.toml")));
+                    }
+                    if granted.contains(&cap) {
+                        return self.respond(id, Ok(json!({"granted": true})));
+                    }
+                    let why = params["why"].as_str().unwrap_or_default();
+                    let mut detail = vec![format!("  • {}  ({cap})", mouser_core::plugins::capability_text(&cap))];
+                    if !why.is_empty() {
+                        detail.push(format!("Why (from the plugin): {why}"));
+                    }
+                    return self.ask(id, PromptKind::Permission { cap, detail }, None, true);
+                }
+                m if m.starts_with("agent.") && !matches!(m, "agent.models" | "agent.set_default") => {
+                    let r = self.agent_call(m, params);
+                    return self.respond(id, r);
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        let env = Env { granted, ssh: self.ssh.clone(), remote_dir: self.remote_dir.clone() };
+        match services::dispatch(&call, &env) {
+            Reply::Now(r) => self.respond(id, r),
+            Reply::Later(rx) => {
+                self.waiting.push((id, Waiting::Worker(rx)));
+                self.poll_later();
+            }
+        }
+    }
+
+    /// Wake the view while worker answers are pending.
+    fn poll_later(&self) {
+        if let Some(w) = self.waker.clone() {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(30));
+                w();
+            });
+        }
+    }
+
+    /// Deliver finished calls.
+    fn pump(&mut self) {
+        let mut done = Vec::new();
+        let mut pending_worker = false;
+        for (i, (id, w)) in self.waiting.iter().enumerate() {
+            match w {
+                Waiting::Worker(rx) => match rx.try_recv() {
+                    Ok(r) => done.push((i, *id, r)),
+                    Err(TryRecvError::Disconnected) => done.push((i, *id, Err("worker stopped".into()))),
+                    Err(TryRecvError::Empty) => pending_worker = true,
+                },
+                Waiting::Popup { rx, secret, permission } => {
+                    let a = match rx.try_recv() {
+                        Ok(a) => a,
+                        Err(TryRecvError::Disconnected) => PromptAnswer::Deny,
+                        Err(TryRecvError::Empty) => continue,
+                    };
+                    let r = match (a, secret) {
+                        (PromptAnswer::Secret(v), Some(key)) => services::save_secret(key, &v),
+                        (PromptAnswer::Deny, Some(_)) => Err("cancelled".into()),
+                        (PromptAnswer::Deny, None) if *permission => Ok(json!({"granted": false})),
+                        (PromptAnswer::Deny, None) => Ok(json!({"decision": "deny"})),
+                        (_, None) if *permission => Ok(json!({"granted": true})),
+                        (_, _) => Ok(json!({"decision": "once"})),
+                    };
+                    done.push((i, *id, r));
+                }
+            }
+        }
+        for (i, id, r) in done.into_iter().rev() {
+            self.waiting.remove(i);
+            self.respond(id, r);
+        }
+        if pending_worker {
+            self.poll_later();
+        }
+    }
+
+    fn agent_call(&mut self, m: &str, params: &Value) -> Answer {
+        if self.agent.is_none() {
+            let f = self.agent_factory.as_ref().ok_or("no agent in this Mouser")?;
+            let chat = f();
+            if let Some(w) = self.waker.clone() {
+                chat.set_notify(Arc::new(move || w()));
+            }
+            self.agent = Some(chat);
+        }
+        let chat = self.agent.as_ref().unwrap();
+        match m {
+            "agent.send" => {
+                let text = params["text"].as_str().ok_or("params.text missing")?;
+                if chat.send(text) { Ok(json!({"started": true})) } else { Err("a reply is still running (or the text is empty)".into()) }
+            }
+            "agent.cancel" => Ok(json!({"cancelled": chat.cancel()})),
+            "agent.clear" => {
+                chat.clear();
+                Ok(Value::Null)
+            }
+            "agent.state" => {
+                let v = agent_state(chat);
+                self.agent_sent = Some(v.clone());
+                Ok(v)
+            }
+            _ => Err(format!("{m} is not available yet")),
+        }
+    }
+
+    /// Push the agent transcript when it changed; hand a new tool card to Mouser's popup.
+    fn agent_tick(&mut self) {
+        let Some(chat) = self.agent.clone() else { return };
+        let card = {
+            let s = chat.state.lock().unwrap();
+            s.pending.as_ref().map(|p| (p.display.clone(), p.lines.clone(), p.for_chat))
+        };
+        match card {
+            Some((display, lines, for_chat)) => {
+                let tag = format!("{display}\n{}", lines.join("\n"));
+                if self.agent_card.as_deref() != Some(&tag) {
+                    self.agent_card = Some(tag);
+                    let (p, rx) = Prompt::new(self.name, PromptKind::AgentTool { display, lines, for_chat });
+                    self.prompts.push(p);
+                    let c = chat.clone();
+                    std::thread::spawn(move || {
+                        let a = match rx.recv() {
+                            Ok(PromptAnswer::Once) | Ok(PromptAnswer::Secret(_)) => mouser_core::agent::Answer::Once,
+                            Ok(PromptAnswer::ForChat) => mouser_core::agent::Answer::ForChat,
+                            _ => mouser_core::agent::Answer::Deny,
+                        };
+                        c.answer(a);
+                    });
+                }
+            }
+            None => self.agent_card = None,
+        }
+        let v = agent_state(&chat);
+        if self.agent_sent.as_ref() != Some(&v) {
+            self.agent_sent = Some(v.clone());
+            self.event("agent.state", v);
+        }
+    }
+
+    /// The view has a focused text field: typing goes to the plugin.
+    fn typing(&self) -> bool {
+        self.view.dock.iter().chain(self.view.panel.iter()).flat_map(|p| &p.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. }))
     }
 
     fn notice(&self, ctx: &Context, text: &str, restart: bool) -> Panel {
@@ -314,13 +528,36 @@ impl Mode for StdioMode {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Option<Effect> {
+        if !self.typing() {
+            return None;
+        }
+        // Keys go as text; Enter, Backspace, Tab and arrows too (the plugin edits its own field).
         self.event("input.text", json!({"utf8": String::from_utf8_lossy(bytes)}));
-        None
+        Some(Effect::None)
+    }
+
+    fn wants_text(&self) -> bool {
+        self.typing()
+    }
+
+    fn wants_key(&self, _bytes: &[u8]) -> bool {
+        self.typing()
     }
 
     fn escape(&mut self) -> bool {
         self.event("input.escape", json!({}));
-        false
+        self.typing()
+    }
+
+    fn remote_ssh(&mut self, ssh: Option<&mouser_core::remote::SshTarget>) {
+        self.ssh = ssh.cloned();
+    }
+
+    fn remote_changed(&mut self, label: &str, dir: Option<&Path>, _listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {
+        self.remote_dir = dir.map(Path::to_path_buf);
+        if self.granted().iter().any(|g| g == "remote.read") {
+            self.event("shell.remote_changed", json!({"label": label, "dir": dir.map(|d| d.display().to_string())}));
+        }
     }
 
     fn view(&mut self, ctx: &Context, _keys: &Keymap) -> View {
@@ -341,6 +578,8 @@ impl Mode for StdioMode {
         for m in msgs {
             self.handle(m);
         }
+        self.pump();
+        self.agent_tick();
         let running = self.sup.as_ref().is_some_and(|s| *s.state() == State::Running);
         if running && !self.was_running && self.active {
             // Started, or back after a crash: tell it it's the current mode.
@@ -382,6 +621,35 @@ impl Mode for StdioMode {
     fn take_effects(&mut self) -> Vec<Effect> {
         std::mem::take(&mut self.effects)
     }
+
+    fn take_prompts(&mut self) -> Vec<Prompt> {
+        std::mem::take(&mut self.prompts)
+    }
+
+    fn set_agent(&mut self, f: AgentFactory) {
+        self.agent_factory = Some(f);
+    }
+}
+
+/// The agent session as the plugin sees it: entries, the running flag and
+/// the model, and whether a tool card is open in Mouser's popup.
+fn agent_state(chat: &mouser_core::agent::Chat) -> Value {
+    use mouser_core::agent::Entry;
+    let s = chat.state.lock().unwrap();
+    let entries: Vec<Value> = s
+        .entries
+        .iter()
+        .map(|e| match e {
+            Entry::User(t) => json!({"user": t}),
+            Entry::Assistant(t) => json!({"assistant": t}),
+            Entry::Tool { display, args, state, output } => {
+                json!({"tool": {"display": display, "args": args, "state": format!("{state:?}").to_lowercase(), "output": output}})
+            }
+            Entry::Note(t) => json!({"note": t}),
+            Entry::Error(t) => json!({"error": t}),
+        })
+        .collect();
+    json!({"entries": entries, "running": s.running, "model": s.model, "card_open": s.pending.is_some()})
 }
 
 impl Drop for StdioMode {

@@ -168,7 +168,7 @@ pub enum Call {
         target: Target,
         cmdline: String,
     },
-    /// A host service method by name (`prefs.get`, `agent.ask` ...).
+    /// A host service method by name (`prefs.get`, `agent.send` ...).
     Service {
         method: String,
         params: Value,
