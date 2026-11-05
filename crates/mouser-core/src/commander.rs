@@ -386,6 +386,7 @@ pub enum Action {
 pub const BINDINGS: &[crate::modes::Binding] = &[
     b("switch_view", "t", "switch view (list / grid / carousel)"),
     b("search", "s", "search this folder"),
+    b("sync", "ctrl+s", "sync: move the shell to commander's folder (silently, at its next prompt if busy)"),
     b("up", "up", "previous row"),
     b("down", "down", "next row"),
     b("left", "left", "previous item"),
@@ -400,8 +401,8 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("page_down", "pagedown", "page down"),
     b("first", "home", "first item"),
     b("last", "end", "last item"),
-    b("parent", "p", "back: parent folder (cd ..)"),
-    b("back", "backspace", "back: parent folder (cd ..)"),
+    b("parent", "p", "back: where you came from, else the parent folder"),
+    b("back", "backspace", "back: where you came from, else the parent folder"),
     b("close", "q", "close the file view / window"),
     b("mark", "space", "mark / unmark the item (for pipe)"),
     b("mark_all", "*", "mark all / clear marks"),
@@ -1003,6 +1004,7 @@ mod tests {
                     | "zoom_actual"
                     | "menu"
                     | "fullscreen"
+                    | "sync"
             )
         }) {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);

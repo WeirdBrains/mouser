@@ -22,9 +22,10 @@ pub enum Effect {
     /// Run a command line in the shell; what the user has typed is kept
     /// (cut to the kill ring and yanked back when the prompt returns).
     Run(String),
-    /// Change the shell's directory: silently through the shell integration
-    /// (Fuzzball `s c`, fuzzball docs/shell.md), else by typing `cd` and then
-    /// erasing those lines so one prompt remains.
+    /// Change the shell's directory (commander's sync): silently through the
+    /// shell integration (Fuzzball `s c`, fuzzball docs/shell.md), at the next
+    /// prompt when a command runs. Never typed: without an integration the
+    /// host says so in the status bar instead.
     Cd(PathBuf),
     /// Hand a file to the desktop's opener (players etc.).
     Open(PathBuf),

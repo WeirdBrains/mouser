@@ -60,7 +60,7 @@ Command to run, after `\-\-` (same as \-e)
 .SH SUBCOMMANDS
 .TP
 mouser\-shell\-integration(1)
-Print the shell integration for zsh, bash or fish (directory reports and silent `cd` from commander; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"` or `mouser shell\-integration fish | source`
+Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync, ctrl+alt+s: nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
 .TP
 mouser\-show(1)
 Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow\-passthrough)

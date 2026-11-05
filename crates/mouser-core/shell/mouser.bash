@@ -4,7 +4,7 @@
 # keeping the line you are typing.
 [[ $- == *i* && -z ${__mouser_si-} ]] || return 0
 # PS0 and bind -x with READLINE_POINT need bash 4.4 (macOS ships 3.2 as /bin/bash):
-# older shells keep the typed-cd fallback.
+# older shells get no silent cd (commander says so; nothing is typed).
 (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )) || return 0
 __mouser_si=1
 

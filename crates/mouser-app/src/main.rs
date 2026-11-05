@@ -113,12 +113,14 @@ struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Command {
-    /// Print the shell integration for zsh, bash or fish (directory reports and
-    /// silent `cd` from commander; fuzzball docs/shell.md). Load it from your rc file:
-    /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`
-    /// or `mouser shell-integration fish | source`.
+    /// Print the shell integration for zsh, bash, fish or PowerShell (directory reports and
+    /// the silent cd behind commander's sync, ctrl+alt+s: nothing typed, nothing in the history;
+    /// fuzzball docs/shell.md). Load it from your rc file:
+    /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`,
+    /// `mouser shell-integration fish | source`, or in PowerShell's $PROFILE
+    /// `mouser shell-integration pwsh | Out-String | Invoke-Expression`.
     ShellIntegration {
-        /// zsh, bash or fish.
+        /// zsh, bash, fish or pwsh (powershell).
         shell: String,
     },
     /// Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow-passthrough).
@@ -1029,7 +1031,7 @@ fn main() -> Result<()> {
                 print!("{t}");
                 return Ok(());
             }
-            None => anyhow::bail!("no integration for {shell}; one of: zsh, bash, fish"),
+            None => anyhow::bail!("no integration for {shell}; one of: zsh, bash, fish, pwsh"),
         }
     }
     if let Some(Command::Model { action }) = &cli.command {
@@ -2928,6 +2930,60 @@ fn wait_for_prompt(session: Option<&tabs::Session>) {
     }
 }
 
+/// Move the tab's shell to `path` without typing anything (commander's
+/// ctrl+alt+s, docs/modes.md §Sync). Through the shell integration only: silently
+/// now when the shell is idle at its prompt, or at its next prompt when a
+/// command is running; PowerShell reads it from its sync file at the next
+/// prompt. Never types `cd`, so nothing reaches the line or the history.
+/// Returns the status-bar message, if any.
+fn sync_shell(session: &std::sync::Arc<tabs::Session>, path: &std::path::Path) -> Option<String> {
+    #[cfg(unix)]
+    let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec();
+    #[cfg(not(unix))]
+    let bytes = path.to_string_lossy().into_owned().into_bytes();
+    static ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    // The latest sync wins when several wait for the same prompt.
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mine = GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    let (now, seen) = {
+        let p = session.parser.lock().unwrap();
+        (p.fuzzball.shell.clone(), p.fuzzball.shell_seen.clone())
+    };
+    let idle = session.shell_in_foreground() != Some(false);
+    fn send(s: &tabs::Session, bytes: &[u8]) {
+        let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut w = s.writer.clone();
+        let _ = w.write_all(&mouser_core::fuzzball::shell_cd(id, bytes));
+    }
+    match (now.as_ref(), seen.as_ref()) {
+        (Some(c), _) if c.has("cwd") && idle => {
+            send(session, &bytes);
+            None
+        }
+        (_, Some(c)) if c.has("cwdfile") => {
+            let f = c.file.clone()?;
+            // Only the per-session file the integration named in the temp dir.
+            let ok = f.starts_with(std::env::temp_dir()) && f.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("mouser-sync-"));
+            if !ok || std::fs::write(&f, path.to_string_lossy().as_bytes()).is_err() {
+                return Some("shell sync: the PowerShell integration's sync file is not usable".into());
+            }
+            Some(format!("{}: the shell changes folder at its next prompt", c.shell))
+        }
+        (_, Some(c)) if c.has("cwd") => {
+            let s = session.clone();
+            std::thread::spawn(move || {
+                wait_for_prompt(Some(&s));
+                let ready = s.parser.lock().unwrap().fuzzball.shell.as_ref().is_some_and(|c| c.has("cwd"));
+                if ready && GEN.load(std::sync::atomic::Ordering::Relaxed) == mine {
+                    send(&s, &bytes);
+                }
+            });
+            Some("the shell is busy: it changes folder at its next prompt".into())
+        }
+        _ => Some("no shell integration here, so the shell's folder is unchanged (nothing is typed); see `mouser shell-integration`".into()),
+    }
+}
+
 fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer: &tabs::ActiveWriter) {
     use mouser_render::modes::Effect;
     match e {
@@ -2952,37 +3008,9 @@ fn apply_mode_effect(st: &mut AppState, e: mouser_render::modes::Effect, writer:
         }
         Effect::Cd(path) => {
             let Some(session) = writer.0.lock().unwrap().active() else { return };
-            #[cfg(unix)]
-            let bytes = std::os::unix::ffi::OsStrExt::as_bytes(path.as_os_str()).to_vec();
-            #[cfg(not(unix))]
-            let bytes = path.to_string_lossy().into_owned().into_bytes();
-            let silent =
-                session.shell_in_foreground() != Some(false) && session.parser.lock().unwrap().fuzzball.shell.as_ref().is_some_and(|s| s.has("cwd"));
-            if silent {
-                // The integration changes directory without touching the line
-                // being typed and redraws its prompt (fuzzball docs/shell.md).
-                static ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-                let id = ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let mut w = session.writer.clone();
-                let _ = w.write_all(&mouser_core::fuzzball::shell_cd(id, &bytes));
-                return;
+            if let Some(m) = sync_shell(&session, &path) {
+                st.look.say(m);
             }
-            // Fallback: type the cd, then erase it and its echo so one prompt remains.
-            let start = session.parser.lock().unwrap().prompt_start();
-            let mut w = session.writer.clone();
-            let _ = w.write_all(&mouser_core::modes::keep_line(&mouser_render::modes::commander::cd_line(&path)));
-            std::thread::spawn(move || {
-                wait_for_prompt(Some(&session));
-                {
-                    let mut p = session.parser.lock().unwrap();
-                    let end = p.prompt_start();
-                    if end > start {
-                        p.erase_rows(start, end);
-                    }
-                }
-                let mut sw = session.writer.clone();
-                let _ = sw.write_all(mouser_core::modes::RESTORE_LINE);
-            });
         }
         Effect::OpenLink(u) => open_link(&u),
         Effect::Open(p) => {
