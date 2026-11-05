@@ -3,9 +3,9 @@
 Commander, chat and preferences are moving out of Mouser into plugin
 executables built on the public `mouser-mode-api` crate
 (`crates/mouser-mode-api`), the same API any third-party mode uses. This page
-describes that protocol. It is **api 0**: still changing. The shipped modes are
-still compiled in until Mouser 1.4.0, but you can install your own mode plugin
-on it now (below).
+describes that protocol. It is **api 1**, frozen as of Mouser 1.4.0: the
+bundled commander, chat and preferences plugins run on it, and you can install
+your own mode plugin on it (below).
 
 ## Process model
 
@@ -112,8 +112,11 @@ over 64 MiB are refused.
    "update Mouser"), the plugin exits, and the mode is shown as incompatible.
    The terminal is never affected.
 
-Mouser accepts the current api and the previous one. The api number changes
-when the wire format breaks, separately from the crate's version. Plugins can
+The api is frozen at **1** as of Mouser 1.4.0 (the bundled modes run on it).
+Mouser accepts the current api and the previous one; `0` was an unreleased
+draft and is refused with "update the plugin". The api number changes only
+when the wire format breaks, separately from the crate's version; additions
+that old plugins can ignore (new events, optional fields) keep it. Plugins can
 add or drop listeners later with `Subscribe` and `Unsubscribe`.
 
 ## Events

@@ -100,6 +100,13 @@ fn incompatible_plugin_stays_off() {
 }
 
 #[test]
+fn draft_api_0_plugin_is_told_to_update() {
+    let s = Supervisor::new(spec(&["--api", "0-0"]), ctx(), 3, |_| Grants::default());
+    let State::Disabled { reason } = s.state() else { panic!("{:?}", s.state()) };
+    assert!(reason.contains("update the plugin"), "{reason}");
+}
+
+#[test]
 fn missing_binary_is_not_fatal() {
     let mut sp = spec(&[]);
     sp.program = "/nonexistent/mouser-plugin".into();

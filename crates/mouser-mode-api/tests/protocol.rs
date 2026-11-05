@@ -18,6 +18,15 @@ fn negotiation_picks_newest_shared_version() {
 }
 
 #[test]
+fn api_1_is_frozen_and_the_draft_0_is_refused() {
+    assert_eq!(mouser_mode_api::API_VERSION, 1);
+    assert_eq!(ApiRange::CURRENT, ApiRange { min: 1, max: 1 });
+    assert_eq!(negotiate(ApiRange::CURRENT, ApiRange { min: 0, max: 1 }), Ok(1));
+    let why = negotiate(ApiRange::CURRENT, ApiRange { min: 0, max: 0 }).unwrap_err();
+    assert!(why.contains("update the plugin"), "{why}");
+}
+
+#[test]
 fn codec_round_trips_both_wires() {
     for wire in [Wire::MsgPack, Wire::Json] {
         let msgs = vec![
