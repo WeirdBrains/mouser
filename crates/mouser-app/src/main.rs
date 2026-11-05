@@ -97,6 +97,16 @@ struct Cli {
     /// Override config dir (tests/manual runs)
     #[arg(long = "config-dir")]
     config_dir: Option<PathBuf>,
+    /// Install a plugin or engine in the background once Mouser starts
+    /// (repeatable; SRC as for `mouser plugin install`); see docs/downloads.md.
+    #[arg(long = "install", value_name = "SRC")]
+    install: Vec<String>,
+    /// With --install: install without a window, then exit (asks nothing: pass --yes).
+    #[arg(long, requires = "install")]
+    wait: bool,
+    /// With --install --wait: install without asking.
+    #[arg(long, requires = "install")]
+    yes: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -154,8 +164,17 @@ enum Command {
     /// Manage GPU rendering engines (mouser, skia, custom); the same as
     /// `mouser plugin … --kind engine` (engines are plugins); see docs/engines.md.
     Engine {
+        #[command(flatten)]
+        flags: VerbFlags,
         #[command(subcommand)]
         action: PluginCommand,
+    },
+    /// The download manager's jobs in the running Mouser (installs and updates);
+    /// `--cancel ID` stops one; see docs/downloads.md.
+    Downloads {
+        /// Job id to cancel (`all` for every running one).
+        #[arg(long, value_name = "ID")]
+        cancel: Option<String>,
     },
     /// Mouser's MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md.
     Mcp {
@@ -191,9 +210,25 @@ enum Command {
         /// With `engine` this is `mouser engine …`.
         #[arg(long, global = true)]
         kind: Option<String>,
+        #[command(flatten)]
+        flags: VerbFlags,
         #[command(subcommand)]
         action: PluginCommand,
     },
+}
+
+/// Flags every `mouser plugin`/`mouser engine` verb takes (docs/downloads.md).
+#[derive(clap::Args, Debug, Clone, Default, PartialEq, Eq)]
+struct VerbFlags {
+    /// Install or update without asking (the card's answer is yes).
+    #[arg(long, global = true)]
+    yes: bool,
+    /// The version to install (a GitHub tag or what the lock pins).
+    #[arg(long, global = true, value_name = "VERSION")]
+    version: Option<String>,
+    /// Wait for the download to finish (the CLI always does; for scripts).
+    #[arg(long, global = true)]
+    wait: bool,
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -392,10 +427,33 @@ enum McpServersCommand {
 enum PluginCommand {
     /// List plugins (or engines) by priority, with what each provides and its state.
     List,
-    /// Install from a directory with plugin.toml (or an engine's engine.toml).
-    Install { path: String },
+    /// Install from a name (plugins.lock), gh:Owner/Repo[@tag], an https:// URL,
+    /// a local folder or archive, or crate:NAME (mode plugins); verified, see docs/downloads.md.
+    Install {
+        #[arg(value_name = "SRC")]
+        path: String,
+    },
+    /// Install the newest version from where NAME came from (--all: everything installed that way).
+    Update {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        name: Option<String>,
+        #[arg(long)]
+        all: bool,
+    },
+    /// Go back to the version before the last install or update (two are kept).
+    Rollback { name: String },
     /// Remove an installed plugin or engine (and a plugin's saved permissions).
+    #[command(visible_alias = "remove")]
     Uninstall { name: String },
+    /// Queue the failed downloads again (first run, installs, updates).
+    Retry,
+    /// Cancel a running download by job id (see `mouser downloads`), or --all.
+    Cancel {
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        id: Option<u32>,
+        #[arg(long)]
+        all: bool,
+    },
     /// Turn a plugin or engine on (built-ins included).
     Enable { name: String },
     /// Turn a plugin or engine off without removing it (not the mouser engine).
@@ -424,13 +482,24 @@ enum PluginCommand {
     Probe { name: String },
 }
 
+/// Which root an `--install SRC` goes to: an engine folder or an official
+/// engine name installs as an engine, everything else as a plugin.
+fn install_kind(src: &str) -> mouser_core::install::Kind {
+    use mouser_core::install::{Kind, Src};
+    match Src::parse(src) {
+        Ok(Src::Path(p)) if mouser_core::engines::is_engine_dir(if p.is_dir() { &p } else { p.parent().unwrap_or(&p) }) => Kind::Engine,
+        Ok(Src::Official(n)) => mouser_core::install::lock().find(&n).map(|i| i.kind).unwrap_or(Kind::Plugin),
+        _ => Kind::Plugin,
+    }
+}
+
 /// `mouser plugin …` / `mouser engine …` as a plugin_cli action and the kind it
 /// is limited to (`mouser engine X` is `mouser plugin X --kind engine`).
 fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<String>, &'static str)> {
     use mouser_app::plugin_cli::Action;
     let (action, kind, who) = match c {
-        Command::Engine { action } => (action, Some("engine".to_string()), "mouser engine"),
-        Command::Plugin { action, kind } => (action, kind.clone(), "mouser plugin"),
+        Command::Engine { action, .. } => (action, Some("engine".to_string()), "mouser engine"),
+        Command::Plugin { action, kind, .. } => (action, kind.clone(), "mouser plugin"),
         _ => return None,
     };
     let a = match action {
@@ -447,6 +516,10 @@ fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<
         PluginCommand::Permissions { name: Some(name), set } if set.len() == 1 && set[0] == "revoke" => Action::Revoke(name.clone()),
         PluginCommand::Permissions { name: Some(name), set } => Action::Permissions(name.clone(), set.clone()),
         PluginCommand::Probe { name } => Action::Probe(name.clone()),
+        PluginCommand::Update { name, .. } => Action::Update(name.clone()),
+        PluginCommand::Rollback { name } => Action::Rollback(name.clone()),
+        PluginCommand::Retry => Action::Retry,
+        PluginCommand::Cancel { id, .. } => Action::Cancel(*id),
     };
     Some((a, kind, who))
 }
@@ -686,6 +759,11 @@ fn main() -> Result<()> {
     mouser_llm::register();
     // Isolated custom engine process (docs/engines.md §7); not a user command.
     let args: Vec<String> = std::env::args().collect();
+    // Engine probe child (docs/downloads.md): loads one library, prints its name.
+    if args.get(1).map(String::as_str) == Some("__engine-probe") {
+        let Some(lib) = args.get(2) else { std::process::exit(2) };
+        std::process::exit(mouser_app::install_cli::probe_main(std::path::Path::new(lib)));
+    }
     if args.get(1).map(String::as_str) == Some("__engine-host") {
         let (Some(lib), Some(name)) = (args.get(2), args.get(3)) else { std::process::exit(2) };
         let r = mouser_render::engine_host::serve(std::path::Path::new(lib), name, std::io::stdin().lock(), std::io::stdout().lock());
@@ -768,6 +846,60 @@ fn main() -> Result<()> {
             std::process::exit(1);
         }
         return Ok(());
+    }
+    if let Some(Command::Engine { flags, .. } | Command::Plugin { flags, .. }) = &cli.command {
+        mouser_app::install_cli::set_cli_flags(mouser_app::install_cli::Flags { yes: flags.yes, version: flags.version.clone(), wait: flags.wait });
+    }
+    if let Some(Command::Downloads { cancel }) = &cli.command {
+        let r = (|| -> Result<()> {
+            let jobs = mouser_core::downloads::saved_jobs();
+            match cancel.as_deref() {
+                Some(c) => {
+                    let ids: Vec<u32> = if c == "all" {
+                        jobs.iter().filter(|j| !j.state.finished()).map(|j| j.id).collect()
+                    } else {
+                        vec![c.trim_start_matches('#').parse().map_err(|_| anyhow::anyhow!("--cancel takes a job id or all"))?]
+                    };
+                    for i in ids {
+                        mouser_core::downloads::request_cancel(i)?;
+                        println!("asked Mouser to cancel #{i}");
+                    }
+                }
+                None if jobs.is_empty() => println!("no downloads in this Mouser session"),
+                None => jobs.iter().for_each(|j| println!("{}", j.line())),
+            }
+            Ok(())
+        })();
+        if let Err(e) = r {
+            eprintln!("mouser downloads: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if cli.wait && cli.command.is_none() {
+        // `mouser --install SRC --wait`: headless, then exit.
+        mouser_core::install::set_engine_probe(mouser_app::install_cli::probe_isolated);
+        let m = mouser_core::downloads::Manager::new(false);
+        let yes = cli.yes;
+        m.set_asker(Arc::new(move |c| {
+            if !yes {
+                for l in c.lines() {
+                    eprintln!("{l}");
+                }
+                eprintln!("(--install --wait asks nothing: add --yes to install this)");
+            }
+            yes
+        }));
+        for s in &cli.install {
+            m.enqueue(install_kind(s), s, mouser_core::downloads::Op::Install);
+        }
+        m.wait();
+        let mut failed = false;
+        for j in m.jobs() {
+            failed |= !matches!(j.state, mouser_core::downloads::State::Done(_));
+            println!("{}", j.line());
+        }
+        std::process::exit(i32::from(failed));
     }
     if let Some((a, kind, who)) = cli.command.as_ref().and_then(plugin_action) {
         if let Err(e) = mouser_app::plugin_cli::run_kind(&a, kind.as_deref(), &mut std::io::stdout()) {
@@ -971,6 +1103,7 @@ fn main() -> Result<()> {
         esc_closed_at: None,
         approvals: Default::default(),
     }));
+    start_downloads(&app_state, &cli.install);
 
     // Hooks for renderer
     let fetch = {
@@ -2375,6 +2508,47 @@ fn resolve_approval(st: &mut AppState, mut req: approval_ui::Request, a: mouser_
     wake();
 }
 
+/// The download manager in the app (docs/downloads.md): installs ask through a
+/// host-drawn card, progress goes to the status line, first run fetches the
+/// `plugins.lock` defaults in parallel, and `--install SRC` is queued.
+fn start_downloads(app_state: &Arc<Mutex<AppState>>, install: &[String]) {
+    use mouser_core::downloads;
+    mouser_core::install::set_engine_probe(mouser_app::install_cli::probe_isolated);
+    let m = downloads::global();
+    {
+        let app_state = app_state.clone();
+        m.set_asker(Arc::new(move |card| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            app_state.lock().unwrap().approvals.push(approval_ui::Request::once(
+                &format!("Install {}", card.name),
+                card.lines(),
+                approval_ui::Origin::Mcp { reply: tx },
+            ));
+            wake();
+            rx.recv().unwrap_or(false)
+        }));
+    }
+    {
+        let app_state = app_state.clone();
+        let last = Mutex::new(String::new());
+        m.set_notify(Arc::new(move || {
+            let now = downloads::global().status().unwrap_or_default();
+            let mut l = last.lock().unwrap();
+            if *l != now {
+                if !now.is_empty() {
+                    app_state.lock().unwrap().look.say(now.clone());
+                }
+                *l = now;
+                wake();
+            }
+        }));
+    }
+    m.first_run();
+    for s in install {
+        m.enqueue(install_kind(s), s, downloads::Op::Install);
+    }
+}
+
 /// `[mouser] model download [ID]`: show the size and ask (every time) first.
 fn model_download_request(arg: &str, app_state: &Arc<Mutex<AppState>>) {
     use mouser_core::models::local;
@@ -2877,11 +3051,11 @@ mod tests {
         assert!(cli(&["show", "x.png"]).command.is_some());
         assert!(matches!(
             cli(&["engine", "unskip", "--all"]).command,
-            Some(Command::Engine { action: PluginCommand::Unskip { name: None, all: true } })
+            Some(Command::Engine { action: PluginCommand::Unskip { name: None, all: true }, .. })
         ));
         assert!(matches!(
             cli(&["engine", "restore", "skia"]).command,
-            Some(Command::Engine { action: PluginCommand::Unskip { name: Some(_), all: false } })
+            Some(Command::Engine { action: PluginCommand::Unskip { name: Some(_), all: false }, .. })
         ));
         // P6: `mouser engine X` is `mouser plugin X --kind engine`.
         let pa = |a: &[&str]| plugin_action(cli(a).command.as_ref().unwrap()).map(|(a, k, _)| (a, k));
@@ -2896,6 +3070,46 @@ mod tests {
             assert_eq!(pa(&e), pa(&p), "{e:?}");
         }
         assert_eq!(pa(&["plugin", "list"]).unwrap().1, None);
+        // Plan §17: every shared verb exists in the same shape for plugins and
+        // engines on the CLI, on the `esc :` line (long and short forms), in
+        // the man pages and in the guide.
+        let arg = |v: &str| match v {
+            "install" => vec!["./x"],
+            "update" | "rollback" | "remove" => vec!["x"],
+            "cancel" => vec!["3"],
+            _ => vec![],
+        };
+        let man = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../man");
+        let guide = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/downloads.md")).unwrap();
+        for v in mouser_app::install_cli::VERBS {
+            let mut e = vec!["engine", v];
+            e.extend(arg(v));
+            let mut p = vec!["plugin", v];
+            p.extend(arg(v));
+            let (ea, ek) = pa(&e).unwrap_or_else(|| panic!("mouser engine {v}"));
+            let (pa_, _) = pa(&p).unwrap_or_else(|| panic!("mouser plugin {v}"));
+            assert_eq!(ea, pa_, "{v}: same action");
+            assert_eq!(ek.as_deref(), Some("engine"));
+            let mut w = vec![v];
+            w.extend(arg(v));
+            let (verb, _) = mouser_app::install_cli::parse(&w).unwrap();
+            let short = mouser_app::install_cli::SHORT.iter().find(|(_, l)| *l == v).unwrap().0;
+            let mut ws = vec![short];
+            ws.extend(arg(v));
+            assert_eq!(mouser_app::install_cli::parse(&ws).unwrap().0, verb, "esc :p{short} = :plugin {v}");
+            let page = if v == "remove" { "uninstall" } else { v };
+            for k in ["plugin", "engine"] {
+                assert!(man.join(format!("mouser-{k}-{page}.1")).is_file(), "man page for mouser {k} {v}");
+                assert!(guide.contains(&format!("{k} {v}")), "docs/downloads.md shows `{k} {v}`");
+            }
+        }
+        for f in [vec!["plugin", "install", "x", "--yes", "--version", "1.0", "--wait"], vec!["engine", "update", "--all", "--yes"]] {
+            assert!(Cli::try_parse_from(std::iter::once("mouser").chain(f.iter().copied())).is_ok(), "{f:?}");
+        }
+        let c = cli(&["--install", "gh:a/b", "--install", "./x", "--wait", "--yes"]);
+        assert_eq!(c.install, ["gh:a/b", "./x"]);
+        assert!(c.wait && c.yes);
+        assert!(Cli::try_parse_from(["mouser", "--wait"]).is_err(), "--wait needs --install");
         assert!(Cli::try_parse_from(["mouser", "engine", "unskip"]).is_err());
         assert!(Cli::try_parse_from(["mouser", "--version"]).is_err_and(|e| e.kind() == clap::error::ErrorKind::DisplayVersion));
     }

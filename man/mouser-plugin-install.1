@@ -4,15 +4,15 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH NAME
-mouser\-plugin\-install \- Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
+mouser\-plugin\-install \- Install from a name (plugins.lock), gh:Owner/Repo[@tag], an https:// URL, a local folder or archive, or crate:NAME (mode plugins); verified, see docs/downloads.md
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser plugin install\fR [\fB\-\-kind\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIPATH\fR> 
+\fBmouser plugin install\fR [\fB\-\-kind\fR] [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fISRC\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
-Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
+Install from a name (plugins.lock), gh:Owner/Repo[@tag], an https:// URL, a local folder or archive, or crate:NAME (mode plugins); verified, see docs/downloads.md
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
@@ -20,10 +20,19 @@ Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
 \fB\-\-kind\fR \fI<KIND>\fR
 Only this kind: mode, engine, model\-provider, tool\-provider, command. With `engine` this is `mouser engine …`
 .TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fIPATH\fR>
+<\fISRC\fR>
 
 .SH SEE ALSO
 \fBmouser\fR(1)

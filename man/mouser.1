@@ -8,7 +8,7 @@ mouser \- Mouser terminal emulator
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser\fR [\fB\-e\fR|\fB\-\-command\fR] [\fB\-\-working\-directory\fR] [\fB\-T\fR|\fB\-\-title\fR] [\fB\-\-class\fR] [\fB\-\-hold\fR] [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fICMD\fR] [\fIsubcommands\fR]
+\fBmouser\fR [\fB\-e\fR|\fB\-\-command\fR] [\fB\-\-working\-directory\fR] [\fB\-T\fR|\fB\-\-title\fR] [\fB\-\-class\fR] [\fB\-\-hold\fR] [\fB\-\-config\fR] [\fB\-\-config\-dir\fR] [\fB\-\-install\fR] [\fB\-\-wait\fR] [\fB\-\-yes\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] [\fICMD\fR] [\fIsubcommands\fR]
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -38,6 +38,15 @@ Path to TOML config
 \fB\-\-config\-dir\fR \fI<CONFIG_DIR>\fR
 Override config dir (tests/manual runs)
 .TP
+\fB\-\-install\fR \fI<SRC>\fR
+Install a plugin or engine in the background once Mouser starts (repeatable; SRC as for `mouser plugin install`); see docs/downloads.md
+.TP
+\fB\-\-wait\fR
+With \-\-install: install without a window, then exit (asks nothing: pass \-\-yes)
+.TP
+\fB\-\-yes\fR
+With \-\-install \-\-wait: install without asking
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
@@ -61,6 +70,9 @@ Render Markdown into this terminal (headings, emphasis, code, lists, quotes, tab
 .TP
 mouser\-engine(1)
 Manage GPU rendering engines (mouser, skia, custom); the same as `mouser plugin … \-\-kind engine` (engines are plugins); see docs/engines.md
+.TP
+mouser\-downloads(1)
+The download manager\*(Aqs jobs in the running Mouser (installs and updates); `\-\-cancel ID` stops one; see docs/downloads.md
 .TP
 mouser\-mcp(1)
 Mouser\*(Aqs MCP server (tabs, screen, shell, files for MCP clients); see docs/mcp.md
@@ -103,7 +115,7 @@ The root moves with \fBMOUSER_HOME\fR.
 Folders of engines shipped with Mouser (a path list), replacing engines/ beside the executable; empty: none (docs/engines.md).
 .TP
 .B MOUSER_OFFLINE_BUNDLE
-Folder with the offline bundle's plugins.lock archives, instead of plugins/ beside the executable (docs/storage.md).
+Folder with the offline bundle's plugins.lock archives, instead of plugins/ beside the executable (docs/downloads.md).
 .TP
 .B MOUSER_CARGO
 cargo used for `install crate:NAME` (default cargo; needs cargo\-binstall).

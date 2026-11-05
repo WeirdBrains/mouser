@@ -229,7 +229,7 @@ CLI (thin adapters over `mouser_core::engines`):
 | command | does |
 |---|---|
 | `mouser engine list` | shipped (`mouser`, `skia`) and installed engines, the active one marked, broken ones with the reason |
-| `mouser engine install <dir \| engine.toml \| lib.so>` | checks the manifest, loads the library and checks its ABI, copies it into `engines/<name>/` |
+| `mouser engine install <SRC>` | a folder, `engine.toml`, library or archive, an official name, `gh:` or `https://` ([Downloads](./downloads.md)); checks the manifest, probes the library in a separate process, installs into `engines/<name>/<version>/` |
 | `mouser engine uninstall <name>` | removes `engines/<name>/` (shipped engines and the basic renderer cannot be removed); if it was in use, the config goes back to `mouser` |
 | `mouser engine use <name>` | moves it first in the order and unskips it |
 | `mouser engine priority <a> <b> ...` | sets the whole order (`mouser` appended if missing) |
@@ -239,8 +239,10 @@ CLI (thin adapters over `mouser_core::engines`):
 
 Each of these is also `mouser plugin <same> --kind engine`.
 
-Installing from a URL is not supported in v1: download the engine yourself and install
-the directory (no network access from the terminal, no unsigned code fetched for you).
+`install` also takes an official name, `gh:Owner/Repo[@tag]` or an `https://` URL,
+and `update`, `rollback`, `retry` and `cancel` work as for plugins. Every download is
+checked (sha256, minisign, a probe in a separate process) and goes into its own
+version folder; see [Downloads](./downloads.md).
 
 ## Mouser's wgpu renderer as an engine library
 

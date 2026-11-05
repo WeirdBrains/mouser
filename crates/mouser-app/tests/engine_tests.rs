@@ -51,6 +51,7 @@ fn home() -> Home {
         std::env::remove_var("MOUSER_FLAT_ABI");
         std::env::remove_var("MOUSER_FLAT_FAIL");
         std::env::set_var("MOUSER_ENGINE_DIRS", common::official_engines(&t.path().join("shipped")));
+        std::env::set_var("MOUSER_TEST_PROBE_EXE", env!("CARGO_BIN_EXE_mouser-app"));
     }
     Home(t)
 }
@@ -103,7 +104,7 @@ fn install_list_use_uninstall() {
 #[serial]
 fn install_rejects_urls_wrong_abi_and_bad_libraries() {
     let h = home();
-    assert!(cli(Action::Install("https://example.com/e.tar".into())).unwrap_err().to_string().contains("URL"));
+    assert!(cli(Action::Install("http://example.com/e.tar".into())).unwrap_err().to_string().contains("https"));
     let src = source_dir(&h);
     // The library itself reports another ABI version.
     unsafe { std::env::set_var("MOUSER_FLAT_ABI", "7") };
