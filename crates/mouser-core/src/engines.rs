@@ -102,6 +102,19 @@ pub fn bundled_roots() -> Vec<PathBuf> {
     v
 }
 
+static MOUSER_VERSION: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+
+/// Tell mouser-core the running Mouser's version (mouser-app's, not this
+/// crate's): the version Mouser's own engines report. The app sets it first.
+pub fn set_mouser_version(v: &'static str) {
+    let _ = MOUSER_VERSION.set(v);
+}
+
+/// The version Mouser's own engines report (see [`set_mouser_version`]).
+pub fn mouser_version() -> &'static str {
+    MOUSER_VERSION.get().copied().unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 /// Mouser's own engine libraries: (library stem, engine name, description).
 pub const OFFICIAL: [(&str, &str, &str); 2] = [
     ("mouser_engine_wgpu", "mouser", "Mouser's wgpu GPU renderer (Vulkan/GL/Metal/DX12)"),
@@ -122,7 +135,7 @@ fn loose(dir: &Path) -> Vec<Installed> {
         .map(|(stem, name, desc)| Installed {
             manifest: Manifest {
                 name: name.to_string(),
-                version: env!("CARGO_PKG_VERSION").into(),
+                version: mouser_version().into(),
                 abi: ABI_MAX,
                 library: lib_file(stem),
                 description: desc.to_string(),
@@ -139,13 +152,8 @@ pub fn stage(lib: &Path, out: &Path) -> Result<Installed> {
     let file = lib.file_name().and_then(|f| f.to_str()).context("library path")?.to_string();
     let (stem, name, desc) =
         OFFICIAL.iter().find(|(stem, ..)| lib_file(stem) == file).with_context(|| format!("{file} is not one of Mouser's engine libraries"))?;
-    let m = Manifest {
-        name: name.to_string(),
-        version: env!("CARGO_PKG_VERSION").into(),
-        abi: ABI_MAX,
-        library: lib_file(stem),
-        description: desc.to_string(),
-    };
+    let m =
+        Manifest { name: name.to_string(), version: mouser_version().into(), abi: ABI_MAX, library: lib_file(stem), description: desc.to_string() };
     let d = out.join(name);
     fs::create_dir_all(&d)?;
     fs::copy(lib, d.join(&m.library)).with_context(|| format!("copying {}", lib.display()))?;

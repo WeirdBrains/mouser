@@ -763,6 +763,7 @@ fn attach_parent_console() {
 }
 
 fn main() -> Result<()> {
+    mouser_core::engines::set_mouser_version(env!("CARGO_PKG_VERSION"));
     #[cfg(windows)]
     attach_parent_console();
     env_logger::init();
