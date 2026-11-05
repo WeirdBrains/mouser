@@ -84,104 +84,161 @@ Installed mode plugins (<code>kind = "mode"</code> over the command transport, w
   window: the mode's view is hidden and no key is taken, Esc included.</li>
 <li><code>ctrl+shift+k</code>: the key mappings of the current mode. <code>ctrl+shift+m</code>: all modes
   (click one to switch).</li>
-<li>Every mode key is <code>&lt;modifier&gt;+&lt;key&gt;</code> (modifier <code>alt</code>). Only the keys a mode binds
-  are taken; every other key, other alt keys too, goes to the shell.</li>
+<li><strong>Focus.</strong> A mode never takes a key from the shell on its own. Without focus every
+  key goes to the shell untouched; the mode binds one key only, the focus toggle
+  <strong>ctrl+alt+k</strong>. The toggle, a click in the mode's view, or switching to the mode
+  with <code>esc :</code> gives it the keyboard: an accent ring round the view and a hint
+  (<code>commander has the keys · s sync · / search · …</code>) show it. While it has focus
+  its keys are plain (arrows, Enter, Space, letters) and nothing you type reaches the
+  shell. Esc (after closing whatever is open), <code>q</code> with nothing left to close, or the
+  toggle again give the keyboard back; the hint then reads <code>ctrl+alt+k: keys to
+  commander</code>. F10 and Alt+Esc stay Mouser's. The same model applies to every mode
+  (commander, chat, preferences and mode plugins).</li>
+<li>Why ctrl+alt+k: bash (readline), zsh (zle) and fish bind none of it in their
+  default emacs keymaps (alt+letters, alt+arrows/Enter/Backspace and most ctrl+alt
+  letters are taken; ctrl+alt+f is bash's shell-forward-word), and no desktop reserves
+  it (GNOME, KDE, Windows and macOS keep Ctrl+Alt+T/L/D/Delete, the arrows and F-keys).
+  A test holds the shells' default tables and fails if the toggle collides. On Windows
+  Ctrl+Alt is also AltGr: if AltGr+K types a character on your layout, remap the toggle.</li>
 </ul>
 <h3 id="remapping">Remapping</h3>
 <p><code>~/.mouser/modes.toml</code> (the Mouser home), one section per mode:</p>
-<pre><code class="language-toml">[commander]
-modifier = &quot;alt&quot;        # only alt for now
+<pre><code class="language-toml">[focus]
+key = &quot;ctrl+alt+k&quot;      # the toggle: alt+&lt;key&gt; or ctrl+alt+&lt;letter&gt;, never plain
 [commander.keys]
-switch_view = &quot;v&quot;       # a character, or up / down / left / right / enter
+switch_view = &quot;t&quot;       # a character, up / down / left / right / enter / tab / space /
+                        # backspace / pageup / pagedown / home / end, alt+&lt;key&gt;, ctrl+alt+&lt;letter&gt;
 </code></pre>
-<p>An unknown action or key is reported in the status bar and the defaults are kept.</p>
+<p>Every key is rebindable. An unknown action or key is reported in the status bar and
+the defaults are kept. The old <code>modifier = "alt"</code> setting is ignored (keys are plain
+while the mode has focus).</p>
 <h3 id="commander">Commander</h3>
 <p>A view docked above the prompt (the terminal grid moves down; about half the
 window) that starts in the shell's working directory (<code>/proc/&lt;pid&gt;/cwd</code> on Linux,
 OSC 7 elsewhere) and keeps its own folder after that: browsing in commander never
-types into the shell or changes its folder (ctrl+alt+s syncs, below). A <code>cd</code> you type in
+types into the shell or changes its folder (<code>s</code> syncs, below). A <code>cd</code> you type in
 the shell still moves commander there. Header: the directory,
 item count and the equivalent <code>ls</code> flags, then the view, <code>options</code>, <code>man</code> and <code>help</code>
 buttons; a search field filters the folder as you type.</p>
+<p>Keys while commander has the keyboard (ctrl+alt+k or a click; plain keys, all
+remappable):</p>
 <table>
 <thead>
 <tr>
 <th>key</th>
-<th>action</th>
+<th>list</th>
+<th>grid</th>
+<th>carousel</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>key (alt+)</td>
-<td>list</td>
-</tr>
-<tr>
-<td>---</td>
-<td>---</td>
-</tr>
-<tr>
-<td>t</td>
+<td>v</td>
 <td>switch view: list → grid → carousel</td>
+<td></td>
+<td></td>
 </tr>
 <tr>
 <td>↑ / ↓</td>
 <td>previous / next row</td>
+<td>row above / below (follows the wrap)</td>
+<td>previous / next item</td>
 </tr>
 <tr>
 <td>← / →</td>
+<td>previous / next item</td>
+<td>previous / next tile</td>
 <td>previous / next item</td>
 </tr>
 <tr>
 <td>PgUp / PgDn</td>
 <td>a screen of rows</td>
+<td>a screen of tiles</td>
+<td>5 items</td>
 </tr>
 <tr>
 <td>Home / End</td>
 <td>first / last</td>
+<td>first / last</td>
+<td>first / last</td>
 </tr>
 <tr>
-<td>p, Backspace</td>
+<td>u, Backspace</td>
 <td>back: where you came from (like <code>popd</code>), else the parent folder; in the file view / player it closes the view</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>Enter</td>
 <td>open: a folder is browsed (the shell stays where it is), video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files)</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>q (or Esc)</td>
-<td>close the file view / window</td>
+<td>close the file view / window; with nothing open, back to the shell</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
-<td>s</td>
+<td>/</td>
 <td>search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>space</td>
 <td>mark / unmark the item (then moves on in list and carousel)</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>*</td>
 <td>mark all / clear marks</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>|</td>
 <td>pipe: a prompt in the view; Enter types <code>printf '%s\n' &lt;paths&gt; \| &lt;cmd&gt;</code> into the shell, so the output lands in the shell</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>z / x</td>
 <td></td>
+<td>larger / smaller tiles</td>
+<td></td>
 </tr>
 <tr>
-<td>a</td>
+<td>h</td>
 <td>dotfiles on/off (<code>ls -a</code>)</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
 <td>o / m</td>
 <td>options window / manual</td>
+<td>same</td>
+<td>same</td>
 </tr>
 <tr>
-<td>ctrl+alt+s</td>
+<td>i</td>
+<td>the header's <code>•••</code> menu when narrow</td>
+<td>same</td>
+<td>same</td>
+</tr>
+<tr>
+<td>ctrl+alt+k or Esc</td>
+<td>give the keyboard back to the shell</td>
+<td>same</td>
+<td>same</td>
+</tr>
+<tr>
+<td>s</td>
 <td>sync: move the shell to commander's folder (silently; see below)</td>
+<td>same</td>
+<td>same</td>
 </tr>
 </tbody>
 </table>
@@ -193,7 +250,7 @@ a breadcrumb jump, or at startup) back goes to the parent of the path you see, n
 of the resolved one, so leaving a symlinked folder never lands in its target's real
 parent. Remote (SSH) folders work the same way (listed over the ssh side channel,
 never by typing into the remote shell).</p>
-<p><strong>Sync (ctrl+alt+s).</strong> The shell's prompt stays as it is while you browse. ctrl+alt+s moves the
+<p><strong>Sync (<code>s</code>).</strong> The shell's prompt stays as it is while you browse. <code>s</code> moves the
 shell to commander's folder, from anywhere in commander (the file view and player
 included), without leaving it. It never types: no <code>cd</code> on the line, nothing in the
 history, the half-typed line kept. How it gets there:</p>
@@ -224,8 +281,8 @@ history, the half-typed line kept. How it gets there:</p>
 appear"). Video frames are decoded by <code>ffmpeg</code> to RGBA, fitted to the view's width and
 drawn through Mouser's image path; Mouser plays the sound itself (cpal: ALSA/PipeWire on
 Linux, CoreAudio, WASAPI). Audio files get a minimal view: name, progress bar, time,
-volume and the keys. Keys (remappable, they only act while a player is open; otherwise
-they go to the shell):</p>
+volume and the keys. Keys (plain, remappable, while commander has the keyboard; they
+only act while a player is open):</p>
 <table>
 <thead>
 <tr>
@@ -235,23 +292,23 @@ they go to the shell):</p>
 </thead>
 <tbody>
 <tr>
-<td>alt+k</td>
+<td>k (Space in fullscreen)</td>
 <td>play / pause</td>
 </tr>
 <tr>
-<td>alt+j / alt+l</td>
+<td>j / l</td>
 <td>back / forward 10 s</td>
 </tr>
 <tr>
-<td>alt+- / alt+=</td>
+<td>- / =</td>
 <td>volume down / up (10 %)</td>
 </tr>
 <tr>
-<td>alt+q or Esc</td>
+<td>q or Esc</td>
 <td>close</td>
 </tr>
 <tr>
-<td>alt+e</td>
+<td>f</td>
 <td>fullscreen (below)</td>
 </tr>
 </tbody>
@@ -320,20 +377,19 @@ selection (it scrolls the file view and the manual). The selection is highlighte
 the view scrolls to keep it on screen. Marks show as <code>*</code> and as a count in the header.
 Pipe takes the marked paths in listing order, or the selected path when nothing is
 marked; paths are single-quoted (<code>'</code> becomes <code>'\''</code>). Marks are per folder.</p>
-<p>The defaults avoid readline's alt keys except <code>alt+t</code> (transpose-words, from
-MODES.md), which commander takes while it is on. Clicks: a click selects an item, a
+<p>Commander takes no key from the shell: without focus it binds only the toggle, so
+alt+t, alt+f, alt+Backspace and the rest stay the shell's. Clicks: a click selects an item, a
 second click opens it; the wheel over the view moves the selection.</p>
 <p><code>.</code> and <code>..</code> are never listed. Going up is the <strong>back</strong> control in the header
-(<code>‹ back (alt+p)</code>, <code>‹ back</code> when narrow; greyed out at <code>/</code>), <code>alt+p</code> or
-<code>alt+Backspace</code> (both remappable, both in <code>ctrl+shift+k</code>; alt+Backspace shadows
-readline's backward-kill-word while commander is on). Going up selects the folder you
+(<code>‹ back (u)</code>, <code>‹ back</code> when narrow; greyed out at <code>/</code>), <code>u</code> or Backspace (both
+remappable, both in <code>ctrl+shift+k</code>). Going up selects the folder you
 came from. The header path is clickable: each segment goes to that folder (long paths
 lose their leading segments to <code>…</code>).</p>
-<p>Search (<code>alt+s</code> or a click on the field) is the only thing that takes plain keys,
-and only while it is focused (bright field, "searching · type to filter" hint). It
-filters as you type and shows <code>N matches for "q"</code> or <code>no matches for "q"</code>; Enter
-keeps the filter, Esc cancels. Everything else you type, viewer or player open or not,
-goes straight to the shell. An Esc right after an Esc that closed a viewer or window
+<p>Search (<code>/</code> or a click on the field) takes the typed letters while it is open
+(bright field, "searching · type to filter" hint). It filters as you type and shows
+<code>N matches for "q"</code> or <code>no matches for "q"</code>; Enter keeps the filter, Esc cancels.
+Without focus everything you type, viewer or player open or not, goes straight to the
+shell. An Esc right after an Esc that closed a viewer or window
 (within 1.5 s) is swallowed instead of being held for the shell: held, it reached the
 shell glued to the next key (Esc c is readline's meta-c), which ate the first letter of
 what you typed next.</p>
@@ -400,12 +456,12 @@ plus the selection's neighbours, so the incoming item loads during the slide.</p
 </ul>
 <h4 id="image-zoom-player-controls-header-menu">Image zoom, player controls, header menu</h4>
 <ul>
-<li>Image view: <code>alt+=</code> / <code>alt+-</code> zoom (they are the player's volume keys too: in the image view they zoom, in the player they change volume; remap <code>zoom_in</code>/<code>zoom_out</code> to split them), <code>alt+0</code> fit, <code>alt+1</code> 100%. Ctrl+wheel zooms about the pointer; when zoomed, drag, <code>alt+arrows</code> or the wheel pan. The header shows <code>fit 37%</code> / <code>200%</code>. Past 2048 px the full image is decoded (the preview shows until it is ready). Images stay inside the view and clear of its rounded corners (the renderers have no per-pixel clip, so images are inset rather than masked).</li>
+<li>Image view: <code>=</code> / <code>-</code> zoom (they are the player's volume keys too: in the image view they zoom, in the player they change volume; remap <code>zoom_in</code>/<code>zoom_out</code> to split them), <code>0</code> fit, <code>1</code> 100%. Ctrl+wheel zooms about the pointer; when zoomed, drag, the arrows or the wheel pan. The header shows <code>fit 37%</code> / <code>200%</code>. Past 2048 px the full image is decoded (the preview shows until it is ready). Images stay inside the view and clear of its rounded corners (the renderers have no per-pixel clip, so images are inset rather than masked).</li>
 <li>Player: <code>« 10s</code>, play/pause and <code>10s »</code> buttons; the seek bar seeks on click, scrubs on drag (seeks at most every 120 ms, a final one on release) and shows the hovered time; the volume bar takes click, drag and wheel. Clicking the video toggles play.</li>
-<li>Fullscreen: <code>alt+e</code> (<code>fullscreen</code>), the header's <code>fullscreen (alt+e)</code> button, or a
+<li>Fullscreen: <code>f</code> (<code>fullscreen</code>), the header's <code>fullscreen (f)</code> button, or a
   double-click on the picture or video. Commander's image viewer or player then fills
   the whole window, local or remote. The shell, tab bar and sidebar are hidden, and the
-  terminal keeps its size, so nothing is resized under the shell. Esc or <code>alt+e</code> again
+  terminal keeps its size, so nothing is resized under the shell. Esc or <code>f</code> again
   leaves.<ul>
 <li>Images are fitted whole and letterboxed on a dark backdrop, and keep zoom and pan.
 Video is letterboxed the same way and keeps play/pause, seeking and the clickable
@@ -415,15 +471,14 @@ entry and after any pointer move or key. It hides after 2.5 s, and the picture t
 takes the whole window.</li>
 <li>Audio gets a centred full-window controls view, always shown.</li>
 <li>Keys while fullscreen: Space plays or pauses, ←/→ seek 10 s, ↑/↓ change the volume.
-In the image view the arrows step or pan. Other typing is swallowed rather than sent
-to the hidden shell, and alt keys still work. Outside fullscreen the usual rule
-applies (only alt keys act).</li>
+In the image view the arrows step or pan. Commander's other keys still work; anything
+unbound is dropped (commander has the keyboard), never sent to the hidden shell.</li>
 <li>The view follows window resizes. Sizes are physical pixels, so HiDPI is sharp.</li>
-<li>The view is closed (and fullscreen dropped) by alt+q, Back or opening something
+<li>The view is closed (and fullscreen dropped) by q, Back or opening something
 else.</li>
 </ul>
 </li>
-<li>Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a <code>•••</code> menu (<code>menu</code>, default <code>alt+i</code>).</li>
+<li>Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a <code>•••</code> menu (<code>menu</code>, default <code>i</code>).</li>
 <li>Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.</li>
 </ul>
 <h4 id="remote-files-ssh-sessions">Remote files (SSH sessions)</h4>
@@ -437,7 +492,7 @@ else.</li>
 <li>Viewer: the header bytes give the size at once; a 1024 px preview shows scaled up, the full image replaces it when fetched; a status line shows progress or the error. Text shows what has arrived and grows.</li>
 <li>Measured on a localhost sshd throttled to 4 MB/s per read: 33 MB 8000x6000 JPEG header 0.1 s, first preview 0.65 s, full 3.4 s; 153 MB 1080p video (moov at the end) first frame 1.7 s, seek to an unfetched 90 s 1.3 s, all here 12.9 s; A/V offset p5 -3.5 / p95 4.0 ms.</li>
 <li>Future: the fetch layer (range map, cache keys, backends, transfer queue) is its own module so a local&lt;-&gt;remote sync can reuse it; sync itself is not built.</li>
-<li>Images fit the terminal's width (default and <code>alt+0</code>).</li>
+<li>Images fit the terminal's width (default and <code>0</code>).</li>
 </ul>
 <h4 id="scroll-position">Scroll position</h4>
 <p>When a view doesn't fit, commander shows where you are: a slim scrollbar on the right of the list, grid and text views, and <code>x–y of N</code> (text: <code>lines x–y of N</code>) at the right of the search row. The carousel shows <code>n of N</code> and a track under the picture.</p>
@@ -463,7 +518,8 @@ program through Mouser's adapter and checks that it draws exactly what the built
 mode draws (list, grid, carousel, search, the file view, images) and asks for the
 same effects; <code>remote_through_mouser.rs</code> does the same for a remote folder over a
 fake ssh (list, grid tiles and snippets, the image and text views). A bound key the
-mode passes on (<code>alt+k</code> with no player) is typed into the shell as the built-in mode
+mode passes on (<code>k</code> with no player) goes nowhere, as in the built-in mode (commander has
+the keyboard, so nothing is typed into the shell)
 let it through. The player runs in the plugin too: it starts ffmpeg itself, plays the
 audio, and hands each frame to Mouser through shared memory
 (<code>player_through_mouser.rs</code>: a 1280x720 60 fps clip arrives at 61.5 fps through the
@@ -525,7 +581,7 @@ remapping are generic.</p>
 served across a C ABI or a socket later.</p>
 <p><strong>Future work:</strong> third-party modes, loaded like engines (a shared library with a
 versioned ABI or a helper process speaking the same calls), installed under
-<code>~/.mouser/modes/</code>; more modifiers than <code>alt</code>; DJ, Director, Debugger and Artist
+<code>~/.mouser/modes/</code>; DJ, Director, Debugger and Artist
 from MODES.md.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/modes.md">docs/modes.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
