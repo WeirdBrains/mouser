@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- Arch: `pacman -U <url>` failed on a missing `<url>.sig` (pacman wants an OpenPGP signature for URL installs; our `.minisig` is minisign, a different format). The documented install is now download, `sha256sum -c`, `pacman -U ./file`; the release workflow OpenPGP-signs the package (`.pkg.tar.zst.sig`) when an `ARCH_GPG_PRIVATE_KEY` secret is set. See docs/release.md §Arch signatures.
 - Linux packages: the release fails if any binary, engine or bundled plugin needs a glibc newer than 2.35 (Ubuntu 22.04), using `scripts/check-glibc.py`. The `.deb` and `.rpm` now declare the glibc they need (`libc6 (>= x.y)`, `glibc >= x.y`), and a clean Ubuntu 22.04 container installs the `.deb` and starts Mouser, its engines and plugins. Issue #2: v1.3.0's Linux build needed GLIBC_2.43 and would not start on Ubuntu 24.04 / Pop!_OS; 1.3.1 and later need GLIBC_2.34. See docs/release.md §Linux build host.
 
 ### Changed

@@ -57,7 +57,7 @@ Notes
   - Download `mouser-<ver>-1.x86_64.rpm` and install:
     - `sudo rpm -Uvh mouser-<ver>-1.x86_64.rpm`
 - Arch (see "Arch packages" below):
-  - Prebuilt: `curl -LO https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst && sudo pacman -U mouser-bin-<ver>-1-x86_64.pkg.tar.zst` (download first; URL installs look for a .sig we do not publish)
+  - Prebuilt: download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` and its `.sha256`, `sha256sum -c` it, then `sudo pacman -U ./mouser-bin-<ver>-1-x86_64.pkg.tar.zst` (see §Arch signatures; `pacman -U <url>` fails on the missing `.sig`)
   - From source: `cd packaging/arch/mouser-git && makepkg -si`
   - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
@@ -140,3 +140,26 @@ mouser_1.4.0_amd64.deb` does not read `.deb` files, so unpack it first
 Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
 without publishing: the publish job only runs for `v*` tags, and the packages are
 versioned `0.0.0`.
+
+## Arch signatures
+
+`pacman -U https://…/mouser-bin-<ver>-1-x86_64.pkg.tar.zst` downloads the package,
+then `<url>.sig`, because pacman's `RemoteFileSigLevel` (default `Required`)
+wants an OpenPGP detached signature from a key in pacman's keyring for anything
+installed from a URL. Releases have no `.sig` yet, so that fails with a 404.
+`LocalFileSigLevel` (default `Optional`) lets a downloaded file install without
+one, so the supported install is download, `sha256sum -c` against the release's
+`.sha256` (and, from 1.4.0, `minisign -Vm <file> -P <key>` against its
+`.minisig`; key in docs/downloads.md), then `sudo pacman -U ./<file>`. Never turn
+signature checking off in `pacman.conf` for this.
+
+The two signatures are different things: `.minisig` is WeirdBrains' minisign
+signature (key `61BA1720747F9146`, for Mouser's own downloads and `plugins.lock`),
+which pacman cannot read; `.sig` is OpenPGP, what pacman checks. The release
+workflow makes `.pkg.tar.zst.sig` when the `ARCH_GPG_PRIVATE_KEY` (and
+`ARCH_GPG_PASSPHRASE`) secrets exist; then a URL install works after the user
+trusts the key once (`sudo pacman-key --recv-keys <fingerprint>` or `--add`,
+then `sudo pacman-key --lsign-key <fingerprint>`). Making that key and
+publishing its fingerprint is a maintainer decision; until then the package
+ships without `.sig`.
+
