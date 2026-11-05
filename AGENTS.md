@@ -35,6 +35,11 @@ These rules are adapted from the owner's Muninn project for this repository.
   `docs/README.md`). Update docs in the same change as the code.
 - In-app help (if present) is built from `docs/` (single source). Topics should be
   searchable and cross-linked.
+- Every Markdown doc in `docs/` must have a matching page on the website, in the right
+  section (User Guides, Developer Guides, MCP Guides or API Guides), updated in the same
+  change. Map each new doc in `docs/sections.toml`; CI (`scripts/check-doc-sections.py`)
+  fails on an unmapped doc, and the Docs site workflow rebuilds the site's pages from
+  `docs/` on every push to main.
 - If Mouser exposes a CLI, generate man pages from clap definitions (clap_mangen) into
   `man/`, with additional FILES / ENVIRONMENT / EXIT STATUS / SECURITY / EXAMPLES sections.
 
