@@ -126,3 +126,122 @@ fn bash_changes_directory_silently() {
         vec!["/bin/bash".into(), "--noprofile".into(), "--rcfile".into(), rc.display().to_string(), "-i".into()]
     });
 }
+
+/// Neither the silent cd nor anything around it lands in the history.
+#[test]
+fn bash_sync_adds_nothing_to_the_history() {
+    let shell = "/bin/bash";
+    if !std::path::Path::new(shell).exists() || name_is_old_bash(shell) {
+        eprintln!("bash 4.4+ not installed, skipped");
+        return;
+    }
+    let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let target = home.path().join("t");
+    std::fs::create_dir(&target).unwrap();
+    let rc = home.path().join("bashrc");
+    let hist = home.path().join("hist");
+    std::fs::write(&rc, format!("PS1='[\\w]$ '\nHISTFILE={}\n{}", hist.display(), mouser_core::shell_integration::BASH)).unwrap();
+    unsafe { std::env::set_var("HOME", home.path()) };
+    let argv: Vec<String> = vec![shell.into(), "--noprofile".into(), "--rcfile".into(), rc.display().to_string(), "-i".into()];
+    let mut h = mouser_pty::spawn_argv_in(&argv, Some(home.path()), 100, 30, 0, 0).unwrap();
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let o2 = out.clone();
+    let mut reader = h.reader;
+    std::thread::spawn(move || {
+        let mut b = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut b) {
+            if n == 0 {
+                break;
+            }
+            o2.lock().unwrap().extend_from_slice(&b[..n]);
+        }
+    });
+    let r = Run { out };
+    let w = &mut h.writer;
+    assert!(r.wait("\x1bP=Fzsa;v=0,shell="), "advertises\n{:?}", r.text());
+    w.write_all(b"echo FIRST\r").unwrap();
+    assert!(r.wait("FIRST\r\n"));
+    std::thread::sleep(Duration::from_millis(200));
+    w.write_all(&mouser_core::fuzzball::shell_cd(3, target.to_str().unwrap().as_bytes())).unwrap();
+    assert!(r.wait("\x1bP=Fzsr;id=3,ok=1\x1b\\"));
+    std::thread::sleep(Duration::from_millis(200));
+    w.write_all(b"history | sed 's/^ *[0-9]* *//' | tr '\\n' '|'; echo END_OF_HISTORY\r").unwrap();
+    assert!(r.wait("END_OF_HISTORY\r\n"), "{:?}", r.text());
+    let t = r.text();
+    let line = t.lines().map(|l| l.trim_start_matches(|c: char| c != 'e')).find(|l| l.starts_with("echo FIRST|")).unwrap_or("").to_string();
+    assert!(line.starts_with("echo FIRST|history"), "only what was typed is in the history: {line:?}\n{t:?}");
+    assert!(!line.contains("cd "), "{line:?}");
+    let _ = h.child.kill();
+}
+
+/// PowerShell: the prompt advertises its sync file; a folder left there is
+/// taken at the next prompt with a builtin Set-Location (nothing typed).
+#[test]
+fn pwsh_takes_the_sync_file_at_the_next_prompt() {
+    let Some(pwsh) = ["/usr/bin/pwsh", "/usr/local/bin/pwsh", "/opt/homebrew/bin/pwsh", "/opt/microsoft/powershell/7/pwsh"]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .chain(std::env::var_os("PATH").into_iter().flat_map(|p| std::env::split_paths(&p).map(|d| d.join("pwsh")).collect::<Vec<_>>()))
+        .find(|p| p.exists())
+    else {
+        eprintln!("pwsh not installed, skipped");
+        return;
+    };
+    let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let home = tempfile::tempdir().unwrap();
+    let target = home.path().join("a dir");
+    std::fs::create_dir(&target).unwrap();
+    let rc = home.path().join("mouser.ps1");
+    std::fs::write(&rc, mouser_core::shell_integration::PWSH).unwrap();
+    unsafe { std::env::set_var("HOME", home.path()) };
+    let argv: Vec<String> =
+        vec![pwsh.display().to_string(), "-NoProfile".into(), "-NoLogo".into(), "-NoExit".into(), "-Command".into(), format!(". '{}'", rc.display())];
+    let h = mouser_pty::spawn_argv_in(&argv, Some(home.path()), 100, 30, 0, 0).unwrap();
+    let mut child = h.child;
+    let writer = Arc::new(Mutex::new(h.writer));
+    let out = Arc::new(Mutex::new(Vec::new()));
+    let o2 = out.clone();
+    let w2 = writer.clone();
+    let mut reader = h.reader;
+    std::thread::spawn(move || {
+        let mut b = [0u8; 4096];
+        while let Ok(n) = reader.read(&mut b) {
+            if n == 0 {
+                break;
+            }
+            // .NET asks where the cursor is (DSR); answer like a terminal.
+            for _ in b[..n].windows(4).filter(|w| w == b"\x1b[6n") {
+                let _ = w2.lock().unwrap().write_all(b"\x1b[1;1R");
+            }
+            o2.lock().unwrap().extend_from_slice(&b[..n]);
+        }
+    });
+    let r = Run { out };
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(20) && !r.text().contains("caps=cwdfile") {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut p = TerminalParser::new(Size { cols: 100, rows: 30 }, Arc::new(Scrollback::new(ScrollbackConfig::default())), std::io::sink());
+    p.feed(&r.out.lock().unwrap());
+    let caps = p.fuzzball.shell.clone().unwrap_or_else(|| panic!("advertises cwdfile\n{:?}", r.text()));
+    assert!(caps.has("cwdfile") && caps.shell == "pwsh", "{caps:?}");
+    let file = caps.file.clone().expect("the sync file");
+    assert!(file.file_name().unwrap().to_str().unwrap().starts_with("mouser-sync-"), "{file:?}");
+    std::fs::write(&file, target.to_str().unwrap()).unwrap();
+    let w = |b: &[u8]| writer.lock().unwrap().write_all(b).unwrap();
+    w(b"\r");
+    std::thread::sleep(Duration::from_millis(500));
+    w(b"'PWD_' + (Get-Location).Path\r");
+    let want = format!("PWD_{}", target.display());
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(10) && !r.text().contains(&want) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(r.text().contains(&want), "moved at the next prompt\n{:?}", r.text());
+    assert!(!file.exists(), "the sync file is used up");
+    w(b"(Get-History | % CommandLine) -join '|'\r");
+    std::thread::sleep(Duration::from_millis(800));
+    assert!(!r.text().contains("Set-Location"), "nothing about the sync in the history");
+    let _ = child.kill();
+}

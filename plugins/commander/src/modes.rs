@@ -79,9 +79,13 @@ impl Keymap {
         self.keys.iter().find(|(_, k, _)| key_bytes(k).is_some_and(|kb| kb.iter().any(|b| b.as_slice() == bytes))).map(|(id, _, _)| id.as_str())
     }
 
-    /// `alt+t`.
+    /// `alt+t`, or `ctrl+alt+s` for a `ctrl+` key.
     pub fn label(&self, id: &str) -> String {
-        format!("{}+{}", self.modifier, self.keys.iter().find(|k| k.0 == id).map_or("?", |k| k.1.as_str()))
+        let k = self.keys.iter().find(|k| k.0 == id).map_or("?", |k| k.1.as_str());
+        match k.strip_prefix("ctrl+") {
+            Some(rest) => format!("ctrl+{}+{rest}", self.modifier),
+            None => format!("{}+{k}", self.modifier),
+        }
     }
 }
 
@@ -115,6 +119,8 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         "end" => vec![b"\x1b[1;3F".to_vec(), b"\x1b\x1b[F".to_vec(), b"\x1b\x1b[4~".to_vec()],
         "space" => vec![b"\x1b ".to_vec()],
         "backspace" => vec![b"\x1b\x7f".to_vec(), b"\x1b\x08".to_vec()],
+        // ctrl+alt+letter: ESC and the control character.
+        k if k.len() == 6 && k.starts_with("ctrl+") && k.as_bytes()[5].is_ascii_lowercase() => vec![vec![0x1b, k.as_bytes()[5] & 0x1f]],
         _ => {
             let mut c = k.chars();
             let ch = c.next()?;

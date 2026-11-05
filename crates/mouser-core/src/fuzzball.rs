@@ -90,6 +90,9 @@ pub struct Fuzzball {
     pub plugin_grants: HashMap<String, Vec<String>>,
     /// What the shell integration advertised (`s a`); None while a command runs.
     pub shell: Option<ShellCaps>,
+    /// The last integration this tab advertised, kept while a command runs:
+    /// tells "busy, catches up at the next prompt" from "no integration".
+    pub shell_seen: Option<ShellCaps>,
     /// `s r` replies from the shell: (id, ok, msg).
     pub shell_replies: Vec<(u32, bool, String)>,
 }
@@ -99,6 +102,9 @@ pub struct Fuzzball {
 pub struct ShellCaps {
     pub shell: String,
     pub caps: Vec<String>,
+    /// `file=PCT` with `caps=cwdfile` (PowerShell): the shell reads a folder
+    /// to change to from this file at its next prompt.
+    pub file: Option<std::path::PathBuf>,
 }
 
 impl ShellCaps {
@@ -227,7 +233,11 @@ impl Fuzzball {
                 self.shell = match p.get("caps") {
                     None | Some("") => None,
                     Some(c) if num(&p, "v").is_none_or(|v| v == VERSION) => {
-                        Some(ShellCaps { shell: p.get("shell").unwrap_or_default().to_string(), caps: c.split('+').map(String::from).collect() })
+                        let file = p.get("file").and_then(pct_decode).map(|f| std::path::PathBuf::from(String::from_utf8_lossy(&f).into_owned()));
+                        let caps =
+                            ShellCaps { shell: p.get("shell").unwrap_or_default().to_string(), caps: c.split('+').map(String::from).collect(), file };
+                        self.shell_seen = Some(caps.clone());
+                        Some(caps)
                     }
                     Some(_) => return eff_err(id, quiet, Error::Version, "version not available"),
                 };

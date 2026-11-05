@@ -101,11 +101,14 @@ fn draws_and_acts_like_the_built_in_commander() {
     same(&mut b, &mut m, "file view closed");
     assert!(!m.escape(), "nothing open: Escape is Mouser's");
 
-    // A folder: open asks for a cd.
+    // A folder: open browses it in both (the shell stays); sync asks for the cd.
     select(&mut b, &mut m, "sub");
-    let want = b.action("open", 0);
-    assert!(matches!(&want, Effect::Cd(d) if d.ends_with("sub")), "{want:?}");
+    assert_eq!(b.action("open", 0), Effect::None);
     m.action("open", 0);
+    same(&mut b, &mut m, "browsed into sub");
+    let want = b.action("sync", 0);
+    assert!(matches!(&want, Effect::Cd(d) if d.ends_with("sub")), "{want:?}");
+    m.action("sync", 0);
     assert_eq!(effects(&mut m, 1), vec![want]);
 
     // A key the built-in passes on (no player: alt+k) reaches the shell.

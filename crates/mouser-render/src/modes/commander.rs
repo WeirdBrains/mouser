@@ -479,6 +479,10 @@ pub struct CommanderMode {
     last_scrub: Option<std::time::Instant>,
     /// The ssh side channel while the listing is remote.
     ssh: Option<fetch::Remote>,
+    /// The folder the shell last reported (local, or the remote shell's).
+    /// Commander follows the shell only when this changes (a `cd` typed
+    /// there); its own navigation never moves the shell (ctrl+alt+s syncs).
+    shell_dir: Option<PathBuf>,
     remote_meta: Arc<HashMap<PathBuf, (u64, i64)>>,
     /// The remote file open in the viewer (or player).
     open_remote: Option<(PathBuf, fetch::Handle)>,
@@ -602,11 +606,6 @@ impl Default for CommanderMode {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// `cd -- '<path>'` (run with [`Effect::Run`], keeping the typed line).
-pub fn cd_line(p: &Path) -> String {
-    format!("cd -- {}", cmdr::shell_quote(&p.to_string_lossy()))
 }
 
 fn item(rect: Rect, text: impl Into<String>, style: PanelStyle, action: UiAction) -> PanelItem {
@@ -743,6 +742,7 @@ impl CommanderMode {
             last_scrub: None,
             ssh: None,
             remote_meta: Arc::new(HashMap::new()),
+            shell_dir: None,
             open_remote: None,
             heads: HashMap::new(),
             remote_text_at: 0,
@@ -1550,12 +1550,19 @@ impl Mode for CommanderMode {
     }
 
     fn cwd_changed(&mut self, dir: &Path) {
-        if self.ssh.take().is_some() {
+        let was_remote = self.ssh.take().is_some();
+        if was_remote {
             self.previews.set_remote(None);
             self.open_remote = None;
             self.heads.clear();
             self.texts.clear();
         }
+        // Every prompt reports the shell's folder; commander follows only a
+        // change there (a `cd` typed in the shell).
+        if !was_remote && self.c.remote.is_none() && self.shell_dir.as_deref() == Some(dir) && self.c.cwd.is_some() {
+            return;
+        }
+        self.shell_dir = Some(dir.to_path_buf());
         self.c.set_cwd(Some(dir.to_path_buf()));
     }
 
@@ -1570,6 +1577,17 @@ impl Mode for CommanderMode {
     }
 
     fn remote_changed(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<Entry>, String>>) {
+        // The remote shell staying in a folder commander has browsed away from.
+        if let Some(d) = dir
+            && self.c.remote.as_deref() == Some(label)
+            && self.shell_dir.as_deref() == Some(d)
+            && self.c.cwd.as_deref().is_some_and(|c| c != d)
+        {
+            return;
+        }
+        if dir.is_some() {
+            self.shell_dir = dir.map(Path::to_path_buf);
+        }
         let fresh = listing.as_ref().is_some_and(|l| l.is_ok());
         self.c.set_remote(label.to_string(), dir.map(Path::to_path_buf), listing);
         if fresh {
@@ -1759,12 +1777,13 @@ impl Mode for CommanderMode {
                 self.c.overlay = None
             }
             "keys" => return Effect::ShowKeys,
+            "sync" => return self.sync(),
             "up_to" => {
                 let mut d = self.c.cwd.clone();
                 for _ in 0..arg.max(0) {
                     d = d.and_then(|d| d.parent().map(Path::to_path_buf));
                 }
-                return d.map_or(Effect::None, Effect::Cd);
+                return d.map_or(Effect::None, |d| self.browse(d));
             }
             // In the file view (and the player) back closes the view first.
             "parent" | "back" if previewing => {
@@ -2112,10 +2131,46 @@ impl Mode for CommanderMode {
 }
 
 impl CommanderMode {
+    /// Show `dir` without touching the shell: list it here, or over the ssh
+    /// side channel when the listing is remote.
+    fn browse(&mut self, dir: PathBuf) -> Effect {
+        match self.c.remote.clone() {
+            None => self.c.set_cwd(Some(dir)),
+            Some(label) => {
+                let listing = match &self.ssh {
+                    Some(r) => r
+                        .run(&mouser_core::remote::listing_command(&dir))
+                        .map(|out| mouser_core::remote::parse_ls(&String::from_utf8_lossy(&out), &dir)),
+                    None => Err(format!("{}: no ssh side channel to list it", dir.display())),
+                };
+                let fresh = listing.is_ok();
+                self.c.set_remote(label, Some(dir), Some(listing));
+                if fresh {
+                    let secs = |t: Option<std::time::SystemTime>| {
+                        t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64)
+                    };
+                    self.remote_meta = Arc::new(self.c.entries.iter().map(|e| (e.path.clone(), (e.size, secs(e.modified)))).collect());
+                    self.previews.set_remote(self.ssh.clone().map(|remote| RemoteCtx { remote, meta: self.remote_meta.clone() }));
+                }
+            }
+        }
+        Effect::None
+    }
+
+    /// ctrl+alt+s: move the shell to commander's folder. The host does it silently
+    /// through the shell integration (nothing typed, no history), or says why not.
+    fn sync(&mut self) -> Effect {
+        match self.c.cwd.clone() {
+            Some(d) => Effect::Cd(d),
+            None => Effect::Say("commander has no folder to sync to".into()),
+        }
+    }
+
     fn effect(&mut self, e: cmdr::Effect) -> Effect {
         match e {
             cmdr::Effect::None => Effect::None,
-            cmdr::Effect::Cd(p) => Effect::Cd(p),
+            // Commander's own navigation: list the folder here; the shell stays.
+            cmdr::Effect::Cd(p) => self.browse(p),
             // The in-app player; the desktop opener only without ffmpeg.
             // Remote media: ffmpeg reads it through the fetch layer's local
             // HTTP server (seeks become prioritised ranged reads).
@@ -2386,8 +2441,10 @@ pub(crate) mod tests {
         assert_eq!(m.action("item", 1), Effect::None, "first click selects");
         m.last_click = None;
         assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
-        let cd = m.action("item", 1);
-        assert_eq!(cd, Effect::Cd(t.path().join("sub dir")));
+        assert_eq!(m.action("item", 1), Effect::None, "opening a folder browses it; the shell stays");
+        assert_eq!(m.c.cwd.as_deref(), Some(t.path().join("sub dir").as_path()));
+        assert_eq!(m.action("sync", 0), Effect::Cd(t.path().join("sub dir")), "ctrl+alt+s moves the shell there");
+        m.action("back", 0);
         m.action("switch_view", 0);
         let v = m.view(&ctx(), &k);
         assert!(v.dock.unwrap().items.iter().filter(|i| matches!(i.style, PanelStyle::Tile { .. })).count() == 2);
@@ -2520,11 +2577,12 @@ pub(crate) mod tests {
         // The parent's segment jumps one level up; the current one is not a link.
         assert!(d.items.iter().any(|i| i.text == "/a" && i.action == act("up_to", 1)));
         assert!(d.items.iter().any(|i| i.text == "/b" && i.action == UiAction::None));
-        assert_eq!(m.action("up_to", 2), Effect::Cd(t.path().to_path_buf()));
-        assert_eq!(m.action("parent", 0), Effect::Cd(t.path().join("a")));
-        // Coming back up selects the folder we left.
-        m.cwd_changed(&t.path().join("a"));
+        // Going up browses there (the shell stays) and selects the folder we left.
+        assert_eq!(m.action("parent", 0), Effect::None);
+        assert_eq!(m.c.cwd.as_deref(), Some(t.path().join("a").as_path()));
         assert_eq!(m.c.selected_entry().unwrap().name, "b");
+        assert_eq!(m.action("up_to", 1), Effect::None);
+        assert_eq!(m.c.cwd.as_deref(), Some(t.path()));
         // At / the control is disabled.
         m.cwd_changed(Path::new("/"));
         let d = m.view(&ctx(), &k).dock.unwrap();
@@ -2713,7 +2771,11 @@ pub(crate) mod tests {
         assert!(d.items.iter().any(|i| i.text == "image · remote"), "no side channel: a badge, nothing read");
         assert!(m.previews().decoded().is_empty());
         m.c.selected = 1;
-        assert_eq!(m.action("open", 0), Effect::Cd("/srv/app".into()), "cd over the PTY");
+        assert_eq!(m.action("open", 0), Effect::None, "browsing never types into the remote shell");
+        assert_eq!(m.c.cwd.as_deref(), Some(Path::new("/srv/app")));
+        m.remote_changed("me@web1", Some(Path::new("/srv")), Some(Ok(vec![ent("app", true)])));
+        assert_eq!(m.c.cwd.as_deref(), Some(Path::new("/srv/app")), "the remote shell staying put doesn't pull commander back");
+        assert_eq!(m.action("sync", 0), Effect::Cd("/srv/app".into()), "ctrl+alt+s asks the host to move the shell");
     }
 
     #[test]

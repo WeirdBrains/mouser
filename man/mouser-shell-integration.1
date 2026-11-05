@@ -4,7 +4,7 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH NAME
-mouser\-shell\-integration \- Print the shell integration for zsh, bash or fish (directory reports and silent `cd` from commander; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"` or `mouser shell\-integration fish | source`
+mouser\-shell\-integration \- Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync, ctrl+alt+s: nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
@@ -12,7 +12,7 @@ mouser\-shell\-integration \- Print the shell integration for zsh, bash or fish 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
-Print the shell integration for zsh, bash or fish (directory reports and silent `cd` from commander; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"` or `mouser shell\-integration fish | source`
+Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync, ctrl+alt+s: nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
@@ -21,7 +21,7 @@ Print the shell integration for zsh, bash or fish (directory reports and silent 
 Print help
 .TP
 <\fISHELL\fR>
-zsh, bash or fish
+zsh, bash, fish or pwsh (powershell)
 .SH SEE ALSO
 \fBmouser\fR(1)
 .ie \n(.g .ds Aq \(aq

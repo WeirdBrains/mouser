@@ -4,13 +4,15 @@
 pub const ZSH: &str = include_str!("../shell/mouser.zsh");
 pub const BASH: &str = include_str!("../shell/mouser.bash");
 pub const FISH: &str = include_str!("../shell/mouser.fish");
+pub const PWSH: &str = include_str!("../shell/mouser.ps1");
 
-/// The script for `shell` (`zsh`, `bash` or `fish`).
+/// The script for `shell` (`zsh`, `bash`, `fish`, or `pwsh` / `powershell`).
 pub fn script(shell: &str) -> Option<&'static str> {
     match shell {
         "zsh" => Some(ZSH),
         "bash" => Some(BASH),
         "fish" => Some(FISH),
+        "pwsh" | "powershell" => Some(PWSH),
         _ => None,
     }
 }

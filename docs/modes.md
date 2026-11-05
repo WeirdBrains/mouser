@@ -68,7 +68,7 @@ Installed mode plugins (`kind = "mode"` over the command transport, with a
 - A lone Esc waits 500 ms for the `:`; without it the Esc goes to the shell
   unchanged (so `esc` keeps working in readline/vi-mode shells, just 500 ms later).
   `alt+:` opens the command line at once. A line whose first word is not a Mouser
-  command runs in the tab's shell (typed like commander's cd: what you had typed is
+  command runs in the tab's shell (typed like commander's pipe: what you had typed is
   kept and comes back), so `echo "hello, world!"` just works; in an SSH tab it runs
   remotely. Mouser commands win on a name clash; a leading `!` forces the shell
   (`!theme` runs a program called theme). If another program owns the terminal the
@@ -97,8 +97,10 @@ An unknown action or key is reported in the status bar and the defaults are kept
 ### Commander
 
 A view docked above the prompt (the terminal grid moves down; about half the
-window) that follows the shell's working directory (`/proc/<pid>/cwd` on Linux,
-OSC 7 elsewhere) and re-lists when the directory changes. Header: the directory,
+window) that starts in the shell's working directory (`/proc/<pid>/cwd` on Linux,
+OSC 7 elsewhere) and keeps its own folder after that: browsing in commander never
+types into the shell or changes its folder (ctrl+alt+s syncs, below). A `cd` you type in
+the shell still moves commander there. Header: the directory,
 item count and the equivalent `ls` flags, then the view, `options`, `man` and `help`
 buttons; a search field filters the folder as you type.
 
@@ -112,7 +114,7 @@ buttons; a search field filters the folder as you type.
 | PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
 | Home / End | first / last | first / last | first / last |
 | p, Backspace | back: where you came from (like `popd`), else the parent folder; in the file view / player it closes the view | same | same |
-| Enter | open: a folder is `cd`'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
+| Enter | open: a folder is browsed (the shell stays where it is), video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
 | q (or Esc) | close the file view / window | same | same |
 | s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
 | space | mark / unmark the item (then moves on in list and carousel) | same | same |
@@ -121,6 +123,7 @@ buttons; a search field filters the folder as you type.
 | z / x | | larger / smaller tiles | |
 | a | dotfiles on/off (`ls -a`) | same | same |
 | o / m | options window / manual | same | same |
+| ctrl+alt+s | sync: move the shell to commander's folder (silently; see below) | same | same |
 
 Back works like `popd`, inside commander (it never runs `pushd`/`popd`). Entering a
 folder or opening a file pushes where you were onto a navigation stack: the path as
@@ -128,7 +131,21 @@ you saw it (a symlink stays a symlink), the selection and the scroll. Back pops 
 and puts you exactly there again. With nothing on the stack (after a `cd` you typed,
 a breadcrumb jump, or at startup) back goes to the parent of the path you see, not
 of the resolved one, so leaving a symlinked folder never lands in its target's real
-parent. Remote (SSH) folders work the same way.
+parent. Remote (SSH) folders work the same way (listed over the ssh side channel,
+never by typing into the remote shell).
+
+**Sync (ctrl+alt+s).** The shell's prompt stays as it is while you browse. ctrl+alt+s moves the
+shell to commander's folder, from anywhere in commander (the file view and player
+included), without leaving it. It never types: no `cd` on the line, nothing in the
+history, the half-typed line kept. How it gets there:
+
+| shell | how |
+| --- | --- |
+| bash 4.4+, zsh, fish with `mouser shell-integration` | idle at the prompt: at once, through the integration's silent cd (Fuzzball `s c`, docs/protocol/shell.md), prompt redrawn in place; running a command: at its next prompt |
+| PowerShell with `mouser shell-integration pwsh` | at the next prompt: the prompt function reads the folder from its sync file and runs `Set-Location` (PowerShell only redraws its prompt after a command; Enter on an empty line takes it at once) |
+| no integration (bash older than 4.4, other shells, a remote shell without it) | nothing happens; the status bar says so |
+
+Both keys are rebindable in `modes.toml` (`sync`, `search`).
 
 **Player.** Video and audio open in commander's own player (MODES.md: "a player will
 appear"). Video frames are decoded by `ffmpeg` to RGBA, fitted to the view's width and
@@ -168,7 +185,7 @@ Nothing is started until a file is opened; playback stops (the readers are kille
 the viewer closes, another file is shown or the mode is left. Without `ffmpeg` and
 `ffprobe` on PATH, media falls back to the desktop opener (`xdg-open`, `open` on macOS).
 
-**What you have typed is kept.** `cd` (open a folder, alt+p) and pipe run without
+**What you have typed is kept.** Pipe runs without
 losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to
 the shell's kill ring), the command and Enter, then, once the shell is the terminal's
 foreground process again (the command finished), Ctrl+Y and Backspace to put the line
@@ -328,7 +345,7 @@ built-in commander (`mouser plugin list` marks it `[overrides built-in]`). It ru
 you, like any program you start: it lists the folder and decodes thumbnails and
 previews itself, and its view goes to Mouser with the images inline (sent once,
 then reused by key). It needs `files.read` (to be told the shell's folder) and
-`shell.type` (cd, pipe, and keys it passes on), and `remote.read` for remote
+`shell.type` (sync, pipe, and keys it passes on), and `remote.read` for remote
 shells (Mouser tells it the ssh session and the folder's listing; it fetches
 previews and files over that session's ssh like the built-in mode, below):
 

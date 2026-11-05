@@ -21,6 +21,7 @@ hotkey = "c"
 keys = [
   { id = "switch_view", key = "t", describe = "switch view (list / grid / carousel)" },
   { id = "search", key = "s", describe = "search this folder" },
+  { id = "sync", key = "ctrl+s", describe = "sync: move the shell to commander's folder (silently, at its next prompt if busy)" },
   { id = "up", key = "up", describe = "previous row" },
   { id = "down", key = "down", describe = "next row" },
   { id = "left", key = "left", describe = "previous item" },
@@ -35,8 +36,8 @@ keys = [
   { id = "page_down", key = "pagedown", describe = "page down" },
   { id = "first", key = "home", describe = "first item" },
   { id = "last", key = "end", describe = "last item" },
-  { id = "parent", key = "p", describe = "back: parent folder (cd ..)" },
-  { id = "back", key = "backspace", describe = "back: parent folder (cd ..)" },
+  { id = "parent", key = "p", describe = "back: where you came from, else the parent folder" },
+  { id = "back", key = "backspace", describe = "back: where you came from, else the parent folder" },
   { id = "close", key = "q", describe = "close the file view / window" },
   { id = "mark", key = "space", describe = "mark / unmark the item (for pipe)" },
   { id = "mark_all", key = "*", describe = "mark all / clear marks" },
