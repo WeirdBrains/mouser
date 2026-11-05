@@ -154,7 +154,12 @@ Until a mode sends one, Mouser guesses from its view: a focused `Field` or an op
 `Popup` takes every key. After a restart it's cleared until the plugin sends it again.
 
 Mouser tells a plugin with `files.read` the shell's folder (`shell.cwd_changed`)
-as soon as it has started, and again after every restart.
+as soon as it has started, and again after every restart. With `remote.read` it
+also tells it about a remote shell, when that changes and after a restart:
+`shell.remote_ssh` (`{"opts": [...], "dest": "host"}` for the session's ssh
+command, or `null`) and `shell.remote_changed` (`label`, `dir` or `null`, and
+`listing`: `null` while loading, `{"entries": [...]}` with `name`, `path`,
+`kind`, `mode`, `size` and `modified` in Unix seconds, or `{"error": "..."}`).
 
 ## Host calls
 

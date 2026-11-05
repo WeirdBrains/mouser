@@ -87,6 +87,9 @@ pub struct StdioMode {
     remote_dir: Option<std::path::PathBuf>,
     /// The shell's folder, told again whenever the plugin (re)starts.
     cwd: Option<std::path::PathBuf>,
+    /// The remote shell as last told (`shell.remote_ssh`, `shell.remote_changed`
+    /// payloads): sent when they change, and again after a restart.
+    remote_told: Option<(Value, Value)>,
 }
 
 enum Waiting {
@@ -136,6 +139,7 @@ impl StdioMode {
             ssh: None,
             remote_dir: None,
             cwd: None,
+            remote_told: None,
         })
     }
 
@@ -528,6 +532,7 @@ impl Mode for StdioMode {
 
     fn cwd_changed(&mut self, dir: &Path) {
         self.cwd = Some(dir.to_path_buf());
+        self.remote_told = None;
         if self.was_running && self.granted().iter().any(|g| g == "files.read") {
             self.event("shell.cwd_changed", json!({"dir": dir.display().to_string()}));
         }
@@ -586,11 +591,33 @@ impl Mode for StdioMode {
         self.ssh = ssh.cloned();
     }
 
-    fn remote_changed(&mut self, label: &str, dir: Option<&Path>, _listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {
+    fn remote_changed(&mut self, label: &str, dir: Option<&Path>, listing: Option<Result<Vec<mouser_core::commander::Entry>, String>>) {
         self.remote_dir = dir.map(Path::to_path_buf);
-        if self.granted().iter().any(|g| g == "remote.read") {
-            self.event("shell.remote_changed", json!({"label": label, "dir": dir.map(|d| d.display().to_string())}));
+        self.cwd = None;
+        if !self.granted().iter().any(|g| g == "remote.read") {
+            return;
         }
+        // Called every frame: tell the plugin only what changed.
+        let ssh = match &self.ssh {
+            Some(t) => json!({"opts": t.opts, "dest": t.dest}),
+            None => Value::Null,
+        };
+        let listing = match listing {
+            None => Value::Null,
+            Some(Ok(v)) => json!({"entries": v.iter().map(entry_json).collect::<Vec<_>>()}),
+            Some(Err(e)) => json!({"error": e}),
+        };
+        let remote = json!({"label": label, "dir": dir.map(|d| d.display().to_string()), "listing": listing});
+        let told = self.remote_told.clone();
+        if self.was_running {
+            if told.as_ref().map(|t| &t.0) != Some(&ssh) {
+                self.event("shell.remote_ssh", ssh.clone());
+            }
+            if told.as_ref().map(|t| &t.1) != Some(&remote) {
+                self.event("shell.remote_changed", remote.clone());
+            }
+        }
+        self.remote_told = Some((ssh, remote));
     }
 
     fn view(&mut self, ctx: &Context, _keys: &Keymap) -> View {
@@ -620,6 +647,10 @@ impl Mode for StdioMode {
             self.was_running = true;
             if let Some(d) = self.cwd.clone().filter(|_| self.granted().iter().any(|g| g == "files.read")) {
                 self.event("shell.cwd_changed", json!({"dir": d.display().to_string()}));
+            }
+            if let Some((ssh, remote)) = self.remote_told.clone() {
+                self.event("shell.remote_ssh", ssh);
+                self.event("shell.remote_changed", remote);
             }
             if self.active {
                 self.event("mode.activated", json!({"via": "start"}));
@@ -701,4 +732,11 @@ impl Drop for StdioMode {
             s.stop("quit");
         }
     }
+}
+
+/// A listing entry for `shell.remote_changed` (`modified`: Unix seconds).
+fn entry_json(e: &mouser_core::commander::Entry) -> Value {
+    let secs = e.modified.and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs_f64());
+    json!({"name": e.name, "path": e.path.display().to_string(), "kind": format!("{:?}", e.kind).to_lowercase(),
+           "mode": e.mode, "size": e.size, "modified": secs})
 }
