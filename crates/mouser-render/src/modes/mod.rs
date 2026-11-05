@@ -13,6 +13,7 @@ pub mod commander;
 pub mod player;
 pub mod plugin;
 pub mod prefs;
+pub mod stdio;
 
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};
 use crate::{UiViewport, Waker};
@@ -90,6 +91,11 @@ pub trait Mode: Send {
     }
     fn view(&mut self, ctx: &Context, keys: &Keymap) -> View;
     fn set_waker(&mut self, _w: Waker) {}
+    /// Effects that came in off the event path (a plugin process's messages);
+    /// Mouser applies them after drawing. Default: none.
+    fn take_effects(&mut self) -> Vec<Effect> {
+        Vec::new()
+    }
 }
 
 /// Host-owned windows.
@@ -148,6 +154,9 @@ impl Host {
             let m: Option<Box<dyn Mode>> = match (e.transport, e.name.as_str()) {
                 (Transport::Builtin, "commander") => Some(Box::new(commander::CommanderMode::new())),
                 (Transport::Builtin, "preferences") => Some(Box::new(prefs::PrefsMode::new())),
+                (Transport::Mode, _) => mouser_core::plugins::find(&e.name)
+                    .and_then(|p| stdio::StdioMode::new(p, mouser_core::storage::max_restarts(&mouser_core::storage::load_preferences())))
+                    .map(|m| Box::new(m) as Box<dyn Mode>),
                 (Transport::Command, _) => {
                     mouser_core::plugins::find(&e.name).and_then(plugin::PluginMode::new).map(|m| Box::new(m) as Box<dyn Mode>)
                 }
@@ -331,6 +340,11 @@ impl Host {
             None => {}
         }
         v
+    }
+
+    /// Effects the modes produced off the event path, to apply now.
+    pub fn take_effects(&mut self) -> Vec<Effect> {
+        self.modes.iter_mut().flat_map(|(m, _)| m.take_effects()).collect()
     }
 
     /// Ctrl+Shift+K: the current mode's mappings plus the global keys.

@@ -15,6 +15,7 @@ the same registry.
 |---|---|---|---|
 | `mcp` | a program speaking MCP over stdio (`run.command`) | started on demand | installed: asks, then remembers what you choose |
 | `fuzzball` | a program running *in* a tab, over Fuzzball `p` (fuzzball docs/plugins.md) | while it runs, that tab only | untrusted; over ssh it asks every time |
+| `mode` | a mode plugin kept running, speaking the mode protocol over stdio: events in; views, effects and images (shared memory) out (docs/mode-protocol.md) | started when first drawn; restarted after a crash (1 s, 2 s, 4 s), off after `plugins.max_restarts` crashes in 30 s | installed: asks (`run`), then remembers; effects and events checked against its permissions |
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 | `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
@@ -37,7 +38,7 @@ kind = "command"                # mode | engine | model-provider | tool-provider
 id = "hello"                    # optional; defaults to the name
 
 [run]
-transport = "command"           # mcp | fuzzball | command
+transport = "command"           # mcp | fuzzball | command | mode
 command = ["sh", "./hello.sh"]  # ./ is the plugin's directory; other names come from PATH
 commands = ["hello"]            # command plugins only
 ```
@@ -103,7 +104,14 @@ still forces an order for one run, as given.
 
 ### Mode plugins
 
-A mode plugin is a `plugin.toml` with `kind = "mode"`, `transport = "command"` and
+A mode plugin uses `transport = "mode"`: Mouser starts the program once and keeps
+it running, talking the mode protocol over its stdin and stdout
+([Mode plugin protocol](./mode-protocol.md)). It gets events, draws panels and
+images, and asks for effects, all checked against its permissions. Write one in
+Rust with the `mouser-mode-api` crate's `Mode` trait and `serve()`.
+
+The older `transport = "command"` (deprecated, removed in 2.0) runs the program
+once per event instead. Either way it's a `plugin.toml` with `kind = "mode"` and
 a `[mode]` table (example: `examples/plugins/hello-mode`):
 
 ```toml
