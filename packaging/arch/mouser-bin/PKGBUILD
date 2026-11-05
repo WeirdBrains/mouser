@@ -32,6 +32,8 @@ build() {
 
 package() {
   install -Dm755 "${srcdir}/mouser-app" "${pkgdir}/usr/bin/mouser"
+  install -d "${pkgdir}/usr/lib/mouser"
+  cp -a "${srcdir}/engines" "${pkgdir}/usr/lib/mouser/engines"
   cd "${_pkgname}-${pkgver}"
   install -Dm644 resources/linux/mouser.desktop "${pkgdir}/usr/share/applications/mouser.desktop"
   install -Dm644 resources/linux/io.github.m3talsmith.mouser.metainfo.xml \

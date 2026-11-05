@@ -480,6 +480,16 @@ enum PluginCommand {
     Permissions { name: Option<String>, set: Vec<String> },
     /// Start an MCP plugin, do the handshake and list its tools.
     Probe { name: String },
+    /// Engines: copy Mouser's engine libraries from a build folder into
+    /// `OUT/<name>/` with their engine.toml (what packages ship); see docs/release.md.
+    Bundle {
+        /// Folder with the built libraries (default: beside this mouser).
+        #[arg(long)]
+        from: Option<std::path::PathBuf>,
+        /// Where to put `<name>/` (e.g. `engines` beside the packaged mouser).
+        #[arg(long)]
+        out: std::path::PathBuf,
+    },
 }
 
 /// Which root an `--install SRC` goes to: an engine folder or an official
@@ -520,6 +530,7 @@ fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<
         PluginCommand::Rollback { name } => Action::Rollback(name.clone()),
         PluginCommand::Retry => Action::Retry,
         PluginCommand::Cancel { id, .. } => Action::Cancel(*id),
+        PluginCommand::Bundle { .. } => return None,
     };
     Some((a, kind, who))
 }
@@ -900,6 +911,28 @@ fn main() -> Result<()> {
             println!("{}", j.line());
         }
         std::process::exit(i32::from(failed));
+    }
+    if let Some(
+        Command::Engine { action: PluginCommand::Bundle { from, out }, .. } | Command::Plugin { action: PluginCommand::Bundle { from, out }, .. },
+    ) = &cli.command
+    {
+        if matches!(cli.command, Some(Command::Plugin { .. })) {
+            eprintln!("mouser plugin: bundle is for engines (`mouser engine bundle`)");
+            std::process::exit(2);
+        }
+        let from = from.clone().or_else(|| std::env::current_exe().ok().and_then(|e| e.parent().map(Into::into))).unwrap_or_default();
+        match mouser_core::engines::bundle(&from, out) {
+            Ok(v) => {
+                for i in v {
+                    println!("bundled {} {} into {}", i.manifest.name, i.manifest.version, i.dir.display());
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("mouser engine bundle: {e:#}");
+                std::process::exit(1);
+            }
+        }
     }
     if let Some((a, kind, who)) = cli.command.as_ref().and_then(plugin_action) {
         if let Err(e) = mouser_app::plugin_cli::run_kind(&a, kind.as_deref(), &mut std::io::stdout()) {

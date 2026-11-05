@@ -41,7 +41,7 @@ build() {
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
   # Default features include the local model (docs/models.md).
-  cargo build --frozen --release -p mouser-app
+  cargo build --frozen --release -p mouser-app -p mouser-engine-wgpu -p mouser-engine-skia
   mkdir -p terminfo
   tic -x -o terminfo extra/mouser.terminfo
 }
@@ -55,6 +55,7 @@ check() {
 package() {
   cd "${_pkgname}"
   install -Dm755 target/release/mouser-app "${pkgdir}/usr/bin/mouser"
+  target/release/mouser-app engine bundle --from target/release --out "${pkgdir}/usr/lib/mouser/engines"
   install -Dm644 resources/linux/mouser.desktop "${pkgdir}/usr/share/applications/mouser.desktop"
   install -Dm644 resources/linux/io.github.m3talsmith.mouser.metainfo.xml \
     "${pkgdir}/usr/share/metainfo/io.github.m3talsmith.mouser.metainfo.xml"

@@ -20,6 +20,15 @@ Release workflow
   - Validates desktop integration on Linux: `desktop-file-validate` and `appstreamcli validate`
   - Publishes a GitHub Release with the CHANGELOG section for that version as notes and uploads all artifacts with checksums
 
+Engines in packages
+- Mouser's renderers are libraries (`mouser_engine_wgpu`, `mouser_engine_skia`); `cargo build --release` builds them next to `mouser-app`.
+- `mouser engine bundle --from target/<triple>/release --out DIR` copies them into `DIR/<name>/` with their `engine.toml` (`--from` defaults to the folder of the running mouser). The release workflow runs it once per target and ships the result:
+  - `.tar.gz`/`.zip`: `engines/` beside `mouser-app`
+  - `.deb`/`.rpm`/Arch: `/usr/lib/mouser/engines/`
+  - `Mouser.app`: `Contents/Resources/engines/`; Homebrew formula: `lib/mouser/engines/`
+  - Windows installer: `{app}\engines\`
+- Mouser looks in `engines/` beside itself, `../Resources/engines` (macOS) and `../lib/mouser/engines` (Unix); `MOUSER_ENGINE_DIRS` replaces those ([Engines](./engines.md)).
+
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.
 2. Bump versions (docs-only: PATCH; feature: MINOR), update `CHANGELOG.md`.
