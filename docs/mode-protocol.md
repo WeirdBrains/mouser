@@ -42,7 +42,18 @@ A bound key or a click arrives as a `ui.action` event, typing as `input.text`,
 switching modes as `mode.activated`/`mode.deactivated`, and the shell's folder
 as `shell.cwd_changed` (with `files.read`). An effect it isn't allowed shows a
 status message instead. Its emits come back to its own listeners. Host calls
-(`Request`) answer "not available yet" until the host services land.
+(`Request`) available so far:
+
+- `prefs.schema`, `prefs.get`, and `prefs.set` with `prefs.write`. Secrets
+  such as API keys never appear and can't be changed by a plugin.
+- `permissions.granted`.
+- Local files with `files.read`: `Read` (1 MiB per call, with offset and
+  length), `Stat` and `List`. Paths must be absolute, and the secrets
+  deny-list always applies.
+
+Others (remote files, changing files, spawn, the agent, fetch, approvals)
+answer "not available yet" for now. A plugin may still start its own
+processes.
 
 ## Writing a plugin in Rust
 
