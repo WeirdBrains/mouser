@@ -294,3 +294,37 @@ fn plugin_toml_engine_installs_through_the_plugin_cli() {
     assert_eq!(engines::chosen(), "flat");
     cli(Action::Uninstall("flat".into())).unwrap();
 }
+
+#[test]
+#[serial]
+fn v2_engines_negotiate_and_report_caps_and_v1_still_loads() {
+    let h = home();
+    let src = source_dir(&h);
+    cli(Action::Install(src.display().to_string())).unwrap();
+    let lib = mouser_render::engine::load_installed("flat").unwrap();
+    assert_eq!(lib.abi(), 2, "flat exports mouser_engine_v2");
+    let mut px = vec![0u32; 16 * 8];
+    let mut pixels = mouser_engine_abi::MouserPixels { data: px.as_mut_ptr(), width: 16, height: 8, stride: 16 };
+    let surface =
+        mouser_engine_abi::MouserSurface { kind: mouser_engine_abi::SURFACE_PIXELS, display: std::ptr::null_mut(), window: (&raw mut pixels).cast() };
+    let handle = lib.create_raw(&surface, 16, 8).unwrap();
+    // SAFETY: `handle` is live until destroy_raw below.
+    let caps = unsafe { lib.caps(handle) }.unwrap();
+    assert_ne!(caps.flags & mouser_engine_abi::CAP_PIXELS, 0, "{caps:?}");
+    assert_ne!(caps.formats & mouser_engine_abi::FORMAT_XRGB8888, 0);
+    // Optional calls the engine leaves out are no-ops.
+    unsafe {
+        lib.set_scale_raw(handle, 2.0);
+        lib.evict_raw(handle, 42);
+        lib.destroy_raw(handle);
+    }
+    drop(lib);
+
+    // An engine with only the v1 entry point loads as ABI 1.
+    unsafe { std::env::set_var("MOUSER_FLAT_V1_ONLY", "1") };
+    let lib = mouser_render::engine::load_installed("flat").unwrap();
+    unsafe { std::env::remove_var("MOUSER_FLAT_V1_ONLY") };
+    assert_eq!(lib.abi(), 1);
+    // SAFETY: v1 has no caps call, so the handle is never used.
+    assert!(unsafe { lib.caps(std::ptr::null_mut()) }.is_none(), "v1 has no caps call");
+}

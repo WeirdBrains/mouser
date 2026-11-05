@@ -223,40 +223,105 @@ pub fn create_default(window: &Arc<Window>, width: u32, height: u32) -> Result<B
     create_named("mouser", window, width, height)
 }
 
-/// A loaded custom engine library with a checked v1 table.
+/// A loaded custom engine library with a checked table: v2 when the library
+/// exports `mouser_engine_v2` (its `base` is the v1-shaped core), else v1.
 pub struct CustomLibrary {
     table: &'static abi::MouserEngineV1,
+    /// The v2 additions, when the engine speaks v2.
+    v2: Option<&'static abi::MouserEngineV2>,
+    /// The negotiated ABI (1 or 2).
+    abi: u32,
     name: String,
     // Keep last: the table points into the library.
     _lib: libloading::Library,
 }
 
 impl CustomLibrary {
-    /// Load a library and check its ABI.
+    /// Load a library and check its ABI (v2 first, then v1).
     pub fn load(path: &Path) -> Result<Self> {
         // SAFETY: loading runs the library's initialisers; installing an engine
         // means trusting it (docs/engines.md).
         let lib = unsafe { libloading::Library::new(path) }.map_err(|e| anyhow!("loading {}: {e}", path.display()))?;
         // SAFETY: the symbol's type is fixed by the ABI.
-        let entry: libloading::Symbol<'_, unsafe extern "C" fn() -> *const abi::MouserEngineV1> =
-            unsafe { lib.get(abi::ENTRY_SYMBOL) }.map_err(|_| anyhow!("{} has no mouser_engine_v1 symbol", path.display()))?;
-        // SAFETY: entry returns a pointer to static data in the library.
-        let ptr = unsafe { entry() };
-        let table = unsafe { ptr.as_ref() }.ok_or_else(|| anyhow!("mouser_engine_v1 returned null"))?;
-        // SAFETY: lives as long as `_lib`, which this struct owns.
-        let table: &'static abi::MouserEngineV1 = unsafe { &*(table as *const abi::MouserEngineV1) };
-        if table.abi != abi::MOUSER_ENGINE_ABI {
-            bail!("engine ABI {} is not supported (this Mouser speaks ABI {})", table.abi, abi::MOUSER_ENGINE_ABI);
-        }
-        if (table.size as usize) < std::mem::size_of::<abi::MouserEngineV1>() {
-            bail!("engine function table is too small ({} bytes)", table.size);
-        }
+        let v2: Option<&'static abi::MouserEngineV2> =
+            match unsafe { lib.get::<unsafe extern "C" fn() -> *const abi::MouserEngineV2>(abi::ENTRY_SYMBOL_V2) } {
+                // SAFETY: entry returns null or a pointer to static data that lives as long as `_lib`.
+                Ok(entry) => unsafe { entry().as_ref().map(|t| &*(t as *const abi::MouserEngineV2)) },
+                Err(_) => None,
+            };
+        let (table, v2, negotiated) = if let Some(t) = v2 {
+            let n = abi::negotiate(t.abi_min, t.abi_max).map_err(|e| anyhow!(e))?;
+            if t.base.abi != abi::MOUSER_ENGINE_ABI_V2 || (t.base.size as usize) < std::mem::size_of::<abi::MouserEngineV2>() {
+                bail!("engine v2 table is malformed (abi {}, {} bytes)", t.base.abi, t.base.size);
+            }
+            (&t.base, if n >= 2 { Some(t) } else { None }, n)
+        } else {
+            // SAFETY: the symbol's type is fixed by the ABI.
+            let entry: libloading::Symbol<'_, unsafe extern "C" fn() -> *const abi::MouserEngineV1> = unsafe { lib.get(abi::ENTRY_SYMBOL) }
+                .map_err(|_| anyhow!("{} has no mouser_engine_v2 or mouser_engine_v1 symbol", path.display()))?;
+            // SAFETY: entry returns a pointer to static data in the library.
+            let ptr = unsafe { entry() };
+            let table = unsafe { ptr.as_ref() }.ok_or_else(|| anyhow!("mouser_engine_v1 returned null"))?;
+            // SAFETY: lives as long as `_lib`, which this struct owns.
+            let table: &'static abi::MouserEngineV1 = unsafe { &*(table as *const abi::MouserEngineV1) };
+            if table.abi != abi::MOUSER_ENGINE_ABI {
+                bail!(
+                    "engine ABI {} is not supported (this Mouser speaks ABI {}-{})",
+                    table.abi,
+                    abi::MOUSER_ENGINE_ABI_MIN,
+                    abi::MOUSER_ENGINE_ABI_V2
+                );
+            }
+            if (table.size as usize) < std::mem::size_of::<abi::MouserEngineV1>() {
+                bail!("engine function table is too small ({} bytes)", table.size);
+            }
+            (table, None, abi::MOUSER_ENGINE_ABI)
+        };
         if table.name.is_null() {
             bail!("engine has no name");
         }
         // SAFETY: checked non-null; NUL-terminated by the ABI.
         let name = unsafe { CStr::from_ptr(table.name) }.to_string_lossy().into_owned();
-        Ok(Self { table, name, _lib: lib })
+        Ok(Self { table, v2, abi: negotiated, name, _lib: lib })
+    }
+
+    /// The negotiated ABI version (1 or 2).
+    pub fn abi(&self) -> u32 {
+        self.abi
+    }
+
+    /// The engine's capabilities (v2 with `caps`), for a created handle.
+    ///
+    /// # Safety
+    /// `handle` must come from [`Self::create_raw`] on this library and not be destroyed yet.
+    pub unsafe fn caps(&self, handle: *mut std::ffi::c_void) -> Option<abi::MouserCaps> {
+        let f = self.v2?.caps?;
+        let mut c = abi::MouserCaps { size: std::mem::size_of::<abi::MouserCaps>() as u32, ..Default::default() };
+        // SAFETY: handle from create_raw; `c` is valid for the call.
+        unsafe { f(handle, &mut c) };
+        Some(c)
+    }
+
+    /// Call the engine on `handle`.
+    ///
+    /// # Safety
+    /// `handle` must come from [`Self::create_raw`] on this library and not be destroyed yet.
+    pub unsafe fn set_scale_raw(&self, handle: *mut std::ffi::c_void, scale: f32) {
+        if let Some(f) = self.v2.and_then(|t| t.set_scale) {
+            // SAFETY: handle from create_raw.
+            unsafe { f(handle, scale) }
+        }
+    }
+
+    /// Call the engine on `handle`.
+    ///
+    /// # Safety
+    /// `handle` must come from [`Self::create_raw`] on this library and not be destroyed yet.
+    pub unsafe fn evict_raw(&self, handle: *mut std::ffi::c_void, key: u64) {
+        if let Some(f) = self.v2.and_then(|t| t.evict) {
+            // SAFETY: handle from create_raw.
+            unsafe { f(handle, key) }
+        }
     }
 
     pub fn name(&self) -> &str {
@@ -287,7 +352,11 @@ impl CustomLibrary {
         // SAFETY: handle from create_raw; frame valid for the call.
         unsafe { (self.table.draw)(handle, frame) }
     }
-    pub(crate) fn destroy_raw(&self, handle: *mut std::ffi::c_void) {
+    /// Call the engine on `handle`.
+    ///
+    /// # Safety
+    /// `handle` must come from [`Self::create_raw`] on this library and not be destroyed yet.
+    pub unsafe fn destroy_raw(&self, handle: *mut std::ffi::c_void) {
         // SAFETY: handle from create_raw, not used afterwards.
         unsafe { (self.table.destroy)(handle) }
     }
@@ -357,7 +426,7 @@ impl Engine for CustomEngine {
         self.lib.name()
     }
     fn description(&self) -> String {
-        format!("custom, ABI {}", self.lib.table.abi)
+        format!("custom, ABI {}", self.lib.abi())
     }
     fn resize(&mut self, width: u32, height: u32) {
         // SAFETY: valid handle.
