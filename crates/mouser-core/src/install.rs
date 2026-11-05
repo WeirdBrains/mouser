@@ -1355,7 +1355,18 @@ mod tests {
 
     #[test]
     fn the_shipped_lock_parses_and_the_official_key_is_pinned() {
-        let _ = lock();
+        let l: Lock = toml::from_str(include_str!("plugins.lock")).unwrap();
+        for (name, kind) in
+            [("commander", Kind::Plugin), ("chat", Kind::Plugin), ("preferences", Kind::Plugin), ("mouser", Kind::Engine), ("skia", Kind::Engine)]
+        {
+            let i = l.item.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("{name} in plugins.lock"));
+            assert_eq!(i.kind, kind);
+            for t in ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"] {
+                let a = &i.assets[t];
+                assert!(a.url.starts_with("https://github.com/WeirdBrains/") && a.sha256.len() == 64 && a.size > 0, "{name} {t}");
+                assert!(minisign_verify::Signature::decode(&a.minisig).is_ok(), "{name} {t}");
+            }
+        }
         let k = OFFICIAL_KEY.expect("the WeirdBrains key is pinned");
         assert!(minisign_verify::PublicKey::from_base64(k).is_ok());
     }

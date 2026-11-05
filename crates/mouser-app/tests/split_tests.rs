@@ -45,8 +45,11 @@ fn start_shell(home: tempfile::TempDir, script: &str, env: &[(&str, &str)]) -> S
     std::fs::write(home.path().join("ssh_config"), "").unwrap();
     let dump = home.path().join("dump.txt");
     let shipped = common::official_engines(&home.path().join("shipped"));
+    // No first-run downloads from the real plugins.lock in tests.
+    std::fs::write(home.path().join("empty.lock"), "").unwrap();
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mouser-app"));
     cmd.env("HOME", home.path())
+        .env("MOUSER_TEST_LOCK", home.path().join("empty.lock"))
         .env_remove("MOUSER_HOME")
         .env("MOUSER_ENGINE_DIRS", &shipped)
         .env("MOUSER_SSH_CONFIG", home.path().join("ssh_config"))
