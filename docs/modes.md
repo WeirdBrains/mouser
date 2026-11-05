@@ -111,7 +111,7 @@ buttons; a search field filters the folder as you type.
 | ← / → | previous / next item | previous / next tile | previous / next item |
 | PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
 | Home / End | first / last | first / last | first / last |
-| p, Backspace | back: parent folder (`cd ..`); in the file view / player it closes the view | same | same |
+| p, Backspace | back: where you came from (like `popd`), else the parent folder; in the file view / player it closes the view | same | same |
 | Enter | open: a folder is `cd`'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files) | same | same |
 | q (or Esc) | close the file view / window | same | same |
 | s | search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it | same | same |
@@ -121,6 +121,14 @@ buttons; a search field filters the folder as you type.
 | z / x | | larger / smaller tiles | |
 | a | dotfiles on/off (`ls -a`) | same | same |
 | o / m | options window / manual | same | same |
+
+Back works like `popd`, inside commander (it never runs `pushd`/`popd`). Entering a
+folder or opening a file pushes where you were onto a navigation stack: the path as
+you saw it (a symlink stays a symlink), the selection and the scroll. Back pops it
+and puts you exactly there again. With nothing on the stack (after a `cd` you typed,
+a breadcrumb jump, or at startup) back goes to the parent of the path you see, not
+of the resolved one, so leaving a symlinked folder never lands in its target's real
+parent. Remote (SSH) folders work the same way.
 
 **Player.** Video and audio open in commander's own player (MODES.md: "a player will
 appear"). Video frames are decoded by `ffmpeg` to RGBA, fitted to the view's width and

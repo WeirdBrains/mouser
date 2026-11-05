@@ -1755,12 +1755,19 @@ impl Mode for CommanderMode {
                 for _ in 0..arg.max(0) {
                     d = d.and_then(|d| d.parent().map(Path::to_path_buf));
                 }
-                return d.map_or(Effect::None, Effect::Cd);
+                return match d {
+                    Some(d) => match self.c.jump(d) {
+                        cmdr::Effect::Cd(p) => Effect::Cd(p),
+                        _ => Effect::None,
+                    },
+                    None => Effect::None,
+                };
             }
             // In the file view (and the player) back closes the view first.
             "parent" | "back" if previewing => {
                 self.fullscreen = false;
                 self.c.overlay = None;
+                self.c.close_file();
                 return Effect::None;
             }
             "scroll" => {

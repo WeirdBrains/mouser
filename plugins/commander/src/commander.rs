@@ -473,8 +473,24 @@ pub enum Effect {
     Run(String),
 }
 
+/// A place on the navigation stack: the folder as the user saw it (the
+/// logical path, symlinks kept), with the selection and scroll there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Place {
+    pub path: PathBuf,
+    pub selected: usize,
+    pub selected_name: Option<String>,
+    pub scroll: usize,
+}
+
 #[derive(Debug, Default)]
 pub struct Commander {
+    /// pushd/popd-style history: entering a folder or file pushes where you
+    /// were; back pops it and restores it exactly (docs/usage.md).
+    pub nav: Vec<Place>,
+    /// Where a `cd` this mode asked for is going (logical path), and the
+    /// place to restore when it arrives (back).
+    pending: Option<(PathBuf, Option<Place>)>,
     pub view: View,
     /// Index into [`TILE_SIZES`].
     pub tile: usize,
@@ -526,6 +542,7 @@ impl Commander {
     /// Follow the shell to `dir`; re-list when it, its mtime or the flags change.
     pub fn set_cwd(&mut self, dir: Option<PathBuf>) {
         let Some(dir) = dir else { return };
+        let dir = self.logical(dir, false);
         let mtime = std::fs::metadata(&dir).and_then(|m| m.modified()).ok();
         let stamp = (dir.clone(), mtime, self.flags);
         if self.remote.is_some() {
@@ -567,7 +584,93 @@ impl Commander {
             None if self.cwd.as_ref() == Some(&dir) && self.error.is_none() && !label_changed => return,
             None => Ok(Vec::new()),
         };
+        let dir = self.logical(dir, true);
         self.load(dir, listing);
+    }
+
+    /// The folder the shell reports, as the user sees it. A `cd` this mode
+    /// asked for keeps its logical path (a symlink stays a symlink) even when
+    /// the shell reports the resolved one; the same folder reported again keeps
+    /// the current logical path; anywhere else (a typed `cd`) starts a new
+    /// history.
+    fn logical(&mut self, reported: PathBuf, remote: bool) -> PathBuf {
+        let same =
+            |a: &Path, b: &Path| a == b || (!remote && std::fs::canonicalize(a).ok().is_some_and(|x| std::fs::canonicalize(b).ok() == Some(x)));
+        if let Some((want, _)) = &self.pending {
+            if same(want, &reported) {
+                return want.clone();
+            }
+            // Still on the old folder (the cd hasn't landed yet).
+            if self.cwd.as_ref().is_some_and(|c| same(c, &reported)) {
+                return self.cwd.clone().unwrap_or(reported);
+            }
+            self.pending = None;
+        }
+        if let Some(c) = &self.cwd
+            && same(c, &reported)
+        {
+            return c.clone();
+        }
+        if self.cwd.is_some() {
+            self.nav.clear();
+        }
+        reported
+    }
+
+    fn here(&self) -> Option<Place> {
+        let path = self.cwd.clone()?;
+        Some(Place { path, selected: self.selected, selected_name: self.selected_entry().map(|e| e.name.clone()), scroll: self.scroll })
+    }
+
+    /// `cd` to `dir` (logical) from this mode, remembering the place to restore.
+    fn go(&mut self, dir: PathBuf, restore: Option<Place>) -> Effect {
+        self.pending = Some((dir.clone(), restore));
+        Effect::Cd(dir)
+    }
+
+    /// Back: pop the stack (the exact place you came from), else the parent of
+    /// the logical path. The file view closes first (see the view).
+    pub fn back(&mut self) -> Effect {
+        if let Some(p) = self.nav.pop() {
+            if self.cwd.as_ref() == Some(&p.path) {
+                // Leaving a file: same folder, restore the selection.
+                self.restore(&p);
+                return Effect::None;
+            }
+            let path = p.path.clone();
+            return self.go(path, Some(p));
+        }
+        match self.cwd.as_ref().and_then(|d| d.parent()) {
+            Some(p) => {
+                let p = p.to_path_buf();
+                self.go(p, None)
+            }
+            None => Effect::None,
+        }
+    }
+
+    /// The file view closed by back: drop the place its opening pushed (the
+    /// same folder) and restore the selection there.
+    pub fn close_file(&mut self) {
+        if let Some(p) = self.nav.last().cloned()
+            && self.cwd.as_ref() == Some(&p.path)
+        {
+            self.nav.pop();
+            self.restore(&p);
+        }
+    }
+
+    /// A jump that isn't a step (a path typed in the breadcrumb, a search
+    /// result, a bookmark): a new history.
+    pub fn jump(&mut self, dir: PathBuf) -> Effect {
+        self.nav.clear();
+        self.go(dir, None)
+    }
+
+    fn restore(&mut self, p: &Place) {
+        self.selected = p.selected_name.as_ref().and_then(|n| self.visible().iter().position(|e| &e.name == n)).unwrap_or(p.selected);
+        self.scroll = p.scroll;
+        self.clamp();
     }
 
     /// List again after the flags changed (local: re-read; remote: re-sort).
@@ -612,8 +715,12 @@ impl Commander {
         {
             self.selected = i;
         }
+        let arrived = self.pending.as_ref().is_some_and(|(w, _)| *w == dir);
         self.cwd = Some(dir);
         self.clamp();
+        if arrived && let Some((_, Some(p))) = self.pending.take() {
+            self.restore(&p);
+        }
     }
 
     /// Entries matching the search (case-insensitive substring).
@@ -737,11 +844,7 @@ impl Commander {
             Action::PageDown => self.selected = (self.selected + self.page.max(1)).min(n.saturating_sub(1)),
             Action::First => self.selected = 0,
             Action::Last => self.selected = n.saturating_sub(1),
-            Action::Parent => {
-                if let Some(p) = self.cwd.as_ref().and_then(|d| d.parent()) {
-                    return Effect::Cd(p.to_path_buf());
-                }
-            }
+            Action::Parent => return self.back(),
             Action::Close => {
                 self.overlay = None;
                 self.piping = false;
@@ -775,8 +878,10 @@ impl Commander {
 
     pub fn open_selected(&mut self) -> Effect {
         let Some(e) = self.selected_entry().cloned() else { return Effect::None };
+        let here = self.here();
+        self.nav.extend(here);
         match e.kind {
-            Kind::Dir => Effect::Cd(e.path),
+            Kind::Dir => self.go(e.path, None),
             // Remote files open like local ones (fetched by `fetch`).
             Kind::Video | Kind::Audio => Effect::External(e.path),
             _ => {
@@ -878,7 +983,7 @@ pub fn text_preview(p: &Path) -> (Vec<String>, Option<String>) {
 mod tests {
     use super::*;
 
-    fn tree() -> tempfile::TempDir {
+    pub(super) fn tree() -> tempfile::TempDir {
         let t = tempfile::tempdir().unwrap();
         std::fs::create_dir(t.path().join("sub")).unwrap();
         std::fs::write(t.path().join("b.png"), b"x").unwrap();
@@ -1118,6 +1223,95 @@ mod remote_tests {
             size: 1,
             modified: None,
         }
+    }
+
+    /// The shell reports where a `cd` landed; the tests pass the resolved path
+    /// as a shell reading /proc would.
+    fn land(c: &mut Commander, e: &Effect) {
+        if let Effect::Cd(p) = e {
+            c.set_cwd(Some(std::fs::canonicalize(p).unwrap()));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_round_trip_comes_back_to_the_link_not_the_targets_parent() {
+        let t = tests::tree();
+        let real = t.path().join("deep/real/target");
+        std::fs::create_dir_all(&real).unwrap();
+        for n in ["x1", "x2", "x3", "x4"] {
+            std::fs::write(real.join(n), b"").unwrap();
+        }
+        std::os::unix::fs::symlink(&real, t.path().join("sub/link")).unwrap();
+        let sub = std::fs::canonicalize(t.path().join("sub")).unwrap();
+        let mut c = Commander::new();
+        c.set_cwd(Some(sub.clone()));
+        c.selected = c.visible().iter().position(|e| e.name == "link").unwrap();
+        let go = c.open_selected();
+        assert_eq!(go, Effect::Cd(sub.join("link")));
+        land(&mut c, &go);
+        // Inside the link: the logical path, not the target's.
+        assert_eq!(c.cwd.as_deref(), Some(sub.join("link").as_path()));
+        // Open a file there, back out of it, then back to sub.
+        c.selected = 2;
+        c.scroll = 1;
+        c.open_selected();
+        c.close_file();
+        assert_eq!((c.selected, c.scroll), (2, 1));
+        let back = c.apply(Action::Parent, 1);
+        assert_eq!(back, Effect::Cd(sub.clone()), "never the target's real parent");
+        land(&mut c, &back);
+        assert_eq!(c.cwd.as_deref(), Some(sub.as_path()));
+        assert_eq!(c.selected_entry().unwrap().name, "link");
+        assert!(c.nav.is_empty());
+        // With an empty stack, back from the link goes to the link's parent.
+        let mut d = Commander::new();
+        d.set_cwd(Some(sub.join("link")));
+        assert_eq!(d.apply(Action::Parent, 1), Effect::Cd(sub.clone()));
+        assert_ne!(d.apply(Action::Parent, 1), Effect::Cd(real.parent().unwrap().to_path_buf()));
+    }
+
+    #[test]
+    fn back_restores_the_selection_and_scroll_and_a_typed_cd_starts_over() {
+        let t = tests::tree();
+        let root = std::fs::canonicalize(t.path()).unwrap();
+        std::fs::create_dir(root.join("sub/inner")).unwrap();
+        let mut c = Commander::new();
+        c.set_cwd(Some(root.clone()));
+        c.selected = c.visible().iter().position(|e| e.name == "sub").unwrap();
+        c.scroll = 2;
+        let (sel, sc) = (c.selected, c.scroll);
+        let go = c.open_selected();
+        land(&mut c, &go);
+        let go = c.open_selected(); // sub/inner
+        land(&mut c, &go);
+        assert_eq!(c.nav.len(), 2);
+        let b = c.apply(Action::Parent, 1);
+        land(&mut c, &b);
+        let b = c.apply(Action::Parent, 1);
+        land(&mut c, &b);
+        assert_eq!((c.cwd.as_deref(), c.selected, c.scroll), (Some(root.as_path()), sel, sc));
+        // A cd typed in the shell (or a breadcrumb jump) is a new history.
+        let go = c.open_selected();
+        land(&mut c, &go);
+        c.set_cwd(Some(root.join("sub/inner")));
+        assert!(c.nav.is_empty());
+        assert_eq!(c.apply(Action::Parent, 1), Effect::Cd(root.join("sub")));
+        assert_eq!(c.jump(root.clone()), Effect::Cd(root.clone()));
+        assert!(c.nav.is_empty());
+    }
+
+    #[test]
+    fn remote_folders_use_the_same_stack() {
+        let mut c = Commander::new();
+        c.set_remote("me@web1".into(), Some("/srv".into()), Some(Ok(vec![e("b.png", false), e("app", true)])));
+        c.selected = c.visible().iter().position(|e| e.name == "app").unwrap();
+        let sel = c.selected;
+        assert_eq!(c.open_selected(), Effect::Cd("/srv/app".into()));
+        c.set_remote("me@web1".into(), Some("/srv/app".into()), Some(Ok(vec![])));
+        assert_eq!(c.apply(Action::Parent, 1), Effect::Cd("/srv".into()));
+        c.set_remote("me@web1".into(), Some("/srv".into()), Some(Ok(vec![e("b.png", false), e("app", true)])));
+        assert_eq!((c.selected, c.nav.len()), (sel, 0));
     }
 
     #[test]
