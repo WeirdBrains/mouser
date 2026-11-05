@@ -4,7 +4,9 @@
 //! MOUSER_HOME.
 
 use mouser_core::plugins::{self, Registry};
-use mouser_render::modes::{Host, Mode};
+use mouser_render::modes::Host;
+#[cfg(unix)]
+use mouser_render::modes::Mode;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use {
