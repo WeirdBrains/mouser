@@ -65,6 +65,19 @@ pub struct Preferences {
     /// `[plugins]`: how plugins are supervised (docs/mode-protocol.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugins: Option<PluginsPrefs>,
+    /// `[audio]`: where the player's sound goes (docs/preferences.md §Audio).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioPrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AudioPrefs {
+    /// `auto` (JACK when a server answers, else ALSA), `jack` or `alsa`; Linux only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// A device name of that host; unset = the host's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

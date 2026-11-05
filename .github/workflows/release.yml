@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev spirv-headers patchelf desktop-file-utils appstream libxml2-utils
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libjack-jackd2-dev pkg-config cmake clang libclang-dev libvulkan-dev spirv-headers patchelf desktop-file-utils appstream libxml2-utils
 
       # Linux builds on Ubuntu 22.04 (glibc 2.35) so the binary runs on older
       # distributions. 22.04 has no glslc package and old Vulkan headers, so
@@ -69,7 +69,8 @@ jobs:
           "$sdk/bin/glslc" --version
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        # Linux builds carry JACK output (libjack is loaded at run time).
+        run: cargo build --release --target ${{ matrix.target }} ${{ runner.os == 'Linux' && '--features mouser-app/jack,mouser-commander/jack' || '' }}
 
       - name: Sign binaries (macOS, Windows; skipped without the signing secrets)
         if: runner.os != 'Linux'

@@ -2,6 +2,7 @@
 
 ### Added
 
+- Preferences → Audio: `audio.host` (auto, jack, alsa on Linux; auto tries JACK first, PipeWire's JACK included, else ALSA), `audio.output_device` (a dropdown of that host's devices, default = the system default; a missing device falls back to the default with a notice) and the active host. JACK is the optional `jack` feature with libjack loaded at run time; the official Linux builds and CI include it. The player's status shows the host playing. See docs/preferences.md §Audio.
 - Commander: back works like `popd`. Entering a folder or file pushes where you were (the path as you saw it, symlinks kept, with the selection and scroll); back restores it exactly. With an empty stack back goes to the parent of the logical path, never a symlink target's real parent. Remote folders too. See docs/modes.md.
 - `plugins.lock` pins the first signed releases of the official plugins and engines (commander, chat, preferences 0.1.0; engines `mouser` and `skia` 0.1.0) from their own WeirdBrains repos, so `mouser plugin install commander` and first run fetch and verify them. See docs/downloads.md.
 - The official WeirdBrains minisign key (`61BA1720747F9146`) is pinned: `plugins.lock` items must verify against it, and Mouser's release files are minisigned with it. See docs/downloads.md.

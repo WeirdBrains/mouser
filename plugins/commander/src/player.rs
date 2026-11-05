@@ -225,10 +225,14 @@ struct Shared {
 const GATE_MAX: Duration = Duration::from_secs(3);
 
 /// Output device format.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Out {
     rate: u32,
     channels: u16,
+    /// The cpal host playing (JACK, ALSA, CoreAudio, WASAPI).
+    host: &'static str,
+    /// Set when the chosen device was gone and the default plays instead.
+    notice: Option<String>,
 }
 
 pub struct Player {
@@ -298,7 +302,11 @@ impl Player {
         }
         if p.info.audio {
             match start_output(p.s.clone()) {
-                Ok(o) => p.out = Some(o),
+                Ok(o) => {
+                    // The chosen device was gone: say so, the default plays.
+                    p.error = o.notice.clone();
+                    p.out = Some(o)
+                }
                 Err(e) => p.error = Some(format!("audio output: {e} (playing without sound)")),
             }
         }
@@ -307,13 +315,18 @@ impl Player {
         p
     }
 
+    /// The audio host playing the sound (shown beside play/pause), if any.
+    pub fn audio_host(&self) -> Option<&'static str> {
+        self.out.as_ref().map(|o| o.host)
+    }
+
     pub fn playing(&self) -> bool {
         !self.s.paused.load(Ordering::Relaxed)
     }
 
     /// The master clock.
     pub fn position(&self) -> f64 {
-        let t = match self.out {
+        let t = match &self.out {
             Some(o) => {
                 let lat = self.s.latency_ns.load(Ordering::Relaxed) as f64 / 1e9;
                 let total = self.s.consumed.load(Ordering::Relaxed);
@@ -417,7 +430,7 @@ impl Player {
                 Err(e) => self.error = Some(format!("ffmpeg: {e}")),
             }
         }
-        if let Some(o) = self.out {
+        if let Some(o) = &self.out {
             let child = crate::process::command("ffmpeg")
                 .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-ss", &ss, "-i"])
                 .arg(&self.input)
@@ -576,14 +589,15 @@ fn fill(data: &mut [f32], ch: usize, s: &Shared) -> u64 {
     (n / ch) as u64
 }
 
-/// Open the default output device on its own thread (cpal streams are not
+/// Open the output device (`[audio]`, else the default) on its own thread (cpal streams are not
 /// `Send` everywhere); it lives until the player closes.
 fn start_output(s: Arc<Shared>) -> Result<Out, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use cpal::traits::{DeviceTrait, StreamTrait};
         let r = (|| {
-            let dev = cpal::default_host().default_output_device().ok_or("no output device")?;
+            let (h, d) = crate::storage::audio_prefs();
+            let (dev, host, notice) = crate::audio::open(h.as_deref(), d.as_deref())?;
             let def = dev.default_output_config().map_err(|e| e.to_string())?;
             let cfg = cpal::StreamConfig { channels: def.channels().min(2), sample_rate: def.sample_rate(), buffer_size: cpal::BufferSize::Default };
             let ch = cfg.channels as usize;
@@ -608,7 +622,7 @@ fn start_output(s: Arc<Shared>) -> Result<Out, String> {
                 )
                 .map_err(|e| e.to_string())?;
             stream.play().map_err(|e| e.to_string())?;
-            Ok::<_, String>((stream, Out { rate: cfg.sample_rate.0, channels: cfg.channels }))
+            Ok::<_, String>((stream, Out { rate: cfg.sample_rate.0, channels: cfg.channels, host, notice }))
         })();
         match r {
             Ok((stream, out)) => {

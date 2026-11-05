@@ -23,6 +23,10 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 time.workspace = true
 
+[features]
+# JACK output (docs/preferences.md §Audio); needs the JACK headers to build.
+jack = ["cpal/jack"]
+
 [dev-dependencies]
 mouser-core = { path = "../../crates/mouser-core" }
 mouser-render = { path = "../../crates/mouser-render" }

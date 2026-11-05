@@ -49,3 +49,29 @@ It reads and writes through Mouser's `prefs.*` calls, so Mouser still does the
 validation and the comment-keeping write. For a secret, Enter makes Mouser
 show its own key popup. The key you type goes from that popup to the keychain,
 and the plugin only hears that it was saved.
+
+## Audio
+
+Where the player's sound goes (`[audio]` in preferences.toml; applies to the next
+clip you open).
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `audio.host` | `auto`, `jack`, `alsa` (Linux); `auto` elsewhere | `auto` |
+| `audio.output_device` | `default` or a device of that host (the dropdown lists them) | `default` |
+| Active host | read-only: the host `audio.host` resolves to right now | |
+
+- **auto** uses JACK when a JACK server answers (PipeWire's JACK, `pipewire-jack`,
+  counts), else ALSA. macOS always uses CoreAudio and Windows WASAPI.
+- **jack** also falls back to ALSA when no JACK server is reachable, so sound never
+  just stops.
+- A device that is gone (unplugged, renamed) falls back to the host's default; the
+  player says `audio device "NAME" not found; using the default`. The player's status
+  shows the host playing, e.g. `playing · JACK`.
+- **Building with JACK.** JACK is the optional `jack` cargo feature
+  (`--features mouser-app/jack,mouser-commander/jack`); building it needs the JACK
+  headers and `jack.pc` (Debian/Ubuntu `libjack-jackd2-dev`, Arch `pipewire-jack` or
+  `jack2`). libjack itself is loaded at run time, so a JACK build still starts and
+  plays through ALSA on a machine without it. The official Linux builds include it.
+  Without the feature, `jack` plays through ALSA and Active host says
+  `ALSA (JACK not in this build)`.

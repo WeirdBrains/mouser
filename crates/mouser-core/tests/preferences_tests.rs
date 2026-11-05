@@ -27,6 +27,7 @@ fn preferences_round_trip_including_sidebar() {
         chat: None,
         keys: None,
         plugins: None,
+        audio: Some(mouser_core::storage::AudioPrefs { host: Some("alsa".into()), output_device: Some("pipewire".into()) }),
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();

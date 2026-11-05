@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod appearance;
+pub mod audio;
 pub mod commander;
 pub mod compression;
 pub mod connections;
