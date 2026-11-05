@@ -25,6 +25,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "..\..\target\x86_64-pc-windows-msvc\release\mouser.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\target\x86_64-pc-windows-msvc\release\engines\*"; DestDir: "{app}\engines"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\Mouser"; Filename: "{app}\{#MyAppExeName}"

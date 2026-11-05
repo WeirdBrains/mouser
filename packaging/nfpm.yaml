@@ -27,6 +27,9 @@ contents:
     type: file
     file_info:
       mode: 0755
+  - src: ${ENGINES_PATH}
+    dst: /usr/lib/mouser/engines
+    type: tree
   - src: resources/linux/mouser.desktop
     dst: /usr/share/applications/mouser.desktop
   - src: resources/icons/hicolor

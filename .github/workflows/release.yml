@@ -65,12 +65,15 @@ jobs:
           if [ "${{ runner.os }}" != "Windows" ]; then
             install -Dm755 "$OUTDIR/${NAME}-app" "$OUTDIR/mouser"
           fi
+          # Mouser's engines ship beside it in engines/<name>/ (docs/release.md).
+          rm -rf "$OUTDIR/engines"
+          "$OUTDIR/${NAME}-app" engine bundle --from "$OUTDIR" --out "$OUTDIR/engines"
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             ART=${NAME}-${{ matrix.target }}.zip
-            7z a "$ART" "$OUTDIR/${NAME}-app.exe"
+            (cd "$OUTDIR" && 7z a "$GITHUB_WORKSPACE/$ART" "${NAME}-app.exe" engines)
           else
             ART=${NAME}-${{ matrix.target }}.tar.gz
-            tar -C "$OUTDIR" -czf "$ART" "${NAME}-app"
+            tar -C "$OUTDIR" -czf "$ART" "${NAME}-app" engines
           fi
           echo "ARTIFACT=$ART" >> $GITHUB_ENV
 
@@ -105,7 +108,8 @@ jobs:
           mkdir -p dist
           # render nfpm config with concrete paths and version
           # Replace literal tokens ${BINARY_PATH} and ${VERSION} without triggering shell expansion
-          sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${VERSION}|'$VER'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
+          ENGPATH="target/x86_64-unknown-linux-gnu/release/engines"
+          sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${ENGINES_PATH}|'$ENGPATH'|g' -e 's|${VERSION}|'$VER'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
           nfpm package --packager deb --config packaging/nfpm.gen.yaml --target "dist/mouser_${VER}_amd64.deb"
           nfpm package --packager rpm --config packaging/nfpm.gen.yaml --target "dist/mouser-${VER}-1.x86_64.rpm"
           # Arch package via container, from packaging/arch/mouser-bin/PKGBUILD with
@@ -154,6 +158,7 @@ jobs:
           mkdir -p "$APPDIR/MacOS" "$APPDIR/Resources"
           install -Dm755 "target/${{ matrix.target }}/release/mouser-app" "$APPDIR/MacOS/mouser"
           cp resources/macos/mouser.icns "$APPDIR/Resources/mouser.icns"
+          cp -R "target/${{ matrix.target }}/release/engines" "$APPDIR/Resources/engines"
           cat > "$APPDIR/Info.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -283,6 +288,7 @@ jobs:
             end
             def install
               bin.install "mouser-app" => "mouser"
+              (lib/"mouser").install "engines"
             end
           end
           RUBY

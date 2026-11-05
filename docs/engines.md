@@ -282,7 +282,9 @@ removed).
 
 Besides `$MOUSER_HOME/engines/<name>/` (what `mouser engine install` writes),
 Mouser finds engines shipped with it in `engines/<name>/` beside its
-executable (and `../Resources/engines` in a macOS app), each with an
+executable (and `../Resources/engines` in a macOS app, `../lib/mouser/engines` on
+Unix, as in `/usr/lib/mouser/engines`; `mouser engine bundle` builds that folder, see
+[Releases](./release.md)), each with an
 `engine.toml` and the library. `engines::stage(lib, out)` writes that layout
 for Mouser's own libraries (`mouser_engine_wgpu` as `mouser`,
 `mouser_engine_skia` as `skia`). A development build also finds those

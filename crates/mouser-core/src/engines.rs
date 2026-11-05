@@ -81,8 +81,9 @@ impl Installed {
 }
 
 /// Where Mouser's own engines are, after the user's `$MOUSER_HOME/engines`:
-/// `engines/` beside the executable (and `../Resources/engines` in a macOS
-/// app). `MOUSER_ENGINE_DIRS` (a path list) replaces them, for packagers and
+/// `engines/` beside the executable, `../Resources/engines` in a macOS app,
+/// and `../lib/mouser/engines` on Unix (a `/usr/bin/mouser` package ships
+/// them in `/usr/lib/mouser/engines`; Homebrew in its `lib/mouser/engines`). `MOUSER_ENGINE_DIRS` (a path list) replaces them, for packagers and
 /// tests; set it empty for none.
 pub fn bundled_roots() -> Vec<PathBuf> {
     if let Some(list) = std::env::var_os("MOUSER_ENGINE_DIRS") {
@@ -93,6 +94,9 @@ pub fn bundled_roots() -> Vec<PathBuf> {
         v.push(exe.join("engines"));
         if cfg!(target_os = "macos") {
             v.push(exe.join("../Resources/engines"));
+        }
+        if cfg!(unix) {
+            v.push(exe.join("../lib/mouser/engines"));
         }
     }
     v
@@ -147,6 +151,19 @@ pub fn stage(lib: &Path, out: &Path) -> Result<Installed> {
     fs::copy(lib, d.join(&m.library)).with_context(|| format!("copying {}", lib.display()))?;
     fs::write(d.join("engine.toml"), toml::to_string_pretty(&m)?)?;
     Ok(Installed { manifest: m, dir: d, bundled: true })
+}
+
+/// `mouser engine bundle`: stage every official engine library found in
+/// `from` (a `cargo build` output folder) into `out/<name>/`. At least one
+/// must be there.
+pub fn bundle(from: &Path, out: &Path) -> Result<Vec<Installed>> {
+    let v: Vec<Installed> =
+        OFFICIAL.iter().map(|(stem, ..)| from.join(lib_file(stem))).filter(|l| l.is_file()).map(|l| stage(&l, out)).collect::<Result<_>>()?;
+    if v.is_empty() {
+        let want: Vec<String> = OFFICIAL.iter().map(|(s, ..)| lib_file(s)).collect();
+        bail!("no engine libraries in {} (looked for {})", from.display(), want.join(", "));
+    }
+    Ok(v)
 }
 
 fn scan(root: &Path, bundled: bool, out: &mut Vec<std::result::Result<Installed, (String, String)>>) {
@@ -631,6 +648,11 @@ mod tests {
         assert!(fs::read_to_string(out.join("skia/engine.toml")).unwrap().contains("abi = 2"), "{m:?}");
         assert!(out.join("skia").join(lib_file("mouser_engine_skia")).is_file());
         assert!(stage(&t.path().join("libother.so"), &out).is_err());
+        let b = t.path().join("bundle-out");
+        assert!(bundle(&t.path().join("nowhere"), &b).is_err());
+        let got = bundle(t.path(), &b).unwrap();
+        assert_eq!(got.len(), 1);
+        assert!(b.join("skia/engine.toml").is_file());
     }
 
     #[test]
