@@ -242,10 +242,11 @@ jobs:
       # RemoteFileSigLevel = Required) refuses the package without an OpenPGP
       # detached signature by a key the user trusts. That is not our minisign
       # signature (.minisig): a different format pacman cannot read. With an
-      # Arch signing key in the secrets, the package gets its .sig; without,
-      # it ships unsigned and the documented install is download-then-install
-      # (docs/release.md §Arch).
-      - name: OpenPGP-sign the Arch package (skipped without ARCH_GPG_PRIVATE_KEY)
+      # Arch signing key in the secrets (public half in
+      # packaging/arch/weirdbrains-mouser.asc), the package gets its .sig. A tag
+      # build without the key fails; a dry run just skips (docs/release.md §Arch
+      # signatures).
+      - name: OpenPGP-sign the Arch package
         if: runner.os == 'Linux'
         shell: bash
         env:
@@ -253,14 +254,22 @@ jobs:
           ARCH_GPG_PASSPHRASE: ${{ secrets.ARCH_GPG_PASSPHRASE }}
         run: |
           set -eu
-          if [ -z "${ARCH_GPG_PRIVATE_KEY}" ]; then echo "::notice::ARCH_GPG_PRIVATE_KEY not set; the Arch package has no .sig (pacman -U needs a local file)"; exit 0; fi
+          if [ -z "${ARCH_GPG_PRIVATE_KEY}" ]; then
+            case "$GITHUB_REF" in refs/tags/*) echo "::error::ARCH_GPG_PRIVATE_KEY not set; a release needs the Arch .sig"; exit 1;; esac
+            echo "::notice::ARCH_GPG_PRIVATE_KEY not set; the Arch package has no .sig"; exit 0
+          fi
           export GNUPGHOME="$RUNNER_TEMP/gnupg" && mkdir -m 700 -p "$GNUPGHOME"
           echo "$ARCH_GPG_PRIVATE_KEY" | gpg --batch --import
           for f in dist/*.pkg.tar.zst; do
             gpg --batch --pinentry-mode loopback --passphrase "${ARCH_GPG_PASSPHRASE:-}" --detach-sign --no-armor -o "$f.sig" "$f"
-            gpg --batch --verify "$f.sig" "$f"
           done
           rm -rf "$GNUPGHOME"
+          # Verify against the published key only (packaging/arch/weirdbrains-mouser.asc),
+          # so a secret that doesn't match what users trust fails the release.
+          PUB="$RUNNER_TEMP/pub.gpg"
+          gpg --batch --dearmor -o "$PUB" packaging/arch/weirdbrains-mouser.asc
+          for f in dist/*.pkg.tar.zst; do gpgv --keyring "$PUB" "$f.sig" "$f"; done
+          rm -f "$PUB"
       - name: Upload Linux packages
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -414,6 +423,8 @@ jobs:
           # One file per name (artifacts can be downloaded twice).
           mkdir -p upload
           find dist -type f -exec cp -n {} upload/ \;
+          # The OpenPGP key pacman needs for the .pkg.tar.zst.sig (docs/release.md §Arch signatures).
+          if ls upload/*.pkg.tar.zst.sig >/dev/null 2>&1; then cp packaging/arch/weirdbrains-mouser.asc upload/; fi
           gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md upload/*
 
       - name: Generate Homebrew formula and cask and push to repo
