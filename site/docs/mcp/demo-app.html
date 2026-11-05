@@ -10,56 +10,85 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/" aria-current=page>MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status draft">Draft: this walkthrough is a draft. The demo&#x27;s repository isn&#x27;t public yet, so the repo link and screenshots below are TODOs.</p><h1 id="demo-app-a-flutter-client-for-mousers-mcp-server">Demo app: a Flutter client for Mouser's MCP server</h1>
-<p>The Mouser MCP demo is a Flutter app that talks to <a href="mcp.html">Mouser's MCP server</a>
-and exercises every tool it offers. It's a worked example of integrating with
-the server from your own app.</p>
+<main id="main"><section class="light doc"><p class="status draft">Draft: this walkthrough is a draft. Screenshots and clips are still TODOs.</p><h1 id="demo-app-a-flutter-client-for-mousers-mcp-server">Demo app: a Flutter client for Mouser's MCP server</h1>
+<p><a href="https://github.com/WeirdBrains/mouser_mcp_demo">mouser_mcp_demo</a> is a Flutter
+desktop app that talks to <a href="mcp.html">Mouser's MCP server</a>: connect, list the
+tools, call any tool from a form generated from its input schema, and follow a
+curated Demo page. Its MCP client (<code>lib/mcp/mcp_client.dart</code>) is plain Dart
+with no extra packages, so it's a good template for your own integration.</p>
 <blockquote>
-<p><strong>TODO:</strong> link to the public repository once it's published.</p>
-<p><strong>TODO:</strong> screenshots of the Connect, Protocol, Tools and Demo pages.</p>
+<p><strong>TODO:</strong> screenshots of the Connect, Protocol, Tools and Demo pages, and a
+short clip of the Demo page.</p>
 </blockquote>
 <h2 id="what-it-covers">What it covers</h2>
 <ul>
-<li><strong>Tools only.</strong> The app uses MCP's <code>initialize</code>, <code>ping</code>, <code>tools/list</code> and
-  <code>tools/call</code>. It doesn't use resources or prompts.</li>
-<li><strong>Transports.</strong> HTTP with MCP sessions, HTTPS with either a pinned
-  certificate or a CA, and stdio through <code>mouser mcp serve --stdio</code>.</li>
+<li><strong>Tools only.</strong> <code>initialize</code>, <code>ping</code>, <code>tools/list</code> and <code>tools/call</code>. Mouser
+  only advertises <code>tools</code>, and answers <code>-32601</code> to resources, prompts, logging
+  and completion; the Protocol page probes those to show it.</li>
+<li><strong>Transports.</strong> Streamable HTTP with a session, HTTPS with a CA file or a
+  pinned SHA-256, and stdio through <code>mouser mcp serve --stdio</code>.</li>
 <li><strong>All 11 tools:</strong> <code>tabs_list</code>, <code>screen_read</code>, <code>scrollback_read</code>,
   <code>shell_type</code>, <code>shell_run</code>, <code>files_list</code>, <code>files_read</code>, <code>files_mkdir</code>,
   <code>files_copy</code>, <code>files_move</code> and <code>files_trash</code>.</li>
 </ul>
-<h2 id="walkthrough">Walkthrough</h2>
-<p>The app has four pages.</p>
-<h3 id="1-connect">1. Connect</h3>
-<p>Pick a transport and connect. Turn the server on first, as described in
-<a href="mcp.html">Mouser and MCP</a>: HTTP is <code>http://127.0.0.1:7801/mcp</code>, HTTPS is
-<code>https://127.0.0.1:7802/mcp</code>, where you either trust
-<code>$MOUSER_HOME/mcp/cert.pem</code> or pin the SHA256 that <code>mouser mcp status</code> shows.
-For stdio, the app starts <code>mouser mcp serve --stdio</code>, which bridges to the
-running Mouser and reads the token itself. Over HTTP and HTTPS the app needs
-the token from <code>mouser mcp token --show</code>.</p>
+<h2 id="1-start-mousers-server">1. Start Mouser's server</h2>
+<pre><code class="language-sh">mouser mcp enable        # then restart Mouser; serves http://127.0.0.1:7801/mcp
+mouser mcp token --show  # Bearer token for HTTP
+</code></pre>
+<p>For a throwaway instance, set <code>MOUSER_HOME=$(mktemp -d) MOUSER_SECRET_STORE=file</code>,
+then run <code>mouser mcp enable</code> and <code>mouser</code> in that environment.</p>
+<h2 id="2-run-the-app">2. Run the app</h2>
+<pre><code class="language-sh">git clone https://github.com/WeirdBrains/mouser_mcp_demo
+cd mouser_mcp_demo
+flutter run -d linux
+</code></pre>
+<p>The repo also has Linux, macOS and Windows packaging scripts; see its README.</p>
+<h2 id="3-connect">3. Connect</h2>
+<p>Pick a transport:</p>
+<ul>
+<li><strong>Streamable HTTP:</strong> endpoint plus token. The key button runs
+  <code>mouser mcp token --show</code>; <code>MOUSER_MCP_URL</code> and <code>MOUSER_MCP_TOKEN</code> prefill them.</li>
+<li><strong>HTTPS</strong> (<code>https://127.0.0.1:7802/mcp</code>): give the CA file
+  (<code>$MOUSER_HOME/mcp/cert.pem</code>) or pin the SHA-256 from <code>mouser mcp status</code>.</li>
+<li><strong>stdio:</strong> the app spawns <code>mouser mcp serve --stdio</code>, which bridges to the
+  running Mouser.</li>
+</ul>
+<p>The protocol version offered is selectable. Mouser serves 2025-11-25,
+2025-06-18 and 2025-03-26, and answers with its newest for anything else. The
+Connect page then shows the status and server info.</p>
 <blockquote>
 <p><strong>TODO:</strong> screenshot of the Connect page.</p>
 </blockquote>
-<h3 id="2-protocol">2. Protocol</h3>
-<p>Shows the MCP exchange itself: the <code>initialize</code> handshake, <code>ping</code>, and the
-session the HTTP transport keeps.</p>
+<h2 id="4-protocol">4. Protocol</h2>
+<p>Shows the session (server info, capabilities, session id, certificate SHA-256),
+<code>ping</code> with its round trip, a JSON-RPC batch, the capability probes, a raw
+JSON-RPC console, and "End HTTP session" (<code>DELETE /mcp</code>).</p>
 <blockquote>
 <p><strong>TODO:</strong> screenshot of the Protocol page.</p>
 </blockquote>
-<h3 id="3-tools">3. Tools</h3>
-<p>Lists what <code>tools/list</code> returns and lets you call each tool with
-<code>tools/call</code>. Typing, running commands and changing files go through Mouser's
-permission broker, so Mouser shows an approval card for those calls.</p>
+<h2 id="5-tools">5. Tools</h2>
+<p>Lists every tool from <code>tools/list</code>, builds a form from each tool's input schema,
+and shows the result of <code>tools/call</code>. Write tools (<code>shell_*</code>,
+<code>files_mkdir</code>/<code>copy</code>/<code>move</code>/<code>trash</code>) show Mouser's approval popup first.</p>
 <blockquote>
 <p><strong>TODO:</strong> screenshot of the Tools page.</p>
 </blockquote>
-<h3 id="4-demo">4. Demo</h3>
-<p>A guided run through the tools against a live Mouser.</p>
+<h2 id="6-demo">6. Demo</h2>
+<p>A guided run: <code>tabs_list</code> then <code>screen_read</code>; a <code>files_list</code>/<code>files_read</code> file
+browser; <code>shell_run</code> then <code>screen_read</code>; plus <code>scrollback_read</code>, <code>shell_type</code>,
+and "send files to Mouser", a local file chooser feeding <code>files_copy</code>,
+<code>files_move</code>, <code>files_mkdir</code> and <code>files_trash</code>. Mouser takes paths; it has no
+upload API.</p>
+<p>Tapping a file, or a path chip in any tool result, opens a viewer for text,
+images, .docx, PDF, video and audio (Linux needs <code>mpv</code> for media).</p>
 <blockquote>
-<p><strong>TODO:</strong> screenshot or recording of the Demo page, and a description of
-each step once the app is published.</p>
-</blockquote></section></main>
+<p><strong>TODO:</strong> clip of the Demo page.</p>
+</blockquote>
+<h2 id="7-check-your-own-client">7. Check your own client</h2>
+<p>The repo's smoke test is a compact reference for a full round trip:</p>
+<pre><code class="language-sh">MOUSER_MCP_TOKEN=$(mouser mcp token --show) dart run bin/smoke.dart http
+dart run bin/smoke.dart stdio
+</code></pre></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
