@@ -37,6 +37,8 @@ mouser-engine-wgpu = { path = "../mouser-engine-wgpu" }
 mouser-engine-skia = { path = "../mouser-engine-skia" }
 
 [features]
+# JACK output (docs/preferences.md §Audio); needs the JACK headers to build.
+jack = ["mouser-render/jack"]
 default = ["local-llm"]
 # The built-in local model (llama.cpp with Vulkan, Metal on macOS); docs/models.md §Local.
 # Build needs cmake, clang, and Vulkan headers + shaderc (Linux/Windows).

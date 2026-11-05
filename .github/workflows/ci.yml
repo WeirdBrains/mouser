@@ -39,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers ffmpeg mesa-vulkan-drivers libgl1-mesa-dri libegl1
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libjack-jackd2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers ffmpeg mesa-vulkan-drivers libgl1-mesa-dri libegl1
 
       # ffmpeg for the player tests (the commander plugin's 60 fps shm path).
       - name: Install ffmpeg (macOS)
@@ -69,6 +69,14 @@ jobs:
           # parity tests must run there; elsewhere they run when wgpu finds one.
           MOUSER_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo test --workspace
+
+      # JACK output is an optional feature (it needs the JACK headers to build).
+      - name: clippy + audio tests with JACK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          cargo clippy -p mouser-core -p mouser-render -p mouser-commander --features mouser-core/jack,mouser-render/jack,mouser-commander/jack --all-targets -- -D warnings
+          cargo test -p mouser-core --features jack --lib audio
+          cargo test -p mouser-commander --features jack --bin mouser-commander audio
 
 
       # The Windows build, for checking on a Windows machine without a release.

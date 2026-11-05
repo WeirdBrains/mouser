@@ -13,6 +13,7 @@
 // only the host used are unused here until the built-in mode goes.
 #![allow(dead_code)]
 
+mod audio;
 mod commander;
 mod fetch;
 mod host;

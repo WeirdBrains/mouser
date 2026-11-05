@@ -1360,7 +1360,13 @@ impl CommanderMode {
         }
         let status = match (hover, &pl.error) {
             (Some(t), _) => format!("→ {}", crate::player::clock(t)),
-            (None, _) => if pl.playing() { "playing" } else { "paused" }.to_string(),
+            (None, _) => {
+                let st = if pl.playing() { "playing" } else { "paused" };
+                match pl.audio_host() {
+                    Some(h) => format!("{st} · {h}"),
+                    None => st.to_string(),
+                }
+            }
         };
         let vw = (cw * 12).min(body.w / 5);
         let vlabel = format!("vol {}%", pl.volume);

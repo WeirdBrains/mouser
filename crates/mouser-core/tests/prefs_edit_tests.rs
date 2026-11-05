@@ -114,3 +114,20 @@ fn mcp_lets_encrypt_settings_use_dropdowns_and_keep_comments() {
     assert_eq!((acme.challenge.as_str(), acme.ca_name()), ("http-01", "Let's Encrypt staging"));
     assert_eq!(mouser_core::mcp_server::TlsSource::of(&srv).unwrap(), mouser_core::mcp_server::TlsSource::Acme);
 }
+
+#[test]
+fn the_audio_section_offers_hosts_devices_and_shows_the_active_host() {
+    let _h = home();
+    let host = field("audio.host");
+    assert_eq!(host.section, "Audio");
+    let Kind::Choice(hosts) = &host.kind else { panic!("{host:?}") };
+    assert_eq!(hosts[0], "auto");
+    if cfg!(target_os = "linux") {
+        assert_eq!(hosts, &["auto", "jack", "alsa"]);
+    }
+    let dev = field("audio.output_device");
+    let Kind::Choice(devs) = &dev.kind else { panic!("{dev:?}") };
+    assert_eq!(devs[0], "default", "the system default is always offered first");
+    assert_eq!(dev.default, "default");
+    assert!(matches!(field("audio.active_host").kind, Kind::ReadOnly(_)));
+}

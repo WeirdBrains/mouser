@@ -38,6 +38,10 @@ libc = "0.2"
 # Wayland clipboard and primary selection as the focused client (no wl-copy needed).
 smithay-clipboard = "0.7.3"
 
+[features]
+# JACK output (docs/preferences.md §Audio); needs the JACK headers to build.
+jack = ["cpal/jack", "mouser-core/jack"]
+
 [dev-dependencies]
 tempfile = "3.10.1"
 mouser-engine-example = { path = "../mouser-engine-example" }

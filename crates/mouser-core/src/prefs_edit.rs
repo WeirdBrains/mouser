@@ -57,6 +57,10 @@ fn choice(v: &[&str]) -> Kind {
 /// Every preference, in display order.
 pub fn schema() -> Vec<Field> {
     let themes = crate::themes::list_themes();
+    let audio = crate::storage::load_preferences().audio.unwrap_or_default();
+    let host = audio.host.as_deref();
+    let mut devices = vec!["default".to_string()];
+    devices.extend(crate::audio::output_devices(host));
     vec![
         f("Appearance", "theme", "Theme", Kind::Choice(themes), "Red Star", true),
         f("Appearance", "mode", "Light / dark", choice(&["system", "light", "dark"]), "system", true),
@@ -67,6 +71,9 @@ pub fn schema() -> Vec<Field> {
         f("Window", "sidebar_collapsed", "Sidebar collapsed", Kind::Bool, "false", false),
         f("Window", "sidebar_width", "Sidebar width (px)", Kind::Int { min: 120, max: 4000 }, "auto", false),
         f("Keys", "keys.leader_timeout_ms", "Esc wait for : (ms)", Kind::Int { min: 100, max: 10_000 }, "1200", true),
+        f("Audio", "audio.host", "Audio host", choice(crate::audio::host_choices()), "auto", false),
+        f("Audio", "audio.output_device", "Output device", Kind::Choice(devices), "default", false),
+        f("Audio", "audio.active_host", "Active host", Kind::ReadOnly("set Audio host"), crate::audio::active_host(host), false),
         f("Plugins", "plugins.max_restarts", "Crash restarts (within 30 s)", Kind::Int { min: 0, max: 100 }, "3", true),
         f("Chat", "chat.transcripts", "Keep transcripts", Kind::Bool, "true", true),
         f("Models", "models.default", "Default model", Kind::Text { url: false }, "(none)", true),

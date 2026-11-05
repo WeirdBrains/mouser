@@ -8,6 +8,7 @@ repository = ""
 
 [dependencies]
 mouser-mode-api = { path = "../mouser-mode-api", features = ["markdown"] }
+cpal = "0.15"
 # The grok provider's opt-in Grok Bot desktop login (docs/models.md §grok).
 grokbot_api = { version = "1.2", features = ["desktop-session"] }
 anyhow.workspace = true
@@ -59,6 +60,10 @@ keyring = { version = "3", features = ["apple-native"] }
 keyring = { version = "3", features = ["windows-native"] }
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 keyring = { version = "3", features = ["async-secret-service", "crypto-rust", "tokio"] }
+
+[features]
+# JACK output (docs/preferences.md §Audio); needs the JACK headers to build.
+jack = ["cpal/jack"]
 
 [dev-dependencies]
 tempfile = "3.10.1"
