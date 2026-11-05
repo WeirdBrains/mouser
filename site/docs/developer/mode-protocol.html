@@ -210,6 +210,28 @@ also tells it about a remote shell, when that changes and after a restart:
 command, or <code>null</code>) and <code>shell.remote_changed</code> (<code>label</code>, <code>dir</code> or <code>null</code>, and
 <code>listing</code>: <code>null</code> while loading, <code>{"entries": [...]}</code> with <code>name</code>, <code>path</code>,
 <code>kind</code>, <code>mode</code>, <code>size</code> and <code>modified</code> in Unix seconds, or <code>{"error": "..."}</code>).</p>
+<h3 id="dock-size-and-context-menus-mouser-mode-api-02-api-1">Dock size and context menus (mouser-mode-api 0.2, api 1)</h3>
+<p><code>view.resized</code> carries <code>dock</code>: <code>{"permille": 500 | null, "full": false}</code>, the
+height the user chose for the mode's dock (dragging its bottom edge, the
+host's taller / shorter keys <code>]</code> / <code>[</code>, or its fullscreen toggle <code>F</code>); it comes
+again whenever that changes. Lay the dock out with <code>DockSize::height(area,
+cell_h, your_default)</code>. A mode that ignores it keeps its own height.</p>
+<p>A right-click in the view, or the host's menu key <code>.</code> while the mode has the
+keyboard, sends <code>menu.open</code> (<code>{"x", "y", "keyboard": bool}</code>; for the keyboard,
+the selected item's place). Answer with <code>Menu { x, y, entries }</code>: every action
+of yours that applies in the current context (the item under the pointer and
+the view's state: list or fullscreen image, playing media, a text viewer ...),
+each a <code>MenuEntry</code> (<code>id</code>, <code>arg</code>, <code>label</code>, its current <code>key</code> or empty,
+<code>enabled</code>). Build it from the same action registry as your key bindings, so
+menu and keys never drift. Mouser draws the menu (pointer, ↑/↓, Enter, Esc);
+picking an entry is the same <code>ui.action</code> its key sends. No answer, or no
+entries: no menu. Older hosts never send <code>menu.open</code>, so a plugin sends <code>Menu</code>
+only in answer to it (<code>Out::Menu</code> is the last variant; older hosts cannot read it).
+Mouser fills in each entry's <code>key</code> from the user's <code>modes.toml</code> when the entry's
+<code>id</code> (or <code>menu:&lt;id&gt;</code>) is one of your bindings, so the menu shows the keys as bound
+now. <code>Host::menu(x, y, entries)</code> sends it from <code>serve()</code>. <code>ClipboardSet</code> puts text
+on the clipboard with no permission (for "copy path" and the like); reading the
+clipboard is not offered.</p>
 <h2 id="host-calls">Host calls</h2>
 <p><code>Request</code> carries a call, answered by exactly one <code>Response</code>:</p>
 <ul>

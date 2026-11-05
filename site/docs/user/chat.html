@@ -70,6 +70,20 @@ out as far as it has come; the rows above stay where they are.</p>
 <p>Cards are answered only with these alt keys or a click, so ordinary typing can never
 approve anything. With nothing running, <code>esc</code> leaves the input and keys go back to
 the shell.</p>
+<h2 id="context-menu">Context menu</h2>
+<p>Right-click (or <code>.</code> while chat has the keyboard; docs/modes.md §Context menus):</p>
+<ul>
+<li>on a message (yours, an answer, a note or an error): copy, quote in a reply
+  (the text as <code>&gt;</code> lines in the input), retry (your message again; on an
+  answer, the message it answered), delete from view, type a message (<code>i</code>),
+  cancel the answer (<code>x</code>);</li>
+<li>on a tool call card: show / hide the output, copy the output, copy the call,
+  delete from view, type, cancel;</li>
+<li>elsewhere: switch model (<code>m</code>), new chat (<code>l</code>), scroll up / down
+  (PageUp / PageDown), type, cancel.</li>
+</ul>
+<p>"Delete from view" only hides the row; the agent's history is unchanged (a new
+chat clears it). Approval cards are still answered only in Mouser's popup.</p>
 <h2 id="what-it-sees">What it sees</h2>
 <p>Each message carries the active tab's place (folder or remote host), its visible
 screen and the last 200 scrollback lines (<code>CONTEXT_LINES</code>).</p>
