@@ -21,12 +21,6 @@ pub const BASIC: &str = "basic";
 pub fn is_reserved(name: &str) -> bool {
     name == BASIC || name == "cpu"
 }
-/// Built-in engine names (whether this build has Skia is up to `mouser-render`).
-pub const BUILTINS: [&str; 2] = ["mouser", "skia"];
-
-pub fn is_builtin(name: &str) -> bool {
-    BUILTINS.contains(&name)
-}
 
 /// `engine.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -49,9 +43,6 @@ impl Manifest {
     pub fn check(&self) -> Result<()> {
         if !valid_name(&self.name) {
             bail!("invalid engine name {:?} (use a-z, 0-9, - and _)", self.name);
-        }
-        if is_builtin(&self.name) {
-            bail!("{:?} is a built-in engine name", self.name);
         }
         if is_reserved(&self.name) {
             bail!("{:?} is reserved for Mouser's built-in basic renderer", self.name);
@@ -189,8 +180,6 @@ pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
         }
         for m in more {
             let dup = match &m {
-                // While `mouser` and `skia` are still compiled in, their libraries wait.
-                Ok(i) if is_builtin(&i.manifest.name) => true,
                 Ok(i) => out.iter().flatten().any(|o| o.manifest.name == i.manifest.name),
                 Err(_) => false,
             };
@@ -265,12 +254,6 @@ pub fn uninstall(name: &str) -> Result<bool> {
     if is_reserved(name) {
         bail!("the basic renderer is built into Mouser and can never be removed; it is used only when no engine starts");
     }
-    if name == DEFAULT {
-        bail!("mouser is the built-in fallback engine and can never be removed (reorder with `mouser engine priority`)");
-    }
-    if is_builtin(name) {
-        bail!("{name} is built in and cannot be uninstalled (move it down with `mouser engine move {name} last`)");
-    }
     let inst = find(name).with_context(|| format!("no installed engine named {name}"))?;
     if inst.bundled {
         bail!(
@@ -333,7 +316,7 @@ fn save_priority(list: Vec<String>) -> Result<()> {
 }
 
 fn known(name: &str) -> Result<()> {
-    if !is_builtin(name) && find(name).is_none() {
+    if find(name).is_none() {
         bail!("no engine named {name} (see `mouser engine list`)");
     }
     Ok(())
@@ -397,9 +380,6 @@ fn now_secs() -> u64 {
 /// Mark an engine as starting; if Mouser dies before [`clear_sentinel`], the
 /// next start skips it.
 pub fn set_sentinel(name: &str) {
-    if name == DEFAULT {
-        return; // mouser is never skipped: it is the last GPU fallback.
-    }
     let _ = fs::create_dir_all(dir());
     let _ = fs::write(sentinel(name), format!("pid={}\nstarted={}\n", std::process::id(), now_secs()));
 }
@@ -407,9 +387,6 @@ pub fn set_sentinel(name: &str) {
 /// Mark an engine skipped now, with why (an isolated engine crashed, or a
 /// built-in one panicked); Mouser keeps running on the next engine.
 pub fn mark_skipped(name: &str, reason: &str) {
-    if name == DEFAULT {
-        return;
-    }
     let _ = fs::create_dir_all(dir());
     let _ = fs::write(sentinel(name), format!("started={}\nreason={}\n", now_secs(), reason.replace('\n', " ")));
 }
@@ -527,7 +504,7 @@ pub fn state(name: &str) -> State {
 /// Clear an engine's skip marker and failure record without selecting it.
 /// Returns whether there was anything to clear.
 pub fn unskip(name: &str) -> Result<bool> {
-    if !is_builtin(name) && find(name).is_none() {
+    if find(name).is_none() {
         bail!("no engine named {name} (see `mouser engine list`)");
     }
     let had = state(name) != State::Ok;
@@ -538,8 +515,7 @@ pub fn unskip(name: &str) -> Result<bool> {
 
 /// Unskip every engine; returns the names that were restored.
 pub fn unskip_all() -> Vec<String> {
-    let mut names: Vec<String> = BUILTINS.iter().map(|s| s.to_string()).collect();
-    names.extend(installed().into_iter().flatten().map(|i| i.manifest.name));
+    let names: Vec<String> = installed().into_iter().flatten().map(|i| i.manifest.name).collect();
     names.into_iter().filter(|n| unskip(n).unwrap_or(false)).collect()
 }
 
@@ -554,6 +530,20 @@ pub fn ago(t: u64) -> String {
     }
 }
 
+/// Test helper: a shipped-engines folder with manifests for `mouser` and
+/// `skia` (placeholder libraries; enough for everything but loading them).
+#[cfg(test)]
+pub(crate) fn test_shipped(root: &Path) -> PathBuf {
+    for (name, stem) in [("mouser", "mouser_engine_wgpu"), ("skia", "mouser_engine_skia")] {
+        let d = root.join(name);
+        fs::create_dir_all(&d).unwrap();
+        let lib = lib_file(stem);
+        fs::write(d.join(&lib), b"placeholder").unwrap();
+        fs::write(d.join("engine.toml"), format!("name = \"{name}\"\nversion = \"1.4.0\"\nabi = 2\nlibrary = \"{lib}\"\n")).unwrap();
+    }
+    root.to_path_buf()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,7 +555,7 @@ mod tests {
         unsafe {
             std::env::set_var("MOUSER_HOME", t.path());
             std::env::remove_var("MOUSER_ENGINE");
-            std::env::set_var("MOUSER_ENGINE_DIRS", "");
+            std::env::set_var("MOUSER_ENGINE_DIRS", test_shipped(&t.path().join("shipped")));
         }
         t
     }
@@ -628,7 +618,8 @@ mod tests {
     fn manifest_checks() {
         assert!(Manifest::parse("name='x'\nversion='1'\nabi=1\nlibrary='libx.so'").is_ok());
         assert!(Manifest::parse("name='X Y'\nversion='1'\nabi=1\nlibrary='l.so'").is_err());
-        assert!(Manifest::parse("name='skia'\nversion='1'\nabi=1\nlibrary='l.so'").is_err());
+        // Mouser's own engines are libraries too: a newer `skia` can be installed over the shipped one.
+        assert!(Manifest::parse("name='skia'\nversion='1'\nabi=1\nlibrary='l.so'").is_ok());
         assert!(Manifest::parse("name='x'\nversion='1'\nabi=2\nlibrary='l.so'").is_ok(), "ABI v2 engines");
         assert!(Manifest::parse("name='x'\nversion='1'\nabi=3\nlibrary='l.so'").unwrap_err().to_string().contains("ABI"));
         for reserved in ["basic", "cpu"] {
@@ -647,7 +638,7 @@ mod tests {
         let (m, lib) = source(&src).unwrap();
         install(&m, &lib).unwrap();
         assert!(dir().join("glow/libglow.so").is_file());
-        assert_eq!(installed().len(), 1);
+        assert_eq!(installed().iter().flatten().filter(|i| !i.bundled).count(), 1, "glow, plus the shipped mouser and skia");
         select("glow").unwrap();
         assert_eq!(chosen(), "glow");
         // SAFETY: serial test.
@@ -658,7 +649,7 @@ mod tests {
         assert!(uninstall("mouser").is_err());
         assert!(uninstall("glow").unwrap());
         assert_eq!(chosen(), "mouser");
-        assert!(uninstall("mouser").unwrap_err().to_string().contains("never be removed"));
+        assert!(uninstall("mouser").unwrap_err().to_string().contains("ships with Mouser"));
         assert!(uninstall(BASIC).unwrap_err().to_string().contains("basic renderer"));
         assert!(uninstall("cpu").unwrap_err().to_string().contains("never be removed"));
         assert!(find("glow").is_none());
@@ -758,7 +749,7 @@ mod tests {
         record_failure("glow", "create failed:\nno GL");
         assert_eq!(state("glow"), State::Failed { at: last_failure("glow").unwrap().0, reason: "create failed: no GL".into() });
         mark_skipped("skia", "test");
-        assert_eq!(unskip_all(), vec!["skia".to_string(), "glow".to_string()]);
+        assert_eq!(unskip_all(), vec!["glow".to_string(), "skia".to_string()], "installed first, then shipped");
         assert_eq!(state("glow"), State::Ok);
         record_failure("glow", "x");
         select("glow").unwrap();

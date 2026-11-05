@@ -222,7 +222,7 @@ cargo build --release -p mouser-app
   touches the GPU for the model.
 - **Size:** the binary grows by about 44 MB (Linux, Vulkan shaders included). The
   Arch package goes from 11.4 MB to 21.8 MB.
-- **Without it:** `cargo build --no-default-features --features skia` leaves llama.cpp
+- **Without it:** `cargo build --no-default-features` leaves llama.cpp
   out. `gemma-local` then says so and still works through `mouser model local url`.
 
 Measured on an RTX 3060 (Vulkan, E2B Q4_0, warm cache): about 0.9 s to load, about

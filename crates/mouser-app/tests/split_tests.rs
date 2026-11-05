@@ -5,6 +5,8 @@
 //! so no display is needed. Unix only (Windows stays single-process).
 #![cfg(unix)]
 
+mod common;
+
 use serial_test::serial;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -42,9 +44,11 @@ fn start_shell(home: tempfile::TempDir, script: &str, env: &[(&str, &str)]) -> S
     Command::new("chmod").arg("+x").arg(&shell).status().unwrap();
     std::fs::write(home.path().join("ssh_config"), "").unwrap();
     let dump = home.path().join("dump.txt");
+    let shipped = common::official_engines(&home.path().join("shipped"));
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mouser-app"));
     cmd.env("HOME", home.path())
         .env_remove("MOUSER_HOME")
+        .env("MOUSER_ENGINE_DIRS", &shipped)
         .env("MOUSER_SSH_CONFIG", home.path().join("ssh_config"))
         .env("SHELL", &shell)
         .env("MOUSER_UI", "headless")
@@ -135,10 +139,9 @@ fn sessions_survive_a_killed_ui_and_a_new_ui_shows_them_again() {
     assert_eq!(b.engine, a.engine, "a kill from outside is not the engine's fault");
 }
 
-#[cfg(feature = "skia")]
 #[test]
 #[serial]
-fn a_crash_in_a_builtin_engine_skips_it_and_the_new_ui_uses_the_next() {
+fn a_crash_in_a_shipped_engine_skips_it_and_the_new_ui_uses_the_next() {
     let home = tempfile::tempdir().unwrap();
     let home_path = home.path().to_path_buf();
     let s = start(home, &[("MOUSER_ENGINE", "skia,mouser"), ("MOUSER_TEST_CRASH_ENGINE", "skia:15")]);
@@ -158,6 +161,14 @@ fn a_crash_in_mouser_falls_to_the_cpu_renderer() {
     let b = wait_for(&s.dump, "the CPU UI", |d| d.ui_pid != a.ui_pid && d.shell_pid.is_some());
     assert_eq!(b.engine, "cpu");
     assert_eq!(b.shell_pid, a.shell_pid);
+}
+
+#[test]
+#[serial]
+fn with_no_engines_shipped_or_installed_the_basic_renderer_draws() {
+    let s = start(tempfile::tempdir().unwrap(), &[("MOUSER_ENGINE_DIRS", "")]);
+    let a = wait_for(&s.dump, "the basic renderer", |d| d.shell_pid.is_some());
+    assert_eq!(a.engine, "cpu");
 }
 
 #[test]
@@ -237,6 +248,7 @@ fn with_no_engine_the_basic_renderer_draws_and_an_engine_takes_over_live_keeping
     let st = Command::new(env!("CARGO_BIN_EXE_mouser-app"))
         .args(["engine", "unskip", "mouser"])
         .env("HOME", &home_path)
+        .env("MOUSER_ENGINE_DIRS", home_path.join("shipped"))
         .env_remove("MOUSER_HOME")
         .env_remove("MOUSER_ENGINE")
         .output()

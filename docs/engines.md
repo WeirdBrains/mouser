@@ -62,9 +62,9 @@ pub trait Engine {
 
 `FontStack::glyph(ch)` gives the coverage bitmap and metrics for a char at the
 current size; `fonts.generation` changes when the font or size changes, so atlases
-can be dropped. Built-in engines are created with the window (`Arc<Window>`) and its
-size. Custom engines see the same frame through the C ABI below
-(`engine::FrameBuf` converts a `DisplayList`).
+can be dropped. Every engine, Mouser's own `mouser` and `skia` included, is a
+library that sees this frame through the C ABI below (`engine::FrameBuf`
+converts a `DisplayList`); none is compiled into Mouser.
 
 ## 3. Lifecycle
 
@@ -228,9 +228,9 @@ CLI (thin adapters over `mouser_core::engines`):
 
 | command | does |
 |---|---|
-| `mouser engine list` | built-in (`mouser`, `skia` if compiled in) and installed engines, the active one marked, broken ones with the reason |
+| `mouser engine list` | shipped (`mouser`, `skia`) and installed engines, the active one marked, broken ones with the reason |
 | `mouser engine install <dir \| engine.toml \| lib.so>` | checks the manifest, loads the library and checks its ABI, copies it into `engines/<name>/` |
-| `mouser engine uninstall <name>` | removes `engines/<name>/` (built-ins cannot be removed); if it was in use, the config goes back to `mouser` |
+| `mouser engine uninstall <name>` | removes `engines/<name>/` (shipped engines and the basic renderer cannot be removed); if it was in use, the config goes back to `mouser` |
 | `mouser engine use <name>` | moves it first in the order and unskips it |
 | `mouser engine priority <a> <b> ...` | sets the whole order (`mouser` appended if missing) |
 | `mouser engine move <name> first\|last\|up\|down\|<n>` | moves one engine (1 = first) |
@@ -245,37 +245,36 @@ the directory (no network access from the terminal, no unsigned code fetched for
 ## Mouser's wgpu renderer as an engine library
 
 `crates/mouser-engine-wgpu` (library `mouser_engine_wgpu`, engine name
-`mouser`, ABI v2 only) is the built-in wgpu renderer ported to the C ABI: the
+`mouser`, ABI v2 only) is Mouser's wgpu renderer on the C ABI: the
 same shaders, instanced quads, R8 glyph atlas (keyed by `MouserGlyph::key`),
 image textures and blending. It presents to the window surfaces (Wayland,
 Xlib, Xcb, AppKit, Win32) or, in the pixel host, renders offscreen and copies
 into `MouserPixels`. It also answers `caps` (max texture size) and `evict`.
 
-Parity is tested, not assumed: `crates/mouser-render/tests/wgpu_engine_parity.rs`
-renders a full frame (styled text, Unicode, the cursor, tabs, the sidebar, a
-status line, a scaled image and a translucent overlay) offscreen through the
-built-in `GpuPainter` and through the library's C ABI frame, twice (cold and
-warm caches) and after a resize, and requires every channel of every pixel
-to be within 2. It runs on any wgpu adapter, including software ones
-(llvmpipe/lavapipe); CI on Linux installs Mesa's and sets
-`MOUSER_REQUIRE_GPU=1` so it can't be skipped there.
-`crates/mouser-engine-wgpu/tests/c_abi.rs` drives the C table on the pixel
-surface. The built-in renderer stays until the library is shipped and
-installed by default (see the plan's step 6); the library can't be installed
-under the name `mouser` while the built-in engine has it.
+Parity is tested, not assumed. While the renderer was still built in,
+`crates/mouser-render/tests/wgpu_engine_parity.rs` rendered a full frame
+(styled text, Unicode, the cursor, tabs, the sidebar, a status line, a scaled
+image and a translucent overlay) offscreen through both and required every
+channel of every pixel to be within 2. The built-in's frames were then saved
+as `crates/mouser-render/tests/golden/wgpu-*.png` (Mesa llvmpipe), and the
+test now holds the library to them on llvmpipe, cold and warm caches and
+after a resize; on other adapters (WARP, Metal) it checks that the scene is
+drawn and stable. CI on Linux installs Mesa and sets `MOUSER_REQUIRE_GPU=1`
+so it can't be skipped there. `crates/mouser-engine-wgpu/tests/c_abi.rs`
+drives the C table on the pixel surface.
 
 ## Mouser's Skia renderer as an engine library
 
 `crates/mouser-engine-skia` (library `mouser_engine_skia`, engine name `skia`,
-ABI v2 only) is the built-in Skia engine on the C ABI: Ganesh over OpenGL
+ABI v2 only) is Mouser's Skia engine on the C ABI: Ganesh over OpenGL
 through glutin (EGL on Linux, CGL on macOS, WGL then EGL on Windows) for a
 window, or a Skia CPU raster surface for the pixel host. The drawing is the
 same: Skia rects, one A8 glyph atlas tinted per glyph, nearest-neighbour
 images, translucent fills. `crates/mouser-render/tests/skia_engine_parity.rs`
-paints the same full frame as the wgpu parity test through the built-in
-engine's drawing (`skia::render_raster`) and through the library, and
-requires every channel to be within 2. The built-in skia engine stays until
-the library ships.
+paints the same full frame as the wgpu parity test on the CPU raster surface
+and requires every channel to be within 2 of `golden/skia-900x520.png`, the
+former built-in engine's frame (it matched the library before it was
+removed).
 
 ## Engines shipped with Mouser
 
@@ -291,20 +290,25 @@ uninstalled (move it down or disable it). `MOUSER_ENGINE_DIRS` (a path
 list) replaces the shipped locations, for packagers and tests; empty means
 none.
 
-## 6. Built-in engines
+## 6. Mouser's own engines
 
-- `mouser`: the wgpu renderer (Vulkan/GL/Metal/DX12): instanced quads, a glyph atlas,
-  image textures cached by key. Unchanged; it is now behind the trait.
-- `skia`: Skia (Ganesh) over OpenGL through glutin (EGL, then GLX; CGL on macOS, WGL
-  on Windows). Rects are Skia rects; glyphs go into one A8 atlas image drawn with the
-  glyph colour (Skia tints alpha-only images and batches quads sharing a texture);
-  images are Skia images cached by key, drawn nearest-neighbour. Swaps without
-  waiting for vblank (`SwapInterval::DontWait`): on Wayland/NVIDIA a vsynced EGL swap
-  blocked ~30 ms per frame during a drag-resize; Mouser already caps frames at one per
-  8 ms. Built behind the `skia` cargo feature of `mouser-app`, **on by default**
-  (the `skia-safe` crate downloads a prebuilt, statically linked Skia at build time;
-  no system packages; the binary then needs `libstdc++` and, to use Skia, `libEGL`
-  or `libGL`). `cargo build --no-default-features` leaves it out.
+Mouser has no engine compiled in. It ships two libraries in `engines/` beside
+the executable (above) and draws with the basic renderer when neither starts:
+
+- `mouser` (`mouser_engine_wgpu`): the wgpu renderer (Vulkan/GL/Metal/DX12):
+  instanced quads, a glyph atlas, image textures cached by key. It is the
+  last engine tried and can't be disabled; if it can't start (or crashed
+  Mouser and is skipped), the basic renderer draws.
+- `skia` (`mouser_engine_skia`): Skia (Ganesh) over OpenGL through glutin (EGL, then
+  GLX; CGL on macOS, WGL on Windows). Rects are Skia rects; glyphs go into one A8
+  atlas image drawn with the glyph colour; images are Skia images cached by key,
+  drawn nearest-neighbour. Swaps without waiting for vblank (on Wayland/NVIDIA a
+  vsynced EGL swap blocked ~30 ms per frame during a drag-resize; Mouser already
+  caps frames at one per 8 ms). `skia-safe` downloads a prebuilt, statically linked
+  Skia when the library is built; the library then needs `libstdc++` and `libEGL`
+  or `libGL`. Mouser itself no longer links Skia or wgpu.
+- `cargo build` (workspace) leaves both libraries next to `target/<profile>/mouser-app`,
+  where a development build finds them.
 - Example custom engine: `crates/mouser-engine-example` (`flat`), a `cdylib` that
   rasterises the ABI frame on the CPU and presents it with softbuffer. Tests build it
   and use it for install/list/use/uninstall, ABI mismatch and load-failure fallback;
@@ -347,10 +351,11 @@ order and the crashed one is marked skipped (restorable with `unskip`).
    (with the reason), and the window switches to the next engine in the order on the
    same frame. All state lives in the main process, so nothing is lost.
 
-### Built-in engines
+### Engines in the UI process
 
-`mouser` (wgpu) and `skia` stay in-process for direct GPU presentation (the reason
-they are built in). They are covered as far as is sound:
+On a window, `mouser` and `skia` (like any engine not run in the engine host)
+are loaded into the UI process for direct GPU presentation. They are covered as
+far as is sound:
 
 - every `create`/`draw` call runs under `catch_unwind`, so a Rust panic (ours, wgpu's,
   skia-safe's) becomes an error: the engine is marked skipped and the window moves on;

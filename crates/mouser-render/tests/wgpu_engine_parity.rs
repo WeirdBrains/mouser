@@ -1,12 +1,12 @@
 //! The wgpu engine library (`crates/mouser-engine-wgpu`, through the C ABI
-//! frame) draws what Mouser's built-in wgpu renderer draws, pixel for pixel
-//! within a small tolerance. Both render offscreen on whatever adapter wgpu
-//! finds (llvmpipe/lavapipe, WARP or Metal on CI). Without an adapter the test
-//! is skipped, unless `MOUSER_REQUIRE_GPU` is set (CI on Linux).
+//! frame) draws what Mouser's former built-in wgpu renderer drew: on Mesa's
+//! llvmpipe the frames must match `golden/wgpu-*.png` (rendered by the
+//! built-in before it was removed) within a small tolerance. Other adapters
+//! (WARP, Metal) must draw the scene and stay stable across frames. Without an
+//! adapter the test is skipped, unless `MOUSER_REQUIRE_GPU` is set (CI on Linux).
 
 use mouser_render::engine::FrameBuf;
 use mouser_render::frame::{CellPaint, CursorShape, Frame, ImageDraw, render_frame};
-use mouser_render::gpu::GpuPainter;
 use mouser_render::text::{DisplayList, DrawOp, FontStack, translucent};
 use mouser_render::ui::{self, SidebarSpec, TabBar};
 use std::collections::BTreeMap;
@@ -16,6 +16,13 @@ const W: u32 = 900;
 const H: u32 = 520;
 /// Largest per-channel difference allowed (rounding in blending and filtering).
 const TOLERANCE: u32 = 2;
+
+/// A golden PNG (RGB) as 0x00RRGGBB pixels.
+pub fn golden(name: &str) -> Vec<u32> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
+    let img = image::open(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())).to_rgb8();
+    img.pixels().map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32).collect()
+}
 
 fn gradient(w: u32, h: u32) -> Vec<u8> {
     let mut v = Vec::with_capacity((w * h * 4) as usize);
@@ -104,54 +111,64 @@ fn max_diff(a: &[u32], b: &[u32]) -> (u32, usize, usize) {
 }
 
 #[test]
-fn the_wgpu_engine_library_draws_like_the_built_in_renderer() {
-    let mut builtin = match GpuPainter::offscreen(W, H) {
+fn the_wgpu_engine_library_draws_like_the_former_built_in_renderer() {
+    let mut lib = match mouser_engine_wgpu::Renderer::offscreen(W, H) {
         Ok(p) => p,
         Err(e) => {
-            assert!(std::env::var_os("MOUSER_REQUIRE_GPU").is_none_or(|v| v.is_empty()), "MOUSER_REQUIRE_GPU is set but there is no adapter: {e:#}");
-            eprintln!("no wgpu adapter ({e:#}); skipped");
+            assert!(std::env::var_os("MOUSER_REQUIRE_GPU").is_none_or(|v| v.is_empty()), "MOUSER_REQUIRE_GPU is set but there is no adapter: {e}");
+            eprintln!("no wgpu adapter ({e}); skipped");
             return;
         }
     };
-    eprintln!("adapter: {}", builtin.description);
-    let mut lib = mouser_engine_wgpu::Renderer::offscreen(W, H).expect("the library finds the same adapter");
+    eprintln!("adapter: {}", lib.description);
+    let strict = lib.description.to_lowercase().contains("llvmpipe");
     let mut fonts = FontStack::embedded(16.0);
     let list = scene(&mut fonts);
     assert!(list.ops.len() > 200 && !list.images.is_empty(), "a real scene");
 
-    // Two frames each: the second one draws from the warm glyph and image caches.
+    let check = |got: &[u32], want: &[u32], what: &str, w: u32| {
+        assert_eq!(got.len(), want.len());
+        let (worst, at, differing) = max_diff(got, want);
+        eprintln!("{what}: max channel diff {worst}, {differing} pixels differ");
+        assert!(
+            worst <= TOLERANCE,
+            "{what}: pixel ({}, {}) differs by {worst} (want {:06x}, library {:06x}); {differing} pixels differ",
+            at as u32 % w,
+            at as u32 / w,
+            want[at],
+            got[at]
+        );
+    };
+    // Two frames: the second one draws from the warm glyph and image caches.
     let mut buf = FrameBuf::default();
     buf.keep_alpha = true;
+    let mut first: Option<Vec<u32>> = None;
     for round in 0..2 {
-        assert!(builtin.draw(&list, &mut fonts));
         let frame = buf.build(&list, &mut fonts);
         // SAFETY: `frame` points into `buf`, `list` and `fonts`, alive for the call.
         assert_eq!(unsafe { lib.draw(&frame) }, mouser_engine_abi::DRAW_OK);
-        let a = builtin.read_pixels().unwrap();
         let b = lib.read_pixels().unwrap();
-        assert_eq!(a.len(), (W * H) as usize);
-        let (worst, at, differing) = max_diff(&a, &b);
-        eprintln!("round {round}: max channel diff {worst}, {differing} pixels differ");
-        assert!(a.iter().any(|&p| p != a[0]), "the built-in drew something");
-        assert!(
-            worst <= TOLERANCE,
-            "round {round}: pixel ({}, {}) differs by {worst} (built-in {:06x}, library {:06x}); {differing} pixels differ",
-            at as u32 % W,
-            at as u32 / W,
-            a[at],
-            b[at]
-        );
+        assert_eq!(b.len(), (W * H) as usize);
+        assert!(b.iter().any(|&p| p != b[0]), "the library drew something");
+        if strict {
+            check(&b, &golden("wgpu-900x520.png"), &format!("round {round}"), W);
+        }
+        match &first {
+            Some(f) => check(&b, f, "warm frame against the first", W),
+            None => first = Some(b),
+        }
     }
 
-    // Resizing keeps them in step.
-    builtin.resize(640, 400);
+    // Resizing.
     lib.resize(640, 400);
     let mut small = list.clone();
     (small.width, small.height) = (640, 400);
-    assert!(builtin.draw(&small, &mut fonts));
     let frame = buf.build(&small, &mut fonts);
     // SAFETY: as above.
     assert_eq!(unsafe { lib.draw(&frame) }, mouser_engine_abi::DRAW_OK);
-    let (worst, _, _) = max_diff(&builtin.read_pixels().unwrap(), &lib.read_pixels().unwrap());
-    assert!(worst <= TOLERANCE, "after resize: {worst}");
+    let b = lib.read_pixels().unwrap();
+    assert_eq!(b.len(), 640 * 400);
+    if strict {
+        check(&b, &golden("wgpu-640x400.png"), "after resize", 640);
+    }
 }

@@ -86,9 +86,6 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             Ok(())
         }
         Action::Use(n) => {
-            if n == "skia" && !mouser_render::engine::available_builtins().iter().any(|(b, _)| *b == "skia") {
-                bail!("this build has no Skia engine");
-            }
             engines::select(n)?;
             writeln!(out, "{n} is now first: {}", engines::saved_priority().join(" > "))?;
             Ok(())
@@ -117,20 +114,12 @@ fn list(out: &mut dyn Write) -> Result<()> {
     let mark = |n: &str| if n == first { "*" } else { " " };
     writeln!(out, "  {:<4} {:<12} {:<10} {:<8} details", "prio", "engine", "version", "state")?;
     let mut rows: Vec<(String, String, String, String)> = Vec::new();
-    let built = mouser_render::engine::available_builtins();
     let reg = mouser_core::plugins::Registry::load();
     for e in reg.entries.iter().filter(|e| e.kinds.contains(&mouser_core::plugins::Kind::Engine)) {
         let n = e.name.as_str();
-        let (v, d) = if e.dir.is_none() {
-            // Built in: listed only when this build has it.
-            let Some((_, d)) = built.iter().find(|(b, _)| *b == n) else { continue };
-            (
-                e.version.clone(),
-                if n == engines::DEFAULT { format!("{d}; always the last fallback, cannot be removed or disabled") } else { d.to_string() },
-            )
-        } else {
-            (e.version.clone(), e.description.clone())
-        };
+        let shipped = if e.source == Some(mouser_core::plugins::Source::Bundle) { "; ships with Mouser" } else { "" };
+        let last = if n == engines::DEFAULT { "; the last engine tried, can't be disabled" } else { "" };
+        let (v, d) = (e.version.clone(), format!("{}{shipped}{last}", e.description));
         let st = if e.enabled { state_text(n) } else { format!("DISABLED: enable: mouser engine enable {n}") };
         rows.push((n.to_string(), v, d, st));
     }
@@ -146,7 +135,7 @@ fn list(out: &mut dyn Write) -> Result<()> {
         writeln!(out, "{} {:<4} {n:<12} {v:<10} {short:<8} {d}{rest}", mark(&n), pos(&n))?;
     }
     for n in &order {
-        if !engines::is_builtin(n) && engines::find(n).is_none() {
+        if engines::find(n).is_none() {
             writeln!(out, "  ({n} is in the priority list but not installed; skipped)")?;
         }
     }

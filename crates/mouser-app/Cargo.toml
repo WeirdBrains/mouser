@@ -32,11 +32,12 @@ tempfile = "3.10.1"
 serial_test = "3.0.0"
 serde_json.workspace = true
 mouser-engine-abi = { path = "../mouser-engine-abi" }
+# Mouser's own engine libraries, staged for the tests (tests/common).
+mouser-engine-wgpu = { path = "../mouser-engine-wgpu" }
+mouser-engine-skia = { path = "../mouser-engine-skia" }
 
 [features]
-# The Skia GPU engine (skia-safe downloads prebuilt Skia at build time).
-default = ["skia", "local-llm"]
-skia = ["mouser-render/skia"]
+default = ["local-llm"]
 # The built-in local model (llama.cpp with Vulkan, Metal on macOS); docs/models.md §Local.
 # Build needs cmake, clang, and Vulkan headers + shaderc (Linux/Windows).
 local-llm = ["dep:mouser-llm"]

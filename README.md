@@ -129,8 +129,10 @@ Mouser keeps everything in its home directory: `~/.mouser`, or `$MOUSER_HOME` if
   `noto-fonts-emoji` (Arch) or `fonts-noto-color-emoji` (Debian/Ubuntu) if emoji show as boxes.
 - Rendering uses the GPU when available and falls back to the CPU; set
   `MOUSER_RENDERER=cpu` to force the CPU renderer. See `docs/rendering.md`.
-- GPU rendering engines are swappable: `mouser` (wgpu, default), `skia` (Skia over
-  OpenGL) or a custom engine (a shared library with a small C ABI):
+- GPU rendering engines are swappable shared libraries with a small C ABI: Mouser
+  ships `mouser` (wgpu, default) and `skia` (Skia over OpenGL) beside its
+  executable, and you can install your own; when none starts, the built-in basic
+  (CPU) renderer draws:
 
   ```bash
   mouser engine list                 # * marks the engine new windows use

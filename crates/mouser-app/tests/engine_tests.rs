@@ -2,6 +2,8 @@
 //! use, uninstall, ABI checks and the load-failure fallback paths. Every test
 //! runs with a temporary MOUSER_HOME.
 
+mod common;
+
 use mouser_app::engine_cli::{Action, run};
 use mouser_core::engines;
 use serial_test::serial;
@@ -48,6 +50,7 @@ fn home() -> Home {
         std::env::remove_var("MOUSER_ENGINE");
         std::env::remove_var("MOUSER_FLAT_ABI");
         std::env::remove_var("MOUSER_FLAT_FAIL");
+        std::env::set_var("MOUSER_ENGINE_DIRS", common::official_engines(&t.path().join("shipped")));
     }
     Home(t)
 }
@@ -114,7 +117,7 @@ fn install_rejects_urls_wrong_abi_and_bad_libraries() {
     let real = toml.lines().find(|l| l.starts_with("library")).unwrap().to_string();
     std::fs::write(src.join("engine.toml"), toml.replace(&real, &format!("library = \"{junk}\""))).unwrap();
     assert!(cli(Action::Install(src.display().to_string())).is_err());
-    assert!(engines::installed().is_empty());
+    assert!(engines::installed().iter().flatten().all(|i| i.bundled), "only the shipped engines");
 }
 
 #[test]
@@ -199,7 +202,7 @@ fn list_states_unskip_and_restored_engine_is_used() {
     cli(Action::Use("mouser".into())).unwrap();
     crashed_before("flat");
     let out = cli(Action::Unskip(None)).unwrap();
-    assert!(out.contains("restored: skia, flat"), "{out}");
+    assert!(out.contains("restored: flat, skia"), "{out}");
     assert_eq!(engines::chosen(), "mouser");
     assert!(cli(Action::Unskip(None)).unwrap().contains("nothing to do"));
     let list = cli(Action::List).unwrap();
@@ -225,7 +228,7 @@ fn cli_priority_and_move_keep_mouser() {
     assert!(cli(Action::Move("flat".into(), "zero".into())).is_err());
     assert!(cli(Action::Use("skia".into())).unwrap().contains("skia > flat > mouser"));
     let e = cli(Action::Uninstall("mouser".into())).unwrap_err().to_string();
-    assert!(e.contains("never be removed"), "{e}");
+    assert!(e.contains("ships with Mouser"), "{e}");
     // Fallback walk: the next engine after a failed one, mouser last.
     let order = engines::priority();
     assert_eq!(mouser_render::engine::after(&order, "skia"), ["flat", "mouser"]);
@@ -237,8 +240,7 @@ fn cli_priority_and_move_keep_mouser() {
     // What a running window switches to when the order changes.
     assert_eq!(mouser_render::engine::first_usable(&engines::priority()).as_deref(), Some("flat"));
     engines::unskip("skia").unwrap();
-    let want = if mouser_render::engine::available_builtins().iter().any(|(b, _)| *b == "skia") { "skia" } else { "flat" };
-    assert_eq!(mouser_render::engine::first_usable(&engines::priority()).as_deref(), Some(want));
+    assert_eq!(mouser_render::engine::first_usable(&engines::priority()).as_deref(), Some("skia"));
     // MOUSER_ENGINE overrides the order for one run.
     unsafe { std::env::set_var("MOUSER_ENGINE", "flat") };
     assert!(cli(Action::List).unwrap().contains("order (MOUSER_ENGINE): flat > mouser"));

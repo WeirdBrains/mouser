@@ -204,7 +204,7 @@ impl Manifest {
         // commander, chat and preferences take over). Other built-in names
         // stay reserved.
         let takes_over = self.run.transport == Transport::Mode && self.provides.iter().all(|p| p.kind == Kind::Mode);
-        if BUILTINS.iter().any(|b| b.0 == self.name && !(b.1 == Kind::Mode && takes_over)) || crate::engines::is_builtin(&self.name) {
+        if BUILTINS.iter().any(|b| b.0 == self.name && !(b.1 == Kind::Mode && takes_over)) {
             bail!("{:?} is a built-in name", self.name);
         }
         if self.api != API {
@@ -374,20 +374,19 @@ pub const RESERVED_COMMANDS: [&str; 16] = [
     "c",
 ];
 
-/// The compiled-in plugins that have a full manifest (modes and engines).
-pub const BUILTIN_MANIFESTS: [(&str, &str); 5] = [
+/// The compiled-in plugins that have a full manifest (the built-in modes;
+/// every engine is a library, docs/engines.md).
+pub const BUILTIN_MANIFESTS: [(&str, &str); 3] = [
     ("commander", include_str!("builtin/commander.toml")),
     ("chat", include_str!("builtin/chat.toml")),
     ("preferences", include_str!("builtin/preferences.toml")),
-    ("mouser", include_str!("builtin/mouser.toml")),
-    ("skia", include_str!("builtin/skia.toml")),
 ];
 
 fn builtin_parse(s: &str) -> Manifest {
     toml::from_str(s).expect("built-in plugin.toml")
 }
 
-/// The compiled-in manifest of a built-in mode or engine.
+/// The compiled-in manifest of a built-in mode.
 pub fn builtin_manifest(name: &str) -> Option<Manifest> {
     BUILTIN_MANIFESTS.iter().find(|(n, _)| *n == name).map(|(_, s)| builtin_parse(s))
 }
@@ -650,9 +649,9 @@ fn known(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// A built-in or installed engine (engines are plugins of kind `engine`).
+/// An installed or shipped engine (engines are plugins of kind `engine`).
 pub fn is_engine(name: &str) -> bool {
-    crate::engines::is_builtin(name) || crate::engines::find(name).is_some()
+    crate::engines::find(name).is_some()
 }
 
 /// Turn a plugin (built-in or installed, engines included) on or off. The
@@ -794,22 +793,6 @@ impl Registry {
         // Engines have their own order (`mouser engine priority`, the saved
         // `engines` preference); listed after, in that order.
         let mut engs = Vec::new();
-        for n in crate::engines::BUILTINS {
-            let m = builtin_manifest(n).expect("built-in engine manifest");
-            engs.push(Entry {
-                name: n.into(),
-                version: "built-in".into(),
-                description: m.description,
-                kinds: vec![Kind::Engine],
-                transport: Transport::Builtin,
-                enabled: !can_disable(n) || on(n),
-                dir: None,
-                source: None,
-                commands: vec![],
-                permissions: vec![],
-                hotkey: None,
-            });
-        }
         for e in crate::engines::installed().into_iter().flatten() {
             let m = Manifest::from_engine(&e.manifest);
             engs.push(Entry {
@@ -818,9 +801,9 @@ impl Registry {
                 description: m.description.clone(),
                 kinds: vec![Kind::Engine],
                 transport: m.run.transport,
-                enabled: on(&m.name),
+                enabled: !can_disable(&m.name) || on(&m.name),
                 dir: Some(e.dir.clone()),
-                source: Some(Source::User),
+                source: Some(if e.bundled { Source::Bundle } else { Source::User }),
                 commands: vec![],
                 permissions: vec![],
                 hotkey: None,
@@ -998,6 +981,7 @@ commands = ["hello"]
     fn install_registry_priority_enable() {
         let t = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("MOUSER_HOME", t.path().join("home")) };
+        unsafe { std::env::set_var("MOUSER_ENGINE_DIRS", crate::engines::test_shipped(&t.path().join("shipped"))) };
         let a = install(&plugin(t.path(), "alpha", &["hi"])).unwrap();
         assert!(a.dir.join("run").is_file());
         install(&plugin(t.path(), "beta", &["yo"])).unwrap();
@@ -1042,10 +1026,7 @@ commands = ["hello"]
         }
         assert_eq!(builtin_manifest("commander").unwrap().mode.unwrap().hotkey, "c");
         assert_eq!(builtin_manifest("chat").unwrap().mode.unwrap().hotkey, "a");
-        let e = builtin_manifest("mouser").unwrap();
-        assert_eq!(e.kinds(), [Kind::Engine]);
-        assert_eq!(e.engine.unwrap().abi, crate::engines::ABI);
-        assert!(builtin_manifest("skia").unwrap().engine.is_some());
+        assert!(builtin_manifest("mouser").is_none() && builtin_manifest("skia").is_none(), "engines are libraries");
         // A plugin can't reuse a built-in name.
         assert!(Manifest::parse(&MODE.replace("\"shout\"", "\"chat\"")).unwrap_err().to_string().contains("built-in"));
     }
@@ -1108,6 +1089,7 @@ library = "libfancy.so"
         let t = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("MOUSER_HOME", t.path().join("home")) };
         unsafe { std::env::remove_var("MOUSER_ENGINE") };
+        unsafe { std::env::set_var("MOUSER_ENGINE_DIRS", crate::engines::test_shipped(&t.path().join("shipped"))) };
         // Old prefs: `engine = "skia"` (pre-priority) migrates to skia > mouser,
         // and the registry lists the engines in that order.
         storage::update_preferences(|p| p.engine = Some("skia".into())).unwrap();
