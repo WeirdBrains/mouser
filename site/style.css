@@ -71,15 +71,34 @@ p,li,td{overflow-wrap:anywhere}
 nav a[aria-current]{color:var(--cyan);font-weight:700}
 .docfoot{padding:1rem clamp(1rem,4vw,3rem);font-size:.8rem;color:#3f5b6e;background:#e3eff5}
 @media (max-width:1100px){.menu{display:block}nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border-bottom:1px solid var(--line);padding:.5rem 1rem}nav.open{display:flex;flex-direction:column}nav a{margin:.4rem 0}}
-/* Doc headers alternate the front page's section bands (dark / light). Applies to every .doc page. */
-.doc h1,.doc h2{padding:.55rem .9rem;border-radius:6px;border-left:4px solid;overflow-wrap:anywhere}
-.doc h1,.doc h2:nth-of-type(even){background:linear-gradient(160deg,#04192A,#0a2a40);color:#d6e6f2;border-color:#3fd8e8}
-.doc h2:nth-of-type(odd){background:linear-gradient(160deg,#ffffff,#e3eff5);color:#0b2233;border:1px solid #c9dbe6;border-left:4px solid #0a7f8c}
-.doc h1 a,.doc h2:nth-of-type(even) a,.doc h2:nth-of-type(even)::before{color:#3fd8e8}
-.doc h2:nth-of-type(odd) a,.doc h2:nth-of-type(odd)::before{color:#0a7f8c}
-.doc h3:nth-of-type(odd){color:#0a7f8c}.doc h3:nth-of-type(even){color:#0b4f63}
 .docfoot a{color:#0a7f8c}
 .doc figure.clip{margin:1.2rem 0 1.6rem;max-width:960px}
 .doc figure.clip video{display:block;width:100%;height:auto;background:#04192A;border:1px solid #c9dbe6;border-left:4px solid #3fd8e8;border-radius:6px}
 .doc figure.clip figcaption{font-size:.85rem;color:#3f5b6e;margin-top:.45rem}
 .doc h1,.doc h2,.doc h3{scroll-margin-top:5rem}
+
+/* Heading tiers: H1 boldest (dark band), each level a lighter version; H2/H3 alternate colors. */
+.doc h1,.doc h2,.doc h3{overflow-wrap:anywhere;border-radius:6px}
+.doc h1{background:linear-gradient(160deg,#04192A,#0a2a40);color:#d6e6f2;border-left:6px solid #3fd8e8;padding:.6rem 1rem}
+.doc h1 a{color:#3fd8e8}
+.doc h2{color:#fff;border-left:5px solid #3fd8e8;padding:.45rem .9rem;background:linear-gradient(160deg,#0b4f63,#0a7f8c)}
+.doc h2:nth-of-type(even){background:linear-gradient(160deg,#16405c,#2a6688);border-left-color:#8fe9f2}
+.doc h2::before,.doc h2 a{color:#bff4fa}
+.doc h3{font-size:1.2rem;color:#0b2233;background:#d3ebf0;border-left:4px solid #0a7f8c;padding:.3rem .75rem}
+.doc h3:nth-of-type(even){background:#dbe5f2;border-left-color:#2a6688}
+.doc h4{font-size:1.05rem;color:#0b4f63;border-left:3px solid #3fd8e8;padding-left:.6rem;margin:1.2rem 0 .4rem}
+.doc h5{font-size:.98rem;color:#0b2233;border-bottom:2px solid #3fd8e8;display:inline-block;padding-bottom:.1rem;margin:1rem 0 .3rem}
+.doc h6{color:#3f5b6e;text-transform:uppercase;letter-spacing:.06em;font-size:.8rem;margin:1rem 0 .3rem}
+.doc h6::before{content:"▸ ";color:#0a7f8c}
+.doc h1,.doc h2,.doc h3,.doc h4,.doc h5,.doc h6{scroll-margin-top:5rem}
+/* Landing pages (front page, /fuzzball/): lighter touch. */
+section:not(.doc) h2{display:inline-block;padding-bottom:.25rem;border-bottom:3px solid var(--cyan)}
+section:not(.doc) h3{border-left:3px solid var(--cyan);padding-left:.55rem}
+section:not(.doc) h3 a{color:inherit}
+/* Inline code gets a tint everywhere; code blocks keep their own style. */
+code{background:color-mix(in srgb,var(--cyan) 14%,transparent);border:1px solid color-mix(in srgb,var(--cyan) 28%,transparent);padding:.05em .35em;border-radius:4px;font-size:.92em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.doc code{background:#e1f1f4;border-color:#bfdfe5;color:#0b4f63}
+pre code,.doc pre code{background:none;border:0;padding:0;border-radius:0;font-size:inherit}
+a code,.doc a code{color:inherit}
+.doc h1 code,.doc h2 code{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#e6fbff}
+.doc h3 code{background:#fff}
