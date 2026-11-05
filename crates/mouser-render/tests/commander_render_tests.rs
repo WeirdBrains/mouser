@@ -88,22 +88,23 @@ fn has_color(buf: &[u32], r: Rect, c: [u8; 3]) -> bool {
 fn list_grid_and_carousel_draw_with_previews() {
     let t = demo();
     let mut h = Host::builtin();
+    h.focus(true);
     h.set_cwd(Some(t.path().to_path_buf()));
     let (_, imgs) = frame(&mut h, 0, "list");
     assert!(imgs.is_empty(), "the list loads no previews");
     // Defaults show . and ..; hide them for this test.
     h.action("hidden", 0);
-    h.key(b"\x1bt").unwrap();
+    h.key(b"v").unwrap();
     let (buf, imgs) = frame(&mut h, 4, "grid");
     assert_eq!(imgs.len(), 4, "every visible image tile");
     for (m, c) in imgs.iter().zip(COLORS) {
         assert!(has_color(&buf, m.rect, c), "preview drawn at {:?}", m.rect);
     }
     // Carousel on shot1: shot0 and shot2 are the partial neighbours.
-    h.key(b"\x1bt").unwrap();
+    h.key(b"v").unwrap();
     // clip.mp4, photos, README.md, shot0, shot1: four steps right.
     for _ in 0..4 {
-        h.key(b"\x1b[1;3C").unwrap();
+        h.key(b"\x1b[C").unwrap();
     }
     let (buf, imgs) = frame(&mut h, 3, "carousel");
     assert_eq!(imgs.len(), 3);
@@ -119,6 +120,7 @@ fn list_grid_and_carousel_draw_with_previews() {
 fn mouse_clicks_and_wheel_drive_commander() {
     let t = demo();
     let mut h = Host::builtin();
+    h.focus(true);
     h.set_cwd(Some(t.path().to_path_buf()));
     let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
     let ctx = Context { viewport: vp, area: Rect { x: 0, y: PADDING, w: 1100, h: 760 - PADDING } };
@@ -181,6 +183,7 @@ fn mouse_clicks_and_wheel_drive_commander() {
 #[test]
 fn restore_picks_the_remembered_mode_or_none() {
     let mut h = Host::builtin();
+    h.focus(true);
     assert_eq!(h.current(), Some("commander"));
     h.restore(None);
     assert_eq!(h.current(), None, "no mode");
@@ -213,12 +216,13 @@ fn settle(h: &mut Host) {
 fn carousel_floating_names_and_folder_icon() {
     let t = demo();
     let mut h = Host::builtin();
+    h.focus(true);
     h.set_cwd(Some(t.path().to_path_buf()));
     h.action("hidden", 0);
-    h.key(b"\x1bt").unwrap();
-    h.key(b"\x1bt").unwrap();
+    h.key(b"v").unwrap();
+    h.key(b"v").unwrap();
     // clip.mp4, photos: one step right is the folder.
-    h.key(b"\x1b[1;3C").unwrap();
+    h.key(b"\x1b[C").unwrap();
     settle(&mut h);
     let (buf, _) = frame(&mut h, 0, "carousel-folder");
     let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
@@ -232,7 +236,7 @@ fn carousel_floating_names_and_folder_icon() {
     assert_ne!(px(icon.x + icon.w / 2, icon.y + icon.h * 3 / 4), px(icon.x - 4, icon.y + icon.h / 2));
     // shot0, shot1: the label sits on top of the image, see-through.
     for _ in 0..3 {
-        h.key(b"\x1b[1;3C").unwrap();
+        h.key(b"\x1b[C").unwrap();
     }
     settle(&mut h);
     let (buf, imgs) = frame(&mut h, 3, "carousel-file");
@@ -257,6 +261,7 @@ fn markdown_previews_render() {
     std::fs::write(t.path().join("README.md"), RICH_MD).unwrap();
     std::fs::write(t.path().join("zz.txt"), "# not markdown\n").unwrap();
     let mut h = Host::builtin();
+    h.focus(true);
     h.set_cwd(Some(t.path().to_path_buf()));
     h.action("hidden", 0);
     let vp = UiViewport { width: 1100, height: 760, cell_w: 9, cell_h: 18 };
@@ -270,7 +275,7 @@ fn markdown_previews_render() {
             .filter(|i| matches!(i.style, ui::PanelStyle::Md { .. } | ui::PanelStyle::MdCode { .. } | ui::PanelStyle::MdToken(_)))
             .collect()
     };
-    for (key, name) in [(&b"\x1bt"[..], "markdown-grid"), (&b"\x1bt"[..], "markdown-carousel")] {
+    for (key, name) in [(&b"v"[..], "markdown-grid"), (&b"v"[..], "markdown-carousel")] {
         h.key(key).unwrap();
         settle(&mut h);
         frame(&mut h, 0, name);

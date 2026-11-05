@@ -1,7 +1,7 @@
 # Mouser shell integration for PowerShell (pwsh 7+, Windows PowerShell 5.1).
 # Load it from $PROFILE:   mouser shell-integration pwsh | Out-String | Invoke-Expression
 # It reports the folder (OSC 7) and, at each prompt, moves to the folder
-# commander's sync (ctrl+alt+s) left in this session's sync file: a builtin
+# commander's sync (`s` in commander) left in this session's sync file: a builtin
 # Set-Location in the prompt function, so nothing is typed and nothing reaches
 # the history. PowerShell only runs its prompt after a command, so the change
 # lands at the next prompt (press Enter on an empty line to take it at once).

@@ -380,13 +380,13 @@ pub enum Action {
     Pipe,
 }
 
-/// Default bindings. They avoid readline's alt keys (alt+b, alt+f, alt+.,
-/// alt+d, alt+/ ...) except `t` (MODES.md), which takes transpose-words while
-/// the mode is on; remap it in `modes.toml` if you need it.
+/// Default bindings: plain keys, live only while commander has the keyboard
+/// (the focus toggle, `mouser_core::modes::DEFAULT_FOCUS_KEY`); otherwise every
+/// key goes to the shell. Remap them in `modes.toml`.
 pub const BINDINGS: &[crate::modes::Binding] = &[
-    b("switch_view", "t", "switch view (list / grid / carousel)"),
-    b("search", "s", "search this folder"),
-    b("sync", "ctrl+s", "sync: move the shell to commander's folder (silently, at its next prompt if busy)"),
+    b("switch_view", "v", "switch view (list / grid / carousel)"),
+    b("search", "/", "search this folder"),
+    b("sync", "s", "sync: move the shell to commander's folder (silently, at its next prompt if busy)"),
     b("up", "up", "previous row"),
     b("down", "down", "next row"),
     b("left", "left", "previous item"),
@@ -394,14 +394,14 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("open", "enter", "open (folder: cd into it; file: full-width view)"),
     b("bigger", "z", "larger grid tiles"),
     b("smaller", "x", "smaller grid tiles"),
-    b("hidden", "a", "show / hide dotfiles (ls -a)"),
+    b("hidden", "h", "show / hide dotfiles (ls -a)"),
     b("options", "o", "options window"),
     b("man", "m", "manual for commander mode"),
     b("page_up", "pageup", "page up"),
     b("page_down", "pagedown", "page down"),
     b("first", "home", "first item"),
     b("last", "end", "last item"),
-    b("parent", "p", "back: where you came from, else the parent folder"),
+    b("parent", "u", "back: where you came from, else the parent folder"),
     b("back", "backspace", "back: where you came from, else the parent folder"),
     b("close", "q", "close the file view / window"),
     b("mark", "space", "mark / unmark the item (for pipe)"),
@@ -416,7 +416,7 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("zoom_out", "-", "image view: zoom out (same key as volume down in the player)"),
     b("zoom_fit", "0", "image view: fit"),
     b("zoom_actual", "1", "image view: 100% (actual pixels)"),
-    b("fullscreen", "e", "image / player: fullscreen, the whole window (Esc or the same key leaves)"),
+    b("fullscreen", "f", "image / player: fullscreen, the whole window (Esc or the same key leaves)"),
     b("menu", "i", "header overflow menu (\u{2022}\u{2022}\u{2022}) when the window is narrow"),
 ];
 
@@ -819,10 +819,12 @@ pub fn manual(k: &crate::modes::Keymap) -> Vec<String> {
         "COMMANDER MODE (the default mode)".to_string(),
         String::new(),
         "Shows the shell's working directory above the prompt and follows every cd.".into(),
-        "Keep typing commands as usual: only the keys below are taken, every other".into(),
-        "key (other alt keys too) goes to the shell. esc : c turns modes off / on.".into(),
+        "It takes no key from the shell: type commands as usual. ctrl+alt+k (the".into(),
+        "focus toggle) or a click gives commander the keyboard; then the plain keys".into(),
+        "below work and nothing typed reaches the shell. Esc, q with nothing open,".into(),
+        "or the toggle again give the keyboard back. esc : c turns modes off / on.".into(),
         String::new(),
-        "KEYS".into(),
+        "KEYS (while commander has the keyboard)".into(),
     ];
     for (id, _, d) in &k.keys {
         v.push(format!("  {:<12} {d}", k.label(id)));
@@ -833,10 +835,12 @@ pub fn manual(k: &crate::modes::Keymap) -> Vec<String> {
         String::new(),
         "REMAPPING".into(),
         format!("  {}:", crate::modes::modes_path().display()),
-        "    [commander]".into(),
-        "    modifier = \"alt\"".into(),
+        "    [focus]".into(),
+        "    key = \"ctrl+alt+k\"   # alt+<key> or ctrl+alt+<letter>".into(),
         "    [commander.keys]".into(),
-        "    switch_view = \"v\"".into(),
+        "    switch_view = \"t\"".into(),
+        "  On Windows Ctrl+Alt is AltGr: remap the toggle if AltGr+K types a".into(),
+        "  character on your layout.".into(),
     ]);
     v
 }
@@ -1010,7 +1014,7 @@ mod tests {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);
         }
         let k = crate::modes::Keymap::new(BINDINGS);
-        assert!(manual(&k).iter().any(|l| l.contains("alt+t") && l.contains("switch view")));
+        assert!(manual(&k).iter().any(|l| l.contains("  v ") && l.contains("switch view")));
     }
 
     #[test]
@@ -1076,11 +1080,11 @@ mod tests {
         // Going down starts at the top.
         c.set_cwd(Some(t.path().join("sub")));
         assert_eq!(c.selected, 0);
-        // alt+p and alt+Backspace are both back, both remappable.
+        // u and Backspace are both back, both remappable.
         let k = crate::modes::Keymap::new(BINDINGS);
-        assert!(manual(&k).iter().any(|l| l.contains("alt+backspace") && l.contains("back")), "{:?}", manual(&k));
+        assert!(manual(&k).iter().any(|l| l.contains("backspace") && l.contains("back")), "{:?}", manual(&k));
         assert_eq!(Action::from_id("back"), Some(Action::Parent));
-        assert_eq!(crate::modes::key_bytes("backspace").unwrap()[0], b"\x1b\x7f");
+        assert_eq!(crate::modes::key_bytes("backspace").unwrap()[0], b"\x7f");
         // At / there is no parent.
         c.set_cwd(Some(PathBuf::from("/")));
         assert_eq!(c.apply(Action::Parent, 1), Effect::None);
