@@ -1,62 +1,101 @@
 ---
 title: Demo app: a Flutter client for Mouser's MCP server
 status: draft
-note: this walkthrough is a draft. The demo's repository isn't public yet, so the repo link and screenshots below are TODOs.
+note: this walkthrough is a draft. Screenshots and clips are still TODOs.
 ---
 # Demo app: a Flutter client for Mouser's MCP server
 
-The Mouser MCP demo is a Flutter app that talks to [Mouser's MCP server](mcp.html)
-and exercises every tool it offers. It's a worked example of integrating with
-the server from your own app.
+[mouser_mcp_demo](https://github.com/WeirdBrains/mouser_mcp_demo) is a Flutter
+desktop app that talks to [Mouser's MCP server](mcp.html): connect, list the
+tools, call any tool from a form generated from its input schema, and follow a
+curated Demo page. Its MCP client (`lib/mcp/mcp_client.dart`) is plain Dart
+with no extra packages, so it's a good template for your own integration.
 
-> **TODO:** link to the public repository once it's published.
->
-> **TODO:** screenshots of the Connect, Protocol, Tools and Demo pages.
+> **TODO:** screenshots of the Connect, Protocol, Tools and Demo pages, and a
+> short clip of the Demo page.
 
 ## What it covers
 
-- **Tools only.** The app uses MCP's `initialize`, `ping`, `tools/list` and
-  `tools/call`. It doesn't use resources or prompts.
-- **Transports.** HTTP with MCP sessions, HTTPS with either a pinned
-  certificate or a CA, and stdio through `mouser mcp serve --stdio`.
+- **Tools only.** `initialize`, `ping`, `tools/list` and `tools/call`. Mouser
+  only advertises `tools`, and answers `-32601` to resources, prompts, logging
+  and completion; the Protocol page probes those to show it.
+- **Transports.** Streamable HTTP with a session, HTTPS with a CA file or a
+  pinned SHA-256, and stdio through `mouser mcp serve --stdio`.
 - **All 11 tools:** `tabs_list`, `screen_read`, `scrollback_read`,
   `shell_type`, `shell_run`, `files_list`, `files_read`, `files_mkdir`,
   `files_copy`, `files_move` and `files_trash`.
 
-## Walkthrough
+## 1. Start Mouser's server
 
-The app has four pages.
+```sh
+mouser mcp enable        # then restart Mouser; serves http://127.0.0.1:7801/mcp
+mouser mcp token --show  # Bearer token for HTTP
+```
 
-### 1. Connect
+For a throwaway instance, set `MOUSER_HOME=$(mktemp -d) MOUSER_SECRET_STORE=file`,
+then run `mouser mcp enable` and `mouser` in that environment.
 
-Pick a transport and connect. Turn the server on first, as described in
-[Mouser and MCP](mcp.html): HTTP is `http://127.0.0.1:7801/mcp`, HTTPS is
-`https://127.0.0.1:7802/mcp`, where you either trust
-`$MOUSER_HOME/mcp/cert.pem` or pin the SHA256 that `mouser mcp status` shows.
-For stdio, the app starts `mouser mcp serve --stdio`, which bridges to the
-running Mouser and reads the token itself. Over HTTP and HTTPS the app needs
-the token from `mouser mcp token --show`.
+## 2. Run the app
+
+```sh
+git clone https://github.com/WeirdBrains/mouser_mcp_demo
+cd mouser_mcp_demo
+flutter run -d linux
+```
+
+The repo also has Linux, macOS and Windows packaging scripts; see its README.
+
+## 3. Connect
+
+Pick a transport:
+
+- **Streamable HTTP:** endpoint plus token. The key button runs
+  `mouser mcp token --show`; `MOUSER_MCP_URL` and `MOUSER_MCP_TOKEN` prefill them.
+- **HTTPS** (`https://127.0.0.1:7802/mcp`): give the CA file
+  (`$MOUSER_HOME/mcp/cert.pem`) or pin the SHA-256 from `mouser mcp status`.
+- **stdio:** the app spawns `mouser mcp serve --stdio`, which bridges to the
+  running Mouser.
+
+The protocol version offered is selectable. Mouser serves 2025-11-25,
+2025-06-18 and 2025-03-26, and answers with its newest for anything else. The
+Connect page then shows the status and server info.
 
 > **TODO:** screenshot of the Connect page.
 
-### 2. Protocol
+## 4. Protocol
 
-Shows the MCP exchange itself: the `initialize` handshake, `ping`, and the
-session the HTTP transport keeps.
+Shows the session (server info, capabilities, session id, certificate SHA-256),
+`ping` with its round trip, a JSON-RPC batch, the capability probes, a raw
+JSON-RPC console, and "End HTTP session" (`DELETE /mcp`).
 
 > **TODO:** screenshot of the Protocol page.
 
-### 3. Tools
+## 5. Tools
 
-Lists what `tools/list` returns and lets you call each tool with
-`tools/call`. Typing, running commands and changing files go through Mouser's
-permission broker, so Mouser shows an approval card for those calls.
+Lists every tool from `tools/list`, builds a form from each tool's input schema,
+and shows the result of `tools/call`. Write tools (`shell_*`,
+`files_mkdir`/`copy`/`move`/`trash`) show Mouser's approval popup first.
 
 > **TODO:** screenshot of the Tools page.
 
-### 4. Demo
+## 6. Demo
 
-A guided run through the tools against a live Mouser.
+A guided run: `tabs_list` then `screen_read`; a `files_list`/`files_read` file
+browser; `shell_run` then `screen_read`; plus `scrollback_read`, `shell_type`,
+and "send files to Mouser", a local file chooser feeding `files_copy`,
+`files_move`, `files_mkdir` and `files_trash`. Mouser takes paths; it has no
+upload API.
 
-> **TODO:** screenshot or recording of the Demo page, and a description of
-> each step once the app is published.
+Tapping a file, or a path chip in any tool result, opens a viewer for text,
+images, .docx, PDF, video and audio (Linux needs `mpv` for media).
+
+> **TODO:** clip of the Demo page.
+
+## 7. Check your own client
+
+The repo's smoke test is a compact reference for a full round trip:
+
+```sh
+MOUSER_MCP_TOKEN=$(mouser mcp token --show) dart run bin/smoke.dart http
+dart run bin/smoke.dart stdio
+```
