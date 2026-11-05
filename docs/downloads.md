@@ -54,9 +54,8 @@ In this order; any failure stops that install and nothing else:
 3. sha256: from the lock, the release manifest or `ASSET.sha256`. Official
    items must have one.
 4. A minisign signature. Official items must verify against the WeirdBrains
-   key pinned in Mouser. This build pins no key yet (the official release
-   key comes with the official releases), so official items can't be
-   installed from the network yet. Third-party items verify against their
+   key pinned in Mouser (minisign key `61BA1720747F9146`,
+   `RWRGkX90IBe6YaOypKF9r1wz4OqpCp3Ggb1Ag2omAzxTRaqoHzsNQSdP`). Third-party items verify against their
    author's `minisign.pub`. Mouser remembers that key the first time
    (`$MOUSER_HOME/plugins/keys.toml`, by source) and refuses a later file signed
    with another key, or unsigned, from the same source. An unsigned item

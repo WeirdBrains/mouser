@@ -21,10 +21,10 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// The official signing key (minisign, base64). None until WeirdBrains'
-/// release key exists (plan step 9): official items then can't verify, so
-/// they aren't installed. `MOUSER_TEST_OFFICIAL_KEY` replaces it in tests.
-pub const OFFICIAL_KEY: Option<&str> = None;
+/// The official WeirdBrains signing key (minisign public key 61BA1720747F9146,
+/// base64): every `plugins.lock` item must verify against it.
+/// `MOUSER_TEST_OFFICIAL_KEY` replaces it in tests.
+pub const OFFICIAL_KEY: Option<&str> = Some("RWRGkX90IBe6YaOypKF9r1wz4OqpCp3Ggb1Ag2omAzxTRaqoHzsNQSdP");
 
 /// Largest download accepted (bytes).
 pub const MAX_BYTES: u64 = 200 * 1024 * 1024;
@@ -1354,8 +1354,9 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_lock_parses_and_there_is_no_official_key_yet() {
+    fn the_shipped_lock_parses_and_the_official_key_is_pinned() {
         let _ = lock();
-        assert!(OFFICIAL_KEY.is_none(), "step 9 pins the real key");
+        let k = OFFICIAL_KEY.expect("the WeirdBrains key is pinned");
+        assert!(minisign_verify::PublicKey::from_base64(k).is_ok());
     }
 }

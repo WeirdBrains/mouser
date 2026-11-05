@@ -359,9 +359,9 @@ fn github_releases_engines_and_the_official_lock_with_its_offline_bundle() {
     );
     std::fs::write(h.path().join("lock.toml"), lock).unwrap();
     unsafe { std::env::set_var("MOUSER_TEST_LOCK", h.path().join("lock.toml")) };
-    // Without the official key nothing official installs.
-    let e = inst("skia", Kind::Engine, true).unwrap_err().to_string();
-    assert!(e.contains("no official signing key"), "{e}");
+    // Signed with another key than the pinned WeirdBrains key: refused.
+    unsafe { std::env::remove_var("MOUSER_TEST_OFFICIAL_KEY") };
+    assert!(inst("skia", Kind::Engine, true).is_err());
     unsafe { std::env::set_var("MOUSER_TEST_OFFICIAL_KEY", official.public()) };
     assert!(inst("skia", Kind::Plugin, true).unwrap_err().to_string().contains("is an official engine"));
     assert!(inst("nope", Kind::Plugin, true).unwrap_err().to_string().contains("not an official"));
