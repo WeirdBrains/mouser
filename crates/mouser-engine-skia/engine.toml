@@ -1,0 +1,5 @@
+name = "skia"
+version = "0.1.0"
+abi = 2
+library = "libmouser_engine_skia.so"
+description = "Skia (Ganesh) over OpenGL"
