@@ -40,6 +40,10 @@
 - Tests: the commander plugin parity test waits for the grid and carousel thumbnails on both sides instead of comparing two empty grids (failed on a fresh, fast machine).
 - CI installs ffmpeg on all three OSes and fails the player test if ffmpeg is missing (`MOUSER_REQUIRE_FFMPEG`), so the commander plugin's 60 fps shared-memory path is really tested instead of possibly being skipped.
 
+### Changed
+
+- CI: the commander player fps test holds the plugin to 20 fps on CI runners (30 locally); keeping up with the built-in player on the same machine is still required.
+
 ## [1.3.0] - 2026-11-04
 
 ### Added
