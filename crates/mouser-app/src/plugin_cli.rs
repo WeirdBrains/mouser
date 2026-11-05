@@ -7,7 +7,6 @@ use anyhow::{Result, bail};
 use mouser_core::permissions::{Decision, Store};
 use mouser_core::plugins::{self, Kind, Transport};
 use std::io::Write;
-use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -30,6 +29,29 @@ pub enum Action {
     Use(String),
     /// Engines: clear the crash skip / failure (`None`: all).
     Unskip(Option<String>),
+    /// Install the newest version from where it came from (`None`: all).
+    Update(Option<String>),
+    /// Back to the version before the last install or update.
+    Rollback(String),
+    /// Queue the failed downloads again.
+    Retry,
+    /// Cancel a running download (`None`: all).
+    Cancel(Option<u32>),
+}
+
+impl Action {
+    /// The shared verbs (docs/downloads.md), run the same way for both kinds.
+    fn verb(&self) -> Option<crate::install_cli::Verb> {
+        use crate::install_cli::Verb;
+        Some(match self {
+            Action::Install(s) => Verb::Install(s.clone()),
+            Action::Update(n) => Verb::Update(n.clone()),
+            Action::Rollback(n) => Verb::Rollback(n.clone()),
+            Action::Retry => Verb::Retry,
+            Action::Cancel(i) => Verb::Cancel(*i),
+            _ => return None,
+        })
+    }
 }
 
 /// A `--kind` name.
@@ -57,9 +79,12 @@ pub fn run_kind(action: &Action, kind: Option<&str>, out: &mut dyn Write) -> Res
 /// Engine actions (`--kind engine`).
 fn engine(action: &Action, out: &mut dyn Write) -> Result<()> {
     use crate::engine_cli::{self, Action as E};
+    if let Some(v) = action.verb() {
+        return crate::install_cli::run(mouser_core::install::Kind::Engine, &v, &crate::install_cli::cli_flags(), out);
+    }
     let e = match action {
         Action::List => E::List,
-        Action::Install(p) => E::Install(p.clone()),
+        Action::Install(_) | Action::Update(_) | Action::Rollback(_) | Action::Retry | Action::Cancel(_) => unreachable!(),
         Action::Uninstall(n) => E::Uninstall(n.clone()),
         Action::Use(n) => E::Use(n.clone()),
         Action::Unskip(n) => E::Unskip(n.clone()),
@@ -86,29 +111,8 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
     match action {
         Action::Use(_) | Action::Unskip(_) => run_kind(action, None, out),
         Action::List => list(out, None),
-        Action::Install(p) => {
-            if p.starts_with("http://") || p.starts_with("https://") {
-                bail!("installing from a URL is not supported; download the plugin and run `mouser plugin install <dir>`");
-            }
-            let path = Path::new(p);
-            let d = if path.is_dir() { path.to_path_buf() } else { path.parent().unwrap_or(Path::new(".")).to_path_buf() };
-            if mouser_core::engines::is_engine_dir(&d) {
-                return crate::engine_cli::run(&crate::engine_cli::Action::Install(p.clone()), out);
-            }
-            let i = plugins::install(path)?;
-            let m = &i.manifest;
-            writeln!(out, "installed {} {} ({}) in {}", m.name, m.version, kinds(&m.kinds()), i.dir.display())?;
-            if !m.permissions.is_empty() {
-                writeln!(out, "it asks for:")?;
-                for c in &m.permissions {
-                    writeln!(out, "  {c:<16} {}", plugins::capability_text(c))?;
-                }
-                writeln!(out, "Mouser asks you before each is used; `mouser plugin permissions {}` to see or change", m.name)?;
-            }
-            if !m.run.commands.is_empty() {
-                writeln!(out, "[mouser] line commands: {}", m.run.commands.join(", "))?;
-            }
-            Ok(())
+        Action::Install(_) | Action::Update(_) | Action::Rollback(_) | Action::Retry | Action::Cancel(_) => {
+            crate::install_cli::run(mouser_core::install::Kind::Plugin, &action.verb().unwrap(), &crate::install_cli::cli_flags(), out)
         }
         Action::Uninstall(n) => {
             if plugins::find(n).is_none() && mouser_core::engines::find(n).is_some() {

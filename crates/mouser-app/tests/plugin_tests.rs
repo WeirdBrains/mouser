@@ -10,6 +10,8 @@ fn examples() -> PathBuf {
 }
 
 fn cli(a: Action) -> anyhow::Result<String> {
+    // SAFETY: serial tests.
+    unsafe { std::env::set_var("MOUSER_TEST_PROBE_EXE", env!("CARGO_BIN_EXE_mouser-app")) };
     let mut v = Vec::new();
     run(&a, &mut v)?;
     Ok(String::from_utf8(v).unwrap())
@@ -28,7 +30,7 @@ fn install_list_permissions_priority_and_examples_run() {
         let o = cli(Action::Install(examples().join(p).display().to_string())).unwrap();
         assert!(o.starts_with(&format!("installed {p} 0.1.0")), "{o}");
     }
-    assert!(cli(Action::Install("https://example.com/p".into())).is_err());
+    assert!(cli(Action::Install("http://example.com/p".into())).unwrap_err().to_string().contains("https"));
     let l = cli(Action::List).unwrap();
     for want in [
         "hello-command",

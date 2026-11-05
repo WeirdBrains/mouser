@@ -8,7 +8,7 @@ mouser\-engine\-probe \- Start an MCP plugin, do the handshake and list its tool
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser engine probe\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBmouser engine probe\fR [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -16,6 +16,15 @@ Start an MCP plugin, do the handshake and list its tools
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
+.TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

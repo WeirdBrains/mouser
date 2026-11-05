@@ -8,7 +8,7 @@ mouser\-engine \- Manage GPU rendering engines (mouser, skia, custom); the same 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser engine\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBmouser engine\fR [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -16,6 +16,15 @@ Manage GPU rendering engines (mouser, skia, custom); the same as `mouser plugin 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
+.TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -27,10 +36,22 @@ mouser\-engine\-list(1)
 List plugins (or engines) by priority, with what each provides and its state
 .TP
 mouser\-engine\-install(1)
-Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
+Install from a name (plugins.lock), gh:Owner/Repo[@tag], an https:// URL, a local folder or archive, or crate:NAME (mode plugins); verified, see docs/downloads.md
+.TP
+mouser\-engine\-update(1)
+Install the newest version from where NAME came from (\-\-all: everything installed that way)
+.TP
+mouser\-engine\-rollback(1)
+Go back to the version before the last install or update (two are kept)
 .TP
 mouser\-engine\-uninstall(1)
 Remove an installed plugin or engine (and a plugin\*(Aqs saved permissions)
+.TP
+mouser\-engine\-retry(1)
+Queue the failed downloads again (first run, installs, updates)
+.TP
+mouser\-engine\-cancel(1)
+Cancel a running download by job id (see `mouser downloads`), or \-\-all
 .TP
 mouser\-engine\-enable(1)
 Turn a plugin or engine on (built\-ins included)

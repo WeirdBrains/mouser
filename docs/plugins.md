@@ -80,7 +80,9 @@ one kind. **`mouser engine X` is `mouser plugin X --kind engine`**: the same
 parser and code (`mouser engine list` and `mouser plugin list --kind engine` print
 the same thing). Engines also have `use <name>` (put first, unskip) and
 `unskip <name>|--all`; without `--kind`, `enable`/`disable`/`use`/`unskip` with an
-engine's name reach the engine. Installing from a URL isn't supported. State lives
+engine's name reach the engine. `install`, `update`, `rollback`, `remove`, `retry`
+and `cancel` take the same sources and checks for plugins and engines
+([Downloads](./downloads.md)). State lives
 in `$MOUSER_HOME/plugins/`: one directory per plugin, `state.toml` (priority,
 disabled; engines' disabled flags too) and `permissions.toml`. The engine order
 stays in the `engines` preference (`mouser engine priority`), not in `state.toml`.

@@ -8,7 +8,7 @@ mouser\-plugin\-unskip \- Engines: stop skipping one that crashed Mouser (and cl
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser plugin unskip\fR [\fB\-\-all\fR] [\fB\-\-kind\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
+\fBmouser plugin unskip\fR [\fB\-\-all\fR] [\fB\-\-kind\fR] [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fINAME\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -22,6 +22,15 @@ Every engine
 .TP
 \fB\-\-kind\fR \fI<KIND>\fR
 Only this kind: mode, engine, model\-provider, tool\-provider, command. With `engine` this is `mouser engine …`
+.TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

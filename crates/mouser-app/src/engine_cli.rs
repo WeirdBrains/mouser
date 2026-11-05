@@ -4,7 +4,6 @@
 use anyhow::{Result, bail};
 use mouser_core::engines;
 use std::io::Write;
-use std::path::Path;
 
 /// One `mouser engine` action.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,20 +23,12 @@ pub enum Action {
 pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
     match action {
         Action::List => list(out),
-        Action::Install(p) => {
-            if p.starts_with("http://") || p.starts_with("https://") {
-                bail!("installing from a URL is not supported; download the engine and run `mouser engine install <dir>`");
-            }
-            let (m, lib) = engines::source(Path::new(p))?;
-            let reported = mouser_render::engine::probe(&lib)?;
-            if reported != m.name {
-                bail!("library reports engine name {reported:?} but engine.toml says {:?}", m.name);
-            }
-            let inst = engines::install(&m, &lib)?;
-            writeln!(out, "installed {} {} in {}", m.name, m.version, inst.dir.display())?;
-            writeln!(out, "use it with: mouser engine use {}", m.name)?;
-            Ok(())
-        }
+        Action::Install(p) => crate::install_cli::run(
+            mouser_core::install::Kind::Engine,
+            &crate::install_cli::Verb::Install(p.clone()),
+            &crate::install_cli::cli_flags(),
+            out,
+        ),
         Action::Uninstall(n) => {
             let was = engines::uninstall(n)?;
             writeln!(out, "uninstalled {n}")?;

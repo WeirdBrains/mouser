@@ -8,7 +8,7 @@ mouser\-engine\-enable \- Turn a plugin or engine on (built\-ins included)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser engine enable\fR [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
+\fBmouser engine enable\fR [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fINAME\fR> 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -16,6 +16,15 @@ Turn a plugin or engine on (built\-ins included)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
+.TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

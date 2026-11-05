@@ -8,7 +8,7 @@ mouser\-plugin \- Manage plugins (mode, model\-provider, tool\-provider, command
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser plugin\fR [\fB\-\-kind\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+\fBmouser plugin\fR [\fB\-\-kind\fR] [\fB\-\-yes\fR] [\fB\-\-version\fR] [\fB\-\-wait\fR] [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
@@ -20,6 +20,15 @@ Manage plugins (mode, model\-provider, tool\-provider, command; engines too); se
 \fB\-\-kind\fR \fI<KIND>\fR
 Only this kind: mode, engine, model\-provider, tool\-provider, command. With `engine` this is `mouser engine …`
 .TP
+\fB\-\-yes\fR
+Install or update without asking (the card\*(Aqs answer is yes)
+.TP
+\fB\-\-version\fR \fI<VERSION>\fR
+The version to install (a GitHub tag or what the lock pins)
+.TP
+\fB\-\-wait\fR
+Wait for the download to finish (the CLI always does; for scripts)
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .ie \n(.g .ds Aq \(aq
@@ -30,10 +39,22 @@ mouser\-plugin\-list(1)
 List plugins (or engines) by priority, with what each provides and its state
 .TP
 mouser\-plugin\-install(1)
-Install from a directory with plugin.toml (or an engine\*(Aqs engine.toml)
+Install from a name (plugins.lock), gh:Owner/Repo[@tag], an https:// URL, a local folder or archive, or crate:NAME (mode plugins); verified, see docs/downloads.md
+.TP
+mouser\-plugin\-update(1)
+Install the newest version from where NAME came from (\-\-all: everything installed that way)
+.TP
+mouser\-plugin\-rollback(1)
+Go back to the version before the last install or update (two are kept)
 .TP
 mouser\-plugin\-uninstall(1)
 Remove an installed plugin or engine (and a plugin\*(Aqs saved permissions)
+.TP
+mouser\-plugin\-retry(1)
+Queue the failed downloads again (first run, installs, updates)
+.TP
+mouser\-plugin\-cancel(1)
+Cancel a running download by job id (see `mouser downloads`), or \-\-all
 .TP
 mouser\-plugin\-enable(1)
 Turn a plugin or engine on (built\-ins included)
