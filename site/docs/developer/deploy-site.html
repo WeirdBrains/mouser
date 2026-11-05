@@ -32,6 +32,16 @@
   link to confirm the asset exists in the release.</li>
 <li>Code blocks get a Copy button from <code>site/main.js</code> and scroll sideways when a
   line is longer than the card (never clipped); install cards are one per row.</li>
+<li><strong>Docs pages</strong> under <code>site/docs/</code> are generated, never edited by hand. Every
+  <code>docs/*.md</code> on main is mapped to a section (<code>user</code>, <code>developer</code>, <code>mcp</code>, <code>api</code>)
+  in <code>docs/sections.toml</code>; <code>docs/historical/</code> goes to the archive. The Docs site
+  workflow (<code>.github/workflows/docs-site.yml</code>) fails if a doc is unmapped, and on
+  every push to main that touches <code>docs/</code> it runs <code>scripts/build_docs.py</code> from the
+  <code>site</code> branch, commits <code>site/docs/</code> to <code>site</code> and deploys Pages. Pages that don't
+  come from <code>docs/</code> (the API crate table, drafts, "coming soon" stubs) live in
+  <code>site-src/&lt;section&gt;/*.md</code> on the <code>site</code> branch, with <code>title</code>/<code>status</code> front matter.
+  Manual rebuild: <code>pip install markdown</code>, then on a <code>site</code> checkout
+  <code>python3 scripts/build_docs.py --docs ../mouser/docs --out site/docs</code>.</li>
 </ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/deploy-site.md">docs/deploy-site.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
