@@ -49,7 +49,10 @@ pub fn cases() -> Vec<(&'static str, String)> {
         ("case:table", "| a | b |\n|---|--:|\n| 1 | 22 |\n| long cell text | x |".into()),
         ("case:wide-table", "| a | b | c |\n|---|---|---|\n| aaaaaaaaaaaaaaaaaaaa | bbbbbbbbbbbbbbbbbbbb | cccccccccccccccccccc |".into()),
         ("case:streaming", "Intro line.\n\n```sh\nls -la\necho hi\n```\n\nAfter **bold** text.".into()),
-        ("case:graphemes", format!("{FAMILY}{FLAG}{HEART}{E_ACUTE}{E_ACUTE}{FAMILY}{FAMILY}{FLAG}{FLAG} and {FAMILY} family {E_ACUTE}{E_ACUTE}{E_ACUTE}{E_ACUTE}")),
+        (
+            "case:graphemes",
+            format!("{FAMILY}{FLAG}{HEART}{E_ACUTE}{E_ACUTE}{FAMILY}{FAMILY}{FLAG}{FLAG} and {FAMILY} family {E_ACUTE}{E_ACUTE}{E_ACUTE}{E_ACUTE}"),
+        ),
         ("case:graphemes-code", format!("```\n{FAMILY}{FAMILY}{FAMILY}{FLAG}{FLAG}{FLAG}{E_ACUTE}{E_ACUTE}{E_ACUTE}{E_ACUTE}\n```")),
         ("case:cjk", "日本語のテキストを折り返す日本語のテキストを折り返す".into()),
         ("case:control", "evil \x1b]52;c;AAAA\x07 text and a [link](http://a\x1bb)".into()),
@@ -81,11 +84,7 @@ impl Who {
 pub fn rows(who: Who, src: &str, width: usize) -> Vec<String> {
     let v: Vec<String> = match who {
         Who::Mouser => markdown::to_text(&markdown::layout(src, width), width).lines().map(String::from).collect(),
-        Who::Base => ratmark_base::Rendered::render(src, width as u16, &ratmark_base::Theme::plain())
-            .lines
-            .iter()
-            .map(|l| l.to_string())
-            .collect(),
+        Who::Base => ratmark_base::Rendered::render(src, width as u16, &ratmark_base::Theme::plain()).lines.iter().map(|l| l.to_string()).collect(),
         Who::Fix => ratmark::Rendered::render(src, width as u16, &ratmark::Theme::plain()).lines.iter().map(|l| l.to_string()).collect(),
     };
     v.into_iter().map(|s| s.trim_end().to_string()).collect()

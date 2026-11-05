@@ -9,7 +9,9 @@ fn main() {
     println!("# ratmark compatibility report\n");
     println!("{} documents (cases plus Mouser's README and docs), widths {:?}.\n", docs.len(), WIDTHS);
     println!("## Totals\n");
-    println!("| renderer | rows | rows equal to Mouser's | docs with Mouser's words | over width (grid) | over width (unicode) | grapheme splits | rows with control chars |");
+    println!(
+        "| renderer | rows | rows equal to Mouser's | docs with Mouser's words | over width (grid) | over width (unicode) | grapheme splits | rows with control chars |"
+    );
     println!("|---|---|---|---|---|---|---|---|");
     for who in Who::ALL {
         let (mut rows_n, mut same, mut words_eq, mut og, mut ou, mut gs, mut cr, mut runs) = (0, 0, 0, 0, 0, 0, 0, 0);
@@ -35,7 +37,16 @@ fn main() {
     for d in docs.iter().filter(|d| d.name.starts_with("case:")) {
         for who in Who::ALL {
             let r = rows(who, &d.src, 24);
-            println!("| {} | {} | {} | {} | {} | {} | {} |", d.name, who.name(), r.len(), over_grid(&r, 24), over_unicode(&r, 24), grapheme_splits(&r), control_rows(&r));
+            println!(
+                "| {} | {} | {} | {} | {} | {} | {} |",
+                d.name,
+                who.name(),
+                r.len(),
+                over_grid(&r, 24),
+                over_unicode(&r, 24),
+                grapheme_splits(&r),
+                control_rows(&r)
+            );
         }
     }
     println!("\n## Streaming (width 40, at most 400 prefixes per document)\n");
