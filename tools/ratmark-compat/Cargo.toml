@@ -1,0 +1,21 @@
+# Compatibility harness: Mouser's Markdown layout (mouser-mode-api `markdown`)
+# side by side with ratmark (https://github.com/nixpulvis/ratmark). Its own
+# workspace, so nothing here touches Mouser's build or dependencies.
+# See README.md.
+[package]
+name = "ratmark-compat"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "BSD-3-Clause"
+
+[workspace]
+
+[dependencies]
+mouser-mode-api = { path = "../../crates/mouser-mode-api", features = ["markdown"] }
+# Upstream ratmark, the baseline.
+ratmark_base = { package = "ratmark", git = "https://github.com/nixpulvis/ratmark", rev = "6483e72ed69b0e6ea5b16ebb4c527129fb5e5523" }
+# WeirdBrains/ratmark fix/grapheme-wrap: the contribution under test.
+ratmark = { git = "https://github.com/WeirdBrains/ratmark", rev = "3678cee105d298d2f39afb36f77c713dd0e8fbf3" }
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
