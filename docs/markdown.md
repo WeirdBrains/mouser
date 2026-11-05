@@ -94,3 +94,8 @@ the frame draws them as panel items in the theme's colours (commander, chat), an
 
 Control characters in the text and in link targets are shown as `�` (or dropped),
 never passed through, so a file cannot send escape sequences to your terminal.
+
+The parser and highlighter live in `mouser-mode-api` behind its `markdown` feature
+(`mouser_mode_api::markdown`, `::highlight`), so mode plugins draw the same Markdown;
+`mouser_core` re-exports both. `markdown::items` turns Markdown into panel items for
+any action type.

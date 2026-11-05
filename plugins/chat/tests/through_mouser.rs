@@ -1,0 +1,113 @@
+//! The chat plugin end to end: Mouser's adapter starts the real
+//! `mouser-chat` program with an agent session on a test host whose model
+//! streams a Markdown reply. Typing goes to the plugin's input, Enter sends
+//! through `agent.send`, and the reply comes back as `agent.state` events and
+//! is drawn as Markdown rows.
+
+use mouser_core::agent::{AgentHost, AgentTool, Chat, Check, ScreenContext};
+use mouser_core::models::{ChatRequest, ChatSink, Event, ModelInfo, ModelProvider};
+use mouser_core::modes::Keymap;
+use mouser_core::permissions::{Decision, Store};
+use mouser_render::modes::stdio::StdioMode;
+use mouser_render::modes::{Context, Mode, View};
+use mouser_render::ui::PanelStyle;
+use serde_json::Value;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+struct Echo;
+impl ModelProvider for Echo {
+    fn id(&self) -> &str {
+        "echo"
+    }
+    fn models(&self) -> Vec<ModelInfo> {
+        vec![]
+    }
+    fn chat(&self, _req: &ChatRequest, sink: &mut dyn ChatSink) -> anyhow::Result<()> {
+        for t in ["**Hello** ", "from `echo`"] {
+            sink.event(Event::Text(t.into()));
+        }
+        sink.event(Event::Done { stop: "end".into() });
+        Ok(())
+    }
+}
+
+struct Host;
+impl AgentHost for Host {
+    fn context(&self) -> ScreenContext {
+        Default::default()
+    }
+    fn tools(&self) -> Vec<AgentTool> {
+        vec![]
+    }
+    fn check(&self, _: &AgentTool, _: &Value) -> Check {
+        Check::Allow
+    }
+    fn call(&self, _: &AgentTool, _: &Value) -> Result<String, String> {
+        Err("no tools".into())
+    }
+    fn model(&self) -> Option<(String, String)> {
+        Some(("echo".into(), "e1".into()))
+    }
+    fn open(&self, _: &str) -> anyhow::Result<Box<dyn ModelProvider>> {
+        Ok(Box::new(Echo))
+    }
+}
+
+fn ctx() -> Context {
+    Context {
+        viewport: mouser_render::UiViewport { width: 1200, height: 900, cell_w: 8, cell_h: 16 },
+        area: mouser_render::ui::Rect { x: 0, y: 0, w: 1200, h: 900 },
+    }
+}
+
+fn until(m: &mut StdioMode, what: &str, mut f: impl FnMut(&View) -> bool) {
+    let keys = Keymap::new(&[]);
+    let end = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < end {
+        if f(&m.view(&ctx(), &keys)) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+fn texts(v: &View) -> Vec<String> {
+    v.dock.iter().flat_map(|d| &d.items).map(|i| i.text.clone()).collect()
+}
+
+#[test]
+fn chats_through_mouser_agent() {
+    let home = tempfile::tempdir().unwrap();
+    // SAFETY: the only test in this binary; set before anything reads it.
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    let dir = home.path().join("plugins/chat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_mouser-chat").replace('\\', "\\\\");
+    let manifest = include_str!("../plugin.toml").replace("command = [\"./mouser-chat\"]", &format!("command = [\"{exe}\"]"));
+    std::fs::write(dir.join("plugin.toml"), manifest).unwrap();
+    let mut store = Store::load();
+    store.set("chat", "run", Decision::Allow);
+    store.set("chat", "agent.use", Decision::Allow);
+    store.save().unwrap();
+
+    let p = mouser_core::plugins::find("chat").expect("chat plugin");
+    let mut m = StdioMode::new(p, 3).unwrap();
+    m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
+    m.activate();
+    until(&mut m, "the chat dock", |v| texts(v).iter().any(|t| t.starts_with("chat · ")));
+    until(&mut m, "a focused input", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. })));
+    assert!(m.wants_text());
+    for b in ["h", "i", "\r"] {
+        m.text(b.as_bytes());
+    }
+    until(&mut m, "the streamed Markdown reply", |v| {
+        let t = texts(v);
+        t.iter().any(|t| t == "Hello") && t.iter().any(|t| t == "echo") && t.iter().any(|t| t.starts_with("you"))
+    });
+    let v = m.view(&ctx(), &Keymap::new(&[]));
+    let bold = v.dock.iter().flat_map(|d| &d.items).find(|i| i.text == "Hello").unwrap();
+    assert!(matches!(bold.style, PanelStyle::Md { flags, .. } if flags & mouser_core::markdown::BOLD != 0), "{:?}", bold.style);
+    drop(m);
+}

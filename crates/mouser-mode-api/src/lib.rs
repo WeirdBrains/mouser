@@ -18,8 +18,12 @@
 
 pub mod codec;
 pub mod events;
+#[cfg(feature = "markdown")]
+pub mod highlight;
 pub mod host;
 pub mod host_api;
+#[cfg(feature = "markdown")]
+pub mod markdown;
 pub mod mode;
 pub mod protocol;
 pub mod serve;

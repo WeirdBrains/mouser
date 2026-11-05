@@ -109,6 +109,23 @@ configured provider works too. The header shows `provider/model`.
 - `cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"`:
   a headless live run against the default model with a sandboxed `sh` tool.
 
+## As a plugin program
+
+`plugins/chat` (`mouser-chat`) is the chat mode as a separate program, built only on
+`mouser-mode-api` with its `markdown` feature. Installed as a `transport = "mode"`
+plugin named `chat`, it replaces the built-in mode (hotkey `a`). It needs the
+`agent.use` permission. The agent itself still runs inside Mouser: the plugin sends
+`agent.send` / `agent.cancel` / `agent.clear` and draws the transcript from
+`agent.state` events, so your keys and models never leave Mouser. Tool-call cards are
+drawn by Mouser's approval popup, not the plugin; the plugin only shows "waiting for
+your answer". The header's model button lists `agent.models` and sets the default
+with `agent.set_default`.
+
+Keys: `i` type, `Enter` send, `x` cancel, `m` model, `l` clear, `PageUp`/`PageDown`
+scroll. There is no model setup wizard in the plugin yet; with no model it points to
+the preferences mode or `mouser model add`. Tested through Mouser's StdioMode with a
+fake provider in `plugins/chat/tests/through_mouser.rs`.
+
 ## Not yet
 
 - The plan's **Edit** button on the card.

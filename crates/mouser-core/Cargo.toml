@@ -7,6 +7,7 @@ description = "Terminal core for Mouser: grid, parser, scrollback with compressi
 repository = ""
 
 [dependencies]
+mouser-mode-api = { path = "../mouser-mode-api", features = ["markdown"] }
 # The grok provider's opt-in Grok Bot desktop login (docs/models.md §grok).
 grokbot_api = { version = "1.2", features = ["desktop-session"] }
 anyhow.workspace = true
@@ -29,7 +30,6 @@ toml.workspace = true
 # Preferences mode: edit preferences.toml keeping comments and unknown keys.
 toml_edit = "0.22"
 # Markdown previews, chat replies and `mouser md` (docs/markdown.md).
-pulldown-cmark = { version = "0.13", default-features = false }
 dirs = "5.0.1"
 hex = "0.4"
 unicode-width = "0.1.14"

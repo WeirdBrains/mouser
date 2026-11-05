@@ -1,0 +1,25 @@
+# The chat mode as a plugin (docs/chat.md). It replaces the built-in chat
+# mode when installed. The agent itself runs in Mouser: models, API keys,
+# tools and their approval cards never reach this program.
+name = "chat"
+version = "0.1.0"
+description = "chat mode: ask about the terminal; the agent, its models and tool approvals run in Mouser"
+permissions = ["agent.use"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "mode"
+command = ["./mouser-chat"]
+
+[mode]
+hotkey = "a"
+keys = [
+  { id = "focus", key = "i", describe = "type a message (Enter sends)" },
+  { id = "cancel", key = "x", describe = "cancel the running turn (also Esc)" },
+  { id = "model", key = "m", describe = "switch model (also click the model name)" },
+  { id = "clear", key = "l", describe = "new chat (clears the transcript)" },
+  { id = "up", key = "pageup", describe = "scroll the transcript up" },
+  { id = "down", key = "pagedown", describe = "scroll the transcript down" },
+]
