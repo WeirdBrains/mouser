@@ -2710,7 +2710,7 @@ pub(crate) mod tests {
         let k = Keymap::new(cmdr::BINDINGS);
         m.view(&ctx(), &k);
         let at = |m: &CommanderMode, n: &str| m.c.visible().iter().position(|e| e.name == n).unwrap();
-        let (file, dir, img, vid) = (at(&m, "a.txt"), at(&m, "sub"), at(&m, "p.png"), at(&m, "v.mp4"));
+        let (file, dir, vid) = (at(&m, "a.txt"), at(&m, "sub"), at(&m, "v.mp4"));
         assert_eq!(m.menu_cx(Some(file)), Cx::File);
         assert_eq!(m.menu_cx(Some(dir)), Cx::Folder);
         assert_eq!(m.menu_cx(Some(vid)), Cx::Media);
@@ -2750,8 +2750,9 @@ pub(crate) mod tests {
         m.action("menu:sort", 2);
         assert_eq!(m.c.flags.sort, Sort::Size);
         // The image view, then fullscreen.
+        // (Sorted by size now: look the image up again.)
         m.c.selected = at(&m, "p.png");
-        m.action("menu:open", img as i32);
+        m.action("menu:open", m.c.selected as i32);
         assert_eq!(m.menu_cx(None), Cx::Image);
         m.toggle_fullscreen();
         assert_eq!(m.menu_cx(Some(0)), Cx::FsImage, "a file view: the item does not matter");
