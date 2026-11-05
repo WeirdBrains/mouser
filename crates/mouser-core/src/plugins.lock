@@ -7,42 +7,42 @@
 [[item]]
 name = "commander"
 kind = "plugin"
-version = "0.1.2"
+version = "0.1.3"
 [item.assets.aarch64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.2/mouser-commander-0.1.2-aarch64-apple-darwin.tar.gz"
-sha256 = "cfdcd209a7fb03fb605d32719ed04e00a02236e6b74cb3069e0e8a8f8085d7d8"
-size = 1707466
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.3/mouser-commander-0.1.3-aarch64-apple-darwin.tar.gz"
+sha256 = "2438d4ed920aa72c2d06a22da0ec7efcd012b368c3a1e3901e5981587bf5ea3b"
+size = 1749884
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YXp4oAVX7lrcvpVuXMhuxK8BGDMelGs0QKwfvHX9pz3aAkIpcAhAFYdEHNOhxPtuFn9RLa6sauZ9W77AHvULNwU=
-trusted comment: mouser-commander-0.1.2-aarch64-apple-darwin.tar.gz mouser-commander v0.1.2
-KNWjUzOitiOQ08aWmBS1EtYV1bkl/VrCYy+MB93QO7Pe/iKNqeCZchqX3A2xSuLUR5choQONUGEEYgFnxwtGAg==
+RURGkX90IBe6Yb2hMaVehPQeEzjoakavB4PUq1oKcQQzqeaYXVKmjr+JGG9AKCqeJxgFLMu3nWiuPchDJgTtmsj1NqC7+Ya3jgU=
+trusted comment: mouser-commander-0.1.3-aarch64-apple-darwin.tar.gz mouser-commander v0.1.3
+GLNWNZ6Daao6vukMZGDP4SqNPpiuKe2EJMEKVPGhPHxT7wI5f4UqOsW59FWczvnlCWg4zhTaou2p8Xr6kkpDBg==
 '''
 [item.assets.x86_64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.2/mouser-commander-0.1.2-x86_64-apple-darwin.tar.gz"
-sha256 = "7773b8413ee2756811b5264ae5a714a64fc0e6e0e8940c937c8a76b30cb1c86b"
-size = 1744193
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.3/mouser-commander-0.1.3-x86_64-apple-darwin.tar.gz"
+sha256 = "e2f730a80f28805c32cb298affb372ab56f48a98d7c8d500a92b72cff9f6d2f6"
+size = 1789218
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YXro2RwQI5zx07SzTHlVvc+vGaW/wj7Y9khXWLbf4nPt43lPWCbJONe/ZDZquebt0RcJF+i1hHr3g3ZYr4JLwQ8=
-trusted comment: mouser-commander-0.1.2-x86_64-apple-darwin.tar.gz mouser-commander v0.1.2
-4Iss6fm4zB+XvGf82KRZoOC/V/UU2y3v0rweGjO4M7eLscRiM8WNbzNSb2bfmPlDOFn2evgW5O0zON6rl17FAw==
+RURGkX90IBe6YfScYnW9SQjp1D1ZCPWJfrb/V6xhkTcjgImwTMOsh2EPvXKy9Lx1XbpPxpCnS8t8GjWddUd32vIaQ9seScdiFgc=
+trusted comment: mouser-commander-0.1.3-x86_64-apple-darwin.tar.gz mouser-commander v0.1.3
+zhb/rywGEK0BzBuJ50AZH4dqI5X9Zl8L3G8ecW4HXORk8S2AwkUkv3A+9L+EW92rTAgKlCyqMNmksaNz8o+CBQ==
 '''
 [item.assets.x86_64-pc-windows-msvc]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.2/mouser-commander-0.1.2-x86_64-pc-windows-msvc.tar.gz"
-sha256 = "234358b939acdc394e3bc81298ab3905eb2451045ec2b3eb500e9580ca092118"
-size = 1586193
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.3/mouser-commander-0.1.3-x86_64-pc-windows-msvc.tar.gz"
+sha256 = "a7cddb524422c3437406165c92fef2c621c6338e344ee88ba130e86784dcd227"
+size = 1626192
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YYSYemZldVO6ebOPO+KFD/P+oixPzg08LgiFDdpx58paUfuU1xAOzXfrlB9C56Oxtm2Htv26fgsYjIiD9BkTkw8=
-trusted comment: mouser-commander-0.1.2-x86_64-pc-windows-msvc.tar.gz mouser-commander v0.1.2
-jFSrhoiH/gtRaQgPVFdaAa24uhwyIB7eb3ZNlFWI3Fcxbstaqz1LLEYUTTHHjKNW095KGpqOex8sFGf0zRiqAg==
+RURGkX90IBe6YaPo1254vPU/iwu14+Ixj8eCBltV0g3Op6kFpJWDr/JZWd7EwjQqBfZa22vr6ZeInRg3hTS9UCTE1+mynenpjg0=
+trusted comment: mouser-commander-0.1.3-x86_64-pc-windows-msvc.tar.gz mouser-commander v0.1.3
+jbwuqTOJk7VnhcMeLT7C4pvMgcPgdmcC7MW5i9dL/H+QG4BHLl+VGYf+n8edkmIUKpaJnda+X8DMg0I1nPIuCA==
 '''
 [item.assets.x86_64-unknown-linux-gnu]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.2/mouser-commander-0.1.2-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "8422244de6078d4e6c36265419f4383e99f1e92c2907dc9e4e664c56e0f74446"
-size = 1902296
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.3/mouser-commander-0.1.3-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "c18dc19d9243694417670144ae4b67df61c2d129a4e82127a87a7d549ca0926c"
+size = 1997940
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YUaBGy4z9nFh/2Ghg75TEBDDXGYKRtVeubqeqK3QLvnySvMh2lSkd9QBYmkhiEg3SA5bdUfMZyvapojtRyktowc=
-trusted comment: mouser-commander-0.1.2-x86_64-unknown-linux-gnu.tar.gz mouser-commander v0.1.2
-3KqYMK0HBBhlhuQz0uWBXUWJQ/FLhpXLevKsDCp5uPkEmQh7KGw8+H/roqDMbtFnjvIUEoSkmrAzaeECQrO+BA==
+RURGkX90IBe6YbY4i3DEbDyiiL5E4fTQUKRwdMTBCTRsYXwEAxiQFd+gQ9auaBcNwplul65cisAV9qr7vvih+j4QQuOElbujwgE=
+trusted comment: mouser-commander-0.1.3-x86_64-unknown-linux-gnu.tar.gz mouser-commander v0.1.3
+KbOxUl5l/3tZEdJfhY9ngncI11sdlVBlNTs/YAU3y9o6LVp7V47selqY5yibIK4kKOxaHPfUgFrkDJH6FOzqBA==
 '''
 
 [[item]]
