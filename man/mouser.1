@@ -102,6 +102,12 @@ The root moves with \fBMOUSER_HOME\fR.
 .B MOUSER_ENGINE_DIRS
 Folders of engines shipped with Mouser (a path list), replacing engines/ beside the executable; empty: none (docs/engines.md).
 .TP
+.B MOUSER_OFFLINE_BUNDLE
+Folder with the offline bundle's plugins.lock archives, instead of plugins/ beside the executable (docs/storage.md).
+.TP
+.B MOUSER_CARGO
+cargo used for `install crate:NAME` (default cargo; needs cargo\-binstall).
+.TP
 .B MOUSER_HOME
 Root directory instead of ~/.mouser (config, themes, plugins, models, logs).
 .TP

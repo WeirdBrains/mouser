@@ -13,6 +13,11 @@ pub const ENVIRONMENT: &[(&str, &str)] = &[
         "MOUSER_ENGINE_DIRS",
         "Folders of engines shipped with Mouser (a path list), replacing engines/ beside the executable; empty: none (docs/engines.md).",
     ),
+    (
+        "MOUSER_OFFLINE_BUNDLE",
+        "Folder with the offline bundle's plugins.lock archives, instead of plugins/ beside the executable (docs/storage.md).",
+    ),
+    ("MOUSER_CARGO", "cargo used for `install crate:NAME` (default cargo; needs cargo-binstall)."),
     ("MOUSER_HOME", "Root directory instead of ~/.mouser (config, themes, plugins, models, logs)."),
     ("MOUSER_ENGINE", "Rendering engine for this run (mouser, skia or a custom engine's name), ahead of the saved priority order."),
     ("MOUSER_RENDERER", "cpu: draw with the CPU renderer instead of a GPU engine."),

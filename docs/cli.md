@@ -58,6 +58,8 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_LLM_TIMINGS` | Print llama.cpp timings for the built-in local model. |
 | `MOUSER_PLUGIN_DIRS` | Plugin folders (a path list) replacing the offline bundle and system folders; empty: only `$MOUSER_HOME/plugins` ([Plugins](./plugins.md)). |
 | `MOUSER_ENGINE_DIRS` | Folders of engines shipped with Mouser (a path list) replacing `engines/` beside the executable; empty: none ([Engines](./engines.md)). |
+| `MOUSER_OFFLINE_BUNDLE` | Folder with the offline bundle's `plugins.lock` archives, instead of `plugins/` beside the executable ([Storage](./storage.md)). |
+| `MOUSER_CARGO` | cargo used for `install crate:NAME` (default `cargo`; needs cargo-binstall). |
 | `MOUSER_MODE_WIRE` | `json`: mode plugins speak JSON instead of MessagePack on stdio, for debugging ([Mode plugin protocol](./mode-protocol.md)). |
 | `RUST_LOG` | Log filter, e.g. `debug`. |
 

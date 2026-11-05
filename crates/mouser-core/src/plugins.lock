@@ -1,0 +1,19 @@
+# plugins.lock: the official plugins and engines this Mouser release pins
+# (docs/downloads.md). On first start Mouser installs the ones it doesn't
+# have, in parallel, from the offline bundle or the URLs below; each must
+# match its sha256 and verify against the official minisign key.
+#
+# Empty until the official release assets exist (plan step 10):
+#
+# [[item]]
+# name = "commander"
+# kind = "plugin"            # or "engine"
+# version = "0.1.0"
+# [item.assets.x86_64-unknown-linux-gnu]
+# url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.0/mouser-commander-0.1.0-x86_64-unknown-linux-gnu.tar.gz"
+# sha256 = "…"
+# size = 1234567
+# minisig = """untrusted comment: …
+# RU…
+# trusted comment: …
+# …"""
