@@ -70,6 +70,8 @@ pub fn schema() -> Vec<Field> {
         f("Window", "sidebar_open", "Sidebar open", Kind::Bool, "false", false),
         f("Window", "sidebar_collapsed", "Sidebar collapsed", Kind::Bool, "false", false),
         f("Window", "sidebar_width", "Sidebar width (px)", Kind::Int { min: 120, max: 4000 }, "auto", false),
+        f("Window", "window.dock_height", "Mode panel height (% of the terminal)", Kind::Int { min: 10, max: 100 }, "auto", false),
+        f("Window", "window.dock_full", "Mode panel fullscreen", Kind::Bool, "false", false),
         f("Keys", "keys.leader_timeout_ms", "Esc wait for : (ms)", Kind::Int { min: 100, max: 10_000 }, "1200", true),
         f("Audio", "audio.host", "Audio host", choice(crate::audio::host_choices()), "auto", false),
         f("Audio", "audio.output_device", "Output device", Kind::Choice(devices), "default", false),
@@ -291,4 +293,32 @@ pub fn step(field: &Field, cur: Option<&str>, dir: i64) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The mode panel's size from `preferences.toml` (`[window] dock_height`, a
+/// percentage, and `dock_full`), as the mode API's `DockSize`.
+pub fn dock_size() -> (Option<u16>, bool) {
+    let Ok(doc) = load_doc() else { return (None, false) };
+    let w = doc.get("window");
+    let pct = w.and_then(|w| w.get("dock_height")).and_then(|v| v.as_integer()).filter(|p| (10..=100).contains(p));
+    let full = w.and_then(|w| w.get("dock_full")).and_then(|v| v.as_bool()).unwrap_or(false);
+    (pct.map(|p| (p * 10) as u16), full)
+}
+
+/// Save the mode panel's size (`None`: the mode's default height).
+pub fn save_dock_size(permille: Option<u16>, full: bool) -> Result<()> {
+    let mut doc = load_doc()?;
+    if doc.get("window").is_none() {
+        doc["window"] = toml_edit::table();
+    }
+    match permille {
+        Some(p) => doc["window"]["dock_height"] = toml_edit::value(((p as i64 + 5) / 10).clamp(10, 100)),
+        None => {
+            if let Some(t) = doc["window"].as_table_mut() {
+                t.remove("dock_height");
+            }
+        }
+    }
+    doc["window"]["dock_full"] = toml_edit::value(full);
+    save(&doc)
 }

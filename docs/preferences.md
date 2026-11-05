@@ -50,6 +50,18 @@ validation and the comment-keeping write. For a secret, Enter makes Mouser
 show its own key popup. The key you type goes from that popup to the keychain,
 and the plugin only hears that it was saved.
 
+## Context menu
+
+Right-click a setting (or `.` while preferences has the keyboard): edit (Enter),
+previous / next value (← / →, for on/off, choices and numbers), reset to default
+(`r`, greyed when nothing is set), copy value (never for a key; those stay in the
+keychain), copy the setting's name, previous / next setting. Off the settings:
+previous / next setting and page up / down.
+
+## Mode panel size
+
+Window → *Mode panel height* (`window.dock_height`, a percentage of the terminal, 10–100; `auto` = the mode's own height) and *Mode panel fullscreen* (`window.dock_full`). The panel's `F`, `]`, `[` keys and dragging its bottom edge write the same two settings (docs/modes.md §Panel size and fullscreen).
+
 ## Audio
 
 Where the player's sound goes (`[audio]` in preferences.toml; applies to the next

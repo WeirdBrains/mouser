@@ -17,7 +17,9 @@ mod audio;
 mod commander;
 mod fetch;
 mod host;
+mod menu;
 mod modes;
+mod ops;
 mod player;
 mod process;
 mod remote;
@@ -46,6 +48,10 @@ struct State {
     /// Shared-memory slots Mouser hasn't copied yet (`frame.presented`
     /// frees one); a slot is written only when free.
     busy: Vec<bool>,
+    /// Item rectangles in the last view (index), for a right-click.
+    items: Vec<(mouser_mode_api::Rect, i32)>,
+    /// File changes on Mouser's approval card, by request id.
+    asked: Vec<(u64, ops::Op)>,
 }
 
 /// Images this big go through shared memory (player frames, large
@@ -55,7 +61,17 @@ const SHM_MIN: usize = 256 << 10;
 impl State {
     fn new() -> Self {
         let (keys, _) = modes::Keymap::load("commander", commander::BINDINGS);
-        Self { mode: view::CommanderMode::new(), keys, ctx: None, sent: HashSet::new(), wants: None, active: false, busy: Vec::new() }
+        Self {
+            mode: view::CommanderMode::new(),
+            keys,
+            ctx: None,
+            sent: HashSet::new(),
+            wants: None,
+            active: false,
+            busy: Vec::new(),
+            items: Vec::new(),
+            asked: Vec::new(),
+        }
     }
 
     /// Draw and send the view, then what the keyboard should bring.
@@ -99,12 +115,75 @@ impl State {
             })
             .collect();
         self.sent = sent;
+        self.items = v
+            .dock
+            .iter()
+            .flat_map(|d| &d.items)
+            .filter_map(|i| match &i.action {
+                mouser_mode_api::Action::Mode { action, arg } if action == "item" => Some((i.rect, *arg)),
+                _ => None,
+            })
+            .collect();
         let _ = host.view(v.dock, v.panel, images, v.fullscreen);
         let w = Wants { text: self.mode.wants_text(), keys: self.mode.taken_keys(), escape: self.mode.escape_takes() };
         if self.wants.as_ref() != Some(&w) {
             let _ = host.wants(w.clone());
             self.wants = Some(w);
         }
+    }
+
+    /// Send what the view queued: file changes go to Mouser's approval
+    /// card (they run on yes), text to the clipboard.
+    fn flush(&mut self, host: &Host) {
+        use mouser_mode_api::host_api::Call;
+        for op in std::mem::take(&mut self.mode.ops) {
+            let (title, detail) = op.describe();
+            if let Ok(id) = host.request(Call::Approve { title, detail, options: vec!["once".into(), "deny".into()] }) {
+                self.asked.push((id, op));
+            }
+        }
+        for t in std::mem::take(&mut self.mode.clip) {
+            let _ = host.request(Call::ClipboardSet(t));
+            let _ = host.effect(Effect::Say("copied".into()));
+        }
+    }
+
+    /// Mouser's answer to an approval card: run the change on yes.
+    fn approved(&mut self, id: u64, r: &Result<serde_json::Value, String>, host: &Host) {
+        let Some(i) = self.asked.iter().position(|(a, _)| *a == id) else { return };
+        let (_, op) = self.asked.remove(i);
+        let msg = match r {
+            Ok(v) if v["decision"] == "once" => match op.run() {
+                Ok(m) => m,
+                Err(e) => format!("not done: {e}"),
+            },
+            Ok(_) => "cancelled".into(),
+            Err(e) => format!("not done: {e}"),
+        };
+        self.mode.c.relist();
+        let _ = host.effect(Effect::Say(msg));
+    }
+
+    /// The context menu at (`x`, `y`) (`< 0`: the selected item, from the keyboard).
+    fn open_menu(&mut self, x: i32, y: i32, host: &Host) {
+        let item = if x < 0 {
+            let n = self.mode.c.visible().len();
+            (self.mode.c.selected < n).then_some(self.mode.c.selected)
+        } else {
+            self.items.iter().find(|(r, _)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(_, i)| *i as usize)
+        };
+        if let Some(i) = item {
+            self.mode.c.selected = i;
+        }
+        let entries = self.mode.menu(item, &self.keys);
+        let (x, y) = if x < 0 {
+            let r = self.items.iter().find(|(_, i)| Some(*i as usize) == item).map(|(r, _)| *r);
+            let a = self.ctx.map(|c| c.area).unwrap_or_default();
+            r.map_or((a.x + a.w / 3, a.y + a.h / 3), |r| (r.x + r.w / 2, r.y + r.h))
+        } else {
+            (x, y)
+        };
+        let _ = host.menu(x, y, entries);
     }
 
     /// Carry out what the view asked. `_key`: the bound key this came from.
@@ -189,6 +268,7 @@ impl mouser_mode_api::Mode for Plugin {
                 "input.text",
                 "input.escape",
                 "view.resized",
+                "menu.open",
                 "shell.cwd_changed",
                 "shell.remote_ssh",
                 "shell.remote_changed",
@@ -271,15 +351,27 @@ impl mouser_mode_api::Mode for Plugin {
             "input.escape" => {
                 s.mode.escape();
             }
+            "menu.open" => {
+                let (x, y) = (e.payload["x"].as_i64().unwrap_or(-1) as i32, e.payload["y"].as_i64().unwrap_or(-1) as i32);
+                s.open_menu(x, y, host);
+            }
             "view.resized" => {
+                s.mode.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
                 if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
                     s.ctx = Some(c);
                 }
             }
             _ => return Handled::Pass,
         }
+        s.flush(host);
         s.redraw(host);
         Handled::Handled
+    }
+
+    fn response(&mut self, id: u64, result: Result<serde_json::Value, String>, host: &Host) {
+        let mut s = self.lock();
+        s.approved(id, &result, host);
+        s.redraw(host);
     }
 }
 

@@ -587,6 +587,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut dirty = true;
     let mut last_frame: Option<Instant> = None;
     let mut mouse_down: Option<mouser_core::input::MouseButton> = None;
+    // Dragging the mode panel's bottom edge: the dock's top y.
+    let mut dock_edge: Option<i32> = None;
+    let mut dock_edge_hover = false;
     let mut text_w = width as i32;
     let mut held_since: Option<Instant> = None;
     let mut title = String::new();
@@ -646,6 +649,19 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 WindowEvent::CursorMoved { position, .. } => {
                     cursor_pos = Some(position);
                     let (px, py) = (position.x.round() as i32, position.y.round() as i32);
+                    if let (Some(top), Some(on_act)) = (dock_edge, &hooks.on_ui_action) {
+                        on_act(ui::UiAction::Mode { action: modes::DOCK_DRAG.into(), arg: (py - top).max(0) });
+                        dirty = true;
+                        return;
+                    }
+                    let edge = last_ui.as_ref().and_then(|l| l.dock.as_ref()).is_some_and(|d| {
+                        let r = d.panel.rect;
+                        px >= r.x && px < r.x + r.w && (py - (r.y + r.h)).abs() <= modes::DOCK_EDGE
+                    });
+                    if edge != dock_edge_hover {
+                        dock_edge_hover = edge;
+                        window.set_cursor(if edge { CursorIcon::NsResize } else { CursorIcon::Default });
+                    }
                     if let Some(on_act) = &hooks.on_ui_action
                         && (dock_press || last_ui.as_ref().is_some_and(|l| l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(px, py))))
                     {
@@ -686,6 +702,14 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                 }
                 WindowEvent::MouseInput { state: ElementState::Released, button, .. } => {
+                    if dock_edge.is_some() && button == winit::event::MouseButton::Left {
+                        dock_edge = None;
+                        if let Some(on_act) = &hooks.on_ui_action {
+                            on_act(ui::UiAction::Mode { action: modes::DOCK_DONE.into(), arg: 0 });
+                        }
+                        dirty = true;
+                        return;
+                    }
                     if dock_press && button == winit::event::MouseButton::Left {
                         dock_press = false;
                         if let (Some(on_act), Some(p)) = (&hooks.on_ui_action, cursor_pos) {
@@ -734,6 +758,22 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 }
                 WindowEvent::ModifiersChanged(m) => modifiers = m.state(),
                 WindowEvent::MouseInput { state: ElementState::Pressed, button, .. } => {
+                    if let (Some(on_act), Some(pos), Some(l)) = (&hooks.on_ui_action, cursor_pos, last_ui.as_ref())
+                        && l.panel.is_none()
+                        && let Some(d) = l.dock.as_ref()
+                    {
+                        let (px, py, r) = (pos.x.round() as i32, pos.y.round() as i32, d.panel.rect);
+                        let inside = px >= r.x && px < r.x + r.w;
+                        if button == winit::event::MouseButton::Left && inside && (py - (r.y + r.h)).abs() <= modes::DOCK_EDGE {
+                            dock_edge = Some(r.y);
+                            return;
+                        }
+                        if button == winit::event::MouseButton::Right && r.contains(px, py) {
+                            on_act(ui::UiAction::Mode { action: modes::MENU_AT.into(), arg: modes::commander::pack_xy(px, py) });
+                            dirty = true;
+                            return;
+                        }
+                    }
                     // Over a mode's view: the mode sees the press (seek bar,
                     // image pan); the item under it is clicked as usual below.
                     if button == winit::event::MouseButton::Left

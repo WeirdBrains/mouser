@@ -111,6 +111,61 @@ Every key is rebindable. An unknown action or key is reported in the status bar 
 the defaults are kept. The old `modifier = "alt"` setting is ignored (keys are plain
 while the mode has focus).
 
+### Panel size and fullscreen
+
+While a mode has the keyboard, Mouser itself takes four plain keys (before the
+mode's own; `[host.keys]` in `modes.toml`):
+
+| Key | Action |
+| --- | --- |
+| `F` (Shift+F) | mode panel fullscreen on / off (also the ⤢ button at the panel's bottom left) |
+| `]` | panel taller (10% of the terminal per press) |
+| `[` | panel shorter (never below a tenth, or four rows) |
+| `.` | context menu for the selected item |
+
+Drag the panel's bottom edge (the pointer turns into ↕) to resize it with the
+mouse. The size is saved in `preferences.toml` as `[window] dock_height` (a
+percentage, 10–100) and `dock_full`, so it survives restarts. Fullscreen hides the
+shell behind the panel; the terminal keeps its size, so nothing reflows. None of
+these keys reach the shell's bindings: they only work while the mode has focus
+(ctrl+alt+k). While a search or text field is focused they are typed instead.
+One-character keys are case sensitive in `modes.toml` (`F` is Shift+F, `f` is f).
+
+### Context menus
+
+Right-click in a mode's view (or press `.`) for a menu of **every action that
+applies right now**: the item under the pointer (file, folder, image, media ...)
+and the view's state (list, fullscreen image, playing clip, text viewer). Each
+row shows the action's current key, so the menu also teaches the keys. The menu
+is built from the same action registry as the key bindings, so a new or
+remapped action shows up automatically. ↑/↓ and Enter pick, a row's own key
+picks it, Esc or a click elsewhere closes it. Disabled actions are shown muted.
+Modes answer `menu.open` with their entries (see docs/mode-protocol.md); a mode
+that does not gets no menu.
+
+Commander's menus (keys are the defaults):
+
+| Where | Entries |
+| --- | --- |
+| a file | open (Enter), copy, copy to…, move to…, rename…, delete…, copy path, mark (Space), pipe (`\|`), back (`u`) |
+| an image, video or audio file | the same, with play (Enter) and play / view fullscreen |
+| a folder | open (Enter), sync the shell here, the file entries, paste, back (`u`) |
+| the empty area | back, sync (`s`), new folder…, paste, sort by name / modified / size, reverse, switch view (`v`), larger / smaller tiles (`z` / `x`), dotfiles (`h`), search (`/`), mark all (`*`), first / last, options (`o`), manual (`m`) |
+| image view, fullscreen or not | zoom in / out (`=` / `-`), fit (`0`), 100% (`1`), pan (arrows; ← / → step images when not zoomed), fullscreen / exit fullscreen (`f`), copy path, close (`q`) |
+| player, fullscreen or not | play / pause (`k`), back / forward 10 s (`j` / `l`), volume (`-` / `=`), fullscreen / exit fullscreen (`f`), copy path, close (`q`) |
+| text, Markdown, PDF or document view, the manual | scroll (↑ / ↓), page up / down, previous / next file (← / →), copy text, copy path, close (`q`) |
+
+File changes never happen straight away: copy to, move to, rename and new folder
+first ask for the destination or name in commander's prompt line (Enter goes on,
+Esc cancels), then every change (delete and paste too) waits for your yes on
+Mouser's approval card, which lists what will change. Nothing is ever
+overwritten: a target that exists stops the change. Delete is permanent (folders
+with everything in them); the card says so. `copy` remembers the items for
+`paste` in another folder; `copy path` and `copy text` put text on the
+clipboard. File changes are local only (greyed out in a remote folder), and the
+commander plugin declares `files.write` for them. The text view has no zoom of
+its own (use Mouser's font size, ctrl+= / ctrl+-).
+
 ### Commander
 
 A view docked above the prompt (the terminal grid moves down; about half the

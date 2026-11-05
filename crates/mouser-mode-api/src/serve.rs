@@ -58,6 +58,11 @@ impl Host {
     }
 
     /// What the mode takes from the keyboard now ([`crate::protocol::Wants`]).
+    /// Show a context menu at (`x`, `y`) (API 0.2; answer to `menu.open`).
+    pub fn menu(&self, x: i32, y: i32, entries: Vec<crate::ui::MenuEntry>) -> io::Result<()> {
+        self.send(&Out::Menu { x, y, entries })
+    }
+
     pub fn wants(&self, w: crate::protocol::Wants) -> io::Result<()> {
         self.send(&Out::Wants(w))
     }
