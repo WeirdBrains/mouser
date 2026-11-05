@@ -144,7 +144,7 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0' }}
         run: |
           set -eux
           VER="${VERSION#v}"
@@ -180,7 +180,7 @@ jobs:
           docker run --rm -v "$PWD/$W:/work" archlinux:base-devel bash /work/buildpkg.sh
           find "$W" -maxdepth 1 -name "mouser-bin-[0-9]*.pkg.tar.zst" -exec sudo mv {} dist/ \;
           # Checksums for packages
-          (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
+          (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do if [ -f "$f" ]; then shasum -a 256 "$f" > "$f.sha256"; fi; done)
           # Upload extra artifacts
           echo "EXTRA_DONE=1" >> $GITHUB_ENV
       - name: Upload Linux packages
@@ -198,7 +198,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0' }}
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -251,7 +251,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v0.0.0' }}
           WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |

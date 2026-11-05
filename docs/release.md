@@ -119,4 +119,5 @@ too old for llama.cpp, so the workflow unpacks the LunarG Vulkan SDK and puts it
 `bin/` first on PATH. The plugin and engine repos build on 22.04 for the same reason.
 
 Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
-without publishing: the publish job only runs for `v*` tags.
+without publishing: the publish job only runs for `v*` tags, and the packages are
+versioned `0.0.0`.
