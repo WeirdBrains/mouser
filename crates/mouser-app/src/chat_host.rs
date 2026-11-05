@@ -43,6 +43,8 @@ fn cap_of(tool: &str) -> &'static str {
         "scrollback_read" => "scrollback.read",
         "files_list" | "files_read" | "tabs_list" => "files.read",
         "shell_type" | "shell_run" => "shell.type",
+        "modes_list" | "mode_actions" => "screen.read",
+        "modes_switch" | "mode_action" => "modes.control",
         _ => "files.write",
     }
 }

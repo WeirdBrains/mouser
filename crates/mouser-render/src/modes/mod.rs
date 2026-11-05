@@ -171,6 +171,10 @@ pub struct Host {
     /// The terminal area's height at the last frame (for drag resizing).
     area_h: i32,
     menu: Option<Menu>,
+    /// An MCP client asked for the context actions ([`Host::request_actions`]):
+    /// the mode's next menu answer goes to it instead of the screen.
+    mcp_wait: bool,
+    mcp_actions: Option<Vec<MenuEntry>>,
     /// Problems loading `modes.toml`, shown once.
     pub notes: Vec<String>,
 }
@@ -194,7 +198,21 @@ impl Host {
         // Tests never read or write the user's preferences.
         let (permille, full) = if cfg!(test) { (None, false) } else { mouser_core::prefs_edit::dock_size() };
         let dock = DockSize { permille, full };
-        let mut h = Self { current: None, window: None, cwd: None, focused: false, focus_key, host_keys, dock, area_h: 0, menu: None, notes, modes };
+        let mut h = Self {
+            current: None,
+            window: None,
+            cwd: None,
+            focused: false,
+            focus_key,
+            host_keys,
+            dock,
+            area_h: 0,
+            menu: None,
+            mcp_wait: false,
+            mcp_actions: None,
+            notes,
+            modes,
+        };
         if !h.modes.is_empty() {
             h.current = Some(0);
             h.modes[0].0.activate();
@@ -448,6 +466,71 @@ impl Host {
         }
     }
 
+    /// Take the mode's menu answer: for an MCP request (kept, not drawn),
+    /// else as the on-screen menu.
+    fn poll_menu(&mut self) {
+        let Some((m, k)) = self.mode() else { return };
+        let Some((x, y, mut entries)) = m.take_menu() else { return };
+        // Keys as bound now (`modes.toml`), whatever the mode sent.
+        for e in &mut entries {
+            let id = e.id.strip_prefix("menu:").unwrap_or(&e.id);
+            if let Some(b) = k.keys.iter().find(|b| b.0 == id) {
+                e.key = b.1.clone();
+            }
+        }
+        if self.mcp_wait {
+            self.mcp_wait = false;
+            self.mcp_actions = Some(entries);
+        } else {
+            self.menu = (!entries.is_empty()).then_some(Menu { x, y, entries, sel: 0 });
+        }
+    }
+
+    /// MCP (`mode_actions`): ask the current mode for every action that
+    /// applies to its selected item and view state, the same list as its
+    /// context menu. The answer comes from [`Host::take_actions`] (a plugin
+    /// answers on a later frame). False: no mode is on.
+    pub fn request_actions(&mut self) -> bool {
+        self.mcp_actions = None;
+        let Some((m, k)) = self.mode() else { return false };
+        let k = k.clone();
+        m.open_menu(None, &k);
+        self.mcp_wait = true;
+        self.poll_menu();
+        true
+    }
+
+    /// The answer to [`Host::request_actions`], once it is there.
+    pub fn take_actions(&mut self) -> Option<Vec<MenuEntry>> {
+        self.poll_menu();
+        let a = self.mcp_actions.take();
+        if a.is_some() {
+            self.mcp_wait = false;
+        }
+        a
+    }
+
+    /// MCP (`modes_list`): (name, hotkey, current) for every mode, and
+    /// whether the current one has the keyboard.
+    pub fn list(&self) -> (Vec<(&'static str, char, bool)>, bool) {
+        (self.modes.iter().enumerate().map(|(i, (m, _))| (m.name(), m.hotkey(), Some(i) == self.current)).collect(), self.focused())
+    }
+
+    /// MCP (`mode_action`): run one of the current mode's actions, as its
+    /// key or menu row would. Only ids from its key bindings or its last
+    /// context actions are accepted.
+    pub fn invoke(&mut self, id: &str, arg: i32, known: &[MenuEntry]) -> Result<Effect, String> {
+        self.menu = None;
+        let Some((m, k)) = self.mode() else { return Err("no mode is on (modes_switch)".into()) };
+        let bound = k.keys.iter().any(|b| b.0 == id);
+        match known.iter().find(|e| e.id == id && e.arg == arg) {
+            Some(e) if !e.enabled => return Err(format!("{} is not available now", e.label)),
+            None if !bound => return Err(format!("{} has no action {id:?} here (mode_actions lists them)", m.name())),
+            _ => {}
+        }
+        Ok(m.action(id, arg))
+    }
+
     /// Whether a context menu is open.
     pub fn menu_open(&self) -> bool {
         self.menu.is_some()
@@ -571,18 +654,7 @@ impl Host {
             }
             None => View::default(),
         };
-        if let Some((m, k)) = self.mode()
-            && let Some((x, y, mut entries)) = m.take_menu()
-        {
-            // Keys as bound now (`modes.toml`), whatever the mode sent.
-            for e in &mut entries {
-                let id = e.id.strip_prefix("menu:").unwrap_or(&e.id);
-                if let Some(b) = k.keys.iter().find(|b| b.0 == id) {
-                    e.key = b.1.clone();
-                }
-            }
-            self.menu = (!entries.is_empty()).then_some(Menu { x, y, entries, sel: 0 });
-        }
+        self.poll_menu();
         if let (Some(d), Some(i)) = (v.dock.as_mut(), self.current) {
             focus_marks(d, self.focused, &self.focus_key, self.modes[i].0.name(), &self.modes[i].1, ctx.viewport);
             if !v.fullscreen {
@@ -874,6 +946,26 @@ mod tests {
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
         let h = Host::new(vec![Box::new(Menus { seen: seen.clone(), ready: None })]);
         (h, Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } }, seen)
+    }
+
+    #[test]
+    fn mcp_lists_and_invokes_the_menu_actions_without_drawing_a_menu() {
+        let (mut h, ctx, seen) = menus_host();
+        let (list, focused) = h.list();
+        assert_eq!(list, vec![("menus", 'n', true)]);
+        assert!(!focused);
+        assert!(h.request_actions());
+        let acts = h.take_actions().expect("an in-process mode answers at once");
+        assert_eq!(acts.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["open", "copy", "delete"]);
+        assert_eq!(acts[1].key, "y", "the key as bound");
+        assert!(!h.menu_open(), "MCP's answer is not drawn");
+        h.view(&ctx);
+        assert!(!h.menu_open());
+        assert_eq!(seen.lock().unwrap().asked, vec![None], "asked for the selected item");
+        assert!(h.invoke("copy", 7, &acts).is_ok());
+        assert!(h.invoke("delete", 7, &acts).unwrap_err().contains("not available"));
+        assert!(h.invoke("rm_rf", 0, &acts).unwrap_err().contains("no action"));
+        assert_eq!(seen.lock().unwrap().got, vec!["copy:7".to_string()]);
     }
 
     #[test]

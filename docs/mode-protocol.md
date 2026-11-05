@@ -189,6 +189,24 @@ now. `Host::menu(x, y, entries)` sends it from `serve()`. `ClipboardSet` puts te
 on the clipboard with no permission (for "copy path" and the like); reading the
 clipboard is not offered.
 
+#### Over MCP
+
+The same `menu.open` (with `"keyboard": true`, for the selected item) also
+answers MCP clients. Mouser's `mode_actions` tool sends it, takes your `Menu`
+answer without drawing it, and lists the entries; `mode_action` then sends the
+chosen `ui.action`, exactly as a picked row would (docs/mcp.md §Mode actions).
+Only ids from your bindings or from that answer are accepted, and disabled
+entries are refused. So a mode is scriptable over MCP once it answers
+`menu.open`:
+
+- Make every entry right for the selected item and the view state.
+- Keep destructive changes behind your own confirmation (a `Prompt`, or the
+  host's approval card), because an MCP client may pick them; Mouser asks the
+  user once (`modes.control`) before it sends the action, not instead of you.
+- Answer within 3 s, or the client is told you have no actions.
+- Entry ids containing `delete`, `trash`, `move`, `rename`, `paste` or `cut`
+  are flagged `destructive` to the client.
+
 ## Host calls
 
 `Request` carries a call, answered by exactly one `Response`:
