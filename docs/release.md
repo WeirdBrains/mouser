@@ -118,6 +118,25 @@ binary built against a newer glibc fails to start on older distributions
 too old for llama.cpp, so the workflow unpacks the LunarG Vulkan SDK and puts its
 `bin/` first on PATH. The plugin and engine repos build on 22.04 for the same reason.
 
+Three checks keep it that way (v1.3.0 shipped built on a newer runner and needed
+`GLIBC_2.43`, issue #2; 1.3.1 fixed the build host):
+
+- `scripts/check-glibc.py --max 2.35 PATH...` prints the newest `GLIBC_x.y` any
+  ELF file needs (archives are unpacked) and fails above 2.35. The packaging step
+  runs it on `mouser`, `mouser-app` and `engines/`, and the `-full` step on the
+  bundle's `plugins/` archives and `engines/`, so a plugin or engine from
+  `plugins.lock` built on a newer host fails the release too.
+- The `.deb` depends on `libc6 (>= x.y)` and the `.rpm` on `glibc >= x.y`, the
+  version the check found, so apt and dnf refuse a system that is too old instead
+  of installing a binary that cannot start.
+- A clean `ubuntu:22.04` container installs the `.deb`, runs `mouser --version`,
+  checks every engine `.so` with `ldd`, and starts each bundled plugin with
+  `--manifest`.
+
+Check a downloaded build by hand the same way: `python3 scripts/check-glibc.py
+mouser_1.4.0_amd64.deb` does not read `.deb` files, so unpack it first
+(`dpkg-deb -x mouser_*.deb d && python3 scripts/check-glibc.py --max 2.35 d`).
+
 Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
 without publishing: the publish job only runs for `v*` tags, and the packages are
 versioned `0.0.0`.

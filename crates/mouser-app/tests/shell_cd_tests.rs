@@ -230,8 +230,21 @@ fn pwsh_takes_the_sync_file_at_the_next_prompt() {
     assert!(file.file_name().unwrap().to_str().unwrap().starts_with("mouser-sync-"), "{file:?}");
     std::fs::write(&file, target.to_str().unwrap()).unwrap();
     let w = |b: &[u8]| writer.lock().unwrap().write_all(b).unwrap();
-    w(b"\r");
-    std::thread::sleep(Duration::from_millis(500));
+    // Enter on an empty line runs the prompt, which takes the file. On a
+    // slow runner PSReadLine can still be busy with its cursor query and
+    // drop that Enter, so press it again until the file is used up.
+    for _ in 0..5 {
+        w(b"\r");
+        let t0 = Instant::now();
+        while t0.elapsed() < Duration::from_secs(2) && file.exists() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        if !file.exists() {
+            break;
+        }
+    }
+    assert!(!file.exists(), "the prompt took the sync file\n{:?}", r.text());
+    std::thread::sleep(Duration::from_millis(300));
     w(b"'PWD_' + (Get-Location).Path\r");
     // macOS temp dirs are under /var, a symlink to /private/var: either form.
     let wants = [format!("PWD_{}", target.display()), format!("PWD_{}", target.canonicalize().unwrap().display())];

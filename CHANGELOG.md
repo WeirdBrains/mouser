@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- Linux packages: the release fails if any binary, engine or bundled plugin needs a glibc newer than 2.35 (Ubuntu 22.04), using `scripts/check-glibc.py`. The `.deb` and `.rpm` now declare the glibc they need (`libc6 (>= x.y)`, `glibc >= x.y`), and a clean Ubuntu 22.04 container installs the `.deb` and starts Mouser, its engines and plugins. Issue #2: v1.3.0's Linux build needed GLIBC_2.43 and would not start on Ubuntu 24.04 / Pop!_OS; 1.3.1 and later need GLIBC_2.34. See docs/release.md §Linux build host.
+
 ### Changed
 
 - Modes take no key from the shell. Commander (and chat, preferences and mode plugins) binds one key only, the focus toggle **ctrl+alt+k** (free in bash, zsh and fish defaults and on the desktops; `[focus] key` in `modes.toml`). The toggle, a click in the view or `esc :` gives the mode the keyboard (accent ring and a key hint); its keys are then plain (arrows, Enter, Space, `s` sync, `/` search, `v` view, `u` back, `h` dotfiles, `f` fullscreen, `k`/`j`/`l` player ...) and nothing typed reaches the shell. Esc, `q` with nothing open, or the toggle give it back. Replaces the alt+key bindings (alt+t, alt+s, alt+arrows, alt+Enter, alt+Backspace ... shadowed shell bindings); the old `modifier` setting is ignored. A test holds the bash/zsh/fish default tables and fails if the toggle collides. docs/modes.md, docs/chat.md, docs/preferences.md, docs/plugins.md, the manual and `ctrl+shift+k` updated.
@@ -11,6 +15,7 @@
 - One-character keys in `modes.toml` are case sensitive (`F` is Shift+F; before, it meant `f`).
 - Releases carry `-full` offline bundles (`mouser-<target>-full.tar.gz` / `.zip`): Mouser plus every `plugins.lock` archive for the target in `plugins/`, so first run installs all engines and plugins without a network (`scripts/full-bundle.py` checks each against the lock).
 - `plugins.lock` pins commander 0.1.3 (audio host and device, the focus-model keys, silent sync).
+- Release: the `-full` bundle step sets up Python 3.12 (the bundle script needs `tomllib`; ubuntu-22.04 has 3.10). The pwsh sync test presses Enter again if a slow runner drops the first one.
 - `mouser shell-integration pwsh`: PowerShell reports its folder (OSC 7) and takes commander's sync at the next prompt through a per-session sync file (a builtin `Set-Location`; nothing typed or added to the history).
 - Preferences → Audio: `audio.host` (auto, jack, alsa on Linux; auto tries JACK first, PipeWire's JACK included, else ALSA), `audio.output_device` (a dropdown of that host's devices, default = the system default; a missing device falls back to the default with a notice) and the active host. JACK is the optional `jack` feature with libjack loaded at run time; the official Linux builds and CI include it. The player's status shows the host playing. See docs/preferences.md §Audio.
 - Commander: back works like `popd`. Entering a folder or file pushes where you were (the path as you saw it, symlinks kept, with the selection and scroll); back restores it exactly. With an empty stack back goes to the parent of the logical path, never a symlink target's real parent. Remote folders too. See docs/modes.md.

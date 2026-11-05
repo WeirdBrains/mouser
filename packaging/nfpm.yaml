@@ -10,6 +10,8 @@ description: |
 homepage: https://github.com/WeirdBrains/mouser
 license: BSD-3-Clause
 depends:
+  # The newest glibc the binaries use (scripts/check-glibc.py; at most 2.35).
+  - libc6 (>= ${LIBC_MIN})
   - libasound2
   - libvulkan1
 recommends:
@@ -17,6 +19,7 @@ recommends:
 overrides:
   rpm:
     depends:
+      - glibc >= ${LIBC_MIN}
       - alsa-lib
       - vulkan-loader
     recommends:
