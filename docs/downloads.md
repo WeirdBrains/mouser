@@ -5,19 +5,21 @@ local folder or archive, or a crate. Every download is checked before
 anything runs, and each item gets its own version folder so you can roll back.
 Plugins and engines use the same verbs, flags and output:
 
-| verb | `mouser plugin …` | `mouser engine …` |
-|---|---|---|
-| install | `mouser plugin install SRC` | `mouser engine install SRC` |
-| update | `mouser plugin update NAME\|--all` | `mouser engine update NAME\|--all` |
-| rollback | `mouser plugin rollback NAME` | `mouser engine rollback NAME` |
-| remove | `mouser plugin remove NAME` | `mouser engine remove NAME` |
-| list | `mouser plugin list` | `mouser engine list` |
-| retry | `mouser plugin retry` | `mouser engine retry` |
-| cancel | `mouser plugin cancel ID\|--all` | `mouser engine cancel ID\|--all` |
+| verb | `mouser plugin …` | `mouser engine …` | `esc :` line |
+|---|---|---|---|
+| install | `mouser plugin install SRC` | `mouser engine install SRC` | `:plugin install SRC`, `:pi SRC` / `:engine install SRC`, `:ei SRC` |
+| update | `mouser plugin update NAME\|--all` | `mouser engine update NAME\|--all` | `:plugin update [NAME]`, `:pu` / `:engine update`, `:eu` |
+| rollback | `mouser plugin rollback NAME` | `mouser engine rollback NAME` | `:prb NAME` / `:erb NAME` |
+| remove | `mouser plugin remove NAME` | `mouser engine remove NAME` | `:prm NAME` / `:erm NAME` |
+| list | `mouser plugin list` | `mouser engine list` | `:pl` / `:el` |
+| retry | `mouser plugin retry` | `mouser engine retry` | `:plugin retry`, `:pr` / `:engine retry`, `:er` |
+| cancel | `mouser plugin cancel ID\|--all` | `mouser engine cancel ID\|--all` | `:cancel ID\|all`, `:pc` / `:ec` |
 
-Every verb takes `--yes` (don't ask), `--version VERSION` and `--wait`.
+Every verb takes `--yes` (don't ask), `--version VERSION` and `--wait` (the
+CLI always waits; on the `esc :` line downloads run in the background).
 `remove` is also spelled `uninstall`. `mouser downloads` lists the running
-Mouser's jobs and `mouser downloads --cancel ID|all` stops them. `mouser --install SRC` (repeatable)
+Mouser's jobs and `mouser downloads --cancel ID|all` stops them; on the `esc :`
+line that's `:downloads` and `:cancel`. `mouser --install SRC` (repeatable)
 starts Mouser and installs in the background; with `--wait` it installs
 without a window and exits (add `--yes`, since nothing can ask).
 
@@ -97,7 +99,7 @@ On start, Mouser queues every `plugins.lock` item that isn't installed or
 shipped beside it. They download in parallel while the terminal works on the
 basic renderer, and each is used as soon as its own download verifies. If one
 fails (offline, say), Mouser carries on as a plain terminal with a note, and
-`mouser plugin retry` tries again.
+`esc :plugin retry` tries again.
 
 The `-full` offline bundle carries the lock's archives in `plugins/` beside
 Mouser (`Contents/Resources/plugins` on macOS; `MOUSER_OFFLINE_BUNDLE` names

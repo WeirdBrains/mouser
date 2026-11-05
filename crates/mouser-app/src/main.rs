@@ -2391,6 +2391,8 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
         let _ = w.write_all(format!("\r\n[mouser] launching connection: {rest}\r\n").as_bytes());
     } else if let Some(arg) = trimmed.strip_prefix("model download").filter(|r| r.is_empty() || r.starts_with(' ')) {
         model_download_request(arg.trim(), app_state);
+    } else if install_command(trimmed, app_state) {
+        // `esc :plugin …` / `:engine …` (docs/downloads.md).
     } else if command_plugin(trimmed, app_state) {
         // A command plugin's word: run (or asked to run) by the plugin.
     } else {
@@ -2547,6 +2549,84 @@ fn start_downloads(app_state: &Arc<Mutex<AppState>>, install: &[String]) {
     for s in install {
         m.enqueue(install_kind(s), s, downloads::Op::Install);
     }
+}
+
+/// `esc :plugin VERB …` / `:engine VERB …` and the short forms (`:pi`, `:eu`, …),
+/// plus `:downloads` and `:cancel`. Same verbs as the CLI; installs and updates
+/// go to the download manager, the rest run off the UI thread.
+fn install_command(line: &str, app_state: &Arc<Mutex<AppState>>) -> bool {
+    use mouser_app::install_cli::{SHORT, Verb, parse};
+    use mouser_core::downloads::{self, Op};
+    use mouser_core::install::Kind;
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let Some(&first) = words.first() else { return false };
+    let (kind, rest): (Kind, Vec<&str>) = match first {
+        "plugin" | "plugins" => (Kind::Plugin, words[1..].to_vec()),
+        "engine" | "engines" => (Kind::Engine, words[1..].to_vec()),
+        "downloads" => {
+            let jobs = downloads::global().jobs();
+            let msg = if jobs.is_empty() { "no downloads".to_string() } else { jobs.iter().map(|j| j.line()).collect::<Vec<_>>().join(" | ") };
+            app_state.lock().unwrap().look.say(msg);
+            return true;
+        }
+        "cancel" => {
+            let id = words.get(1).filter(|w| **w != "all").and_then(|w| w.trim_start_matches('#').parse().ok());
+            let n = downloads::global().cancel(id);
+            app_state.lock().unwrap().look.say(format!("cancelled {n} download(s)"));
+            return true;
+        }
+        w if w.len() >= 2 && (w.starts_with('p') || w.starts_with('e')) && SHORT.iter().any(|(s, _)| *s == &w[1..]) => {
+            let k = if w.starts_with('p') { Kind::Plugin } else { Kind::Engine };
+            let mut r = vec![&w[1..]];
+            r.extend(&words[1..]);
+            (k, r)
+        }
+        _ => return false,
+    };
+    let say = |m: String| {
+        app_state.lock().unwrap().look.say(m);
+        wake();
+    };
+    match parse(&rest) {
+        Err(e) => say(format!("{}: {e:#}", kind.name())),
+        Ok((Verb::Install(src), _)) => {
+            let k = if kind == Kind::Plugin { install_kind(&src) } else { kind };
+            let id = downloads::global().enqueue(k, &src, Op::Install);
+            say(format!("download #{id}: {} {src} (esc :downloads; esc :cancel {id})", k.name()));
+        }
+        Ok((Verb::Update(name), _)) => {
+            let names = name.map(|n| vec![n]).unwrap_or_else(|| mouser_core::install::updatable(kind));
+            if names.is_empty() {
+                say(format!("nothing to update: no {} was installed with install", kind.name()));
+            }
+            for n in names {
+                downloads::global().enqueue(kind, &n, Op::Update);
+            }
+        }
+        Ok((Verb::Retry, _)) => {
+            let n = downloads::global().retry().len();
+            say(format!("retrying {n} download(s)"));
+        }
+        Ok((Verb::Cancel(id), _)) => {
+            let n = downloads::global().cancel(id);
+            say(format!("cancelled {n} download(s)"));
+        }
+        Ok((verb, flags)) => {
+            let app_state = app_state.clone();
+            std::thread::spawn(move || {
+                let mut out = Vec::new();
+                let r = mouser_app::install_cli::run(kind, &verb, &flags, &mut out);
+                let text = String::from_utf8_lossy(&out).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" | ");
+                let msg = match r {
+                    Ok(()) => text,
+                    Err(e) => format!("{}: {e:#}", kind.name()),
+                };
+                app_state.lock().unwrap().look.say(msg);
+                wake();
+            });
+        }
+    }
+    true
 }
 
 /// `[mouser] model download [ID]`: show the size and ask (every time) first.
