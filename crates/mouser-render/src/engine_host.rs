@@ -220,7 +220,8 @@ pub fn serve(lib: &Path, name: &str, input: impl Read, output: impl Write) -> Re
             t => bail!("engine host: unknown message {t}"),
         }
     }
-    lib.destroy_raw(handle);
+    // SAFETY: handle came from create_raw and is not used afterwards.
+    unsafe { lib.destroy_raw(handle) };
     Ok(())
 }
 

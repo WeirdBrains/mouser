@@ -126,6 +126,32 @@ All pointers in a frame are valid only during `draw`. Colours are 0xRRGGBB. The
 header is `crates/mouser-engine-abi/mouser_engine.h`; the Rust side of the ABI is the
 `mouser-engine-abi` crate, which engine authors can depend on.
 
+### ABI v2 (Mouser 1.4.0)
+
+A v2 engine exports `mouser_engine_v2`, returning a `MouserEngineV2` table that
+**starts with a complete v1 table** (`base.abi = 2`, `base.size =
+sizeof(MouserEngineV2)`), so the frame types and `create`/`resize`/`draw`/
+`destroy` are unchanged. It adds:
+
+```c
+typedef struct { uint32_t size, flags, formats, max_texture; } MouserCaps;
+typedef struct {
+    MouserEngineV1 base;
+    uint32_t abi_min, abi_max;                       /* the range it speaks */
+    void (*caps)(void *engine, MouserCaps *caps);    /* optional (may be NULL) */
+    void (*set_scale)(void *engine, float scale);    /* DPI change, optional */
+    void (*evict)(void *engine, uint64_t key);       /* drop a cached upload, optional */
+    void (*set_vsync)(void *engine, int on);         /* with MOUSER_CAP_VSYNC_CONTROL */
+} MouserEngineV2;
+const MouserEngineV2 *mouser_engine_v2(void);
+```
+
+Mouser tries `mouser_engine_v2` first and picks the newest ABI both sides
+speak (it speaks 1–2); a null return or a missing symbol falls back to
+`mouser_engine_v1`, so v1 engines keep loading. Export both entry points to
+also load in Mouser builds older than 1.4.0 (the `flat` example does). The
+engine's description in Mouser shows the negotiated ABI ("custom, ABI 2").
+
 Guards on the Mouser side: the ABI number must match and `size` must be at least the
 v1 table, the reported name must match the manifest (checked at install and at load),
 a negative `draw` result switches the window to the Mouser engine, and a **crash sentinel**: before calling `create` Mouser writes

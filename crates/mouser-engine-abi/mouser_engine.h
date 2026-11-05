@@ -1,10 +1,13 @@
-/* Mouser custom rendering engine ABI, version 1. See docs/engines.md. */
+/* Mouser custom rendering engine ABI, version 2 (v1 still loads). See docs/engines.md. */
 #ifndef MOUSER_ENGINE_H
 #define MOUSER_ENGINE_H
 #include <stddef.h>
 #include <stdint.h>
 
 #define MOUSER_ENGINE_ABI 1
+#define MOUSER_ENGINE_ABI_V2 2
+enum { MOUSER_CAP_VSYNC_CONTROL = 1, MOUSER_CAP_DIRECT_SURFACE = 2, MOUSER_CAP_PIXELS = 4 };
+enum { MOUSER_FORMAT_XRGB8888 = 1 };
 enum { MOUSER_SURFACE_WAYLAND = 1, MOUSER_SURFACE_XLIB = 2, MOUSER_SURFACE_XCB = 3,
        MOUSER_SURFACE_APPKIT = 4, MOUSER_SURFACE_WIN32 = 5,
        MOUSER_SURFACE_PIXELS = 6 /* window -> MouserPixels; used in the engine host */ };
@@ -37,6 +40,18 @@ typedef struct {
     void (*destroy)(void *engine);
 } MouserEngineV1;
 
-/* Exported by every engine library. */
+typedef struct { uint32_t size, flags, formats, max_texture; } MouserCaps;
+
+typedef struct {
+    MouserEngineV1 base;  /* base.abi = MOUSER_ENGINE_ABI_V2, base.size = sizeof(MouserEngineV2) */
+    uint32_t abi_min, abi_max;
+    void (*caps)(void *engine, MouserCaps *caps);        /* optional */
+    void (*set_scale)(void *engine, float scale);        /* optional */
+    void (*evict)(void *engine, uint64_t key);           /* optional */
+    void (*set_vsync)(void *engine, int on);             /* optional */
+} MouserEngineV2;
+
+/* Exported by engine libraries: v2 is tried first, v1 for older Mouser builds. */
+const MouserEngineV2 *mouser_engine_v2(void);
 const MouserEngineV1 *mouser_engine_v1(void);
 #endif

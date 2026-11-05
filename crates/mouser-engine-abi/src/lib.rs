@@ -1,7 +1,9 @@
-//! The stable C ABI between Mouser and custom GPU rendering engines (v1).
+//! The stable C ABI between Mouser and custom GPU rendering engines (v2,
+//! with v1 still loaded).
 //!
 //! An engine is a shared library exporting
-//! `extern "C" fn mouser_engine_v1() -> *const MouserEngineV1`. Mouser builds
+//! `extern "C" fn mouser_engine_v2() -> *const MouserEngineV2` (and, for
+//! older Mouser builds, `mouser_engine_v1() -> *const MouserEngineV1`). Mouser builds
 //! a [`MouserFrame`] per frame (everything already composed: cells, cursor,
 //! selection, UI, images) and the engine rasterises and presents it to the
 //! window described by [`MouserSurface`]. The C header is `mouser_engine.h`.
@@ -10,10 +12,23 @@
 
 use std::ffi::{c_char, c_int, c_void};
 
-/// ABI version; bumped only on incompatible changes.
+/// The v1 ABI version (the `abi` of a [`MouserEngineV1`] table).
 pub const MOUSER_ENGINE_ABI: u32 = 1;
-/// Name of the exported entry symbol (NUL-terminated).
+/// The newest ABI version; a v2 table's `base.abi`.
+pub const MOUSER_ENGINE_ABI_V2: u32 = 2;
+/// The oldest ABI this crate's host still loads.
+pub const MOUSER_ENGINE_ABI_MIN: u32 = 1;
+/// Name of the v1 entry symbol (NUL-terminated).
 pub const ENTRY_SYMBOL: &[u8] = b"mouser_engine_v1\0";
+/// Name of the v2 entry symbol (NUL-terminated); tried first.
+pub const ENTRY_SYMBOL_V2: &[u8] = b"mouser_engine_v2\0";
+
+/// Capability flags in [`MouserCaps::flags`].
+pub const CAP_VSYNC_CONTROL: u32 = 1;
+pub const CAP_DIRECT_SURFACE: u32 = 2;
+pub const CAP_PIXELS: u32 = 4;
+/// Pixel formats in [`MouserCaps::formats`] (a bit set).
+pub const FORMAT_XRGB8888: u32 = 1;
 
 pub const SURFACE_WAYLAND: u32 = 1;
 pub const SURFACE_XLIB: u32 = 2;
@@ -151,6 +166,53 @@ pub struct MouserEngineV1 {
 // SAFETY: the table is immutable static data.
 unsafe impl Sync for MouserEngineV1 {}
 
+/// What an engine can do, filled in by [`MouserEngineV2::caps`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MouserCaps {
+    /// `size_of::<MouserCaps>()`, set by Mouser before the call.
+    pub size: u32,
+    /// `CAP_*` bits.
+    pub flags: u32,
+    /// `FORMAT_*` bits.
+    pub formats: u32,
+    /// Largest texture side the engine can upload (0 = unknown).
+    pub max_texture: u32,
+}
+
+/// The v2 function table. It starts with a complete v1 table (`base.abi` is
+/// 2, `base.size` is `size_of::<MouserEngineV2>()`), so the frame types and
+/// the four core calls are unchanged; the additions are optional (null when
+/// the engine doesn't implement them).
+#[repr(C)]
+pub struct MouserEngineV2 {
+    pub base: MouserEngineV1,
+    /// The ABI range the engine speaks; Mouser picks the newest shared one.
+    pub abi_min: u32,
+    pub abi_max: u32,
+    /// Fill `caps` (formats, max texture, vsync control, surfaces).
+    pub caps: Option<unsafe extern "C" fn(engine: *mut c_void, caps: *mut MouserCaps)>,
+    /// The window's scale factor changed (DPI); `resize` follows if the size did.
+    pub set_scale: Option<unsafe extern "C" fn(engine: *mut c_void, scale: f32)>,
+    /// Drop a cached glyph or image upload by its `key`.
+    pub evict: Option<unsafe extern "C" fn(engine: *mut c_void, key: u64)>,
+    /// Turn vsync on or off (only with `CAP_VSYNC_CONTROL`).
+    pub set_vsync: Option<unsafe extern "C" fn(engine: *mut c_void, on: c_int)>,
+}
+
+// SAFETY: the table is immutable static data.
+unsafe impl Sync for MouserEngineV2 {}
+
+/// The newest ABI both sides speak (Mouser speaks `MOUSER_ENGINE_ABI_MIN..=MOUSER_ENGINE_ABI_V2`).
+pub fn negotiate(engine_min: u32, engine_max: u32) -> Result<u32, String> {
+    let hi = engine_max.min(MOUSER_ENGINE_ABI_V2);
+    if engine_min <= engine_max && engine_min.max(MOUSER_ENGINE_ABI_MIN) <= hi {
+        Ok(hi)
+    } else {
+        Err(format!("engine ABI {engine_min}-{engine_max} is not supported (this Mouser speaks ABI {MOUSER_ENGINE_ABI_MIN}-{MOUSER_ENGINE_ABI_V2})"))
+    }
+}
+
 impl MouserFrame {
     /// The ops as a slice.
     ///
@@ -196,7 +258,19 @@ mod tests {
             assert_eq!(std::mem::size_of::<MouserFrame>(), 96);
             assert_eq!(std::mem::size_of::<MouserEngineV1>(), 48);
             assert_eq!(std::mem::size_of::<MouserPixels>(), 24);
+            assert_eq!(std::mem::size_of::<MouserEngineV2>(), 88);
+            assert_eq!(std::mem::size_of::<MouserCaps>(), 16);
         }
+    }
+
+    #[test]
+    fn negotiates_the_newest_shared_abi() {
+        assert_eq!(negotiate(1, 2), Ok(2));
+        assert_eq!(negotiate(2, 9), Ok(2));
+        assert_eq!(negotiate(1, 1), Ok(1));
+        assert!(negotiate(3, 4).unwrap_err().contains("ABI 3-4"));
+        assert!(negotiate(0, 0).is_err());
+        assert!(negotiate(2, 1).is_err());
     }
 
     #[test]

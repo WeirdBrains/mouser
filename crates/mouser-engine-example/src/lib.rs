@@ -237,7 +237,36 @@ static TABLE: MouserEngineV1 = MouserEngineV1 {
 
 static mut ODD: MouserEngineV1 = MouserEngineV1 { abi: 0, ..TABLE };
 
-/// The engine entry point.
+unsafe extern "C" fn caps(_engine: *mut c_void, caps: *mut MouserCaps) {
+    // SAFETY: Mouser passes a valid, writable `MouserCaps`.
+    if let Some(c) = unsafe { caps.as_mut() } {
+        c.flags = CAP_DIRECT_SURFACE | CAP_PIXELS;
+        c.formats = FORMAT_XRGB8888;
+        c.max_texture = 0;
+    }
+}
+
+static TABLE_V2: MouserEngineV2 = MouserEngineV2 {
+    base: MouserEngineV1 { abi: MOUSER_ENGINE_ABI_V2, size: std::mem::size_of::<MouserEngineV2>() as u32, ..TABLE },
+    abi_min: MOUSER_ENGINE_ABI,
+    abi_max: MOUSER_ENGINE_ABI_V2,
+    caps: Some(caps),
+    set_scale: None,
+    evict: None,
+    set_vsync: None,
+};
+
+/// The v2 entry point (tried first). Test hooks: `MOUSER_FLAT_ABI` or
+/// `MOUSER_FLAT_V1_ONLY` make it return null, so Mouser falls back to v1.
+#[unsafe(no_mangle)]
+pub extern "C" fn mouser_engine_v2() -> *const MouserEngineV2 {
+    if std::env::var_os("MOUSER_FLAT_ABI").is_some() || std::env::var_os("MOUSER_FLAT_V1_ONLY").is_some() {
+        return std::ptr::null();
+    }
+    &TABLE_V2
+}
+
+/// The v1 entry point, for Mouser builds older than 1.4.0.
 #[unsafe(no_mangle)]
 pub extern "C" fn mouser_engine_v1() -> *const MouserEngineV1 {
     if let Some(abi) = std::env::var("MOUSER_FLAT_ABI").ok().and_then(|v| v.parse().ok()) {
