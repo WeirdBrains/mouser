@@ -15,7 +15,7 @@ pub struct Doc {
 
 /// Small cases that each exercise one thing, then Mouser's own docs.
 pub fn corpus() -> Vec<Doc> {
-    let mut v: Vec<Doc> = cases().into_iter().map(|(n, s)| Doc { name: n.into(), src: s.into() }).collect();
+    let mut v: Vec<Doc> = cases().into_iter().map(|(n, s)| Doc { name: n.into(), src: s }).collect();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut files = vec![root.join("README.md")];
     if let Ok(rd) = std::fs::read_dir(root.join("docs")) {

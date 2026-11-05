@@ -80,7 +80,7 @@ fn main() {
             (s.max_back, m.max_back, format!("{} {at}", d.name))
         })
         .collect();
-    worst.sort_by(|a, b| b.0.cmp(&a.0));
+    worst.sort_by_key(|w| std::cmp::Reverse(w.0));
     println!("| ratmark max back | mouser max back | document, where |");
     println!("|---|---|---|");
     for (r, m, n) in worst.iter().take(8) {
