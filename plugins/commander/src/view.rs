@@ -478,7 +478,7 @@ pub struct CommanderMode {
     ssh: Option<fetch::Remote>,
     /// The folder the shell last reported (local, or the remote shell's).
     /// Commander follows the shell only when this changes (a `cd` typed
-    /// there); its own navigation never moves the shell (ctrl+alt+s syncs).
+    /// there); its own navigation never moves the shell (`s` syncs).
     shell_dir: Option<PathBuf>,
     remote_meta: Arc<HashMap<PathBuf, (u64, i64)>>,
     /// The remote file open in the viewer (or player).
@@ -1611,14 +1611,11 @@ impl Mode for CommanderMode {
                 let e = self.action(id, if id == "scroll" { 1 } else { 0 });
                 return Some(if e == Effect::Pass { Effect::None } else { e });
             }
-            // Other plain keys are swallowed (nothing types into the hidden
-            // shell); alt keys fall through to the bindings.
-            if !(bytes.len() > 1 && bytes[0] == 0x1b) {
-                return Some(Effect::None);
-            }
+            // Other keys go to the bindings (the host swallows the rest while
+            // the mode has focus, so nothing types into the hidden shell).
             return None;
         }
-        // Bound alt keys still work while searching.
+        // Arrows and other escape sequences still reach the bindings while searching.
         if bytes.len() > 1 && bytes[0] == 0x1b {
             return None;
         }
@@ -2172,7 +2169,7 @@ impl CommanderMode {
         Effect::None
     }
 
-    /// ctrl+alt+s: move the shell to commander's folder. The host does it silently
+    /// `s` (sync): move the shell to commander's folder. The host does it silently
     /// through the shell integration (nothing typed, no history), or says why not.
     fn sync(&mut self) -> Effect {
         match self.c.cwd.clone() {
@@ -2458,7 +2455,7 @@ pub(crate) mod tests {
         assert_eq!(m.action("item", 1), Effect::None, "a slow second click only selects");
         assert_eq!(m.action("item", 1), Effect::None, "opening a folder browses it; the shell stays");
         assert_eq!(m.c.cwd.as_deref(), Some(t.path().join("sub dir").as_path()));
-        assert_eq!(m.action("sync", 0), Effect::Cd(t.path().join("sub dir")), "ctrl+alt+s moves the shell there");
+        assert_eq!(m.action("sync", 0), Effect::Cd(t.path().join("sub dir")), "s moves the shell there");
         m.action("back", 0);
         m.action("switch_view", 0);
         let v = m.view(&ctx(), &k);
@@ -2541,7 +2538,7 @@ pub(crate) mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
             let v = m.view(&ctx(), &k);
             if !v.images.is_empty() {
-                assert!(v.dock.unwrap().items.iter().any(|i| i.text.contains("alt+k play/pause")));
+                assert!(v.dock.unwrap().items.iter().any(|i| i.text.contains("k play/pause")));
                 got = true;
                 break;
             }
@@ -2592,7 +2589,7 @@ pub(crate) mod tests {
         // A cd typed in the shell moves commander.
         m.cwd_changed(&t.path().join("c"));
         assert_eq!(m.c.cwd.as_deref(), Some(t.path().join("c").as_path()));
-        // ctrl+alt+s: the host moves the shell; its report lands where commander is.
+        // s (sync): the host moves the shell; its report lands where commander is.
         m.c.selected = 0;
         assert_eq!(m.action("sync", 0), Effect::Cd(t.path().join("c")));
         m.cwd_changed(&t.path().join("c"));
@@ -2610,7 +2607,7 @@ pub(crate) mod tests {
         m.cwd_changed(&t.path().join("a/b"));
         let d = m.view(&ctx(), &k).dock.unwrap();
         let back = d.items.iter().find(|i| i.text.starts_with("‹ back")).expect("back control");
-        assert_eq!(back.text, "‹ back (alt+p)");
+        assert_eq!(back.text, "‹ back (u)");
         assert_eq!(back.action, act("parent", 0));
         assert!(!d.items.iter().any(|i| i.text.contains(" ..") || i.text.ends_with(" .")), "no . or ..");
         // The parent's segment jumps one level up; the current one is not a link.
@@ -2790,7 +2787,7 @@ pub(crate) mod tests {
         // The remote shell still reports /srv: commander stays where it browsed.
         m.remote_changed("me@web1", Some(Path::new("/srv")), Some(Ok(vec![ent("app", true)])));
         assert_eq!(m.c.cwd.as_deref(), Some(Path::new("/srv/app")));
-        assert_eq!(m.action("sync", 0), Effect::Cd("/srv/app".into()), "ctrl+alt+s asks the host to move the shell");
+        assert_eq!(m.action("sync", 0), Effect::Cd("/srv/app".into()), "s asks the host to move the shell");
     }
 
     #[test]
@@ -2799,16 +2796,16 @@ pub(crate) mod tests {
         image::RgbaImage::from_pixel(400, 300, image::Rgba([0, 255, 0, 255])).save(t.path().join("p.png")).unwrap();
         std::fs::write(t.path().join("a.txt"), "hello").unwrap();
         let k = Keymap::new(cmdr::BINDINGS);
-        assert_eq!(k.label("fullscreen"), "alt+e");
+        assert_eq!(k.label("fullscreen"), "f");
         let mut m = CommanderMode::new();
         m.cwd_changed(t.path());
-        // Not on a text file (alt+e goes to the shell there).
+        // Not on a text file (f does nothing there).
         m.c.overlay = Some(Overlay::Preview(t.path().join("a.txt")));
         assert_eq!(m.action("fullscreen", 0), Effect::Pass);
         m.c.overlay = Some(Overlay::Preview(t.path().join("p.png")));
         let v = wait_loaded(&mut m, 1);
         assert!(!v.fullscreen);
-        let btn = v.dock.as_ref().unwrap().items.iter().find(|i| i.text.starts_with("fullscreen (alt+e)")).expect("header button").action.clone();
+        let btn = v.dock.as_ref().unwrap().items.iter().find(|i| i.text.starts_with("fullscreen (f)")).expect("header button").action.clone();
         assert_eq!(btn, act("fullscreen", 0));
         assert_eq!(m.action("fullscreen", 0), Effect::None);
         let c = ctx();
@@ -2816,7 +2813,7 @@ pub(crate) mod tests {
         assert!(v.fullscreen);
         let d = v.dock.as_ref().unwrap();
         assert_eq!(d.rect, Rect { x: 0, y: 0, w: c.viewport.width, h: c.viewport.height }, "the whole window");
-        assert!(d.items.iter().any(|i| i.text.starts_with("exit fullscreen (alt+e / esc)")), "controls show at first");
+        assert!(d.items.iter().any(|i| i.text.starts_with("exit fullscreen (f / esc)")), "controls show at first");
         // Letterboxed: the whole picture, centred, inside the window.
         let r = v.images[0].rect;
         assert!(r.x >= 0 && r.y >= 0 && r.x + r.w <= c.viewport.width && r.y + r.h <= c.viewport.height, "{r:?}");
@@ -2829,10 +2826,11 @@ pub(crate) mod tests {
         // A pointer move brings them back.
         m.action("pointer_move", pack_xy(300, 300));
         assert!(m.view(&c, &k).dock.unwrap().items.iter().any(|i| i.text.starts_with("exit fullscreen")));
-        // Keys: arrows and space are the view's, other typing is swallowed; alt keys still bind.
-        assert!(m.wants_text() && m.wants_key(b"\x1b[C") && !m.wants_key(b"\x1be"));
-        assert_eq!(m.text(b"x"), Some(Effect::None));
-        assert_eq!(m.text(b"\x1be"), None);
+        // Keys: arrows and space are the view's, other keys go to the bindings
+        // (the host drops unbound ones while commander has the keyboard).
+        assert!(m.wants_text() && m.wants_key(b"\x1b[C") && !m.wants_key(b"f"));
+        assert_eq!(m.text(b"x"), None);
+        assert_eq!(m.text(b"f"), None);
         assert_eq!(m.text(b"\x1b"), None, "Esc goes to escape()");
         // Resize: the rect follows the window.
         let small = Context { viewport: UiViewport { width: 640, height: 480, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 8, w: 640, h: 472 } };

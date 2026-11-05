@@ -7,13 +7,13 @@ Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
 `plugins.max_restarts`: how many crashes within 30 s a plugin may have before
 it stays off (default 3; 0 never restarts; see [Mode plugin protocol](./mode-protocol.md)).
 
-Keys (alt+key by default; remap them in `modes.toml` under `[preferences.keys]`):
+Keys while the preferences mode has the keyboard (switching to it with `esc :p` gives it; ctrl+alt+k or Esc gives it back, docs/modes.md §Focus; remap them in `modes.toml` under `[preferences.keys]`):
 
-- alt+↑ / alt+↓ move, alt+PgUp / alt+PgDn page;
-- alt+← / alt+→ change the value: the previous/next choice, on/off, or ±1 for numbers;
-- alt+Enter edits: on/off toggles, choices open a dropdown (↑/↓, Enter picks,
+- ↑ / ↓ move, PgUp / PgDn page;
+- ← / → change the value: the previous/next choice, on/off, or ±1 for numbers;
+- Enter edits: on/off toggles, choices open a dropdown (↑/↓, Enter picks,
   Esc closes), other fields take typed text (Enter saves, Esc cancels);
-- alt+r resets the row to its default (the key is removed from the file).
+- r resets the row to its default (the key is removed from the file).
 
 Rows are clickable: the value edits it, `reset` resets it.
 

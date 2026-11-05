@@ -148,10 +148,10 @@ hotkey = "h"                    # one letter/digit; not c, a (built-ins) or p
 keys = [{ id = "time", key = "t", describe = "show the time" }]
 ```
 
-A key is a letter, digit or punctuation key (not `:`), `ctrl+` and a letter
-(ctrl+alt+letter), or `up`, `down`, `left`, `right`, `enter`, `pageup`, `pagedown`,
-`home`, `end`, `tab`, `space` or `backspace`; each is pressed with the mode's
-modifier (alt).
+A key is plain, live only while the mode has the keyboard (docs/modes.md §Focus): a
+letter, digit or punctuation key (not `:`), `alt+<key>`, `ctrl+alt+<letter>`, or `up`, `down`, `left`, `right`, `enter`, `pageup`, `pagedown`,
+`home`, `end`, `tab`, `space` or `backspace`. Without focus the mode gets no key at
+all (the focus toggle, ctrl+alt+k, is the host's).
 
 It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the built-in modes and
 docks above the prompt like them. Mouser runs its program once per event, off the

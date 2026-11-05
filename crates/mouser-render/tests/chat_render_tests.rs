@@ -68,7 +68,7 @@ fn the_dock_has_a_header_an_input_and_shows_the_transcript() {
     let d = v.dock.expect("docked above the prompt");
     assert!(d.rect.h >= 18 * 12 && d.rect.y == 30, "{:?}", d.rect);
     assert!(d.items.iter().any(|i| i.text.starts_with("chat · ")));
-    assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::Field { focused: false, .. }) && i.text.contains("alt+i")));
+    assert!(d.items.iter().any(|i| matches!(i.style, PanelStyle::Field { focused: false, .. }) && i.text.contains("(i ")));
     assert!(d.items.iter().any(|i| i.action == UiAction::Mode { action: "clear".into(), arg: 0 }));
     // Opening the mode focuses the input; typing goes there, not to the shell.
     m.activate();
@@ -234,8 +234,8 @@ fn alt_m_opens_the_switch_picker_and_picking_switches_and_persists() {
     let home = two_models();
     let mut m = ChatMode::new(Chat::new(Arc::new(NoModel)));
     let keys = Keymap::new(m.bindings());
-    assert_eq!(keys.lookup(b"\x1bm"), Some("model"));
-    assert_eq!(keys.label("model"), "alt+m");
+    assert_eq!(keys.lookup(b"m"), Some("model"));
+    assert_eq!(keys.label("model"), "m");
     // No clash with the mode's other keys.
     let ids: Vec<_> = m.bindings().iter().map(|b| b.key).collect();
     assert_eq!(ids.iter().filter(|k| **k == "m").count(), 1);

@@ -114,7 +114,7 @@ struct Cli {
 #[derive(clap::Subcommand, Debug)]
 enum Command {
     /// Print the shell integration for zsh, bash, fish or PowerShell (directory reports and
-    /// the silent cd behind commander's sync, ctrl+alt+s: nothing typed, nothing in the history;
+    /// the silent cd behind commander's sync (`s` while it has the keyboard): nothing typed, nothing in the history;
     /// fuzzball docs/shell.md). Load it from your rc file:
     /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`,
     /// `mouser shell-integration fish | source`, or in PowerShell's $PROFILE
@@ -1466,7 +1466,13 @@ fn main() -> Result<()> {
             | ui::UiAction::FontSize(_) => {
                 let mut st = app_state.lock().unwrap();
                 let own_panel = st.ssh.panel.is_some() || st.look.panel.is_some();
-                if !own_panel && matches!(act, ui::UiAction::ClosePanel) && (st.modes.close_window() || st.modes.escape()) {
+                if !own_panel
+                    && matches!(act, ui::UiAction::ClosePanel)
+                    && (st.modes.close_window() || {
+                        st.modes.focus(true);
+                        st.modes.escape()
+                    })
+                {
                     // Closed the mode's window.
                 } else if let (false, ui::UiAction::ScrollPanel(n)) = (own_panel, &act) {
                     let e = st.modes.action("scroll", *n);
@@ -2931,7 +2937,7 @@ fn wait_for_prompt(session: Option<&tabs::Session>) {
 }
 
 /// Move the tab's shell to `path` without typing anything (commander's
-/// ctrl+alt+s, docs/modes.md §Sync). Through the shell integration only: silently
+/// `s` while it has the keyboard, docs/modes.md §Sync). Through the shell integration only: silently
 /// now when the shell is idle at its prompt, or at its next prompt when a
 /// command is running; PowerShell reads it from its sync file at the next
 /// prompt. Never types `cd`, so nothing reaches the line or the history.

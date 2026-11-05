@@ -19,9 +19,9 @@ command = ["./mouser-commander"]
 [mode]
 hotkey = "c"
 keys = [
-  { id = "switch_view", key = "t", describe = "switch view (list / grid / carousel)" },
-  { id = "search", key = "s", describe = "search this folder" },
-  { id = "sync", key = "ctrl+s", describe = "sync: move the shell to commander's folder (silently, at its next prompt if busy)" },
+  { id = "switch_view", key = "v", describe = "switch view (list / grid / carousel)" },
+  { id = "search", key = "/", describe = "search this folder" },
+  { id = "sync", key = "s", describe = "sync: move the shell to commander's folder (silently, at its next prompt if busy)" },
   { id = "up", key = "up", describe = "previous row" },
   { id = "down", key = "down", describe = "next row" },
   { id = "left", key = "left", describe = "previous item" },
@@ -29,14 +29,14 @@ keys = [
   { id = "open", key = "enter", describe = "open (folder: cd into it; file: full-width view)" },
   { id = "bigger", key = "z", describe = "larger grid tiles" },
   { id = "smaller", key = "x", describe = "smaller grid tiles" },
-  { id = "hidden", key = "a", describe = "show / hide dotfiles (ls -a)" },
+  { id = "hidden", key = "h", describe = "show / hide dotfiles (ls -a)" },
   { id = "options", key = "o", describe = "options window" },
   { id = "man", key = "m", describe = "manual for commander mode" },
   { id = "page_up", key = "pageup", describe = "page up" },
   { id = "page_down", key = "pagedown", describe = "page down" },
   { id = "first", key = "home", describe = "first item" },
   { id = "last", key = "end", describe = "last item" },
-  { id = "parent", key = "p", describe = "back: where you came from, else the parent folder" },
+  { id = "parent", key = "u", describe = "back: where you came from, else the parent folder" },
   { id = "back", key = "backspace", describe = "back: where you came from, else the parent folder" },
   { id = "close", key = "q", describe = "close the file view / window" },
   { id = "mark", key = "space", describe = "mark / unmark the item (for pipe)" },
@@ -51,6 +51,6 @@ keys = [
   { id = "zoom_out", key = "-", describe = "image view: zoom out (same key as volume down in the player)" },
   { id = "zoom_fit", key = "0", describe = "image view: fit" },
   { id = "zoom_actual", key = "1", describe = "image view: 100% (actual pixels)" },
-  { id = "fullscreen", key = "e", describe = "image / player: fullscreen, the whole window (Esc or the same key leaves)" },
+  { id = "fullscreen", key = "f", describe = "image / player: fullscreen, the whole window (Esc or the same key leaves)" },
   { id = "menu", key = "i", describe = "header overflow menu (\u2022\u2022\u2022) when the window is narrow" },
 ]

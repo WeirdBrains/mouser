@@ -107,18 +107,13 @@ impl State {
         }
     }
 
-    /// Carry out what the view asked. `key`: the bound key this came from,
-    /// typed into the shell when the mode passes on it (as the built-in
-    /// mode let it through).
-    fn apply(&mut self, e: Effect, key: Option<&str>, host: &Host) {
+    /// Carry out what the view asked. `_key`: the bound key this came from.
+    fn apply(&mut self, e: Effect, _key: Option<&str>, host: &Host) {
         match e {
             Effect::None => {}
-            Effect::Pass => {
-                // What alt+key sends (its first encoding).
-                if let Some(b) = key.and_then(modes::key_bytes).and_then(|v| v.into_iter().next()) {
-                    let _ = host.effect(Effect::Type(String::from_utf8_lossy(&b).into_owned()));
-                }
-            }
+            // Not taken: the host has given the mode the keyboard, so the
+            // key goes nowhere (never typed into the shell).
+            Effect::Pass => {}
             e => {
                 let _ = host.effect(e);
             }

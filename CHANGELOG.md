@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed
+
+- Modes take no key from the shell. Commander (and chat, preferences and mode plugins) binds one key only, the focus toggle **ctrl+alt+k** (free in bash, zsh and fish defaults and on the desktops; `[focus] key` in `modes.toml`). The toggle, a click in the view or `esc :` gives the mode the keyboard (accent ring and a key hint); its keys are then plain (arrows, Enter, Space, `s` sync, `/` search, `v` view, `u` back, `h` dotfiles, `f` fullscreen, `k`/`j`/`l` player ...) and nothing typed reaches the shell. Esc, `q` with nothing open, or the toggle give it back. Replaces the alt+key bindings (alt+t, alt+s, alt+arrows, alt+Enter, alt+Backspace ... shadowed shell bindings); the old `modifier` setting is ignored. A test holds the bash/zsh/fish default tables and fails if the toggle collides. docs/modes.md, docs/chat.md, docs/preferences.md, docs/plugins.md, the manual and `ctrl+shift+k` updated.
+
 ### Added
 
 - `mouser shell-integration pwsh`: PowerShell reports its folder (OSC 7) and takes commander's sync at the next prompt through a per-session sync file (a builtin `Set-Location`; nothing typed or added to the history).
@@ -46,7 +50,7 @@
 
 ### Changed
 
-- Commander keeps its own folder: browsing (open, back, the header path, search jumps) never types into the shell or changes its folder, local or over SSH (remote folders are listed over the ssh side channel). The shell's folder changes only with **sync, ctrl+alt+s** (free in bash, zsh and fish), silently through the shell integration (nothing typed, nothing in the history, the half-typed line kept): at once when the shell is idle at its prompt, at its next prompt while a command runs. Without an integration the status bar says so; the typed-`cd` fallback is gone. A `cd` typed in the shell still moves commander. Rebindable (`sync` in `modes.toml`). Keys can now be ctrl+alt+letter (`ctrl+s` in `modes.toml`). See docs/modes.md §Sync.
+- Commander keeps its own folder: browsing (open, back, the header path, search jumps) never types into the shell or changes its folder, local or over SSH (remote folders are listed over the ssh side channel). The shell's folder changes only with **sync** (`s` while commander has the keyboard), silently through the shell integration (nothing typed, nothing in the history, the half-typed line kept): at once when the shell is idle at its prompt, at its next prompt while a command runs. Without an integration the status bar says so; the typed-`cd` fallback is gone. A `cd` typed in the shell still moves commander. Rebindable (`sync` in `modes.toml`). Keys can now be ctrl+alt+letter (`ctrl+s` in `modes.toml`). See docs/modes.md §Sync.
 - plugins.lock pins commander 0.1.2 (the navigation stack), chat, preferences and the mouser and skia engines at 0.1.1 (Linux builds on Ubuntu 22.04, so they load on glibc 2.35+).
 - Releases: Linux builds run on Ubuntu 22.04 (glibc 2.35) with glslc and Vulkan headers from the LunarG SDK, so the binary runs on older distributions. A manual run of the release workflow builds and packages everything as v0.0.0 and publishes nothing.
 - CI: the commander player fps test holds the plugin to 20 fps on CI runners (30 locally); keeping up with the built-in player on the same machine is still required.

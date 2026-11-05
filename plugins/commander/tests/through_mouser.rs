@@ -111,10 +111,12 @@ fn draws_and_acts_like_the_built_in_commander() {
     m.action("sync", 0);
     assert_eq!(effects(&mut m, 1), vec![want]);
 
-    // A key the built-in passes on (no player: alt+k) reaches the shell.
+    // A key the built-in passes on (no player: k) types nothing into the
+    // shell: commander has the keyboard.
     assert_eq!(b.action("play_pause", 0), Effect::Pass);
     m.action("play_pause", 0);
-    assert_eq!(effects(&mut m, 1), vec![Effect::Type("\x1bk".into())]);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(!effects(&mut m, 1).iter().any(|e| matches!(e, Effect::Type(_))));
 
     // Mark and pipe: the command line is run in the shell.
     for x in [&mut b as &mut dyn Mode, &mut m] {

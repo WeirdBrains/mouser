@@ -1,5 +1,7 @@
 //! Mode plugins (docs/modes.md). A mode changes how you work with the files
-//! under the shell: it gets the keys bound in its keymap, follows the shell's
+//! under the shell: while it has the keyboard (the focus toggle, or a click
+//! in its view) it gets plain keys through its keymap, and otherwise none:
+//! every key goes to the shell untouched. It follows the shell's
 //! working directory and draws a view above the prompt. Exactly one mode is
 //! active at a time (or none); Mouser starts in the default one, commander.
 //!
@@ -123,6 +125,10 @@ pub struct Host {
     current: Option<usize>,
     window: Option<Window>,
     cwd: Option<PathBuf>,
+    /// The current mode has the keyboard.
+    focused: bool,
+    /// The focus toggle (`[focus] key` in `modes.toml`).
+    focus_key: String,
     /// Problems loading `modes.toml`, shown once.
     pub notes: Vec<String>,
 }
@@ -139,7 +145,9 @@ impl Host {
                 (m, k)
             })
             .collect();
-        let mut h = Self { current: None, window: None, cwd: None, notes, modes };
+        let (focus_key, note) = mouser_core::modes::load_focus_key();
+        notes.extend(note);
+        let mut h = Self { current: None, window: None, cwd: None, focused: false, focus_key, notes, modes };
         if !h.modes.is_empty() {
             h.current = Some(0);
             h.modes[0].0.activate();
@@ -227,12 +235,14 @@ impl Host {
     }
 
     /// Switch to the mode with `hotkey` (or `name`), replacing the current
-    /// one; the current mode's own hotkey turns modes off.
+    /// one, and give it the keyboard; the current mode's own hotkey turns
+    /// modes off.
     pub fn switch(&mut self, key: &str) -> Result<String, String> {
         let key = key.trim().trim_start_matches(':');
         let Some(i) = self.modes.iter().position(|(m, _)| key == m.name() || key.chars().eq([m.hotkey()])) else {
             return Err(format!("no mode {key:?} (ctrl+shift+m lists them)"));
         };
+        self.focused = false;
         if let Some(c) = self.current.take() {
             self.modes[c].0.deactivate();
             if c == i {
@@ -240,6 +250,8 @@ impl Host {
             }
         }
         self.current = Some(i);
+        // Switched to on purpose: it gets the keyboard (Esc gives it back).
+        self.focused = true;
         let m = &mut self.modes[i].0;
         m.activate();
         if let Some(d) = &self.cwd {
@@ -252,15 +264,52 @@ impl Host {
         self.current.map(|i| &mut self.modes[i])
     }
 
-    /// A key from the keyboard: the current mode's bound keys (or its focused
-    /// input); `None` = not a mode key, send it to the shell.
+    fn is_focus_key(&self, bytes: &[u8]) -> bool {
+        mouser_core::modes::key_bytes(&self.focus_key).is_some_and(|v| v.iter().any(|b| b.as_slice() == bytes))
+    }
+
+    /// The current mode has the keyboard.
+    pub fn focused(&self) -> bool {
+        self.focused && self.current.is_some()
+    }
+
+    /// Give the current mode the keyboard (a click in its view) or take it back.
+    pub fn focus(&mut self, on: bool) {
+        self.focused = on && self.current.is_some();
+    }
+
+    /// The focus toggle as typed (`ctrl+alt+k`).
+    pub fn focus_key(&self) -> &str {
+        &self.focus_key
+    }
+
+    /// A key from the keyboard. Without focus only the focus toggle is the
+    /// mode's (`None`: send it to the shell). With focus every key is: the
+    /// mode's input first, then its bindings; anything else is dropped so
+    /// nothing reaches the shell. Mouser's own F10 and Alt+Esc pass through.
     pub fn key(&mut self, bytes: &[u8]) -> Option<Effect> {
+        self.current?;
+        if self.is_focus_key(bytes) {
+            self.focused = !self.focused;
+            return Some(Effect::None);
+        }
+        if !self.focused || bytes == b"\x1b[21~" || bytes == b"\x1b\x1b" {
+            return None;
+        }
         let (m, k) = self.mode()?;
         if let Some(e) = m.text(bytes) {
             return Some(e);
         }
-        let id = k.lookup(bytes)?.to_string();
-        Some(m.action(&id, 0)).filter(|e| *e != Effect::Pass)
+        let Some(id) = k.lookup(bytes).map(str::to_string) else { return Some(Effect::None) };
+        let e = m.action(&id, 0);
+        if e == Effect::Pass {
+            // `close` with nothing left to close hands the keyboard back.
+            if id == "close" {
+                self.focused = false;
+            }
+            return Some(Effect::None);
+        }
+        Some(e)
     }
 
     /// Whether `key` (a hotkey or name) is a registered mode.
@@ -271,22 +320,32 @@ impl Host {
 
     /// Would [`Host::key`] take these bytes (no side effects)?
     pub fn takes(&self, bytes: &[u8]) -> bool {
-        self.current.is_some_and(|i| {
-            let (m, k) = &self.modes[i];
-            m.wants_text() && (!(bytes.len() > 1 && bytes[0] == 0x1b) || m.wants_key(bytes)) || k.lookup(bytes).is_some()
-        })
+        self.current.is_some() && (self.is_focus_key(bytes) || (self.focused && bytes != b"\x1b[21~" && bytes != b"\x1b\x1b"))
     }
 
+    /// A click in the mode's view or window (or a host action): it gives
+    /// the mode the keyboard, except the wheel. [`FOCUS_ACTION`] toggles.
     pub fn action(&mut self, id: &str, arg: i32) -> Effect {
+        if id == FOCUS_ACTION {
+            self.focused = !self.focused && self.current.is_some();
+            return Effect::None;
+        }
+        if id != "scroll" {
+            self.focus(true);
+        }
         self.mode().map_or(Effect::None, |(m, _)| m.action(id, arg))
     }
 
-    /// Escape: closes a host window, then the mode's; false if nothing was open.
+    /// Escape: closes a host window, then the mode's, then gives the
+    /// keyboard back to the shell; false if none of that happened.
     pub fn escape(&mut self) -> bool {
         if self.window.take().is_some() {
             return true;
         }
-        self.mode().is_some_and(|(m, _)| m.escape())
+        if self.focused() && self.mode().is_some_and(|(m, _)| m.escape()) {
+            return true;
+        }
+        std::mem::take(&mut self.focused) && self.current.is_some()
     }
 
     pub fn has_window(&self) -> bool {
@@ -346,6 +405,9 @@ impl Host {
             }
             None => View::default(),
         };
+        if let (Some(d), Some(i)) = (v.dock.as_mut(), self.current) {
+            focus_marks(d, self.focused, &self.focus_key, self.modes[i].0.name(), &self.modes[i].1, ctx.viewport);
+        }
         match window {
             Some(Window::Keys) => v.panel = Some(self.keys_panel(ctx.viewport)),
             Some(Window::Modes) => v.panel = Some(self.modes_panel(ctx.viewport)),
@@ -377,7 +439,8 @@ impl Host {
         match self.current {
             Some(i) => {
                 let (m, k) = &self.modes[i];
-                lines.push((format!("{} mode", m.name()), String::new()));
+                lines.push((format!("{} mode", m.name()), "these keys work while it has the keyboard".into()));
+                lines.push((self.focus_key.clone(), format!("give {} the keyboard / back to the shell (also esc)", m.name())));
                 for (id, _, d) in &k.keys {
                     lines.push((k.label(id), d.clone()));
                 }
@@ -407,6 +470,41 @@ impl Host {
         let keys: Vec<char> = self.modes.iter().map(|(m, _)| m.hotkey()).collect();
         list_panel(vp, "Modes", &lines, |i| keys.get(i).map_or(UiAction::None, |c| UiAction::SwitchMode(*c)))
     }
+}
+
+/// The host action a click on the focus hint sends.
+pub const FOCUS_ACTION: &str = "mouser.focus";
+
+/// Show who has the keyboard: with focus an accent ring round the dock and
+/// a hint with a few of the mode's keys; without, a hint naming the toggle.
+fn focus_marks(d: &mut Panel, focused: bool, toggle: &str, name: &str, k: &Keymap, vp: UiViewport) {
+    let r = d.rect;
+    if r.w <= 0 || r.h <= 0 {
+        return;
+    }
+    let text = if focused {
+        let mut parts: Vec<String> = ["sync", "search", "switch_view", "open", "focus", "man"]
+            .iter()
+            .filter(|id| k.keys.iter().any(|(i, _, _)| i == *id))
+            .take(4)
+            .map(|id| format!("{} {}", k.label(id), id.replace('_', " ")))
+            .collect();
+        parts.push(format!("esc / {toggle} shell"));
+        format!("{name} has the keys · {}", parts.join(" · "))
+    } else {
+        format!("{toggle}: keys to {name}")
+    };
+    if focused {
+        let t = 2;
+        for (x, y, w, h) in [(r.x, r.y, r.w, t), (r.x, r.y + r.h - t, r.w, t), (r.x, r.y, t, r.h), (r.x + r.w - t, r.y, t, r.h)] {
+            d.items.push(PanelItem { rect: Rect { x, y, w, h }, text: String::new(), style: PanelStyle::MdQuote, action: UiAction::None });
+        }
+    }
+    let w = ((text.chars().count() as i32 + 2) * vp.cell_w).min(r.w - 8).max(0);
+    let h = vp.cell_h + 6;
+    let rect = Rect { x: r.x + r.w - w - 6, y: r.y + r.h - h - 6, w, h };
+    let action = UiAction::Mode { action: FOCUS_ACTION.into(), arg: 0 };
+    d.items.push(PanelItem { rect, text, style: PanelStyle::FloatLabel, action });
 }
 
 /// A centred window with two columns of text.
@@ -489,19 +587,66 @@ mod tests {
     fn one_mode_routes_only_its_keys() {
         let mut h = Host::new(vec![Box::new(Fake { on: false, got: vec![] }), Box::new(commander::CommanderMode::new())]);
         assert_eq!(h.current(), Some("fake"), "the first mode is the default and starts active");
-        assert_eq!(h.key(b"\x1bg"), Some(Effect::Say("go".into())));
-        assert_eq!(h.key(b"\x1bt"), None, "commander's key is not routed while fake is on");
-        assert_eq!(h.key(b"\x1bb"), None);
+        assert_eq!(h.key(b"g"), None, "no focus: the key is the shell's");
+        assert_eq!(h.key(b"\x1b\x0b"), Some(Effect::None), "ctrl+alt+k gives the mode the keyboard");
+        assert!(h.focused());
+        assert_eq!(h.key(b"g"), Some(Effect::Say("go".into())));
+        assert_eq!(h.key(b"v"), Some(Effect::None), "commander's key is not routed while fake is on; dropped, not typed");
+        assert!(h.takes(b"b") && !h.takes(b"\x1b[21~"), "F10 stays Mouser's");
+        assert!(h.escape() && !h.focused(), "Esc gives the keyboard back");
+        assert!(!h.escape());
         assert_eq!(h.switch("c").unwrap(), "commander mode");
         assert_eq!(h.current(), Some("commander"), "switching replaces the mode");
-        assert_eq!(h.key(b"\x1bg"), None);
-        assert!(h.key(b"\x1bt").is_some());
+        assert!(h.focused(), "switched to on purpose: it has the keyboard");
+        assert!(h.key(b"v").is_some());
+        h.focus(false);
+        assert_eq!(h.key(b"v"), None);
         assert_eq!(h.switch(":c").unwrap(), "commander mode off");
         assert_eq!(h.current(), None);
-        assert_eq!(h.key(b"\x1bt"), None, "no mode: everything goes to the shell");
+        assert!(!h.focused());
+        assert_eq!(h.key(b"\x1b\x0b"), None, "no mode: everything goes to the shell");
         assert!(h.switch("q").is_err());
         h.switch("fake").unwrap();
         assert_eq!(h.current(), Some("fake"));
+        h.focus(false);
+        assert_eq!(h.action(FOCUS_ACTION, 0), Effect::None);
+        assert!(h.focused(), "a click on the hint focuses");
+        h.focus(false);
+        h.action("go", 0);
+        assert!(h.focused(), "a click in the view focuses");
+    }
+
+    /// Without focus a mode takes exactly one key, the focus toggle, and the
+    /// toggle is no bash, zsh or fish default (`mouser_core::modes` tests).
+    #[test]
+    fn unfocused_the_only_mode_key_is_the_toggle() {
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+        for k in cmdr_all_keys() {
+            keys.extend(mouser_core::modes::key_bytes(&k).unwrap());
+            keys.extend(mouser_core::modes::key_bytes(&format!("alt+{k}")).unwrap());
+        }
+        for c in (0x20u8..0x7f).chain(1..0x20) {
+            keys.push(vec![c]);
+            keys.push(vec![0x1b, c]);
+        }
+        let mut h = Host::builtin();
+        for b in &keys {
+            let toggle = mouser_core::modes::key_bytes(mouser_core::modes::DEFAULT_FOCUS_KEY).unwrap().contains(b);
+            assert_eq!(h.takes(b), toggle, "{b:?}");
+            if !toggle {
+                assert_eq!(h.key(b), None, "{b:?} goes to the shell");
+            }
+        }
+        // Every mode built in: its defaults are plain keys, never the toggle.
+        for m in [&commander::CommanderMode::new() as &dyn Mode, &prefs::PrefsMode::new()] {
+            for b in m.bindings() {
+                assert!(!b.key.starts_with("alt+") && !b.key.starts_with("ctrl+"), "{}: {} is not plain", m.name(), b.id);
+            }
+        }
+    }
+
+    fn cmdr_all_keys() -> Vec<String> {
+        mouser_core::commander::BINDINGS.iter().map(|b| b.key.to_string()).collect()
     }
 
     #[test]
@@ -511,7 +656,8 @@ mod tests {
         h.show_keys();
         let v = h.view(&Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } });
         let p = v.panel.unwrap();
-        assert!(p.items.iter().any(|i| i.text == "alt+t"));
+        assert!(p.items.iter().any(|i| i.text == "v"));
+        assert!(p.items.iter().any(|i| i.text == "ctrl+alt+k"));
         assert!(h.escape() && !h.has_window());
         let m = h.modes_panel(vp);
         assert!(m.items.iter().any(|i| i.action == UiAction::SwitchMode('c')));

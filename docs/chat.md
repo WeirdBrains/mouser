@@ -11,16 +11,16 @@ path and tab first.
 
 ## Keys
 
-All keys can be remapped in `modes.toml` under `[chat.keys]`; `ctrl+shift+k` lists them.
+Keys are plain and work while chat has the keyboard (switching to it with `esc :a`, a click, or ctrl+alt+k; Esc or ctrl+alt+k gives it back, docs/modes.md). All keys can be remapped in `modes.toml` under `[chat.keys]`; `ctrl+shift+k` lists them.
 
 | Key | Does |
 |---|---|
-| `alt+i` (or click the input) | type a message; Enter sends, Ctrl+U clears |
-| `esc`, `alt+x`, Ctrl+C, the **cancel** button | cancel the running turn (the stream stops, an open card is denied, a running tool is told to stop: MCP servers get `notifications/cancelled`, and a stdio server that hasn't stopped within 1 s is killed and reconnected) |
-| `alt+y` / `alt+a` / `alt+n` | card: allow once / allow for this chat / deny |
-| `alt+m` (or click the model name in the header) | switch model: configured models, then local/hosted ones to install; ● marks the current one, Esc keeps it. The choice becomes the default (as `mouser model default`) and applies from the next message; not while a turn runs |
-| `alt+l` | new chat |
-| `alt+pageup` / `alt+pagedown`, wheel | scroll the transcript |
+| `i` (or click the input) | type a message; Enter sends, Ctrl+U clears |
+| `esc`, `x`, Ctrl+C, the **cancel** button | cancel the running turn (the stream stops, an open card is denied, a running tool is told to stop: MCP servers get `notifications/cancelled`, and a stdio server that hasn't stopped within 1 s is killed and reconnected) |
+| `y` / `a` / `n` | card: allow once / allow for this chat / deny |
+| `m` (or click the model name in the header) | switch model: configured models, then local/hosted ones to install; ● marks the current one, Esc keeps it. The choice becomes the default (as `mouser model default`) and applies from the next message; not while a turn runs |
+| `l` | new chat |
+| PgUp / PgDn, wheel | scroll the transcript |
 | click a tool row | show or hide its output |
 | click a link in a message | open it (web, mail and file links only) |
 
