@@ -146,7 +146,9 @@ shipped beside it. They download in parallel while the terminal works on the
 basic renderer, and each is used as soon as its own download verifies. If one
 fails (offline, say), Mouser carries on as a plain terminal with a note, and
 <code>esc :plugin retry</code> tries again.</p>
-<p>The <code>-full</code> offline bundle carries the lock's archives in <code>plugins/</code> beside
+<p>The <code>-full</code> offline bundle (<code>mouser-&lt;target&gt;-full.tar.gz</code>, <code>.zip</code> on Windows,
+on every release) carries the lock's archives for its target, every engine and
+official plugin with its <code>.minisig</code>, in <code>plugins/</code> beside
 Mouser (<code>Contents/Resources/plugins</code> on macOS; <code>MOUSER_OFFLINE_BUNDLE</code> names
 another folder). First run installs from there with the same checks and no
 network.</p>
