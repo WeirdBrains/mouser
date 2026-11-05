@@ -613,8 +613,9 @@ pub fn unpack(file: &Path, out: &Path) -> Result<PathBuf> {
                 _ => bail!("archive entry {} escapes the folder; refusing the archive", p.display()),
             }
         }
+        // `./` (as `tar -C dir -czf x.tar.gz .` writes): the folder itself.
         if clean.as_os_str().is_empty() {
-            bail!("empty archive entry name");
+            return Ok(out.to_path_buf());
         }
         Ok(out.join(clean))
     };
@@ -1351,6 +1352,19 @@ mod tests {
         }
         let root = unpack(&z, &t.path().join("out2")).unwrap();
         assert!(root.ends_with("item") && root.join("plugin.toml").is_file());
+        // A tar.gz made with `tar -C stage -czf x.tar.gz .` (a `./` entry, then `./plugin.toml`).
+        let dot = t.path().join("dot.tar.gz");
+        {
+            let stage = t.path().join("stage");
+            fs::create_dir_all(&stage).unwrap();
+            fs::write(stage.join("plugin.toml"), "x").unwrap();
+            let gz = flate2::write::GzEncoder::new(fs::File::create(&dot).unwrap(), flate2::Compression::fast());
+            let mut b = tar::Builder::new(gz);
+            b.append_dir_all(".", &stage).unwrap();
+            b.into_inner().unwrap().finish().unwrap();
+        }
+        let root = unpack(&dot, &t.path().join("out3")).unwrap();
+        assert!(root.join("plugin.toml").is_file(), "{}", root.display());
     }
 
     #[test]

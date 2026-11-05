@@ -32,6 +32,7 @@
 
 ### Fixed
 
+- Installs: archives made with `tar -C dir -czf x.tar.gz .` (a leading `./` entry) unpack instead of failing with "empty archive entry name".
 - Mouser's own engines (bundled, staged or beside a dev build) report Mouser's version instead of 0.4.0 (mouser-core's).
 - Tests: the headless test UI writes its status file through a per-process temp file and a rename, so a crashed UI and its replacement can't interleave their writes (a flaky engine-fallback test on macOS).
 - Tests: the commander folder test no longer depends on the filesystem's timestamp resolution.
