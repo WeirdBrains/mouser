@@ -19,6 +19,7 @@
 - Tests: with no usable engine the basic renderer draws the terminal, and when an engine becomes usable the same UI switches to it live with its shell and tabs (the headless test UI now re-checks the engine order like a window does).
 - Mouser's wgpu renderer is also an engine library on the C ABI (`crates/mouser-engine-wgpu`, engine `mouser`, ABI v2), pixel-identical to the built-in renderer in a new offscreen parity test that CI runs on a software adapter. ABI v2 frames keep translucent colours (top byte `255 - opacity`); v1 engines still get opaque ones.
 - Mouser's Skia renderer is also an engine library on the C ABI (`crates/mouser-engine-skia`, engine `skia`, ABI v2), pixel-identical to the built-in skia engine in a new raster parity test.
+- Engines can ship with Mouser: `engines/<name>/` beside the executable (or the official libraries loose next to a development build) are found after the user's installs, can't be uninstalled, and `MOUSER_ENGINE_DIRS` overrides where they are looked for.
 
 ### Fixed
 
