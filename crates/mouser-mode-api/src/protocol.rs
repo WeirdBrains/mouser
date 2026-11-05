@@ -260,6 +260,15 @@ pub enum Out {
         text: String,
     },
     Wake,
+    /// The context menu for the `menu.open` event at (`x`, `y`) (window
+    /// pixels; the host places and draws it). Empty `entries`: no menu.
+    /// Added in mode-api 1.4 (api 1, additive; last, so older variants keep
+    /// their encoding).
+    Menu {
+        x: i32,
+        y: i32,
+        entries: Vec<crate::ui::MenuEntry>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

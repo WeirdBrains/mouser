@@ -35,4 +35,4 @@ pub mod ui;
 pub use mode::{Context, Effect};
 pub use protocol::{API_VERSION, ApiRange};
 pub use serve::{Host, Mode, serve};
-pub use ui::{Action, Panel, PanelItem, PanelStyle, Rect, Viewport};
+pub use ui::{Action, DockSize, MenuEntry, Panel, PanelItem, PanelStyle, Rect, Viewport};

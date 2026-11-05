@@ -133,3 +133,72 @@ impl<A> Panel<A> {
         }
     }
 }
+
+/// The dock height the user chose (dragging the dock's bottom edge, the
+/// host's taller / shorter keys, or its fullscreen toggle). Mouser sends it as
+/// `dock` in the `view.resized` payload (and again whenever it changes);
+/// a mode lays its dock out with [`DockSize::height`]. Older modes ignore it
+/// and keep their own height.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DockSize {
+    /// Share of the terminal area in 1/1000 (`None`: the mode's default).
+    #[serde(default)]
+    pub permille: Option<u16>,
+    /// The dock fills the whole terminal area (the shell is hidden until it
+    /// is toggled off; the terminal keeps its size).
+    #[serde(default)]
+    pub full: bool,
+}
+
+impl DockSize {
+    /// The dock height for `area`: the whole area when full, else the chosen
+    /// share, else `default_h`; at least four rows and leaving two for the shell.
+    pub fn height(&self, area: Rect, cell_h: i32, default_h: i32) -> i32 {
+        let min = (cell_h * 4).min(area.h.max(0));
+        if self.full {
+            return area.h.max(min);
+        }
+        let max = (area.h - cell_h * 2).max(min);
+        match self.permille {
+            Some(p) => ((area.h as i64 * p as i64 / 1000) as i32).clamp(min, max),
+            None => default_h,
+        }
+    }
+
+    /// From a `view.resized` payload (`dock`, absent from older hosts).
+    pub fn from_payload(v: &serde_json::Value) -> Self {
+        serde_json::from_value(v["dock"].clone()).unwrap_or_default()
+    }
+}
+
+/// One entry of a context menu ([`crate::protocol::Out::Menu`]): an action
+/// from the mode's own action registry, so the menu and the key bindings
+/// never drift apart. Picking it is the same `ui.action` (`id`, `arg`) its
+/// key or button sends.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MenuEntry {
+    pub id: String,
+    pub arg: i32,
+    pub label: String,
+    /// The action's current key as typed (`s`, `enter`); empty: none.
+    pub key: String,
+    pub enabled: bool,
+}
+
+#[cfg(test)]
+mod dock_tests {
+    use super::*;
+
+    #[test]
+    fn dock_size_heights() {
+        let a = Rect { x: 0, y: 0, w: 800, h: 600 };
+        assert_eq!(DockSize::default().height(a, 20, 300), 300);
+        assert_eq!(DockSize { permille: Some(750), full: false }.height(a, 20, 300), 450);
+        assert_eq!(DockSize { permille: Some(1000), full: false }.height(a, 20, 300), 560, "two rows stay the shell's");
+        assert_eq!(DockSize { permille: Some(10), full: false }.height(a, 20, 300), 80, "at least four rows");
+        assert_eq!(DockSize { permille: None, full: true }.height(a, 20, 300), 600);
+        let p = serde_json::json!({"dock": {"permille": 500, "full": false}});
+        assert_eq!(DockSize::from_payload(&p).permille, Some(500));
+        assert_eq!(DockSize::from_payload(&serde_json::json!({})), DockSize::default(), "an older host");
+    }
+}

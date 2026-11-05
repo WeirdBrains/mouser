@@ -97,7 +97,10 @@ Manage plugins (mode, model\-provider, tool\-provider, command; engines too); se
 Font, colours, scrollback, compression, engines, models, MCP and plugin settings (TOML).
 .TP
 .I ~/.mouser/preferences.toml
-Choices made in the app: theme, engine order, sidebar, last mode.
+Choices made in the app: theme, engine order, sidebar, last mode, mode panel size ([window] dock_height, dock_full).
+.TP
+.I ~/.mouser/modes.toml
+Mode keys: the focus toggle ([focus] key, default ctrl+alt+k), each mode's keys ([<mode>.keys]) and the host's own keys while a mode has focus ([host.keys]: F fullscreen panel, ] taller, [ shorter, . context menu).
 .TP
 .I ~/.mouser/themes/
 Built-in themes, written on first run or copied on edit.

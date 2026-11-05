@@ -90,6 +90,10 @@ pub struct StdioMode {
     /// The remote shell as last told (`shell.remote_ssh`, `shell.remote_changed`
     /// payloads): sent when they change, and again after a restart.
     remote_told: Option<(Value, Value)>,
+    /// The dock size the user chose (sent in `view.resized` as `dock`).
+    dock: mouser_mode_api::DockSize,
+    /// A context menu from the plugin, waiting for the host.
+    menu: Option<(i32, i32, Vec<mouser_mode_api::MenuEntry>)>,
 }
 
 enum Waiting {
@@ -140,6 +144,8 @@ impl StdioMode {
             remote_dir: None,
             cwd: None,
             remote_told: None,
+            dock: Default::default(),
+            menu: None,
         })
     }
 
@@ -258,6 +264,7 @@ impl StdioMode {
                 }
             }
             Out::Wants(w) => self.wants = Some(w),
+            Out::Menu { x, y, entries } => self.menu = Some((x, y, entries)),
             Out::Effect(e) => {
                 let granted = self.granted();
                 match e.permission() {
@@ -302,6 +309,12 @@ impl StdioMode {
             Call::Approve { title, detail, .. } => {
                 let detail = detail.lines().map(str::to_string).collect();
                 return self.ask(id, PromptKind::Approve { title: title.clone(), detail }, None, false);
+            }
+            // Writing the clipboard needs no grant (a menu's "copy path");
+            // reading it is not offered.
+            Call::ClipboardSet(text) => {
+                let r = if crate::clipboard::store(text, false) { Ok(json!({})) } else { Err("no clipboard".into()) };
+                return self.respond(id, r);
             }
             Call::Service { method, params } if mouser_mode_api::services::allowed(method, &granted) => match method.as_str() {
                 "prefs.secret_prompt" => {
@@ -637,7 +650,7 @@ impl Mode for StdioMode {
             if first {
                 self.ensure();
             } else {
-                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area}));
+                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area, "dock": self.dock}));
             }
         }
         let now = Instant::now();
@@ -693,6 +706,24 @@ impl Mode for StdioMode {
             }
             Some(State::Disabled { reason }) => View { dock: Some(self.notice(ctx, &reason, true)), ..View::default() },
         }
+    }
+
+    fn set_dock_size(&mut self, d: mouser_mode_api::DockSize) {
+        if d != self.dock {
+            self.dock = d;
+            if let (true, Some(ctx)) = (self.was_running, self.ctx) {
+                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area, "dock": d}));
+            }
+        }
+    }
+
+    fn open_menu(&mut self, at: Option<(i32, i32)>, _keys: &Keymap) {
+        let (x, y) = at.unwrap_or((-1, -1));
+        self.event("menu.open", json!({"x": x, "y": y, "keyboard": at.is_none()}));
+    }
+
+    fn take_menu(&mut self) -> Option<(i32, i32, Vec<mouser_mode_api::MenuEntry>)> {
+        self.menu.take()
     }
 
     fn set_waker(&mut self, w: Waker) {

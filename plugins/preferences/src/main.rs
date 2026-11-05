@@ -58,7 +58,37 @@ struct Prefs {
     drop: Option<usize>,
     status: Option<(String, bool)>,
     asked: HashMap<u64, Asked>,
+    /// The mode panel's size the user chose.
+    dock: mouser_mode_api::DockSize,
+    /// Setting rows drawn last: (rect, field index), for a right-click.
+    hits: Vec<(Rect, usize)>,
 }
+
+/// The preference keys (`[preferences.keys]` in modes.toml).
+const KEYS: &[(&str, &str)] = &[
+    ("up", "up"),
+    ("down", "down"),
+    ("prev", "left"),
+    ("next", "right"),
+    ("edit", "enter"),
+    ("reset", "r"),
+    ("page_up", "pageup"),
+    ("page_down", "pagedown"),
+];
+
+/// The menu's actions: (id, label, on a setting, off the settings).
+const ACTIONS: &[(&str, &str, bool, bool)] = &[
+    ("edit", "edit", true, false),
+    ("prev", "previous value", true, false),
+    ("next", "next value", true, false),
+    ("reset", "reset to default", true, false),
+    ("copy_value", "copy value", true, false),
+    ("copy_key", "copy the setting's name", true, false),
+    ("up", "previous setting", true, true),
+    ("down", "next setting", true, true),
+    ("page_up", "page up", false, true),
+    ("page_down", "page down", false, true),
+];
 
 fn kind_of(v: &Value) -> Kind {
     match v["type"].as_str().unwrap_or("") {
@@ -179,7 +209,62 @@ impl Prefs {
         }
     }
 
+    /// The context menu on setting `i` (`None`: off the settings).
+    fn menu(&self, i: Option<usize>) -> Vec<mouser_mode_api::MenuEntry> {
+        let f = i.and_then(|i| self.fields.get(i));
+        ACTIONS
+            .iter()
+            .filter(|(_, _, on, off)| if f.is_some() { *on } else { *off })
+            .map(|(id, label, _, _)| {
+                let enabled = match (*id, f) {
+                    ("reset", Some(f)) => self.value(f).is_some() && !matches!(f.kind, Kind::ReadOnly(_)),
+                    // Keys never leave the keychain.
+                    ("copy_value", Some(f)) => !matches!(f.kind, Kind::Secret),
+                    ("prev" | "next", Some(f)) => matches!(f.kind, Kind::Bool | Kind::Choice(_) | Kind::Int { .. } | Kind::Float { .. }),
+                    _ => true,
+                };
+                mouser_mode_api::MenuEntry {
+                    id: format!("menu:{id}"),
+                    arg: i.map_or(-1, |i| i as i32),
+                    label: (*label).into(),
+                    key: KEYS.iter().find(|k| k.0 == *id).map(|k| k.1.to_string()).unwrap_or_default(),
+                    enabled,
+                }
+            })
+            .collect()
+    }
+
+    fn open_menu(&mut self, x: i32, y: i32, host: &Host) {
+        let i = if x < 0 {
+            (self.sel < self.fields.len()).then_some(self.sel)
+        } else {
+            self.hits.iter().find(|(r, _)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(_, i)| *i)
+        };
+        let (x, y) = if x < 0 { self.hits.iter().find(|(_, j)| Some(*j) == i).map_or((40, 40), |(r, _)| (r.x + r.w / 3, r.y + r.h)) } else { (x, y) };
+        if let Some(i) = i {
+            self.move_to(i);
+        }
+        let _ = host.menu(x, y, self.menu(i));
+    }
+
     fn action(&mut self, id: &str, arg: i32, host: &Host) {
+        if let Some(m) = id.strip_prefix("menu:") {
+            if arg >= 0 {
+                self.move_to(arg as usize);
+            }
+            let copy = match m {
+                "copy_value" => self.field().filter(|f| !matches!(f.kind, Kind::Secret)).map(|f| self.value(f).unwrap_or_else(|| f.default.clone())),
+                "copy_key" => self.field().map(|f| f.key.clone()),
+                _ => None,
+            };
+            if let Some(t) = copy {
+                let _ = host.request(Call::ClipboardSet(t));
+                self.status = Some(("copied".into(), false));
+                return;
+            }
+            let m = m.to_string();
+            return self.action(&m, 0, host);
+        }
         let n = self.fields.len();
         match id {
             "up" => match self.drop.as_mut() {
@@ -258,7 +343,7 @@ impl Prefs {
         let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
         let a = ctx.area;
         let row_h = ch + 4;
-        let h = (a.h / 2).max(row_h * 6).min(a.h);
+        let h = self.dock.height(a, ch, (a.h / 2).max(row_h * 6).min(a.h));
         let rect = Rect { x: a.x + PADDING, y: a.y, w: a.w - 2 * PADDING, h };
         let (x0, w) = (rect.x + 10, rect.w - 30);
         let mut items = Vec::new();
@@ -274,10 +359,12 @@ impl Prefs {
         let sec_w = 13 * cw;
         let mut y = rect.y + 6 + row_h;
         let mut drop_at = None;
+        self.hits.clear();
         for (i, f) in self.fields.iter().enumerate().skip(self.top).take(body) {
             let selected = i == self.sel;
             let first_of_section = i == 0 || self.fields[i - 1].section != f.section || i == self.top;
             let r = Rect { x: x0, y, w, h: row_h };
+            self.hits.push((r, i));
             items.push(item(r, "", PanelStyle::Row { selected }, act("row", i as i32)));
             if first_of_section {
                 items.push(item(Rect { x: x0 + 4, y, w: sec_w, h: row_h }, f.section.clone(), PanelStyle::Hint, act("row", i as i32)));
@@ -349,16 +436,7 @@ impl Prefs {
 
 impl Mode for Prefs {
     fn hello(&self) -> Hello {
-        let keys = [
-            ("up", "up"),
-            ("down", "down"),
-            ("prev", "left"),
-            ("next", "right"),
-            ("edit", "enter"),
-            ("reset", "r"),
-            ("page_up", "pageup"),
-            ("page_down", "pagedown"),
-        ];
+        let keys = KEYS;
         Hello {
             api: ApiRange::CURRENT,
             name: "preferences".into(),
@@ -368,7 +446,7 @@ impl Mode for Prefs {
                 bindings: keys.iter().map(|(id, k)| BindingDecl { id: (*id).into(), key: (*k).into(), describe: String::new() }).collect(),
                 activate_on: vec![],
             }],
-            listeners: ["mode.*", "ui.action", "input.text", "input.escape", "view.resized"].iter().map(|e| Listener::on(e)).collect(),
+            listeners: ["mode.*", "ui.action", "input.text", "input.escape", "view.resized", "menu.open"].iter().map(|e| Listener::on(e)).collect(),
             emits: vec![],
             wants_mcp: false,
             shm: false,
@@ -396,7 +474,12 @@ impl Mode for Prefs {
                 self.edit = None;
                 self.drop = None;
             }
+            "menu.open" => {
+                let (x, y) = (e.payload["x"].as_i64().unwrap_or(-1) as i32, e.payload["y"].as_i64().unwrap_or(-1) as i32);
+                self.open_menu(x, y, host);
+            }
             "view.resized" => {
+                self.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
                 if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
                     self.ctx = Some(c);
                 }
@@ -458,5 +541,36 @@ fn main() {
     if let Err(e) = serve(Prefs::default()) {
         eprintln!("mouser-preferences: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    fn field(key: &str, kind: Kind) -> Field {
+        Field { section: "S".into(), key: key.into(), label: key.into(), kind, default: "1".into(), live: true }
+    }
+
+    #[test]
+    fn setting_menu_and_off_settings() {
+        let mut p = Prefs { fields: vec![field("n", Kind::Int { min: 0, max: 9 }), field("k", Kind::Secret)], ..Prefs::default() };
+        p.values.insert("n".into(), Some("3".into()));
+        let m = p.menu(Some(0));
+        for (id, key) in [("reset", "r"), ("copy_value", ""), ("edit", "enter"), ("prev", "left"), ("next", "right")] {
+            assert!(m.iter().any(|e| e.id == format!("menu:{id}") && e.key == key && e.enabled), "setting: {id}");
+        }
+        let s = p.menu(Some(1));
+        assert!(!s.iter().find(|e| e.id == "menu:copy_value").unwrap().enabled, "a key is never copied");
+        assert!(!s.iter().find(|e| e.id == "menu:reset").unwrap().enabled, "nothing set: nothing to reset");
+        let off = p.menu(None);
+        assert!(off.iter().any(|e| e.id == "menu:page_down") && !off.iter().any(|e| e.id == "menu:reset"));
+    }
+
+    #[test]
+    fn every_key_is_in_a_menu() {
+        for (id, _) in KEYS {
+            assert!(ACTIONS.iter().any(|a| a.0 == *id), "{id}");
+        }
     }
 }

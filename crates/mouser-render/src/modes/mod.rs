@@ -25,7 +25,7 @@ use mouser_core::modes::{Binding, Keymap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub use mouser_mode_api::{Context, Effect};
+pub use mouser_mode_api::{Context, DockSize, Effect, MenuEntry};
 
 /// Pixels to show inside `rect` (fitted, aspect kept).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +107,42 @@ pub trait Mode: Send {
     /// How to start an agent session for a plugin with `agent.use` (the
     /// app's tools and models; keys stay in Mouser). Default: ignored.
     fn set_agent(&mut self, _f: AgentFactory) {}
+    /// The dock height the user chose (called every frame; cheap when
+    /// unchanged). Default: ignored, the mode keeps its own height.
+    fn set_dock_size(&mut self, _s: DockSize) {}
+    /// Ask for the context menu at (`x`, `y`), or for the selected item
+    /// (`None`, the keyboard). The answer comes from [`Mode::take_menu`].
+    fn open_menu(&mut self, _at: Option<(i32, i32)>, _keys: &Keymap) {}
+    /// A context menu that is ready: (x, y, entries).
+    fn take_menu(&mut self) -> Option<(i32, i32, Vec<MenuEntry>)> {
+        None
+    }
 }
+
+/// Keys the host itself takes while a mode has the keyboard (before the
+/// mode's own; `[host.keys]` in `modes.toml`).
+pub const HOST_BINDINGS: &[Binding] = &[
+    Binding { id: "dock_full", key: "F", describe: "mode panel: fullscreen on / off (also the header's ⤢ button)" },
+    Binding { id: "dock_taller", key: "]", describe: "mode panel: taller (or drag its bottom edge)" },
+    Binding { id: "dock_shorter", key: "[", describe: "mode panel: shorter" },
+    Binding { id: "menu", key: ".", describe: "context menu for the selected item (or right-click)" },
+];
+
+/// An open context menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Menu {
+    x: i32,
+    y: i32,
+    entries: Vec<MenuEntry>,
+    sel: usize,
+}
+
+/// The host action ids a menu row, the dock edge and a right-click send.
+pub const MENU_PICK: &str = "mouser.menu_pick";
+pub const MENU_AT: &str = "mouser.menu_at";
+pub const DOCK_DRAG: &str = "mouser.dock_drag";
+pub const DOCK_DONE: &str = "mouser.dock_done";
+pub const DOCK_FULL: &str = "mouser.dock_full";
 
 /// Makes an agent session (`mouser_core::agent::Chat`) on the app's host.
 pub type AgentFactory = Arc<dyn Fn() -> mouser_core::agent::Chat + Send + Sync>;
@@ -129,6 +164,13 @@ pub struct Host {
     focused: bool,
     /// The focus toggle (`[focus] key` in `modes.toml`).
     focus_key: String,
+    /// The host's own keys while a mode has focus ([`HOST_BINDINGS`]).
+    host_keys: Keymap,
+    /// The mode panel's size (`[window]` in `preferences.toml`).
+    dock: DockSize,
+    /// The terminal area's height at the last frame (for drag resizing).
+    area_h: i32,
+    menu: Option<Menu>,
     /// Problems loading `modes.toml`, shown once.
     pub notes: Vec<String>,
 }
@@ -147,7 +189,12 @@ impl Host {
             .collect();
         let (focus_key, note) = mouser_core::modes::load_focus_key();
         notes.extend(note);
-        let mut h = Self { current: None, window: None, cwd: None, focused: false, focus_key, notes, modes };
+        let (host_keys, note) = Keymap::load("host", HOST_BINDINGS);
+        notes.extend(note);
+        // Tests never read or write the user's preferences.
+        let (permille, full) = if cfg!(test) { (None, false) } else { mouser_core::prefs_edit::dock_size() };
+        let dock = DockSize { permille, full };
+        let mut h = Self { current: None, window: None, cwd: None, focused: false, focus_key, host_keys, dock, area_h: 0, menu: None, notes, modes };
         if !h.modes.is_empty() {
             h.current = Some(0);
             h.modes[0].0.activate();
@@ -296,6 +343,13 @@ impl Host {
         if !self.focused || bytes == b"\x1b[21~" || bytes == b"\x1b\x1b" {
             return None;
         }
+        if self.menu.is_some() {
+            return Some(self.menu_key(bytes));
+        }
+        let typing = self.mode().is_some_and(|(m, _)| m.wants_text());
+        if !typing && let Some(id) = self.host_keys.lookup(bytes).map(str::to_string) {
+            return Some(self.host_action(&id));
+        }
         let (m, k) = self.mode()?;
         if let Some(e) = m.text(bytes) {
             return Some(e);
@@ -323,6 +377,82 @@ impl Host {
         self.current.is_some() && (self.is_focus_key(bytes) || (self.focused && bytes != b"\x1b[21~" && bytes != b"\x1b\x1b"))
     }
 
+    /// The host's own keys and controls: the dock's size and the menu.
+    fn host_action(&mut self, id: &str) -> Effect {
+        match id {
+            "dock_full" => {
+                self.dock.full = !self.dock.full;
+                self.save_dock();
+            }
+            "dock_taller" | "dock_shorter" => {
+                let cur = self.dock.permille.unwrap_or(500) as i32;
+                let step = if id == "dock_taller" { 100 } else { -100 };
+                self.dock = DockSize { permille: Some((cur + step).clamp(100, 1000) as u16), full: false };
+                self.save_dock();
+            }
+            "menu" => {
+                if let Some((m, k)) = self.mode() {
+                    let k = k.clone();
+                    m.open_menu(None, &k);
+                }
+            }
+            _ => {}
+        }
+        Effect::None
+    }
+
+    fn save_dock(&self) {
+        if cfg!(test) {
+            return;
+        }
+        let _ = mouser_core::prefs_edit::save_dock_size(self.dock.permille, self.dock.full);
+    }
+
+    /// The mode panel's size now.
+    pub fn dock_size(&self) -> DockSize {
+        self.dock
+    }
+
+    /// Keys while a context menu is open: ↑/↓ move, Enter picks, Esc
+    /// (through [`Host::escape`]) closes; an entry's own key picks it too.
+    fn menu_key(&mut self, bytes: &[u8]) -> Effect {
+        let Some(menu) = self.menu.as_mut() else { return Effect::None };
+        let n = menu.entries.len().max(1);
+        match bytes {
+            b"\x1b[A" | b"\x1bOA" => menu.sel = (menu.sel + n - 1) % n,
+            b"\x1b[B" | b"\x1bOB" => menu.sel = (menu.sel + 1) % n,
+            b"\r" | b"\n" => {
+                let i = menu.sel;
+                return self.menu_pick(i);
+            }
+            _ => {
+                let hit = menu.entries.iter().position(|e| {
+                    !e.key.is_empty() && mouser_core::modes::key_bytes(&e.key).is_some_and(|v| v.iter().any(|b| b.as_slice() == bytes))
+                });
+                if let Some(i) = hit {
+                    return self.menu_pick(i);
+                }
+            }
+        }
+        Effect::None
+    }
+
+    fn menu_pick(&mut self, i: usize) -> Effect {
+        let Some(menu) = self.menu.take() else { return Effect::None };
+        match menu.entries.get(i) {
+            Some(e) if e.enabled => {
+                let (id, arg) = (e.id.clone(), e.arg);
+                self.mode().map_or(Effect::None, |(m, _)| m.action(&id, arg))
+            }
+            _ => Effect::None,
+        }
+    }
+
+    /// Whether a context menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.menu.is_some()
+    }
+
     /// A click in the mode's view or window (or a host action): it gives
     /// the mode the keyboard, except the wheel. [`FOCUS_ACTION`] toggles.
     pub fn action(&mut self, id: &str, arg: i32) -> Effect {
@@ -330,6 +460,39 @@ impl Host {
             self.focused = !self.focused && self.current.is_some();
             return Effect::None;
         }
+        match id {
+            MENU_PICK => {
+                self.focus(true);
+                return self.menu_pick(arg.max(0) as usize);
+            }
+            MENU_AT => {
+                self.focus(true);
+                self.menu = None;
+                let (x, y) = (arg & 0x7fff, (arg >> 15) & 0x7fff);
+                if let Some((m, k)) = self.mode() {
+                    let k = k.clone();
+                    m.open_menu(Some((x, y)), &k);
+                }
+                return Effect::None;
+            }
+            DOCK_DRAG => {
+                if self.area_h > 0 {
+                    self.dock = DockSize { permille: Some((arg as i64 * 1000 / self.area_h as i64).clamp(100, 1000) as u16), full: false };
+                }
+                return Effect::None;
+            }
+            DOCK_DONE => {
+                self.save_dock();
+                return Effect::None;
+            }
+            DOCK_FULL => {
+                self.focus(true);
+                return self.host_action("dock_full");
+            }
+            _ => {}
+        }
+        // Any other click closes an open menu.
+        self.menu = None;
         if id != "scroll" {
             self.focus(true);
         }
@@ -339,7 +502,7 @@ impl Host {
     /// Escape: closes a host window, then the mode's, then gives the
     /// keyboard back to the shell; false if none of that happened.
     pub fn escape(&mut self) -> bool {
-        if self.window.take().is_some() {
+        if self.window.take().is_some() || self.menu.take().is_some() {
             return true;
         }
         if self.focused() && self.mode().is_some_and(|(m, _)| m.escape()) {
@@ -361,7 +524,7 @@ impl Host {
     }
 
     pub fn close_window(&mut self) -> bool {
-        self.window.take().is_some()
+        self.window.take().is_some() || self.menu.take().is_some()
     }
 
     /// The shell is remote (see [`Mode::remote_changed`]).
@@ -398,15 +561,36 @@ impl Host {
     /// The current mode's view, with a host window (keys / modes) on top.
     pub fn view(&mut self, ctx: &Context) -> View {
         let window = self.window;
+        self.area_h = ctx.area.h;
+        let dock = self.dock;
         let mut v = match self.mode() {
             Some((m, k)) => {
                 let k = k.clone();
+                m.set_dock_size(dock);
                 m.view(ctx, &k)
             }
             None => View::default(),
         };
+        if let Some((m, k)) = self.mode()
+            && let Some((x, y, mut entries)) = m.take_menu()
+        {
+            // Keys as bound now (`modes.toml`), whatever the mode sent.
+            for e in &mut entries {
+                let id = e.id.strip_prefix("menu:").unwrap_or(&e.id);
+                if let Some(b) = k.keys.iter().find(|b| b.0 == id) {
+                    e.key = b.1.clone();
+                }
+            }
+            self.menu = (!entries.is_empty()).then_some(Menu { x, y, entries, sel: 0 });
+        }
         if let (Some(d), Some(i)) = (v.dock.as_mut(), self.current) {
             focus_marks(d, self.focused, &self.focus_key, self.modes[i].0.name(), &self.modes[i].1, ctx.viewport);
+            if !v.fullscreen {
+                dock_controls(d, self.dock.full, &self.host_keys, ctx.viewport);
+            }
+        }
+        if let Some(m) = &self.menu {
+            v.panel = Some(menu_panel(m, ctx.viewport));
         }
         match window {
             Some(Window::Keys) => v.panel = Some(self.keys_panel(ctx.viewport)),
@@ -444,6 +628,10 @@ impl Host {
                 for (id, _, d) in &k.keys {
                     lines.push((k.label(id), d.clone()));
                 }
+                for (id, _, d) in &self.host_keys.keys {
+                    lines.push((self.host_keys.label(id), d.clone()));
+                }
+                lines.push(("right-click".into(), "context menu: every action for the item and view, with its key".into()));
             }
             None => lines.push(("no mode".into(), String::new())),
         }
@@ -505,6 +693,59 @@ fn focus_marks(d: &mut Panel, focused: bool, toggle: &str, name: &str, k: &Keyma
     let rect = Rect { x: r.x + r.w - w - 6, y: r.y + r.h - h - 6, w, h };
     let action = UiAction::Mode { action: FOCUS_ACTION.into(), arg: 0 };
     d.items.push(PanelItem { rect, text, style: PanelStyle::FloatLabel, action });
+}
+
+/// The dock's own controls: a fullscreen button at the bottom left and the
+/// draggable bottom edge (an invisible strip; dragging sends [`DOCK_DRAG`]).
+fn dock_controls(d: &mut Panel, full: bool, k: &Keymap, vp: UiViewport) {
+    let r = d.rect;
+    let label = format!("{} ({})", if full { "⤡" } else { "⤢" }, k.label("dock_full"));
+    let w = (label.chars().count() as i32 + 2) * vp.cell_w;
+    let h = vp.cell_h + 6;
+    let rect = Rect { x: r.x + 6, y: r.y + r.h - h - 4, w, h };
+    d.items.push(PanelItem {
+        rect,
+        text: label,
+        style: PanelStyle::Button { primary: false },
+        action: UiAction::Mode { action: DOCK_FULL.into(), arg: 0 },
+    });
+}
+
+/// Pixels of the dock's bottom edge that start a resize drag.
+pub const DOCK_EDGE: i32 = 5;
+
+/// The context menu as a floating panel at the pointer (kept on screen):
+/// label left, the action's current key right; disabled entries muted.
+fn menu_panel(m: &Menu, vp: UiViewport) -> Panel {
+    let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
+    let row_h = ch + 6;
+    let left = m.entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0) as i32;
+    let right = m.entries.iter().map(|e| e.key.chars().count()).max().unwrap_or(0) as i32;
+    let w = ((left + right + 4) * cw + 16).min(vp.width - 8).max(cw * 12);
+    let h = (row_h * m.entries.len() as i32 + 12).min(vp.height - 8);
+    let x = m.x.min(vp.width - w - 4).max(4);
+    let y = m.y.min(vp.height - h - 4).max(4);
+    let rect = Rect { x, y, w, h };
+    let mut items = vec![PanelItem { rect, text: String::new(), style: PanelStyle::Popup, action: UiAction::None }];
+    for (i, e) in m.entries.iter().enumerate() {
+        let ry = y + 6 + i as i32 * row_h;
+        if ry + row_h > y + h {
+            break;
+        }
+        let act = if e.enabled { UiAction::Mode { action: MENU_PICK.into(), arg: i as i32 } } else { UiAction::None };
+        let style = if e.enabled { PanelStyle::Row { selected: i == m.sel } } else { PanelStyle::Hint };
+        items.push(PanelItem { rect: Rect { x: x + 6, y: ry, w: w - 12, h: row_h }, text: e.label.clone(), style, action: act.clone() });
+        if !e.key.is_empty() {
+            let kw = (e.key.chars().count() as i32 + 1) * cw;
+            items.push(PanelItem {
+                rect: Rect { x: x + w - 8 - kw, y: ry, w: kw, h: row_h },
+                text: e.key.clone(),
+                style: PanelStyle::Hint,
+                action: act,
+            });
+        }
+    }
+    Panel { rect, items }
 }
 
 /// A centred window with two columns of text.
@@ -581,6 +822,145 @@ mod tests {
         fn view(&mut self, _: &Context, _: &Keymap) -> View {
             View::default()
         }
+    }
+
+    /// What a [`Menus`] mode saw.
+    #[derive(Default)]
+    struct Seen {
+        got: Vec<String>,
+        dock: DockSize,
+        asked: Vec<Option<(i32, i32)>>,
+    }
+
+    /// A mode with a context menu that records what the host told it.
+    struct Menus {
+        seen: std::sync::Arc<std::sync::Mutex<Seen>>,
+        ready: Option<(i32, i32, Vec<MenuEntry>)>,
+    }
+
+    impl Mode for Menus {
+        fn name(&self) -> &'static str {
+            "menus"
+        }
+        fn hotkey(&self) -> char {
+            'n'
+        }
+        fn bindings(&self) -> &'static [Binding] {
+            &[Binding { id: "copy", key: "y", describe: "copy" }]
+        }
+        fn action(&mut self, id: &str, arg: i32) -> Effect {
+            self.seen.lock().unwrap().got.push(format!("{id}:{arg}"));
+            Effect::None
+        }
+        fn view(&mut self, _: &Context, _: &Keymap) -> View {
+            View { dock: Some(Panel { rect: Rect { x: 0, y: 0, w: 900, h: 300 }, items: vec![] }), ..View::default() }
+        }
+        fn set_dock_size(&mut self, s: DockSize) {
+            self.seen.lock().unwrap().dock = s;
+        }
+        fn open_menu(&mut self, at: Option<(i32, i32)>, _: &Keymap) {
+            self.seen.lock().unwrap().asked.push(at);
+            let e = |id: &str, key: &str, enabled| MenuEntry { id: id.into(), arg: 7, label: id.into(), key: key.into(), enabled };
+            self.ready =
+                Some((at.map_or(10, |a| a.0), at.map_or(10, |a| a.1), vec![e("open", "", true), e("copy", "y", true), e("delete", "", false)]));
+        }
+        fn take_menu(&mut self) -> Option<(i32, i32, Vec<MenuEntry>)> {
+            self.ready.take()
+        }
+    }
+
+    fn menus_host() -> (Host, Context, std::sync::Arc<std::sync::Mutex<Seen>>) {
+        let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
+        let h = Host::new(vec![Box::new(Menus { seen: seen.clone(), ready: None })]);
+        (h, Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } }, seen)
+    }
+
+    #[test]
+    fn dock_keys_and_drag_resize_and_fullscreen() {
+        let (mut h, ctx, seen) = menus_host();
+        h.focus(true);
+        assert_eq!(h.dock_size(), DockSize::default());
+        assert_eq!(h.key(b"F"), Some(Effect::None));
+        h.view(&ctx);
+        assert!(seen.lock().unwrap().dock.full, "F: fullscreen, and the mode is told");
+        h.key(b"F");
+        assert!(!h.dock_size().full);
+        h.key(b"]");
+        assert_eq!(h.dock_size().permille, Some(600), "] taller from the default half");
+        h.key(b"[");
+        h.key(b"[");
+        assert_eq!(h.dock_size().permille, Some(400));
+        h.view(&ctx);
+        h.action(DOCK_DRAG, 200);
+        assert_eq!(h.dock_size().permille, Some(250), "dragged to 200 of 800 px");
+        h.action(DOCK_DRAG, 5);
+        assert_eq!(h.dock_size().permille, Some(100), "never below a tenth");
+        h.action(DOCK_DONE, 0);
+        h.action(DOCK_FULL, 0);
+        assert!(h.dock_size().full, "the header button");
+        h.focus(false);
+        assert_eq!(h.key(b"F"), None, "unfocused: the shell's key");
+        let v = h.view(&ctx);
+        assert!(v.dock.unwrap().items.iter().any(|i| matches!(&i.action, UiAction::Mode { action, .. } if action == DOCK_FULL)));
+    }
+
+    /// The host's keys are none of the official modes' keys.
+    #[test]
+    fn host_keys_are_free_in_every_official_mode() {
+        for t in [
+            include_str!("../../../../plugins/commander/plugin.toml"),
+            include_str!("../../../../plugins/chat/plugin.toml"),
+            include_str!("../../../../plugins/preferences/plugin.toml"),
+        ] {
+            let m = mouser_core::plugins::Manifest::parse(t).unwrap();
+            for k in &m.mode.as_ref().unwrap().keys {
+                assert!(HOST_BINDINGS.iter().all(|b| b.key != k.key), "{} uses {}", m.name, k.key);
+            }
+        }
+        for b in mouser_core::commander::BINDINGS {
+            assert!(HOST_BINDINGS.iter().all(|h| h.key != b.key), "{}", b.id);
+        }
+    }
+
+    #[test]
+    fn context_menu_by_key_and_right_click() {
+        let (mut h, ctx, seen) = menus_host();
+        h.focus(true);
+        h.key(b".");
+        let v = h.view(&ctx);
+        assert_eq!(seen.lock().unwrap().asked, vec![None], "the keyboard asks for the selected item");
+        let p = v.panel.expect("the menu is drawn");
+        assert!(p.items.iter().any(|i| i.text == "copy") && p.items.iter().any(|i| i.text == "y"), "the entry's current key");
+        assert!(h.menu_open() && h.takes(b"[B"));
+        h.key(b"[B");
+        h.key(
+            b"
+",
+        );
+        assert!(!h.menu_open());
+        assert_eq!(seen.lock().unwrap().got, vec!["copy:7"], "Enter picks the selected entry");
+        // Right-click at (30, 40): the mode is asked there; the entry's key picks it.
+        h.focus(false);
+        h.action(MENU_AT, commander::pack_xy(30, 40));
+        assert!(h.focused());
+        h.view(&ctx);
+        assert_eq!(seen.lock().unwrap().asked[1], Some((30, 40)));
+        h.key(b"y");
+        assert_eq!(seen.lock().unwrap().got.last().unwrap(), "copy:7");
+        // A disabled entry does nothing; Esc closes the menu, not the mode.
+        h.key(b".");
+        h.view(&ctx);
+        h.action(MENU_PICK, 2);
+        assert_eq!(seen.lock().unwrap().got.len(), 2);
+        h.key(b".");
+        h.view(&ctx);
+        assert!(h.escape() && !h.menu_open() && h.focused());
+        // A click on a row picks it.
+        h.key(b".");
+        h.view(&ctx);
+        h.action(MENU_PICK, 0);
+        assert_eq!(seen.lock().unwrap().got.last().unwrap(), "open:7");
     }
 
     #[test]

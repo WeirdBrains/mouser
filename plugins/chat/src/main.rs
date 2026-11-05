@@ -51,7 +51,44 @@ struct Chat {
     default_model: Option<String>,
     status: Option<(String, bool)>,
     asked: HashMap<u64, Asked>,
+    /// The mode panel's size the user chose.
+    dock: mouser_mode_api::DockSize,
+    /// Entries removed from the view ("delete from view"; the agent keeps them).
+    hidden: BTreeSet<usize>,
+    /// Rows drawn last: (rect, entry index), for a right-click.
+    hits: Vec<(Rect, usize)>,
 }
+
+/// Where the context menu was opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cx {
+    /// On your message, an answer, a note or an error.
+    Message,
+    /// On a tool call card.
+    Card,
+    /// Anywhere else in the chat.
+    Chat,
+}
+
+/// The chat's actions: (id, label, contexts). Bound ones show their key.
+const ACTIONS: &[(&str, &str, &[Cx])] = &[
+    ("copy", "copy", &[Cx::Message]),
+    ("quote", "quote in a reply", &[Cx::Message]),
+    ("retry", "retry", &[Cx::Message]),
+    ("toggle", "show / hide the output", &[Cx::Card]),
+    ("copy_output", "copy the output", &[Cx::Card]),
+    ("copy", "copy the call", &[Cx::Card]),
+    ("hide", "delete from view", &[Cx::Message, Cx::Card]),
+    ("focus", "type a message", &[Cx::Message, Cx::Card, Cx::Chat]),
+    ("cancel", "cancel the answer", &[Cx::Message, Cx::Card, Cx::Chat]),
+    ("model", "switch model", &[Cx::Chat]),
+    ("clear", "new chat", &[Cx::Chat]),
+    ("up", "scroll up", &[Cx::Chat]),
+    ("down", "scroll down", &[Cx::Chat]),
+];
+
+/// The chat's key bindings (`[chat.keys]` in modes.toml).
+const KEYS: &[(&str, &str)] = &[("focus", "i"), ("cancel", "x"), ("model", "m"), ("clear", "l"), ("up", "pageup"), ("down", "pagedown")];
 
 fn act(id: &str, arg: i32) -> Action {
     Action::Mode { action: id.into(), arg }
@@ -93,7 +130,20 @@ enum Row {
     Md { prefix: String, style: PanelStyle, line: md::Line, code: (bool, bool) },
 }
 
-fn rows(entries: &[Entry], open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
+/// The rows of the shown entries, each with its entry's index.
+fn rows(entries: &[Entry], open: &BTreeSet<usize>, hidden: &BTreeSet<usize>, cols: usize) -> Vec<(usize, Row)> {
+    let mut out: Vec<(usize, Row)> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        if hidden.contains(&i) {
+            continue;
+        }
+        // Tool rows toggle their own entry: keep the index in their action.
+        out.extend(entry_rows(i, e, open, cols).into_iter().map(|r| (i, r)));
+    }
+    out
+}
+
+fn entry_rows(i: usize, e: &Entry, open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
     let mut v: Vec<Row> = Vec::new();
     let add = |v: &mut Vec<Row>, text: &str, prefix: &str, style: PanelStyle, a: Action| {
         let pad: String = " ".repeat(prefix.chars().count());
@@ -110,7 +160,7 @@ fn rows(entries: &[Entry], open: &BTreeSet<usize>, cols: usize) -> Vec<Row> {
         }
         !lines.is_empty()
     };
-    for (i, e) in entries.iter().enumerate() {
+    {
         match e {
             Entry::User(t) => {
                 if !markdown(&mut v, t, "you  ", PanelStyle::Title) {
@@ -198,7 +248,109 @@ impl Chat {
         self.call(host, "agent.send", json!({"text": t}), Asked::Send);
     }
 
+    fn entry_cx(&self, i: Option<usize>) -> Cx {
+        match i.and_then(|i| self.entries.get(i)) {
+            Some(Entry::Tool { .. }) => Cx::Card,
+            Some(_) => Cx::Message,
+            None => Cx::Chat,
+        }
+    }
+
+    /// The context menu on entry `i` (`None`: off the messages).
+    fn menu(&self, i: Option<usize>, keys: &[(String, String)]) -> Vec<mouser_mode_api::MenuEntry> {
+        let cx = self.entry_cx(i);
+        let e = i.and_then(|i| self.entries.get(i));
+        ACTIONS
+            .iter()
+            .filter(|(_, _, c)| c.contains(&cx))
+            .map(|(id, label, _)| {
+                let enabled = match *id {
+                    "cancel" => self.running,
+                    "retry" => !self.running && matches!(e, Some(Entry::User(_) | Entry::Assistant(_) | Entry::Error(_))),
+                    "copy_output" => matches!(e, Some(Entry::Tool { output, .. }) if !output.is_empty()),
+                    _ => true,
+                };
+                mouser_mode_api::MenuEntry {
+                    id: format!("menu:{id}"),
+                    arg: i.map_or(-1, |i| i as i32),
+                    label: (*label).into(),
+                    key: keys.iter().find(|k| k.0 == *id).map(|k| k.1.clone()).unwrap_or_default(),
+                    enabled,
+                }
+            })
+            .collect()
+    }
+
+    fn open_menu(&mut self, x: i32, y: i32, host: &Host) {
+        let i = if x < 0 {
+            (0..self.entries.len()).rev().find(|i| !self.hidden.contains(i))
+        } else {
+            self.hits.iter().find(|(r, _)| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h).map(|(_, i)| *i)
+        };
+        let (x, y) = if x < 0 {
+            let r = i.and_then(|i| self.hits.iter().rev().find(|(_, j)| *j == i).map(|(r, _)| *r));
+            r.map_or((40, 40), |r| (r.x + 4 * 9, r.y + r.h))
+        } else {
+            (x, y)
+        };
+        // Default keys; Mouser shows the ones bound now.
+        let keys: Vec<(String, String)> = KEYS.iter().map(|(i, k)| (i.to_string(), k.to_string())).collect();
+        let _ = host.menu(x, y, self.menu(i, &keys));
+    }
+
+    /// The text of entry `i` (a tool call: its name and arguments).
+    fn entry_text(&self, i: usize) -> Option<String> {
+        Some(match self.entries.get(i)? {
+            Entry::User(t) | Entry::Assistant(t) | Entry::Note(t) | Entry::Error(t) => t.clone(),
+            Entry::Tool { display, args, .. } => format!("{display} {args}"),
+        })
+    }
+
+    fn menu_action(&mut self, id: &str, i: usize, host: &Host) {
+        match id {
+            "copy" => {
+                if let Some(t) = self.entry_text(i) {
+                    let _ = host.request(Call::ClipboardSet(t));
+                    let _ = host.effect(Effect::Say("copied".into()));
+                }
+            }
+            "copy_output" => {
+                if let Some(Entry::Tool { output, .. }) = self.entries.get(i) {
+                    let _ = host.request(Call::ClipboardSet(output.clone()));
+                    let _ = host.effect(Effect::Say("copied".into()));
+                }
+            }
+            "quote" => {
+                if let Some(t) = self.entry_text(i) {
+                    let q: Vec<String> = t.lines().map(|l| format!("> {l}")).collect();
+                    self.input = format!("{}\n\n{}", q.join("\n"), self.input);
+                    self.focused = true;
+                }
+            }
+            "retry" => {
+                // Your message again; on an answer, the message it answered.
+                let ask = self.entries[..=i.min(self.entries.len().saturating_sub(1))].iter().rev().find_map(|e| match e {
+                    Entry::User(t) => Some(t.clone()),
+                    _ => None,
+                });
+                if let Some(t) = ask {
+                    self.input = t;
+                    self.send(host);
+                }
+            }
+            "hide" => {
+                self.hidden.insert(i);
+            }
+            "toggle" => self.action("toggle", i as i32, host),
+            other => self.action(other, 0, host),
+        }
+    }
+
     fn action(&mut self, id: &str, arg: i32, host: &Host) {
+        if let Some(m) = id.strip_prefix("menu:") {
+            let m = m.to_string();
+            return self.menu_action(&m, arg.max(0) as usize, host);
+        }
         if let Some((choices, sel)) = self.picker.as_mut() {
             match id {
                 "up" => *sel = sel.saturating_sub(1),
@@ -222,6 +374,7 @@ impl Chat {
             "clear" => {
                 self.call(host, "agent.clear", json!({}), Asked::Other);
                 self.open.clear();
+                self.hidden.clear();
                 self.scroll = 0;
             }
             "link" => {
@@ -283,7 +436,7 @@ impl Chat {
         let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
         let a = ctx.area;
         let max_h = (a.h - ch * 8).max(ch * 6);
-        let h = (a.h / 2).max(ch * 12).min(max_h);
+        let h = self.dock.height(a, ch, (a.h / 2).max(ch * 12).min(max_h));
         let rect = Rect { x: a.x + PADDING, y: a.y, w: a.w - 2 * PADDING, h };
         let row_h = ch + 4;
         let (x0, w) = (rect.x + 10, rect.w - 20);
@@ -337,7 +490,7 @@ impl Chat {
         // Focused only while no picker is open (the picker takes the keys then).
         let focused = self.focused && self.picker.is_none();
         items.push(item(Rect { x: x0, y: input_y, w, h: row_h + 4 }, shown, PanelStyle::Field { focused, valid: true }, act("focus", 0)));
-        let all = rows(&self.entries, &self.open, cols);
+        let all = rows(&self.entries, &self.open, &self.hidden, cols);
         let fit = ((bottom - y) / row_h).max(0) as usize;
         self.scroll = self.scroll.min(all.len().saturating_sub(fit));
         let end = all.len() - self.scroll;
@@ -354,8 +507,10 @@ impl Chat {
             links.push(u.to_string());
             act("link", links.len() as i32 - 1)
         };
-        for (i, r) in all[start..end].iter().enumerate() {
+        self.hits.clear();
+        for (i, (entry, r)) in all[start..end].iter().enumerate() {
             let ry = y + i as i32 * row_h;
+            self.hits.push((Rect { x: x0, y: ry, w, h: row_h }, *entry));
             match r {
                 Row::Plain(t, st, a) => items.push(item(Rect { x: x0, y: ry, w, h: row_h }, t.clone(), *st, a.clone())),
                 Row::Md { prefix, style, line, code } => {
@@ -394,7 +549,7 @@ impl Chat {
 
 impl Mode for Chat {
     fn hello(&self) -> Hello {
-        let keys = [("focus", "i"), ("cancel", "x"), ("model", "m"), ("clear", "l"), ("up", "pageup"), ("down", "pagedown")];
+        let keys = KEYS;
         Hello {
             api: ApiRange::CURRENT,
             name: "chat".into(),
@@ -404,7 +559,10 @@ impl Mode for Chat {
                 bindings: keys.iter().map(|(id, k)| BindingDecl { id: (*id).into(), key: (*k).into(), describe: String::new() }).collect(),
                 activate_on: vec![],
             }],
-            listeners: ["mode.*", "ui.action", "input.text", "input.escape", "view.resized", "agent.state"].iter().map(|e| Listener::on(e)).collect(),
+            listeners: ["mode.*", "ui.action", "input.text", "input.escape", "view.resized", "menu.open", "agent.state"]
+                .iter()
+                .map(|e| Listener::on(e))
+                .collect(),
             emits: vec![],
             wants_mcp: false,
             shm: false,
@@ -426,7 +584,12 @@ impl Mode for Chat {
             "input.text" => self.text(e.payload["utf8"].as_str().unwrap_or(""), host),
             "input.escape" => self.escape(host),
             "agent.state" => self.apply_state(&e.payload),
+            "menu.open" => {
+                let (x, y) = (e.payload["x"].as_i64().unwrap_or(-1) as i32, e.payload["y"].as_i64().unwrap_or(-1) as i32);
+                self.open_menu(x, y, host);
+            }
             "view.resized" => {
+                self.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
                 if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
                     self.ctx = Some(c);
                 }
@@ -476,5 +639,64 @@ fn main() {
     if let Err(e) = serve(Chat::default()) {
         eprintln!("mouser-chat: {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod menu_tests {
+    use super::*;
+
+    fn ids(c: &Chat, i: Option<usize>) -> Vec<(String, String, bool)> {
+        let keys: Vec<(String, String)> = KEYS.iter().map(|(i, k)| (i.to_string(), k.to_string())).collect();
+        c.menu(i, &keys).into_iter().map(|e| (e.id.trim_start_matches("menu:").to_string(), e.key, e.enabled)).collect()
+    }
+
+    fn chat() -> Chat {
+        Chat {
+            entries: vec![
+                Entry::User("hi".into()),
+                Entry::Assistant("hello".into()),
+                Entry::Tool { display: "run".into(), args: "ls".into(), state: "done".into(), output: "a b".into() },
+            ],
+            ..Chat::default()
+        }
+    }
+
+    #[test]
+    fn message_card_and_chat_menus() {
+        let c = chat();
+        let m = ids(&c, Some(1));
+        for id in ["copy", "quote", "retry", "hide", "focus"] {
+            assert!(m.iter().any(|e| e.0 == id), "message: {id}");
+        }
+        assert!(m.iter().any(|e| e.0 == "focus" && e.1 == "i"), "the key is shown");
+        assert!(!m.iter().find(|e| e.0 == "cancel").unwrap().2, "nothing running: cancel is greyed");
+        let card = ids(&c, Some(2));
+        for id in ["toggle", "copy_output", "copy", "hide"] {
+            assert!(card.iter().any(|e| e.0 == id), "card: {id}");
+        }
+        assert!(!card.iter().any(|e| e.0 == "retry" || e.0 == "quote"));
+        let off = ids(&c, None);
+        for (id, key) in [("model", "m"), ("clear", "l"), ("up", "pageup"), ("down", "pagedown")] {
+            assert!(off.iter().any(|e| e.0 == id && e.1 == key), "chat: {id}");
+        }
+        assert!(!off.iter().any(|e| e.0 == "copy"));
+    }
+
+    #[test]
+    fn delete_from_view_hides_only_that_entry() {
+        let mut c = chat();
+        c.hidden.insert(0);
+        let r = rows(&c.entries, &c.open, &c.hidden, 80);
+        assert!(r.iter().all(|(i, _)| *i != 0) && r.iter().any(|(i, _)| *i == 1));
+        assert_eq!(c.entries.len(), 3, "the agent's history is untouched");
+    }
+
+    /// Every binding appears in some menu.
+    #[test]
+    fn every_key_is_in_a_menu() {
+        for (id, _) in KEYS {
+            assert!(ACTIONS.iter().any(|a| a.0 == *id), "{id}");
+        }
     }
 }

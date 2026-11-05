@@ -164,6 +164,31 @@ command, or `null`) and `shell.remote_changed` (`label`, `dir` or `null`, and
 `listing`: `null` while loading, `{"entries": [...]}` with `name`, `path`,
 `kind`, `mode`, `size` and `modified` in Unix seconds, or `{"error": "..."}`).
 
+### Dock size and context menus (mouser-mode-api 0.2, api 1)
+
+`view.resized` carries `dock`: `{"permille": 500 | null, "full": false}`, the
+height the user chose for the mode's dock (dragging its bottom edge, the
+host's taller / shorter keys `]` / `[`, or its fullscreen toggle `F`); it comes
+again whenever that changes. Lay the dock out with `DockSize::height(area,
+cell_h, your_default)`. A mode that ignores it keeps its own height.
+
+A right-click in the view, or the host's menu key `.` while the mode has the
+keyboard, sends `menu.open` (`{"x", "y", "keyboard": bool}`; for the keyboard,
+the selected item's place). Answer with `Menu { x, y, entries }`: every action
+of yours that applies in the current context (the item under the pointer and
+the view's state: list or fullscreen image, playing media, a text viewer ...),
+each a `MenuEntry` (`id`, `arg`, `label`, its current `key` or empty,
+`enabled`). Build it from the same action registry as your key bindings, so
+menu and keys never drift. Mouser draws the menu (pointer, ↑/↓, Enter, Esc);
+picking an entry is the same `ui.action` its key sends. No answer, or no
+entries: no menu. Older hosts never send `menu.open`, so a plugin sends `Menu`
+only in answer to it (`Out::Menu` is the last variant; older hosts cannot read it).
+Mouser fills in each entry's `key` from the user's `modes.toml` when the entry's
+`id` (or `menu:<id>`) is one of your bindings, so the menu shows the keys as bound
+now. `Host::menu(x, y, entries)` sends it from `serve()`. `ClipboardSet` puts text
+on the clipboard with no permission (for "copy path" and the like); reading the
+clipboard is not offered.
+
 ## Host calls
 
 `Request` carries a call, answered by exactly one `Response`:

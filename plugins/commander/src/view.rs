@@ -489,6 +489,36 @@ pub struct CommanderMode {
     remote_text_at: u64,
     /// The open markdown file laid out: (path, columns, source lines, rows).
     md_cache: Option<(PathBuf, usize, usize, Arc<Vec<md::Line>>)>,
+    /// The mode panel's size the user chose (Mouser's `[` `]` `F`, the edge).
+    pub dock: mouser_mode_api::DockSize,
+    /// A name or destination being typed for a menu action.
+    pub ask: Option<(Ask, String)>,
+    /// File changes waiting for the user's yes on Mouser's approval card.
+    pub ops: Vec<crate::ops::Op>,
+    /// Text to put on the clipboard (through Mouser).
+    pub clip: Vec<String>,
+    /// Paths `copy` remembered for `paste`.
+    yank: Vec<PathBuf>,
+}
+
+/// What the typed text is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    CopyTo(Vec<PathBuf>),
+    MoveTo(Vec<PathBuf>),
+    Rename(PathBuf),
+    NewFolder(PathBuf),
+}
+
+impl Ask {
+    fn prompt(&self) -> String {
+        match self {
+            Ask::CopyTo(v) => format!("copy {} item(s) to (folder)", v.len()),
+            Ask::MoveTo(v) => format!("move {} item(s) to (folder)", v.len()),
+            Ask::Rename(p) => format!("rename {}", p.file_name().unwrap_or_default().to_string_lossy()),
+            Ask::NewFolder(_) => "new folder name".into(),
+        }
+    }
 }
 
 /// Zoom of the image in the file view: scale (1.0 = actual pixels) and the
@@ -744,7 +774,177 @@ impl CommanderMode {
             heads: HashMap::new(),
             remote_text_at: 0,
             md_cache: None,
+            dock: Default::default(),
+            ask: None,
+            ops: Vec::new(),
+            clip: Vec::new(),
+            yank: Vec::new(),
         }
+    }
+
+    /// Where a menu opened on `item` (or off the items) is.
+    pub fn menu_cx(&self, item: Option<usize>) -> crate::menu::Cx {
+        use crate::menu::Cx;
+        match &self.c.overlay {
+            Some(Overlay::Preview(p)) => match cmdr::kind_of(&p.to_string_lossy()) {
+                Kind::Image if self.fullscreen => Cx::FsImage,
+                Kind::Image => Cx::Image,
+                Kind::Video | Kind::Audio if self.fullscreen => Cx::FsPlayer,
+                Kind::Video | Kind::Audio => Cx::Player,
+                _ => Cx::Text,
+            },
+            Some(Overlay::Man) => Cx::Text,
+            _ => match item.and_then(|i| self.c.visible().get(i).map(|e| e.kind)) {
+                Some(Kind::Dir) => Cx::Folder,
+                Some(Kind::Image | Kind::Video | Kind::Audio) => Cx::Media,
+                Some(_) => Cx::File,
+                None => Cx::Empty,
+            },
+        }
+    }
+
+    /// The context menu for `item` (`None`: off the items, or a file view).
+    pub fn menu(&self, item: Option<usize>, keys: &Keymap) -> Vec<mouser_mode_api::MenuEntry> {
+        let cx = self.menu_cx(item);
+        let local = self.c.remote.is_none();
+        let viewing = matches!(self.c.overlay, Some(Overlay::Preview(_)) | Some(Overlay::Man));
+        let item = if viewing { None } else { item };
+        let enabled = |id: &str| match id {
+            "copy" | "copy_to" | "move_to" | "rename" | "delete" | "new_folder" => local,
+            "paste" => local && !self.yank.is_empty(),
+            "copy_text" => self.full_text.is_some() || self.c.overlay == Some(Overlay::Man),
+            "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up" => self.player.is_some(),
+            _ => true,
+        };
+        crate::menu::entries(cx, item, keys, &enabled)
+    }
+
+    /// The paths an item action works on: the marked ones when the item is
+    /// marked, else just the item.
+    fn op_paths(&self) -> Vec<PathBuf> {
+        let sel = self.c.selected_entry().map(|e| e.path.clone());
+        match sel {
+            Some(p) if self.c.marks.contains(&p) => self.c.pipe_paths(),
+            Some(p) => vec![p],
+            None => Vec::new(),
+        }
+    }
+
+    /// A picked menu entry (`menu:<id>`, the item index as its argument).
+    fn menu_action(&mut self, id: &str, arg: i32) -> Effect {
+        let item_action = !matches!(id, "sort") && !matches!(self.c.overlay, Some(Overlay::Preview(_)) | Some(Overlay::Man));
+        if item_action
+            && arg >= 0
+            && (arg as usize) < self.c.visible().len()
+            && crate::menu::ACTIONS
+                .iter()
+                .any(|a| a.id == id && a.cx.iter().any(|c| matches!(c, crate::menu::Cx::Folder | crate::menu::Cx::File | crate::menu::Cx::Media)))
+        {
+            self.c.selected = arg as usize;
+        }
+        let dir = self.c.cwd.clone();
+        let paths = self.op_paths();
+        match id {
+            "open_fullscreen" => {
+                let e = self.c.open_selected();
+                let e = self.effect(e);
+                if matches!(&self.c.overlay, Some(Overlay::Preview(p)) if is_media(p)) && !self.fullscreen {
+                    self.toggle_fullscreen();
+                }
+                e
+            }
+            "sync_item" => match self.c.selected_entry() {
+                Some(en) if en.kind == Kind::Dir => Effect::Cd(en.path.clone()),
+                _ => Effect::None,
+            },
+            "copy" => {
+                self.yank = paths;
+                Effect::Say(format!("{} item(s) to paste", self.yank.len()))
+            }
+            "copy_to" | "move_to" if !paths.is_empty() => {
+                let start = dir.map(|d| format!("{}/", d.display())).unwrap_or_default();
+                self.ask = Some((if id == "copy_to" { Ask::CopyTo(paths) } else { Ask::MoveTo(paths) }, start));
+                Effect::None
+            }
+            "rename" => match self.c.selected_entry() {
+                Some(en) => {
+                    let name = en.name.clone();
+                    self.ask = Some((Ask::Rename(en.path.clone()), name));
+                    Effect::None
+                }
+                None => Effect::None,
+            },
+            "delete" if !paths.is_empty() => {
+                self.ops.push(crate::ops::Op::Delete(paths));
+                Effect::None
+            }
+            "new_folder" => match dir {
+                Some(d) => {
+                    self.ask = Some((Ask::NewFolder(d), String::new()));
+                    Effect::None
+                }
+                None => Effect::None,
+            },
+            "paste" => match dir {
+                Some(d) if !self.yank.is_empty() => {
+                    // On a folder: into it; else into this folder.
+                    let to = self.c.selected_entry().filter(|e| e.kind == Kind::Dir && item_action).map(|e| e.path.clone()).unwrap_or(d);
+                    self.ops.push(crate::ops::Op::CopyTo { from: self.yank.clone(), to });
+                    Effect::None
+                }
+                _ => Effect::None,
+            },
+            "copy_path" => {
+                let p = match &self.c.overlay {
+                    Some(Overlay::Preview(p)) => Some(p.clone()),
+                    _ => self.c.selected_entry().map(|e| e.path.clone()),
+                };
+                if let Some(p) = p {
+                    self.clip.push(p.display().to_string());
+                }
+                Effect::None
+            }
+            "copy_text" => {
+                if let Some((_, lines, _)) = &self.full_text {
+                    self.clip.push(lines.join("\n"));
+                }
+                Effect::None
+            }
+            "copy_to" | "move_to" | "delete" => Effect::None,
+            other => self.action(other, if other == "sort" { arg } else { 0 }),
+        }
+    }
+
+    /// Typed text while a name or destination is asked: Enter goes on to
+    /// the approval card, Esc cancels.
+    fn ask_key(&mut self, bytes: &[u8]) -> Effect {
+        let Some((ask, text)) = self.ask.as_mut() else { return Effect::None };
+        match bytes {
+            b"\r" => {
+                let (ask, text) = self.ask.take().unwrap_or((Ask::NewFolder(PathBuf::new()), String::new()));
+                let t = text.trim();
+                let op = match ask {
+                    Ask::CopyTo(from) if !t.is_empty() => crate::ops::Op::CopyTo { from, to: PathBuf::from(t) },
+                    Ask::MoveTo(from) if !t.is_empty() => crate::ops::Op::MoveTo { from, to: PathBuf::from(t) },
+                    Ask::Rename(p) if crate::ops::valid_name(t) => crate::ops::Op::Rename { to: p.with_file_name(t), from: p },
+                    Ask::NewFolder(d) if crate::ops::valid_name(t) => crate::ops::Op::NewFolder(d.join(t)),
+                    _ => return Effect::Say("not a valid name".into()),
+                };
+                self.ops.push(op);
+            }
+            b"\x7f" | b"\x08" => {
+                text.pop();
+            }
+            _ => {
+                if let Ok(t) = std::str::from_utf8(bytes)
+                    && !t.chars().any(char::is_control)
+                {
+                    text.push_str(t);
+                }
+                let _ = ask;
+            }
+        }
+        Effect::None
     }
 
     pub fn previews(&self) -> &Previews {
@@ -1605,6 +1805,13 @@ impl Mode for CommanderMode {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Option<Effect> {
+        if self.ask.is_some() {
+            if bytes == b"\x1b" {
+                self.ask = None;
+                return Some(Effect::None);
+            }
+            return (bytes.len() == 1 || bytes[0] != 0x1b).then(|| self.ask_key(bytes));
+        }
         if self.fullscreen && bytes != b"\x1b" {
             if let Some(id) = fs_key(bytes) {
                 self.fs_poke();
@@ -1626,7 +1833,7 @@ impl Mode for CommanderMode {
     }
 
     fn wants_text(&self) -> bool {
-        self.c.searching || self.c.piping || self.fullscreen
+        self.c.searching || self.c.piping || self.fullscreen || self.ask.is_some()
     }
 
     fn wants_key(&self, bytes: &[u8]) -> bool {
@@ -1635,7 +1842,9 @@ impl Mode for CommanderMode {
     }
 
     fn escape(&mut self) -> bool {
-        if self.fullscreen {
+        if self.ask.take().is_some() {
+            true
+        } else if self.fullscreen {
             self.fullscreen = false;
             true
         } else if self.menu_open {
@@ -1653,6 +1862,10 @@ impl Mode for CommanderMode {
     }
 
     fn action(&mut self, id: &str, arg: i32) -> Effect {
+        if let Some(m) = id.strip_prefix("menu:") {
+            let m = m.to_string();
+            return self.menu_action(&m, arg);
+        }
         if matches!(id, "pointer_down" | "pointer_move" | "pointer_up") {
             self.pointer(id, unpack_xy(arg));
             return Effect::None;
@@ -1839,7 +2052,7 @@ impl Mode for CommanderMode {
         let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
         let a = ctx.area;
         let max_h = (a.h - ch * 8).max(ch * 4);
-        let h = (a.h / 2).max(ch * 10).min(max_h);
+        let h = self.dock.height(a, ch, (a.h / 2).max(ch * 10).min(max_h));
         let rect = Rect { x: a.x + PADDING, y: a.y, w: a.w - 2 * PADDING, h };
         // A remote file in the viewer: its transfer (dropped when it closes).
         match &self.c.overlay {
@@ -2004,7 +2217,16 @@ impl Mode for CommanderMode {
         } else {
             // Search field, or the pipe prompt.
             let fw = (cw * 40).min(w);
-            if self.c.piping {
+            if let Some((ask, text)) = &self.ask {
+                let fr = Rect { x: x0, y: body.y, w: (cw * 60).min(w), h: row_h };
+                o.items.push(item(fr, text.clone(), PanelStyle::Field { focused: true, valid: true }, UiAction::None));
+                o.items.push(item(
+                    Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
+                    format!("{} · Enter asks to confirm · Esc cancels", ask.prompt()),
+                    PanelStyle::Hint,
+                    UiAction::None,
+                ));
+            } else if self.c.piping {
                 let n = self.c.pipe_paths().len();
                 let fr = Rect { x: x0, y: body.y, w: (cw * 60).min(w), h: row_h };
                 o.items.push(item(fr, format!("| {}", self.c.pipe_cmd), PanelStyle::Field { focused: true, valid: true }, UiAction::None));
@@ -2136,7 +2358,7 @@ impl CommanderMode {
     /// Escape would close something (the plugin tells Mouser, which asks
     /// before it handles Escape itself).
     pub fn escape_takes(&self) -> bool {
-        self.fullscreen || self.menu_open || self.c.piping || self.c.searching || self.c.overlay.is_some()
+        self.fullscreen || self.menu_open || self.c.piping || self.c.searching || self.c.overlay.is_some() || self.ask.is_some()
     }
 
     /// Escape sequences taken as text now ([`Mode::wants_key`]).
@@ -2465,6 +2687,94 @@ pub(crate) mod tests {
         assert_eq!(m.text(b"s"), Some(Effect::None));
         assert_eq!(m.c.filter, "s");
         assert!(m.text(b"\x1bt").is_none(), "bound keys still work while searching");
+    }
+
+    fn menu_ids(m: &CommanderMode, item: Option<usize>) -> Vec<String> {
+        m.menu(item, &Keymap::new(cmdr::BINDINGS)).into_iter().map(|e| e.id.trim_start_matches("menu:").to_string()).collect()
+    }
+
+    /// The context menu in each context lists what applies there, and file
+    /// changes wait for the approval card (nothing is touched before it).
+    #[test]
+    fn context_menus_by_view_and_item() {
+        use crate::menu::Cx;
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("a.txt"), "hello\n").unwrap();
+        std::fs::create_dir(d.join("sub")).unwrap();
+        png(&d.join("p.png"));
+        std::fs::write(d.join("v.mp4"), b"not really").unwrap();
+        let mut m = CommanderMode::new();
+        m.c.flags.all = false;
+        m.cwd_changed(d);
+        let k = Keymap::new(cmdr::BINDINGS);
+        m.view(&ctx(), &k);
+        let at = |m: &CommanderMode, n: &str| m.c.visible().iter().position(|e| e.name == n).unwrap();
+        let (file, dir, img, vid) = (at(&m, "a.txt"), at(&m, "sub"), at(&m, "p.png"), at(&m, "v.mp4"));
+        assert_eq!(m.menu_cx(Some(file)), Cx::File);
+        assert_eq!(m.menu_cx(Some(dir)), Cx::Folder);
+        assert_eq!(m.menu_cx(Some(vid)), Cx::Media);
+        assert_eq!(m.menu_cx(None), Cx::Empty);
+        let f = menu_ids(&m, Some(file));
+        for id in ["open", "copy", "copy_to", "move_to", "rename", "delete", "copy_path"] {
+            assert!(f.contains(&id.to_string()), "list file: {id}");
+        }
+        assert!(menu_ids(&m, Some(vid)).contains(&"open_fullscreen".to_string()), "media: play and fullscreen");
+        let fo = menu_ids(&m, Some(dir));
+        assert!(["open", "parent", "sync_item"].iter().all(|i| fo.contains(&i.to_string())));
+        let e = menu_ids(&m, None);
+        assert!(["new_folder", "paste", "sort"].iter().all(|i| e.contains(&i.to_string())));
+        assert!(!m.menu(None, &k).iter().find(|e| e.id == "menu:paste").unwrap().enabled, "nothing copied yet");
+        // Delete asks first; the file stays until the card says yes.
+        m.action("menu:delete", file as i32);
+        assert!(matches!(m.ops.as_slice(), [crate::ops::Op::Delete(v)] if v == &[d.join("a.txt")]));
+        assert!(d.join("a.txt").exists());
+        m.ops.clear();
+        // Rename: type the name, Enter queues it for the card.
+        m.action("menu:rename", file as i32);
+        assert!(m.wants_text());
+        m.text(b"\x7f");
+        m.text(b"x");
+        m.text(b"\r");
+        assert_eq!(m.ops, vec![crate::ops::Op::Rename { from: d.join("a.txt"), to: d.join("a.txx") }]);
+        assert!(d.join("a.txt").exists() && !d.join("a.txx").exists());
+        m.ops.clear();
+        // Copy, then paste into the empty area: again only queued.
+        m.action("menu:copy", file as i32);
+        assert!(m.menu(None, &k).iter().find(|e| e.id == "menu:paste").unwrap().enabled);
+        m.action("menu:paste", -1);
+        assert!(matches!(m.ops.as_slice(), [crate::ops::Op::CopyTo { .. }]));
+        m.ops.clear();
+        m.action("menu:copy_path", file as i32);
+        assert_eq!(m.clip, vec![d.join("a.txt").display().to_string()]);
+        m.action("menu:sort", 2);
+        assert_eq!(m.c.flags.sort, Sort::Size);
+        // The image view, then fullscreen.
+        m.c.selected = at(&m, "p.png");
+        m.action("menu:open", img as i32);
+        assert_eq!(m.menu_cx(None), Cx::Image);
+        m.toggle_fullscreen();
+        assert_eq!(m.menu_cx(Some(0)), Cx::FsImage, "a file view: the item does not matter");
+        let fi = menu_ids(&m, None);
+        assert!(["close", "zoom_in", "zoom_out", "zoom_fit", "zoom_actual", "left", "fullscreen"].iter().all(|i| fi.contains(&i.to_string())));
+        assert!(!fi.contains(&"delete".to_string()));
+        m.action("menu:close", 0);
+        // Text view.
+        m.c.overlay = Some(Overlay::Preview(d.join("a.txt")));
+        m.view(&ctx(), &k);
+        assert_eq!(m.menu_cx(None), Cx::Text);
+        let tx = menu_ids(&m, None);
+        assert!(["up", "page_down", "close", "copy_text"].iter().all(|i| tx.contains(&i.to_string())));
+        // A video in the player, fullscreen.
+        m.c.overlay = Some(Overlay::Preview(d.join("v.mp4")));
+        m.fullscreen = true;
+        assert_eq!(m.menu_cx(None), Cx::FsPlayer);
+        let pl = menu_ids(&m, None);
+        assert!(
+            ["play_pause", "seek_back", "seek_forward", "volume_up", "volume_down", "fullscreen", "close"]
+                .iter()
+                .all(|i| pl.contains(&i.to_string()))
+        );
     }
 
     #[test]

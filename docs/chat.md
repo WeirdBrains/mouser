@@ -34,6 +34,22 @@ Cards are answered only with these alt keys or a click, so ordinary typing can n
 approve anything. With nothing running, `esc` leaves the input and keys go back to
 the shell.
 
+## Context menu
+
+Right-click (or `.` while chat has the keyboard; docs/modes.md §Context menus):
+
+- on a message (yours, an answer, a note or an error): copy, quote in a reply
+  (the text as `> ` lines in the input), retry (your message again; on an
+  answer, the message it answered), delete from view, type a message (`i`),
+  cancel the answer (`x`);
+- on a tool call card: show / hide the output, copy the output, copy the call,
+  delete from view, type, cancel;
+- elsewhere: switch model (`m`), new chat (`l`), scroll up / down
+  (PageUp / PageDown), type, cancel.
+
+"Delete from view" only hides the row; the agent's history is unchanged (a new
+chat clears it). Approval cards are still answered only in Mouser's popup.
+
 ## What it sees
 
 Each message carries the active tab's place (folder or remote host), its visible

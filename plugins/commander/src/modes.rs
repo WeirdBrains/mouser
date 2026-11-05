@@ -53,7 +53,7 @@ impl Keymap {
                 return Err(format!("unknown key {key:?} for {id}"));
             }
             match self.keys.iter_mut().find(|k| k.0 == id) {
-                Some(k) => k.1 = key.to_lowercase(),
+                Some(k) => k.1 = if key.chars().count() == 1 { key } else { key.to_lowercase() },
                 None => return Err(format!("{mode} has no action {id:?}")),
             }
         }
@@ -134,8 +134,8 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         // ctrl+alt+letter: ESC and the control character.
         return (l.len() == 1 && l.as_bytes()[0].is_ascii_lowercase()).then(|| vec![vec![0x1b, l.as_bytes()[0] & 0x1f]]);
     }
-    if let Some(rest) = k.strip_prefix("alt+") {
-        return Some(key_bytes(rest)?.into_iter().map(|b| [&[0x1b][..], &b].concat()).collect());
+    if k.starts_with("alt+") {
+        return Some(key_bytes(&key[4..])?.into_iter().map(|b| [&[0x1b][..], &b].concat()).collect());
     }
     Some(match k.as_str() {
         "up" => vec![b"\x1b[A".to_vec(), b"\x1bOA".to_vec()],
@@ -150,8 +150,9 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         "end" => vec![b"\x1b[F".to_vec(), b"\x1bOF".to_vec(), b"\x1b[4~".to_vec()],
         "space" => vec![b" ".to_vec()],
         "backspace" => vec![b"\x7f".to_vec(), b"\x08".to_vec()],
+        // One character keeps its case: `F` is Shift+F, not `f`.
         _ => {
-            let mut c = k.chars();
+            let mut c = key.chars();
             let ch = c.next()?;
             if c.next().is_some() || ch.is_control() || ch == ' ' {
                 return None;

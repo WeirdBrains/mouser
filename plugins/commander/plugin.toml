@@ -7,7 +7,7 @@
 name = "commander"
 version = "0.1.0"
 description = "commander mode: the shell's folder as a list, grid or carousel above the prompt, with previews"
-permissions = ["files.read", "shell.type", "remote.read"]
+permissions = ["files.read", "files.write", "shell.type", "remote.read"]
 
 [[provides]]
 kind = "mode"
