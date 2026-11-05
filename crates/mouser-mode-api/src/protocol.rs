@@ -9,12 +9,12 @@ use crate::mode::{Context, Effect};
 use crate::ui::{Panel, Rect};
 use serde_json::Value;
 
-/// The newest protocol version this crate speaks. `0` while the protocol is
-/// still changing; frozen to `1` once the bundled modes run on it.
-pub const API_VERSION: u32 = 0;
+/// The newest protocol version this crate speaks. Frozen at `1` (Mouser
+/// 1.4.0) now that the bundled modes run on it; a wire break bumps it.
+pub const API_VERSION: u32 = 1;
 /// The oldest version a host built from this crate still accepts: the
-/// current and the previous major.
-pub const API_MIN: u32 = API_VERSION.saturating_sub(1);
+/// current and the previous one. `0` was an unreleased draft, never accepted.
+pub const API_MIN: u32 = if API_VERSION > 1 { API_VERSION - 1 } else { 1 };
 
 /// An inclusive range of protocol versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
