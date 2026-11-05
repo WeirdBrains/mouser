@@ -4,6 +4,13 @@
 
 - `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.4.0. See docs/mode-protocol.md.
 
+## [1.3.1] - 2026-11-05
+
+### Fixed
+
+- macOS: dingbats missing from the primary font and Apple Symbols, such as oh-my-zsh's prompt arrow ➜ (U+279C) with Cascadia Mono PL, no longer show as boxes: Menlo, Zapf Dingbats and Arial Unicode MS follow Apple Symbols in the fallback list.
+- Linux release builds run on Ubuntu 22.04 (glibc 2.35), so the binary starts on older distributions.
+
 ## [1.3.0] - 2026-11-04
 
 ### Added
