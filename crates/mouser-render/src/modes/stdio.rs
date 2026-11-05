@@ -436,9 +436,15 @@ impl StdioMode {
         }
     }
 
-    /// The view has a focused text field: typing goes to the plugin.
+    /// The view has a focused text field or an open dropdown (`Popup`):
+    /// typing, Enter and arrows go to the plugin.
     fn typing(&self) -> bool {
-        self.view.dock.iter().chain(self.view.panel.iter()).flat_map(|p| &p.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. }))
+        self.view
+            .dock
+            .iter()
+            .chain(self.view.panel.iter())
+            .flat_map(|p| &p.items)
+            .any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. } | PanelStyle::Popup))
     }
 
     fn notice(&self, ctx: &Context, text: &str, restart: bool) -> Panel {

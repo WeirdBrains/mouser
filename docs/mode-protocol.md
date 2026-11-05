@@ -43,7 +43,7 @@ switching modes as `mode.activated`/`mode.deactivated`, and the shell's folder
 as `shell.cwd_changed` (with `files.read`). An effect it isn't allowed shows a
 status message instead. Its emits come back to its own listeners. Typing
 reaches the plugin as `input.text` only while its view has a focused `Field`
-item (then bound keys don't fire); otherwise keys go to its bindings or the
+item or an open dropdown (a `Popup` item); then bound keys don't fire; otherwise keys go to its bindings or the
 shell.
 
 Host calls (`Request`) available so far. Each needs the permission shown,

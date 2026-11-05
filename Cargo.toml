@@ -10,6 +10,8 @@ members = [
   "crates/icon-tools",
   # The built-in local model (llama.cpp); mouser-app's default `local-llm` feature.
   "crates/mouser-llm",
+  # Modes as plugin programs (transport = "mode"), on mouser-mode-api only.
+  "plugins/preferences",
 ]
 resolver = "2"
 
