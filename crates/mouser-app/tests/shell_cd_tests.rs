@@ -233,12 +233,14 @@ fn pwsh_takes_the_sync_file_at_the_next_prompt() {
     w(b"\r");
     std::thread::sleep(Duration::from_millis(500));
     w(b"'PWD_' + (Get-Location).Path\r");
-    let want = format!("PWD_{}", target.display());
+    // macOS temp dirs are under /var, a symlink to /private/var: either form.
+    let wants = [format!("PWD_{}", target.display()), format!("PWD_{}", target.canonicalize().unwrap().display())];
+    let moved = || wants.iter().any(|w| r.text().contains(w.as_str()));
     let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_secs(10) && !r.text().contains(&want) {
+    while t0.elapsed() < Duration::from_secs(10) && !moved() {
         std::thread::sleep(Duration::from_millis(50));
     }
-    assert!(r.text().contains(&want), "moved at the next prompt\n{:?}", r.text());
+    assert!(moved(), "moved at the next prompt\n{:?}", r.text());
     assert!(!file.exists(), "the sync file is used up");
     w(b"(Get-History | % CommandLine) -join '|'\r");
     std::thread::sleep(Duration::from_millis(800));
