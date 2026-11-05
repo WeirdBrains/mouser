@@ -82,3 +82,4 @@ nav a[aria-current]{color:var(--cyan);font-weight:700}
 .doc figure.clip{margin:1.2rem 0 1.6rem;max-width:960px}
 .doc figure.clip video{display:block;width:100%;height:auto;background:#04192A;border:1px solid #c9dbe6;border-left:4px solid #3fd8e8;border-radius:6px}
 .doc figure.clip figcaption{font-size:.85rem;color:#3f5b6e;margin-top:.45rem}
+.doc h1,.doc h2,.doc h3{scroll-margin-top:5rem}
