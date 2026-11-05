@@ -1,0 +1,26 @@
+# The preferences mode as a plugin (docs/plugins/preferences.md). It replaces
+# the built-in preferences mode when installed.
+name = "preferences"
+version = "0.1.0"
+description = "preferences mode: all settings by section, validated by Mouser, written back with comments kept"
+permissions = ["prefs.write"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "mode"
+command = ["./mouser-preferences"]
+
+[mode]
+hotkey = "p"
+keys = [
+  { id = "up", key = "up", describe = "previous preference" },
+  { id = "down", key = "down", describe = "next preference" },
+  { id = "prev", key = "left", describe = "previous value (choices, on/off, numbers)" },
+  { id = "next", key = "right", describe = "next value (choices, on/off, numbers)" },
+  { id = "edit", key = "enter", describe = "edit: type a value, pick from the dropdown, or enter a key" },
+  { id = "reset", key = "r", describe = "reset to the default" },
+  { id = "page_up", key = "pageup", describe = "page up" },
+  { id = "page_down", key = "pagedown", describe = "page down" },
+]

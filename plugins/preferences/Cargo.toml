@@ -1,0 +1,21 @@
+[package]
+name = "mouser-preferences"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Mouser's preferences mode as a plugin: every preference by section, edited through Mouser's prefs service"
+publish = false
+
+[dependencies]
+mouser-mode-api = { path = "../../crates/mouser-mode-api" }
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+# The end-to-end test drives this program through Mouser's own adapter.
+[dev-dependencies]
+mouser-core = { path = "../../crates/mouser-core" }
+mouser-render = { path = "../../crates/mouser-render" }
+tempfile = "3.10.1"

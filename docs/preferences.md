@@ -30,3 +30,22 @@ Secrets (the local model server key) go only to the OS keychain; the file
 keeps a `keychain:NAME` reference and the mode shows "set (keychain)". With no
 keychain available the secret is not saved. The model folder is shown but
 moved with `mouser model local move <dir>`.
+
+## As a plugin program
+
+`plugins/preferences` is the same mode as a separate program
+(`mouser-preferences`, `transport = "mode"`), built only on `mouser-mode-api`.
+Installed, it replaces the built-in preferences mode (`mouser plugin list`
+marks it `[overrides built-in]`):
+
+```
+cargo build --release -p mouser-preferences
+mkdir -p /tmp/prefs-plugin && cp plugins/preferences/plugin.toml target/release/mouser-preferences /tmp/prefs-plugin/
+mouser plugin install /tmp/prefs-plugin
+mouser plugin permissions preferences run=allow prefs.write=allow
+```
+
+It reads and writes through Mouser's `prefs.*` calls, so Mouser still does the
+validation and the comment-keeping write. For a secret, Enter makes Mouser
+show its own key popup. The key you type goes from that popup to the keychain,
+and the plugin only hears that it was saved.
