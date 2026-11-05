@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.4.0] - 2026-11-05
+
 ### Fixed
 
 - Arch: `pacman -U <url>` failed on a missing `<url>.sig` (pacman wants an OpenPGP signature for URL installs; our `.minisig` is minisign, a different format). Arch packages now ship an OpenPGP `.pkg.tar.zst.sig` from the WeirdBrains Mouser packages key (`3561BE80D8B3E767CF0B0B176318D43051C4DBBC`, `packaging/arch/weirdbrains-mouser.asc`, also attached to the release). Trust it once with `pacman-key --add` and `--lsign-key`, and URL installs work. The `.sha256` files stay, and download, `sha256sum -c`, `pacman -U ./file` still works without the key. The release verifies each `.sig` against the committed key. See docs/release.md §Arch signatures.
