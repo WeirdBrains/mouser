@@ -161,10 +161,19 @@ impl mouser_mode_api::Mode for Plugin {
                     .collect(),
                 activate_on: vec![],
             }],
-            listeners: ["mode.*", "ui.action", "input.text", "input.escape", "view.resized", "shell.cwd_changed"]
-                .iter()
-                .map(|e| Listener::on(e))
-                .collect(),
+            listeners: [
+                "mode.*",
+                "ui.action",
+                "input.text",
+                "input.escape",
+                "view.resized",
+                "shell.cwd_changed",
+                "shell.remote_ssh",
+                "shell.remote_changed",
+            ]
+            .iter()
+            .map(|e| Listener::on(e))
+            .collect(),
             emits: vec![],
             wants_mcp: false,
             shm: false,
@@ -193,6 +202,25 @@ impl mouser_mode_api::Mode for Plugin {
                     s.mode.cwd_changed(Path::new(d));
                 }
             }
+            "shell.remote_ssh" => {
+                let t = e.payload.get("dest").and_then(|d| d.as_str()).map(|dest| remote::SshTarget {
+                    opts: e.payload["opts"].as_array().into_iter().flatten().filter_map(|o| o.as_str().map(String::from)).collect(),
+                    dest: dest.to_string(),
+                });
+                s.mode.remote_ssh(t.as_ref());
+            }
+            "shell.remote_changed" => {
+                let p = &e.payload;
+                let listing = match &p["listing"] {
+                    v if v.is_null() => None,
+                    v => match v["error"].as_str() {
+                        Some(err) => Some(Err(err.to_string())),
+                        None => Some(Ok(v["entries"].as_array().into_iter().flatten().map(entry).collect())),
+                    },
+                };
+                let dir = p["dir"].as_str().map(std::path::PathBuf::from);
+                s.mode.remote_changed(p["label"].as_str().unwrap_or(""), dir.as_deref(), listing);
+            }
             "ui.action" => {
                 let id = e.payload["id"].as_str().unwrap_or("").to_string();
                 let arg = e.payload["arg"].as_i64().unwrap_or(0) as i32;
@@ -220,6 +248,27 @@ impl mouser_mode_api::Mode for Plugin {
         }
         s.redraw(host);
         Handled::Handled
+    }
+}
+
+/// A remote listing entry as Mouser sends it.
+fn entry(v: &serde_json::Value) -> commander::Entry {
+    use commander::Kind;
+    let kind = match v["kind"].as_str().unwrap_or("") {
+        "dir" => Kind::Dir,
+        "image" => Kind::Image,
+        "video" => Kind::Video,
+        "audio" => Kind::Audio,
+        "text" => Kind::Text,
+        _ => Kind::Other,
+    };
+    commander::Entry {
+        name: v["name"].as_str().unwrap_or("").into(),
+        path: v["path"].as_str().unwrap_or("").into(),
+        kind,
+        mode: v["mode"].as_str().unwrap_or("").into(),
+        size: v["size"].as_u64().unwrap_or(0),
+        modified: v["modified"].as_f64().map(|s| std::time::UNIX_EPOCH + Duration::from_secs_f64(s.max(0.0))),
     }
 }
 

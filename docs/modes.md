@@ -320,13 +320,15 @@ built-in commander (`mouser plugin list` marks it `[overrides built-in]`). It ru
 you, like any program you start: it lists the folder and decodes thumbnails and
 previews itself, and its view goes to Mouser with the images inline (sent once,
 then reused by key). It needs `files.read` (to be told the shell's folder) and
-`shell.type` (cd, pipe, and keys it passes on):
+`shell.type` (cd, pipe, and keys it passes on), and `remote.read` for remote
+shells (Mouser tells it the ssh session and the folder's listing; it fetches
+previews and files over that session's ssh like the built-in mode, below):
 
 ```
 cargo build --release -p mouser-commander
 mkdir -p /tmp/commander-plugin && cp plugins/commander/plugin.toml target/release/mouser-commander /tmp/commander-plugin/
 mouser plugin install /tmp/commander-plugin
-mouser plugin permissions commander run=allow files.read=allow shell.type=allow
+mouser plugin permissions commander run=allow files.read=allow shell.type=allow remote.read=allow
 ```
 
 `mouser-commander --manifest` prints its `plugin.toml`. Keys, remaps in
@@ -334,9 +336,10 @@ mouser plugin permissions commander run=allow files.read=allow shell.type=allow
 zoom match the built-in mode: `plugins/commander/tests/through_mouser.rs` starts the
 program through Mouser's adapter and checks that it draws exactly what the built-in
 mode draws (list, grid, carousel, search, the file view, images) and asks for the
-same effects. A bound key the mode passes on (`alt+k` with no player) is typed into
-the shell as the built-in mode let it through. Not yet in the plugin: remote
-(SSH) folders and the player's frames through shared memory, which come next.
+same effects; `remote_through_mouser.rs` does the same for a remote folder over a
+fake ssh (list, grid tiles and snippets, the image and text views). A bound key the
+mode passes on (`alt+k` with no player) is typed into the shell as the built-in mode
+let it through. Not yet in the plugin: the player's frames through shared memory.
 
 ### Plugin API (`mouser_render::modes`)
 
