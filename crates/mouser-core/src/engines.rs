@@ -12,6 +12,15 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT: &str = "mouser";
 /// ABI version this build loads.
 pub const ABI: u32 = 1;
+/// The newest engine ABI an `engine.toml` may declare (the library negotiates).
+pub const ABI_MAX: u32 = 2;
+/// The built-in CPU renderer: not an engine, never listed as one, never removed.
+pub const BASIC: &str = "basic";
+
+/// Names engines can't take: the basic renderer and `MOUSER_RENDERER=cpu`.
+pub fn is_reserved(name: &str) -> bool {
+    name == BASIC || name == "cpu"
+}
 /// Built-in engine names (whether this build has Skia is up to `mouser-render`).
 pub const BUILTINS: [&str; 2] = ["mouser", "skia"];
 
@@ -44,8 +53,11 @@ impl Manifest {
         if is_builtin(&self.name) {
             bail!("{:?} is a built-in engine name", self.name);
         }
-        if self.abi != ABI {
-            bail!("engine {} needs ABI {}, this Mouser supports ABI {ABI}", self.name, self.abi);
+        if is_reserved(&self.name) {
+            bail!("{:?} is reserved for Mouser's built-in basic renderer", self.name);
+        }
+        if !(ABI..=ABI_MAX).contains(&self.abi) {
+            bail!("engine {} needs ABI {}, this Mouser supports ABI {ABI}-{ABI_MAX}", self.name, self.abi);
         }
         if self.library.is_empty() || self.library.contains('/') || self.library.contains('\\') || self.library.starts_with('.') {
             bail!("library must be a plain file name next to engine.toml");
@@ -148,6 +160,9 @@ pub fn install(m: &Manifest, lib: &Path) -> Result<Installed> {
 /// Remove an installed engine (and drop it from the priority list). Returns
 /// whether it was first in the list.
 pub fn uninstall(name: &str) -> Result<bool> {
+    if is_reserved(name) {
+        bail!("the basic renderer is built into Mouser and can never be removed; it is used only when no engine starts");
+    }
     if name == DEFAULT {
         bail!("mouser is the built-in fallback engine and can never be removed (reorder with `mouser engine priority`)");
     }
@@ -459,7 +474,12 @@ mod tests {
         assert!(Manifest::parse("name='x'\nversion='1'\nabi=1\nlibrary='libx.so'").is_ok());
         assert!(Manifest::parse("name='X Y'\nversion='1'\nabi=1\nlibrary='l.so'").is_err());
         assert!(Manifest::parse("name='skia'\nversion='1'\nabi=1\nlibrary='l.so'").is_err());
-        assert!(Manifest::parse("name='x'\nversion='1'\nabi=2\nlibrary='l.so'").unwrap_err().to_string().contains("ABI"));
+        assert!(Manifest::parse("name='x'\nversion='1'\nabi=2\nlibrary='l.so'").is_ok(), "ABI v2 engines");
+        assert!(Manifest::parse("name='x'\nversion='1'\nabi=3\nlibrary='l.so'").unwrap_err().to_string().contains("ABI"));
+        for reserved in ["basic", "cpu"] {
+            let m = format!("name='{reserved}'\nversion='1'\nabi=1\nlibrary='l.so'");
+            assert!(Manifest::parse(&m).unwrap_err().to_string().contains("basic renderer"), "{reserved}");
+        }
         assert!(Manifest::parse("name='x'\nversion='1'\nabi=1\nlibrary='../l.so'").is_err());
     }
 
@@ -484,6 +504,8 @@ mod tests {
         assert!(uninstall("glow").unwrap());
         assert_eq!(chosen(), "mouser");
         assert!(uninstall("mouser").unwrap_err().to_string().contains("never be removed"));
+        assert!(uninstall(BASIC).unwrap_err().to_string().contains("basic renderer"));
+        assert!(uninstall("cpu").unwrap_err().to_string().contains("never be removed"));
         assert!(find("glow").is_none());
     }
 
