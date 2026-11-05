@@ -114,10 +114,60 @@ with <code>mouser mcp token --show</code>, and replace it with <code>--rotate</c
 <td>move to <code>$MOUSER_HOME/trash</code> (nothing is deleted for good)</td>
 <td><strong>yes</strong> (<code>files.write</code>)</td>
 </tr>
+<tr>
+<td><code>modes_list</code></td>
+<td>the modes: name, hotkey, which is on, whether it has the keyboard</td>
+<td>no (<code>screen.read</code>)</td>
+</tr>
+<tr>
+<td><code>modes_switch</code></td>
+<td>turn a mode on by name or hotkey (its own again: modes off)</td>
+<td><strong>yes</strong> (<code>modes.control</code>)</td>
+</tr>
+<tr>
+<td><code>mode_actions</code></td>
+<td>every action of the current mode for its selected item and view state (its context menu)</td>
+<td>no (<code>screen.read</code>)</td>
+</tr>
+<tr>
+<td><code>mode_action</code></td>
+<td>run one of those actions by <code>id</code> and <code>arg</code>, as its key would</td>
+<td><strong>yes</strong> (<code>modes.control</code>); file changes ask again</td>
+</tr>
 </tbody>
 </table>
 <p>Relative paths are resolved in the tab's local folder. A tool argument <code>tab</code>
 picks a tab; the default is the active one.</p>
+<h2 id="mode-actions">Mode actions</h2>
+<p>The modes' actions are the same registry as their keys and right-click menus
+(docs/modes.md §Context menus), so whatever a mode offers you, it offers an MCP
+client, and nothing else:</p>
+<ol>
+<li><code>modes_list</code> shows the modes and which one is on; <code>modes_switch</code> turns one on
+   (<code>{"mode": "commander"}</code> or its hotkey).</li>
+<li><code>mode_actions</code> asks the current mode for its context menu for the <strong>selected
+   item</strong> and the <strong>view state</strong>, exactly what <code>.</code> would show: a folder gives
+   open and sync, a file copy, move, rename, delete and copy path, a fullscreen
+   image close, zoom and scroll, a clip play and fullscreen. Each entry:</li>
+</ol>
+<p><code>json
+   {"id": "menu:delete", "arg": 3, "label": "delete…", "key": "", "enabled": true, "destructive": true}</code></p>
+<p>Commander's <code>arg</code> is the item's index in the listing (for <code>menu:sort</code>, the
+   sort order).</p>
+<p><code>key</code> is the action's key as bound in <code>modes.toml</code> (empty: menu only);
+   <code>enabled: false</code> entries are listed but refused. A plugin has 3 s to answer;
+   a mode with no menu reports that it has no actions.
+3. <code>mode_action</code> runs one (<code>{"id": "menu:open", "arg": 3}</code>). Only ids from the
+   mode's key bindings or its current <code>mode_actions</code> are accepted. It asks you
+   on Mouser's approval popup (<code>modes.control</code>, key <code>mcp:&lt;client&gt;</code>), naming the
+   mode and the action. A <code>destructive</code> action (delete, move, rename, paste)
+   then asks again the way the mode always does, on its own approval card, and
+   never overwrites; the result has <code>"confirm": true</code> to tell the client a
+   second question is on screen. The effect is applied as if you pressed the
+   key: a sync types nothing, an open opens, a copy path fills the clipboard.</p>
+<p>The menu Mouser would draw is not shown for an MCP request. Moving the
+selection is itself an action (the arrow keys' ids, <code>down</code>, <code>up</code> ...), so a
+client can walk the list, then ask again for the new item's actions.</p>
 <h2 id="security">Security</h2>
 <ul>
 <li>Nothing listens unless you enable it. It binds <strong>127.0.0.1</strong> unless you set

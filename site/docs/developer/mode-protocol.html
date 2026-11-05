@@ -232,6 +232,23 @@ Mouser fills in each entry's <code>key</code> from the user's <code>modes.toml</
 now. <code>Host::menu(x, y, entries)</code> sends it from <code>serve()</code>. <code>ClipboardSet</code> puts text
 on the clipboard with no permission (for "copy path" and the like); reading the
 clipboard is not offered.</p>
+<h4 id="over-mcp">Over MCP</h4>
+<p>The same <code>menu.open</code> (with <code>"keyboard": true</code>, for the selected item) also
+answers MCP clients. Mouser's <code>mode_actions</code> tool sends it, takes your <code>Menu</code>
+answer without drawing it, and lists the entries; <code>mode_action</code> then sends the
+chosen <code>ui.action</code>, exactly as a picked row would (docs/mcp.md §Mode actions).
+Only ids from your bindings or from that answer are accepted, and disabled
+entries are refused. So a mode is scriptable over MCP once it answers
+<code>menu.open</code>:</p>
+<ul>
+<li>Make every entry right for the selected item and the view state.</li>
+<li>Keep destructive changes behind your own confirmation (a <code>Prompt</code>, or the
+  host's approval card), because an MCP client may pick them; Mouser asks the
+  user once (<code>modes.control</code>) before it sends the action, not instead of you.</li>
+<li>Answer within 3 s, or the client is told you have no actions.</li>
+<li>Entry ids containing <code>delete</code>, <code>trash</code>, <code>move</code>, <code>rename</code>, <code>paste</code> or <code>cut</code>
+  are flagged <code>destructive</code> to the client.</li>
+</ul>
 <h2 id="host-calls">Host calls</h2>
 <p><code>Request</code> carries a call, answered by exactly one <code>Response</code>:</p>
 <ul>
