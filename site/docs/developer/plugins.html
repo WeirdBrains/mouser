@@ -15,9 +15,10 @@
 This is phase 1 of docs/plans/mcp-agent.md: the manifest, registry, CLI,
 permission broker with approval popups, and the three transports. Mouser's MCP
 server (P2), the MCP client in the sidebar (P3), model providers (P4) and the chat
-mode (P5) build on it. Since P6 everything is a plugin: the built-in modes
-(commander, chat) and engines (mouser, skia) are compiled-in plugins with their
-own <code>plugin.toml</code> (§Built-in plugins), and engines install, list and switch through
+mode (P5) build on it. Since P6 everything is a plugin, and since 1.4.0 no mode
+is compiled in: commander, chat and preferences are plugin programs installed
+from <code>plugins.lock</code>, the engines (mouser, skia) are libraries, and only the model
+providers are built in (§Built-in plugins); engines install, list and switch through
 the same registry.</p>
 <h2 id="transports">Transports</h2>
 <table>
@@ -146,10 +147,11 @@ read-only: <code>uninstall</code> refuses them, but <code>disable</code> works.<
 <code>current</code> can be a folder or symlink, or a file containing the version (Windows
 symlinks need admin rights). Uninstalling a versioned plugin removes every
 version.</p>
-<p>A <code>transport = "mode"</code> plugin may use a built-in mode's name and hotkey
-(<code>commander</code>, <code>chat</code>, <code>preferences</code>). It then replaces the built-in, and <code>plugin
-list</code> marks it <code>[overrides built-in]</code> (decision 5). Other built-in names stay
-reserved.</p>
+<p>The official modes' names and hotkeys (<code>commander</code> <code>c</code>, <code>chat</code> <code>a</code>,
+<code>preferences</code> <code>p</code>) belong to those plugins: your own build of one installs
+under the same name and replaces the official one (your copy in
+<code>$MOUSER_HOME/plugins</code> wins), and no other plugin may take those hotkeys. The
+built-in model providers' names stay reserved.</p>
 <h3 id="built-in-plugins">Built-in plugins</h3>
 <table>
 <thead>
@@ -162,18 +164,6 @@ reserved.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>commander</code></td>
-<td>mode</td>
-<td><code>c</code></td>
-<td>yes</td>
-</tr>
-<tr>
-<td><code>chat</code></td>
-<td>mode</td>
-<td><code>a</code></td>
-<td>yes</td>
-</tr>
-<tr>
 <td><code>openai</code>, <code>xai</code>, <code>openrouter</code>, <code>moonshot</code>, <code>anthropic</code>, <code>google</code>, <code>gemma-local</code></td>
 <td>model-provider</td>
 <td></td>
@@ -183,9 +173,9 @@ reserved.</p>
 </table>
 <p>The engines <code>mouser</code> (can't be disabled; the last engine tried) and <code>skia</code> are
 libraries shipped with Mouser, not built in (<a href="../developer/engines.html">Engines</a>).
-The built-ins' manifests are compiled in (<code>crates/mouser-core/src/builtin/*.toml</code>,
-<code>transport = "builtin"</code>; no dynamic loading of Mouser's own code). Disabling
-commander and chat leaves no mode: Mouser is then a plain terminal (the mode-less
+The official modes are not in this table: they are plugins (<code>mouser plugin list</code>
+shows them with their versions). Disabling (or not installing) commander, chat
+and preferences leaves no mode: Mouser is then a plain terminal (the mode-less
 fallback), and <code>mouser plugin list</code> says so. A disabled engine is passed over when
 a window picks its engine and is hidden from the sidebar; <code>MOUSER_ENGINE=a,b</code>
 still forces an order for one run, as given.</p>
@@ -206,7 +196,7 @@ keys = [{ id = &quot;time&quot;, key = &quot;t&quot;, describe = &quot;show the 
 letter, digit or punctuation key (not <code>:</code>), <code>alt+&lt;key&gt;</code>, <code>ctrl+alt+&lt;letter&gt;</code>, or <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>enter</code>, <code>pageup</code>, <code>pagedown</code>,
 <code>home</code>, <code>end</code>, <code>tab</code>, <code>space</code> or <code>backspace</code>. Without focus the mode gets no key at
 all (the focus toggle, ctrl+alt+k, is the host's).</p>
-<p>It joins the mode switcher (<code>esc :h</code>; listed in <code>ctrl+shift+m</code>) after the built-in modes and
+<p>It joins the mode switcher (<code>esc :h</code>; listed in <code>ctrl+shift+m</code>) after the official modes and
 docks above the prompt like them. Mouser runs its program once per event, off the
 UI thread, with the command-plugin contract (10 s limit, scrubbed environment):
 <code>{"api":1,"command":"mode","args":[EVENT,ID],"cwd":...}</code> with EVENT <code>activate</code>,

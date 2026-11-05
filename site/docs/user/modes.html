@@ -55,12 +55,16 @@ mode: the chat starts empty and sends nothing, and no model is picked or downloa
 you use it. Delete the file to go back to the default (the first enabled mode).</p>
 <p>Exactly one mode plugin is active at a time (or none). Mouser starts in the default
 mode, <strong>commander</strong>. Switching replaces the current mode; there is no stacking.
-The second built-in mode is <strong>chat</strong> (<code>esc :a</code>), the agent; see docs/chat.md.
+The second official mode is <strong>chat</strong> (<code>esc :a</code>), the agent; see docs/chat.md.
+Since 1.4.0 no mode is compiled into Mouser: commander, chat and preferences are
+plugin programs (<code>mouser-commander</code>, <code>mouser-chat</code>, <code>mouser-preferences</code>) that
+first run installs from <code>plugins.lock</code> (signed, checked; the <code>-full</code> release
+bundles carry them for offline installs; docs/downloads.md).
 The modes are plugins (P6): the switcher lists the enabled modes from the plugin
 registry in priority order, and the first is the default. <code>mouser plugin disable
 commander</code> (or chat) takes one out; with every mode off Mouser is a plain terminal.
 Installed mode plugins (<code>kind = "mode"</code> over the command transport, with a
-<code>[mode]</code> hotkey) join after the built-ins; see docs/plugins.md §Mode plugins and
+<code>[mode]</code> hotkey) join after the official modes; see docs/plugins.md §Mode plugins and
 <code>examples/plugins/hello-mode</code>.</p>
 <ul>
 <li><code>esc :</code> then the mode's hotkey and Enter switches to it (<code>esc :c</code> = commander).</li>
@@ -592,15 +596,15 @@ else.</li>
 <h4 id="scroll-position">Scroll position</h4>
 <p>When a view doesn't fit, commander shows where you are: a slim scrollbar on the right of the list, grid and text views, and <code>x–y of N</code> (text: <code>lines x–y of N</code>) at the right of the search row. The carousel shows <code>n of N</code> and a track under the picture.</p>
 <h4 id="as-a-plugin-program">As a plugin program</h4>
-<p><code>plugins/commander</code> is the same mode as a separate program (<code>mouser-commander</code>,
-<code>transport = "mode"</code>), built only on <code>mouser-mode-api</code>; installed, it replaces the
-built-in commander (<code>mouser plugin list</code> marks it <code>[overrides built-in]</code>). It runs as
+<p>Commander is a separate program (<code>mouser-commander</code>, <code>transport = "mode"</code>, source in
+<code>plugins/commander</code> and the WeirdBrains/mouser-commander repo), built only on
+<code>mouser-mode-api</code>; Mouser has no built-in commander since 1.4.0. It runs as
 you, like any program you start: it lists the folder and decodes thumbnails and
 previews itself, and its view goes to Mouser with the images inline (sent once,
 then reused by key). It needs <code>files.read</code> (to be told the shell's folder) and
 <code>shell.type</code> (sync, pipe, and keys it passes on), and <code>remote.read</code> for remote
 shells (Mouser tells it the ssh session and the folder's listing; it fetches
-previews and files over that session's ssh like the built-in mode, below):</p>
+previews and files over that session's ssh, below):</p>
 <pre><code>cargo build --release -p mouser-commander
 mkdir -p /tmp/commander-plugin &amp;&amp; cp plugins/commander/plugin.toml target/release/mouser-commander /tmp/commander-plugin/
 mouser plugin install /tmp/commander-plugin
@@ -608,20 +612,21 @@ mouser plugin permissions commander run=allow files.read=allow shell.type=allow 
 </code></pre>
 <p><code>mouser-commander --manifest</code> prints its <code>plugin.toml</code>. Keys, remaps in
 <code>modes.toml</code>, the views, search, pipe, the file view with Markdown, and image
-zoom match the built-in mode: <code>plugins/commander/tests/through_mouser.rs</code> starts the
-program through Mouser's adapter and checks that it draws exactly what the built-in
-mode draws (list, grid, carousel, search, the file view, images) and asks for the
-same effects; <code>remote_through_mouser.rs</code> does the same for a remote folder over a
+zoom are tested end to end: <code>plugins/commander/tests/through_mouser.rs</code> starts the
+program through Mouser's adapter and checks what it draws (list, grid, carousel,
+search, the file view, images) and the effects it asks for (sync's cd, pipe's
+command line); <code>remote_through_mouser.rs</code> does the same for a remote folder over a
 fake ssh (list, grid tiles and snippets, the image and text views). A bound key the
-mode passes on (<code>k</code> with no player) goes nowhere, as in the built-in mode (commander has
+mode passes on (<code>k</code> with no player) goes nowhere (commander has
 the keyboard, so nothing is typed into the shell)
 let it through. The player runs in the plugin too: it starts ffmpeg itself, plays the
 audio, and hands each frame to Mouser through shared memory
-(<code>player_through_mouser.rs</code>: a 1280x720 60 fps clip arrives at 61.5 fps through the
-plugin and 61.5 fps in the built-in mode, debug build on Linux).</p>
+(<code>player_through_mouser.rs</code>: a 1280x720 60 fps clip arrives at 61.5 fps through
+Mouser, debug build on Linux; the test's floor is 30, 20 on CI).</p>
 <h3 id="plugin-api-mouser_rendermodes">Plugin API (<code>mouser_render::modes</code>)</h3>
 <p>A mode implements the <code>Mode</code> trait and is registered with <code>Host::new</code> (the first
-mode is the default). Built-in modes are listed in <code>Host::builtin</code>.</p>
+mode is the default). Mouser registers the enabled mode plugins with
+<code>Host::from_registry</code>; tests register their own modes with <code>Host::new</code>.</p>
 <table>
 <thead>
 <tr>

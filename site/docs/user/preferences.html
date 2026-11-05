@@ -11,8 +11,8 @@
   <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
 <main id="main"><section class="light doc"><h1 id="preferences-mode">Preferences mode</h1>
-<p><code>esc :p</code> opens the preferences mode (a built-in mode plugin, like commander
-and chat; <code>mouser plugin disable preferences</code> turns it off). It lists every
+<p><code>esc :p</code> opens the preferences mode (a mode plugin, <code>mouser-preferences</code>, like
+commander and chat; <code>mouser plugin disable preferences</code> turns it off). It lists every
 setting in <code>$MOUSER_HOME/preferences.toml</code> by section: Appearance, Window,
 Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
 <code>plugins.max_restarts</code>: how many crashes within 30 s a plugin may have before
@@ -38,10 +38,9 @@ keeps a <code>keychain:NAME</code> reference and the mode shows "set (keychain)"
 keychain available the secret is not saved. The model folder is shown but
 moved with <code>mouser model local move &lt;dir&gt;</code>.</p>
 <h2 id="as-a-plugin-program">As a plugin program</h2>
-<p><code>plugins/preferences</code> is the same mode as a separate program
-(<code>mouser-preferences</code>, <code>transport = "mode"</code>), built only on <code>mouser-mode-api</code>.
-Installed, it replaces the built-in preferences mode (<code>mouser plugin list</code>
-marks it <code>[overrides built-in]</code>):</p>
+<p><code>plugins/preferences</code> is the mode's program (<code>mouser-preferences</code>,
+<code>transport = "mode"</code>), built only on <code>mouser-mode-api</code>; Mouser has no built-in
+preferences mode since 1.4.0. To run your own build instead of the official one:</p>
 <pre><code>cargo build --release -p mouser-preferences
 mkdir -p /tmp/prefs-plugin &amp;&amp; cp plugins/preferences/plugin.toml target/release/mouser-preferences /tmp/prefs-plugin/
 mouser plugin install /tmp/prefs-plugin
