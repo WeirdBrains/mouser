@@ -16,6 +16,7 @@
 - The mode plugin protocol is frozen at api 1: plugins built on `mouser-mode-api` 1.4.0 keep working until the wire format breaks, and Mouser will accept the previous api for one more version when it does. Plugins built on the unreleased api 0 draft are refused with "update the plugin".
 - Engine ABI v2: engines export `mouser_engine_v2` (a v1 table plus an ABI range, a capabilities query, DPI changes, cache eviction and vsync control, all optional), Mouser negotiates the newest shared ABI, and v1 engines still load. The `flat` example exports both; `mouser_engine.h` and docs/engines.md describe v2.
 - The basic renderer: Mouser's built-in CPU drawing is named and labelled in the status bar ("basic renderer — no GPU engine running yet") whenever no engine starts, switches live to an engine once one can start, and can never be removed (`basic` and `cpu` are reserved engine names). `engine.toml` may declare ABI 1 or 2.
+- Tests: with no usable engine the basic renderer draws the terminal, and when an engine becomes usable the same UI switches to it live with its shell and tabs (the headless test UI now re-checks the engine order like a window does).
 
 ### Fixed
 

@@ -514,11 +514,8 @@ pub fn ui_main() -> Result<()> {
 fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
     let dump = std::env::var_os("MOUSER_TEST_DUMP").map(PathBuf::from).context("MOUSER_TEST_DUMP is not set")?;
     let order = mouser_core::engines::priority();
-    let engine = if std::env::var("MOUSER_RENDERER").is_ok_and(|v| v == "cpu") {
-        "cpu".to_string()
-    } else {
-        crate::engine::first_usable(&order).unwrap_or_else(|| "cpu".into())
-    };
+    let forced_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v == "cpu");
+    let mut engine = if forced_cpu { "cpu".to_string() } else { crate::engine::first_usable(&order).unwrap_or_else(|| "cpu".into()) };
     c.call::<Option<()>>(Call::Engine(engine.clone()));
     let (cols, rows) = (80u16, 24usize);
     c.call::<()>(Call::Resize(cols, rows as u16, 800, 480));
@@ -541,6 +538,16 @@ fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
     for n in 1u32.. {
         if c.call::<bool>(Call::ShouldExit) {
             return Ok(());
+        }
+        // Like a window: switch live (also off the basic renderer) once the
+        // priority order picks another engine that can start.
+        if !forced_cpu && n % 5 == 0 {
+            let want = crate::engine::first_usable(&mouser_core::engines::priority());
+            let current = (engine != "cpu").then_some(engine.as_str());
+            if crate::should_switch(current, want.as_deref()) {
+                engine = want.unwrap();
+                c.call::<Option<()>>(Call::Engine(engine.clone()));
+            }
         }
         if let Some((e, at)) = &crash
             && *e == engine
