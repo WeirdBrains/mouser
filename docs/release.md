@@ -57,7 +57,7 @@ Notes
   - Download `mouser-<ver>-1.x86_64.rpm` and install:
     - `sudo rpm -Uvh mouser-<ver>-1.x86_64.rpm`
 - Arch (see "Arch packages" below):
-  - Prebuilt: download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` and its `.sha256`, `sha256sum -c` it, then `sudo pacman -U ./mouser-bin-<ver>-1-x86_64.pkg.tar.zst` (see §Arch signatures; `pacman -U <url>` fails on the missing `.sig`)
+  - Prebuilt: download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` and its `.sha256`, `sha256sum -c` it, then `sudo pacman -U ./mouser-bin-<ver>-1-x86_64.pkg.tar.zst`; or, from 1.4.0, trust the package key once and `sudo pacman -U <url>` (see §Arch signatures)
   - From source: `cd packaging/arch/mouser-git && makepkg -si`
   - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
@@ -146,20 +146,37 @@ versioned `0.0.0`.
 `pacman -U https://…/mouser-bin-<ver>-1-x86_64.pkg.tar.zst` downloads the package,
 then `<url>.sig`, because pacman's `RemoteFileSigLevel` (default `Required`)
 wants an OpenPGP detached signature from a key in pacman's keyring for anything
-installed from a URL. Releases have no `.sig` yet, so that fails with a 404.
-`LocalFileSigLevel` (default `Optional`) lets a downloaded file install without
-one, so the supported install is download, `sha256sum -c` against the release's
-`.sha256` (and, from 1.4.0, `minisign -Vm <file> -P <key>` against its
-`.minisig`; key in docs/downloads.md), then `sudo pacman -U ./<file>`. Never turn
-signature checking off in `pacman.conf` for this.
+installed from a URL. Releases up to 1.3.1 have no `.sig`, so that fails with a
+404 there. Never turn signature checking off in `pacman.conf` for this.
+
+From 1.4.0 every Arch package has a `.pkg.tar.zst.sig`, made with the WeirdBrains
+Mouser packages key:
+
+- fingerprint `3561BE80D8B3E767CF0B0B176318D43051C4DBBC` (ed25519, expires 2029-11-04)
+- public key: `packaging/arch/weirdbrains-mouser.asc` in this repo, and
+  `weirdbrains-mouser.asc` on each release
+
+Trust it once, then install from the URL:
+
+```bash
+curl -LO https://raw.githubusercontent.com/WeirdBrains/mouser/main/packaging/arch/weirdbrains-mouser.asc
+gpg --show-keys weirdbrains-mouser.asc   # check the fingerprint above
+sudo pacman-key --add weirdbrains-mouser.asc
+sudo pacman-key --lsign-key 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+```
+
+Without trusting the key (or for 1.3.x), download, `sha256sum -c` against the
+release's `.sha256`, then `sudo pacman -U ./<file>`: `LocalFileSigLevel`
+(default `Optional`) checks a `.sig` beside the file only if there is one. The
+`.sha256` files stay on every release.
 
 The two signatures are different things: `.minisig` is WeirdBrains' minisign
 signature (key `61BA1720747F9146`, for Mouser's own downloads and `plugins.lock`),
-which pacman cannot read; `.sig` is OpenPGP, what pacman checks. The release
-workflow makes `.pkg.tar.zst.sig` when the `ARCH_GPG_PRIVATE_KEY` (and
-`ARCH_GPG_PASSPHRASE`) secrets exist; then a URL install works after the user
-trusts the key once (`sudo pacman-key --recv-keys <fingerprint>` or `--add`,
-then `sudo pacman-key --lsign-key <fingerprint>`). Making that key and
-publishing its fingerprint is a maintainer decision; until then the package
-ships without `.sig`.
+which pacman cannot read; `.sig` is OpenPGP, what pacman checks.
 
+Release side: the `ARCH_GPG_PRIVATE_KEY` and `ARCH_GPG_PASSPHRASE` secrets hold
+the signing key. The release workflow signs each `.pkg.tar.zst`, verifies the
+`.sig` with `gpgv` against the committed public key (so a mismatched secret
+fails the release) and uploads the key with the release. Rotating the key means
+a new `weirdbrains-mouser.asc`, new secrets and a CHANGELOG note.
