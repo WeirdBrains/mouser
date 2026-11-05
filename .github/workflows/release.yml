@@ -143,6 +143,11 @@ jobs:
       # The -full offline bundle: the base archive plus every plugins.lock
       # archive for this target (all engines and official plugins) in plugins/,
       # checked against the lock's sha256 and size (docs/downloads.md).
+      # scripts/full-bundle.py reads the lock with tomllib (Python 3.11+);
+      # ubuntu-22.04 ships 3.10.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Full offline bundle
         shell: bash
         run: |
@@ -161,6 +166,10 @@ jobs:
             shasum -a 256 "$FULL" > "$FULL.sha256"
           fi
           echo "FULL=$FULL" >> $GITHUB_ENV
+          # Every plugin and engine in the bundle must run where Mouser does.
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            "$PY" scripts/check-glibc.py --max 2.35 "$OUTDIR/plugins" "$OUTDIR/engines"
+          fi
 
       - name: Upload full bundle
         uses: actions/upload-artifact@v4
@@ -183,14 +192,30 @@ jobs:
           appstreamcli validate resources/linux/io.github.m3talsmith.mouser.metainfo.xml
           # nfpm: deb and rpm from prebuilt binary
           BINPATH="target/x86_64-unknown-linux-gnu/release/mouser"
+          # glibc baseline: Ubuntu 22.04's 2.35 at most (v1.3.0 was built on a
+          # newer runner and needed GLIBC_2.43, issue #2). The packages depend
+          # on the newest version the binaries really use.
+          LIBC_MIN=$(python3 scripts/check-glibc.py --max 2.35 "$BINPATH" target/x86_64-unknown-linux-gnu/release/mouser-app target/x86_64-unknown-linux-gnu/release/engines | sed -E 's/^GLIBC_([0-9.]+).*/\1/')
+          test -n "$LIBC_MIN"
           curl -sSfL https://github.com/goreleaser/nfpm/releases/download/v2.37.0/nfpm_2.37.0_Linux_x86_64.tar.gz | tar -xz -C /usr/local/bin nfpm
           mkdir -p dist
           # render nfpm config with concrete paths and version
           # Replace literal tokens ${BINARY_PATH} and ${VERSION} without triggering shell expansion
           ENGPATH="target/x86_64-unknown-linux-gnu/release/engines"
-          sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${ENGINES_PATH}|'$ENGPATH'|g' -e 's|${VERSION}|'$VER'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
+          sed -e 's|${BINARY_PATH}|'$BINPATH'|g' -e 's|${ENGINES_PATH}|'$ENGPATH'|g' -e 's|${VERSION}|'$VER'|g' -e 's|${LIBC_MIN}|'$LIBC_MIN'|g' packaging/nfpm.yaml > packaging/nfpm.gen.yaml
           nfpm package --packager deb --config packaging/nfpm.gen.yaml --target "dist/mouser_${VER}_amd64.deb"
           nfpm package --packager rpm --config packaging/nfpm.gen.yaml --target "dist/mouser-${VER}-1.x86_64.rpm"
+          # Smoke test on the oldest supported baseline: the .deb installs and
+          # runs on a clean Ubuntu 22.04, its engines resolve every library,
+          # and the -full bundle's plugins start (`--manifest`).
+          docker run --rm -v "$PWD/dist:/d:ro" -v "$PWD/target/x86_64-unknown-linux-gnu/release/plugins:/p:ro" ubuntu:22.04 bash -euxc '
+            apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq /d/mouser_*_amd64.deb >/dev/null
+            mouser --version
+            ! find /usr/lib/mouser/engines -name "*.so" -exec ldd {} \; | grep "not found"
+            mkdir /tmp/p && for a in /p/*.tar.gz; do tar -xzf "$a" -C /tmp/p; done
+            ! find /tmp/p -name "*.so" -exec ldd {} \; | grep "not found"
+            for m in $(find /tmp/p -type f -perm -u+x -name "mouser-*" ! -name "*.so"); do "$m" --manifest >/dev/null; done
+          '
           # Arch package via container, from packaging/arch/mouser-bin/PKGBUILD with
           # this build's binary and source tree (the release does not exist yet).
           TARBALL="mouser-x86_64-unknown-linux-gnu.tar.gz"
