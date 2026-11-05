@@ -17,8 +17,9 @@
 <li>Family: <code>font_family</code> in config/preferences; otherwise the first installed of JetBrains Mono
   (incl. Nerd Font), Fira Code, Cascadia Mono, DejaVu Sans Mono, Noto Sans Mono, Hack,
   Source Code Pro, Menlo, Consolas, Liberation Mono, Adwaita Mono.</li>
-<li>Fallback: characters missing from the primary font come from symbol/Nerd Font/CJK faces,
-  then from the bundled Liberation Mono (SIL OFL 1.1, <code>crates/mouser-render/assets/fonts</code>).</li>
+<li>Fallback: characters missing from the primary font come from symbol/Nerd Font/CJK faces
+  (on macOS Apple Symbols, then Menlo, Zapf Dingbats and Arial Unicode MS for dingbats
+  like oh-my-zsh's ➜), then from the bundled Liberation Mono (SIL OFL 1.1, <code>crates/mouser-render/assets/fonts</code>).</li>
 <li>Size: <code>font_size</code> (logical px), scaled by the window's scale factor.</li>
 </ul>
 <p>Cells</p>
