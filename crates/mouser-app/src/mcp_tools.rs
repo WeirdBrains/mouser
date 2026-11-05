@@ -1,5 +1,6 @@
 //! The tools Mouser's MCP server offers (docs/mcp.md): tabs, screen, scrollback,
-//! typing/running in a shell, and the commander's file ops. Reads need the token
+//! typing/running in a shell, the commander's file ops, and the modes'
+//! actions (the same registry as their keys and context menus). Reads need the token
 //! only; typing, running and file changes go through the permission broker and
 //! Mouser's approval popup (key `mcp:<client name>`).
 
@@ -27,7 +28,7 @@ fn tool(name: &str, desc: &str, props: Value, required: &[&str], read_only: bool
         "name": name,
         "description": desc,
         "inputSchema": {"type": "object", "properties": props, "required": required},
-        "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only && name.contains("trash"), "openWorldHint": false}
+        "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only && (name.contains("trash") || name == "mode_action"), "openWorldHint": false}
     })
 }
 
@@ -82,7 +83,44 @@ pub fn descriptors() -> Vec<Value> {
             &["path"],
             false,
         ),
+        tool(
+            "modes_list",
+            "List Mouser's modes (commander, chat, preferences, plugins): name, hotkey, which is on and whether it has the keyboard.",
+            json!({}),
+            &[],
+            true,
+        ),
+        tool(
+            "modes_switch",
+            "Turn a mode on by name or hotkey (its own name again turns modes off). Asks first.",
+            json!({"mode": {"type": "string"}}),
+            &["mode"],
+            false,
+        ),
+        tool(
+            "mode_actions",
+            "Every action of the current mode that applies now to its selected item and view state (a file, folder, image, clip; list or fullscreen view ...): the same list as its right-click menu, with id, arg, label, key, enabled and destructive.",
+            json!({}),
+            &[],
+            true,
+        ),
+        tool(
+            "mode_action",
+            "Run one action from mode_actions (id and arg), as its key would. Asks first; destructive file changes (delete, move, rename, paste) also ask again on the mode's own approval card and never overwrite.",
+            json!({"id": {"type": "string"}, "arg": {"type": "integer", "description": "from mode_actions (default 0)"}}),
+            &["id"],
+            false,
+        ),
     ]
+}
+
+/// How long `mode_actions` waits for a mode plugin's answer.
+const ACTIONS_WAIT: Duration = Duration::from_secs(3);
+
+/// Actions that change files: shown as destructive to MCP clients.
+fn destructive(id: &str) -> bool {
+    let id = id.strip_prefix("menu:").unwrap_or(id);
+    ["delete", "trash", "move", "rename", "paste", "cut"].iter().any(|w| id.contains(w))
 }
 
 type R = std::result::Result<Value, String>;
@@ -156,6 +194,28 @@ impl AppTools {
                     Err(_) => Err("no answer from the user in time".into()),
                 }
             }
+        }
+    }
+
+    /// The current mode's context actions (waits for a plugin's answer).
+    fn mode_actions(&self) -> std::result::Result<(String, Vec<mouser_render::modes::MenuEntry>), String> {
+        let name = {
+            let mut st = self.app_state.lock().unwrap();
+            if !st.modes.request_actions() {
+                return Err("no mode is on (modes_switch)".into());
+            }
+            st.modes.current().unwrap_or_default().to_string()
+        };
+        let t0 = std::time::Instant::now();
+        loop {
+            if let Some(a) = self.app_state.lock().unwrap().modes.take_actions() {
+                return Ok((name, a));
+            }
+            if t0.elapsed() > ACTIONS_WAIT {
+                return Err(format!("{name} did not answer (a mode without a context menu has no actions to list)"));
+            }
+            wake();
+            std::thread::sleep(Duration::from_millis(20));
         }
     }
 
@@ -255,6 +315,46 @@ impl mouser_core::mcp_server::Tools for AppTools {
                 let to = fileops::trash(&p).map_err(s)?;
                 Ok(json!({"trashed": p.display().to_string(), "now_at": to.display().to_string()}))
             }
+            "modes_list" => {
+                self.may_read(client, "screen.read")?;
+                let st = self.app_state.lock().unwrap();
+                let (list, focused) = st.modes.list();
+                let v: Vec<Value> = list.iter().map(|(n, k, on)| json!({"name": n, "hotkey": k.to_string(), "on": on})).collect();
+                Ok(json!({"modes": v, "focused": focused}))
+            }
+            "modes_switch" => {
+                let m = a.get("mode").and_then(Value::as_str).ok_or("mode is required")?;
+                self.ask(client, "modes.control", vec![format!("Switch to the {m} mode")])?;
+                let r = self.app_state.lock().unwrap().modes.switch(m)?;
+                wake();
+                Ok(json!({"result": r}))
+            }
+            "mode_actions" => {
+                self.may_read(client, "screen.read")?;
+                let (mode, acts) = self.mode_actions()?;
+                let v: Vec<Value> = acts
+                    .iter()
+                    .map(|e| json!({"id": e.id, "arg": e.arg, "label": e.label, "key": e.key, "enabled": e.enabled, "destructive": destructive(&e.id)}))
+                    .collect();
+                Ok(json!({"mode": mode, "actions": v}))
+            }
+            "mode_action" => {
+                let id = a.get("id").and_then(Value::as_str).ok_or("id is required")?.to_string();
+                let arg = a.get("arg").and_then(Value::as_i64).unwrap_or(0) as i32;
+                let (mode, acts) = self.mode_actions()?;
+                let label = acts.iter().find(|e| e.id == id && e.arg == arg).map_or(id.clone(), |e| e.label.clone());
+                let mut detail = vec![format!("{mode}: {label}")];
+                if destructive(&id) {
+                    detail.push("  changes files; the mode asks again before it does".into());
+                }
+                self.ask(client, "modes.control", detail)?;
+                let mut st = self.app_state.lock().unwrap();
+                let e = st.modes.invoke(&id, arg, &acts)?;
+                crate::apply_mode_effect(&mut st, e, &tabs::ActiveWriter(self.tabs.clone()));
+                drop(st);
+                wake();
+                Ok(json!({"mode": mode, "ran": id, "arg": arg, "confirm": destructive(&id)}))
+            }
             _ => Err(format!("unknown tool {name}")),
         }
     }
@@ -333,7 +433,8 @@ mod tests {
     #[test]
     fn descriptors_are_valid_and_mutating_ones_say_they_ask() {
         let d = super::descriptors();
-        assert_eq!(d.len(), 11);
+        assert_eq!(d.len(), 15);
+        assert!(!super::destructive("open") && super::destructive("delete") && super::destructive("menu:move_to"));
         for t in &d {
             let n = t["name"].as_str().unwrap();
             assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{n}");

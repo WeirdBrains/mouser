@@ -59,9 +59,49 @@ with `mouser mcp token --show`, and replace it with `--rotate`.
 | `files_list`, `files_read` | list a folder, read up to 1 MiB of a file | no |
 | `files_mkdir`, `files_copy`, `files_move` | create, copy, move or rename (never overwrite) | **yes** (`files.write`) |
 | `files_trash` | move to `$MOUSER_HOME/trash` (nothing is deleted for good) | **yes** (`files.write`) |
+| `modes_list` | the modes: name, hotkey, which is on, whether it has the keyboard | no (`screen.read`) |
+| `modes_switch` | turn a mode on by name or hotkey (its own again: modes off) | **yes** (`modes.control`) |
+| `mode_actions` | every action of the current mode for its selected item and view state (its context menu) | no (`screen.read`) |
+| `mode_action` | run one of those actions by `id` and `arg`, as its key would | **yes** (`modes.control`); file changes ask again |
 
 Relative paths are resolved in the tab's local folder. A tool argument `tab`
 picks a tab; the default is the active one.
+
+## Mode actions
+
+The modes' actions are the same registry as their keys and right-click menus
+(docs/modes.md §Context menus), so whatever a mode offers you, it offers an MCP
+client, and nothing else:
+
+1. `modes_list` shows the modes and which one is on; `modes_switch` turns one on
+   (`{"mode": "commander"}` or its hotkey).
+2. `mode_actions` asks the current mode for its context menu for the **selected
+   item** and the **view state**, exactly what `.` would show: a folder gives
+   open and sync, a file copy, move, rename, delete and copy path, a fullscreen
+   image close, zoom and scroll, a clip play and fullscreen. Each entry:
+
+   ```json
+   {"id": "menu:delete", "arg": 3, "label": "delete…", "key": "", "enabled": true, "destructive": true}
+   ```
+
+   Commander's `arg` is the item's index in the listing (for `menu:sort`, the
+   sort order).
+
+   `key` is the action's key as bound in `modes.toml` (empty: menu only);
+   `enabled: false` entries are listed but refused. A plugin has 3 s to answer;
+   a mode with no menu reports that it has no actions.
+3. `mode_action` runs one (`{"id": "menu:open", "arg": 3}`). Only ids from the
+   mode's key bindings or its current `mode_actions` are accepted. It asks you
+   on Mouser's approval popup (`modes.control`, key `mcp:<client>`), naming the
+   mode and the action. A `destructive` action (delete, move, rename, paste)
+   then asks again the way the mode always does, on its own approval card, and
+   never overwrites; the result has `"confirm": true` to tell the client a
+   second question is on screen. The effect is applied as if you pressed the
+   key: a sync types nothing, an open opens, a copy path fills the clipboard.
+
+The menu Mouser would draw is not shown for an MCP request. Moving the
+selection is itself an action (the arrow keys' ids, `down`, `up` ...), so a
+client can walk the list, then ask again for the new item's actions.
 
 ## Security
 

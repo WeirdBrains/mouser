@@ -86,7 +86,7 @@ impl Transport {
 }
 
 /// Capabilities a plugin can ask for; each goes through the permission broker.
-pub const CAPABILITIES: [(&str, &str); 13] = [
+pub const CAPABILITIES: [(&str, &str); 14] = [
     ("run", "run its program on this computer"),
     ("notify", "show notices"),
     ("screen.read", "read the visible text of the tab"),
@@ -100,6 +100,7 @@ pub const CAPABILITIES: [(&str, &str); 13] = [
     ("agent.use", "talk to your AI models through Mouser (keys stay in Mouser)"),
     ("prefs.write", "change your preferences"),
     ("net.fetch", "make web requests through Mouser"),
+    ("modes.control", "switch modes and run their actions (as their keys would)"),
 ];
 
 pub fn capability_text(cap: &str) -> &'static str {
