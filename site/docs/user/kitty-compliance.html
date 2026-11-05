@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitty keyboard protocol compliance — Mouser — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="kitty-keyboard-protocol-compliance-mouser">Kitty keyboard protocol compliance — Mouser</h1>
+<p>Mouser supports <strong>only</strong> the Kitty keyboard protocol, as a fallback for applications that do
+not use <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/protocol/keyboard.md">Fuzzball keyboard mode</a>. Fuzzball wins when both are active.
+Kitty graphics is supported as a separate fallback (see <code>fuzzball docs/graphics.md</code> §7). iTerm2 <code>OSC 1337</code> images and the <code>xterm-kitty</code> TERM fallback are not supported.</p>
+<p>Spec: <a href="https://sw.kovidgoyal.net/kitty/keyboard-protocol/">https://sw.kovidgoyal.net/kitty/keyboard-protocol/</a>. Tests, one per spec section:
+<code>crates/mouser-core/tests/kitty_keyboard_spec_tests.rs</code> (plus <code>kitty_keyboard_tests.rs</code>).</p>
+<p>Legend: ✅ compliant · 🟡 partial · ➖ not applicable</p>
+<table>
+<thead>
+<tr>
+<th>Spec section</th>
+<th>Status</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Progressive enhancement: <code>CSI &gt; flags u</code> push, <code>CSI &lt; n u</code> pop, <code>CSI = flags ; mode u</code> set/or/clear, <code>CSI ? u</code> query</td>
+<td>✅</td>
+<td>Stack per screen (main/alt), bounded; pop beyond empty resets to 0; RIS clears both.</td>
+</tr>
+<tr>
+<td>Flag 1 — disambiguate escape codes</td>
+<td>✅</td>
+<td>Esc, Alt/Ctrl+keys, F13+, media, keypad nav keys as <code>CSI u</code>; Enter/Tab/Backspace stay legacy.</td>
+</tr>
+<tr>
+<td>Flag 2 — report event types</td>
+<td>✅</td>
+<td><code>:2</code> repeat, <code>:3</code> release; Enter/Tab/Backspace releases only with flag 8.</td>
+</tr>
+<tr>
+<td>Flag 4 — report alternate keys</td>
+<td>✅</td>
+<td>Shifted key and base-layout key fields.</td>
+</tr>
+<tr>
+<td>Flag 8 — report all keys as escape codes</td>
+<td>✅</td>
+<td>Text keys, Enter/Tab/Backspace, modifier keys (57441…) reported; lock bits kept.</td>
+</tr>
+<tr>
+<td>Flag 16 — report associated text</td>
+<td>✅</td>
+<td>Text codepoints as third field; omitted on release.</td>
+</tr>
+<tr>
+<td>Key event encoding <code>CSI code;mods:event;text u</code></td>
+<td>✅</td>
+<td>Unicode codepoint of the unshifted key; trailing defaults omitted.</td>
+</tr>
+<tr>
+<td>Modifiers (1 + bits: shift 1, alt 2, ctrl 4, super 8)</td>
+<td>✅</td>
+<td></td>
+</tr>
+<tr>
+<td>Modifiers hyper 16, meta 32</td>
+<td>🟡</td>
+<td>winit does not expose Hyper/Meta; never set.</td>
+</tr>
+<tr>
+<td>Lock modifiers caps 64, num 128</td>
+<td>🟡</td>
+<td>Encoding supported; winit does not report lock state, so not set from the window.</td>
+</tr>
+<tr>
+<td>Functional key definitions (PUA 57344+, legacy <code>CSI ~</code> / <code>SS3</code> forms)</td>
+<td>✅</td>
+<td>Full table incl. keypad (57399…), media (57428…), modifiers (57441…).</td>
+</tr>
+<tr>
+<td>Legacy mode (flags 0) keys</td>
+<td>✅</td>
+<td>xterm encoding; Ctrl+Backspace 0x08, Ctrl+Shift/Super+text as <code>CSI u</code>; F13+ not sent (optional).</td>
+</tr>
+<tr>
+<td>Disambiguation of Alt+Esc, Ctrl+Tab etc.</td>
+<td>🟡</td>
+<td>Some combinations are reserved by Mouser's own shortcuts and are not delivered.</td>
+</tr>
+<tr>
+<td>Detection (<code>CSI ? u</code> answered before DA1)</td>
+<td>✅</td>
+<td></td>
+</tr>
+<tr>
+<td>IME / compose</td>
+<td>➖</td>
+<td>Committed text is sent as text; the spec defines no pre-edit encoding.</td>
+</tr>
+</tbody>
+</table><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/kitty-compliance.md">docs/kitty-compliance.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

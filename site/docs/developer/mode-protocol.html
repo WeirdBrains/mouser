@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mode plugin protocol — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="mode-plugin-protocol">Mode plugin protocol</h1>
+<p>Commander, chat and preferences are moving out of Mouser into plugin
+executables built on the public <code>mouser-mode-api</code> crate
+(<code>crates/mouser-mode-api</code>), the same API any third-party mode uses. This page
+describes that protocol. It is <strong>api 1</strong>, frozen as of Mouser 1.4.0: the
+bundled commander, chat and preferences plugins run on it, and you can install
+your own mode plugin on it (below).</p>
+<h2 id="process-model">Process model</h2>
+<ul>
+<li>A mode is its own executable. Mouser starts it once, the first time the mode
+  is used, and keeps it running. stdin and stdout carry the protocol; stderr
+  goes to Mouser's plugin log.</li>
+<li>The plugin runs as you, with your rights. It is not a sandbox. Mouser checks
+  every request and effect against the permissions the plugin was granted.</li>
+</ul>
+<h2 id="installing-a-mode-plugin">Installing a mode plugin</h2>
+<pre><code class="language-toml"># plugin.toml
+name = &quot;hello&quot;
+version = &quot;0.1.0&quot;
+permissions = [&quot;files.read&quot;]     # shell.type to type into the shell, ...
+
+[[provides]]
+kind = &quot;mode&quot;
+
+[run]
+transport = &quot;mode&quot;
+command = [&quot;./hello-mode&quot;]       # ./ is the plugin's directory
+
+[mode]
+hotkey = &quot;h&quot;
+keys = [{ id = &quot;refresh&quot;, key = &quot;r&quot;, describe = &quot;refresh&quot; }]
+</code></pre>
+<p><code>mouser plugin install DIR</code>, then allow it to run with
+<code>mouser plugin permissions hello run=allow</code> (and any permission it lists). It
+joins the mode switcher (<code>esc :h</code>). Mouser starts it the first time it's drawn.
+A bound key or a click arrives as a <code>ui.action</code> event, typing as <code>input.text</code>,
+switching modes as <code>mode.activated</code>/<code>mode.deactivated</code>, and the shell's folder
+as <code>shell.cwd_changed</code> (with <code>files.read</code>). An effect it isn't allowed shows a
+status message instead. Its emits come back to its own listeners. Typing
+reaches the plugin as <code>input.text</code> only while its view has a focused <code>Field</code>
+item or an open dropdown (a <code>Popup</code> item); then bound keys don't fire; otherwise keys go to its bindings or the
+shell.</p>
+<p>Host calls (<code>Request</code>) available so far. Each needs the permission shown,
+declared in <code>plugin.toml</code> and granted:</p>
+<table>
+<thead>
+<tr>
+<th>call</th>
+<th>permission</th>
+<th>answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prefs.schema</code></td>
+<td>none</td>
+<td>every preference: <code>section</code>, <code>key</code>, <code>label</code>, <code>default</code>, <code>live</code>, <code>kind</code> (<code>{"type": "bool"}</code>, <code>int</code>/<code>float</code> with <code>min</code>/<code>max</code>, <code>choice</code> with <code>values</code>, <code>text</code>, <code>secret</code>, <code>readonly</code> with <code>hint</code>)</td>
+</tr>
+<tr>
+<td><code>prefs.get {key}</code></td>
+<td>none</td>
+<td>the value, or <code>null</code> for the default. A secret only says <code>"set (keychain)"</code></td>
+</tr>
+<tr>
+<td><code>prefs.set {key, value}</code>, <code>prefs.reset {key}</code></td>
+<td><code>prefs.write</code></td>
+<td>written to preferences.toml with its comments kept. Secrets are refused</td>
+</tr>
+<tr>
+<td><code>prefs.secret_prompt {key}</code></td>
+<td><code>prefs.write</code></td>
+<td>Mouser's own popup asks you for the key (masked) and saves it to the keychain. The plugin gets <code>{"saved": true}</code> or <code>cancelled</code>, never the value</td>
+</tr>
+<tr>
+<td><code>permissions.granted</code></td>
+<td>none</td>
+<td>the granted permissions</td>
+</tr>
+<tr>
+<td><code>permissions.request {permission, why}</code></td>
+<td>none</td>
+<td>Mouser's popup asks you to grant a permission the manifest declares (Allow always / Deny / Never); <code>{"granted": bool}</code></td>
+</tr>
+<tr>
+<td><code>Approve {title, detail}</code></td>
+<td>none</td>
+<td>Mouser's popup with your own question; <code>{"decision": "once"}</code> or <code>"deny"</code></td>
+</tr>
+<tr>
+<td><code>Fs</code> <code>Read</code>/<code>Stat</code>/<code>List</code></td>
+<td><code>files.read</code></td>
+<td>local files, absolute paths, 1 MiB per read, never in the secrets deny-list</td>
+</tr>
+<tr>
+<td><code>fetch {url, method, headers, body, max_bytes}</code></td>
+<td><code>net.fetch</code></td>
+<td>one HTTP(S) request made by Mouser: <code>status</code>, <code>headers</code>, <code>text</code> (or <code>bytes</code>), <code>truncated</code>. 4 MiB by default, 16 MiB at most</td>
+</tr>
+<tr>
+<td><code>remote.location</code>, <code>remote.list {path}</code>, <code>remote.read {path, offset, len}</code></td>
+<td><code>remote.read</code></td>
+<td>the shell's ssh host, over its connection (1 MiB per read); <code>shell.remote_changed</code> events too</td>
+</tr>
+<tr>
+<td><code>agent.models</code>, <code>agent.set_default {model}</code></td>
+<td><code>agent.use</code></td>
+<td>providers, their models and the default. Never a key</td>
+</tr>
+<tr>
+<td><code>agent.send {text}</code>, <code>agent.cancel</code>, <code>agent.clear</code>, <code>agent.state</code></td>
+<td><code>agent.use</code></td>
+<td>an agent session that runs inside Mouser with your models, keys and tools. Replies stream to the plugin as <code>agent.state</code> events: <code>entries</code> (<code>user</code>, <code>assistant</code>, <code>tool</code>, <code>note</code>, <code>error</code>), <code>running</code>, <code>model</code>, <code>card_open</code>. Tool-call cards are drawn by Mouser, never by the plugin</td>
+</tr>
+</tbody>
+</table>
+<p>Mouser's popups name the plugin that asks. They take every key and click while
+open, and their buttons do nothing for the first 400 ms, so a plugin (or the
+program in the tab) can neither draw nor answer them. Slow calls (<code>fetch</code>,
+<code>remote.*</code>) run on a worker thread and answer when done.</p>
+<p>Others (changing files, spawn, timers, the clipboard) answer "not available
+yet" for now. A plugin may still start its own processes.</p>
+<h2 id="writing-a-plugin-in-rust">Writing a plugin in Rust</h2>
+<p>Implement <code>mouser_mode_api::Mode</code> and call <code>serve</code> from <code>main</code>. Only <code>hello</code>
+is required; <code>welcome</code>, <code>event</code>, <code>response</code> and <code>stopping</code> have defaults.
+<code>serve</code> sends the <code>Hello</code>, waits for the <code>Welcome</code>, maps the shared-memory
+ring and hands every event to your mode on one thread, in order. The <code>Host</code>
+handle it passes in sends views, effects, emits and host calls, and can be
+cloned into worker threads. A worker that emits an event gets it back
+through the mode's own listener, in order with input. A sync listener's
+<code>Handled</code>/<code>Pass</code> answer is sent back for you.</p>
+<p>Panels use the mode's own <code>Action</code>s (<code>None</code>, or <code>Mode {action, arg}</code>); a
+click on one comes back as a <code>ui.action</code> event. Mouser converts them into
+its own action type, so a plugin can't trigger Mouser's windows or
+approvals.</p>
+<p><code>crates/mouser-mode-api/src/bin/echo.rs</code> is a complete small example.</p>
+<h2 id="framing">Framing</h2>
+<p>Each message is a 4-byte little-endian length followed by the message body.
+The body is MessagePack by default. Set <code>MOUSER_MODE_WIRE=json</code> to use JSON
+instead, which makes plugins easy to write and debug in any language. Frames
+over 64 MiB are refused.</p>
+<h2 id="handshake-and-versions">Handshake and versions</h2>
+<ol>
+<li>The plugin sends <code>Hello</code>: the api range it speaks (<code>min</code>, <code>max</code>), its name
+   and version, what it provides (a mode with its hotkey, key bindings and the
+   events that may activate it, or a background service), the <strong>listeners</strong> it
+   registers, the custom events it <strong>emits</strong> (all named <code>&lt;plugin&gt;.*</code>), whether
+   it wants its own MCP connection, and whether it can use shared memory.</li>
+<li>Mouser replies <code>Welcome::Accepted</code> with the chosen api (the newest version
+   both sides speak), a session id, the drawing area, the granted permissions,
+   the listeners it refused and why (not fatal), the shared-memory ring, the
+   plugin's MCP grant, and the state it saved before a crash. If no version is
+   shared it replies <code>Welcome::Rejected</code> with a reason ("update the plugin" or
+   "update Mouser"), the plugin exits, and the mode is shown as incompatible.
+   The terminal is never affected.</li>
+</ol>
+<p>The api is frozen at <strong>1</strong> as of Mouser 1.4.0 (the bundled modes run on it).
+Mouser accepts the current api and the previous one; <code>0</code> was an unreleased
+draft and is refused with "update the plugin". The api number changes only
+when the wire format breaks, separately from the crate's version; additions
+that old plugins can ignore (new events, optional fields) keep it. Plugins can
+add or drop listeners later with <code>Subscribe</code> and <code>Unsubscribe</code>.</p>
+<h2 id="events">Events</h2>
+<p>Everything Mouser tells a plugin is an <code>Event</code>: a sequence number, a time,
+the tab, a name such as <code>shell.cwd_changed</code>, <code>input.key</code>, <code>ui.action</code> or
+<code>frame.tick</code>, a payload, and where it came from. A listener names one event
+or a family (<code>input.*</code>) and can be async (the default), sync (answers
+<code>Handled</code> or <code>Pass</code> within 16 ms, at most 50 ms) or a responder.</p>
+<p>Plugins can emit their own declared events. Emits go through the same
+dispatcher as Mouser's events, so the emitting plugin hears them too (unless a
+listener opts out), in order with everything else. Some limits apply:</p>
+<ul>
+<li>A plugin can never emit facts only Mouser knows (<code>shell.*</code>, <code>term.*</code>,
+  <code>agent.*</code>, <code>approval.*</code>, <code>tab.*</code> and similar).</li>
+<li>It can synthesize input (<code>input.key</code>, <code>ui.action</code> ...) only into its own
+  mode, unless you grant <code>events.inject:&lt;other&gt;</code>. Synthetic input never
+  reaches the shell.</li>
+<li>A chain of emits stops after 8 hops, one emit reaches at most 64 listeners,
+  and each plugin may emit 200 events a second (bursts of 1000).</li>
+</ul>
+<h2 id="messages-from-the-plugin">Messages from the plugin</h2>
+<p><code>View</code> (dock, floating panel, images, fullscreen; the latest wins), <code>Effect</code>
+(type or run in the shell, <code>cd</code>, open a file or link, show keys, a status
+message, or pass the key on), <code>Frame</code> (a video frame already in shared
+memory), <code>Emit</code> and <code>EmitRequest</code>, <code>Respond</code>, <code>Request</code> (a host call),
+<code>Reply</code> (for sync listeners), <code>StateSave</code> (handed back after a restart),
+<code>Subscribe</code>, <code>Unsubscribe</code>, <code>Log</code> and <code>Wake</code>.</p>
+<p><code>Wants</code> says what the mode takes from the keyboard right now (the latest wins):
+<code>text</code> (plain typing comes as <code>input.text</code>; alt keys still go to the mode's
+bindings and the rest to the shell), <code>keys</code> (escape sequences taken as text too,
+such as the arrows in a fullscreen view) and <code>escape</code> (something is open that
+Escape closes, so Escape goes to the mode as <code>input.escape</code> instead of to Mouser).
+Until a mode sends one, Mouser guesses from its view: a focused <code>Field</code> or an open
+<code>Popup</code> takes every key. After a restart it's cleared until the plugin sends it again.</p>
+<p>Mouser tells a plugin with <code>files.read</code> the shell's folder (<code>shell.cwd_changed</code>)
+as soon as it has started, and again after every restart. With <code>remote.read</code> it
+also tells it about a remote shell, when that changes and after a restart:
+<code>shell.remote_ssh</code> (<code>{"opts": [...], "dest": "host"}</code> for the session's ssh
+command, or <code>null</code>) and <code>shell.remote_changed</code> (<code>label</code>, <code>dir</code> or <code>null</code>, and
+<code>listing</code>: <code>null</code> while loading, <code>{"entries": [...]}</code> with <code>name</code>, <code>path</code>,
+<code>kind</code>, <code>mode</code>, <code>size</code> and <code>modified</code> in Unix seconds, or <code>{"error": "..."}</code>).</p>
+<h2 id="host-calls">Host calls</h2>
+<p><code>Request</code> carries a call, answered by exactly one <code>Response</code>:</p>
+<ul>
+<li><strong>Files:</strong> read, write (atomic if asked), append, stat, list, mkdir,
+  remove (to the trash by default; deleting for good always asks), rename,
+  chmod and watch, on the local machine or a remote tab over its SSH
+  connection.</li>
+<li><strong>Processes:</strong> spawn with pipes, a private pty, or typed into a terminal tab
+  you can see; stdin, kill and resize.</li>
+<li><strong>Escalation:</strong> a plugin never gets more than your own rights. To run
+  something as root it asks with <code>Escalate</code>; Mouser shows a card every time
+  (there's no "always"), then types the command into your visible terminal so
+  sudo asks you itself, or shows the Windows UAC or macOS system prompt.
+  Mouser never sees a password. <code>sudo</code>, <code>doas</code>, <code>pkexec</code>, <code>su</code> and <code>run0</code> are
+  refused anywhere else.</li>
+<li><strong>Services:</strong> preferences, models and the agent, approvals, timers and the
+  clipboard (see below).</li>
+</ul>
+<p><code>~/.ssh</code>, <code>~/.gnupg</code>, keychains and Mouser's secrets and config are off limits
+unless you allow them.</p>
+<h2 id="images">Images</h2>
+<p>Mouser creates a ring of image slots in shared memory (in <code>/dev/shm</code> on Linux,
+otherwise the temp directory) and passes its path in the handshake. The plugin
+writes RGBA pixels into a slot and sends only a small <code>ImageRef</code> naming the
+slot. Mouser copies the slot into the GPU texture cache under the image's key,
+so an image that hasn't changed is sent as <code>Cached</code> and never copied again.
+Where the ring can't be mapped, pixels go inline in the message.</p>
+<p>Mouser sends <code>frame.presented</code> (<code>{"slot": n}</code>) once it has copied a slot, and a
+plugin must not write that slot again before then. A plugin pushing frames on its
+own (a video player) therefore never overwrites a frame Mouser hasn't taken: when
+every slot is still waiting it skips a frame rather than queue it. The ring has two
+1080p slots.</p>
+<p>Measured with the test plugin (<code>mouser-mode-echo</code>), 1080p RGBA at 60 fps for
+10 s:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>frames dropped</th>
+<th>round trip p50 / p99</th>
+<th>Mouser's share per frame (p99)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux, shared memory</td>
+<td>0 of 600</td>
+<td>1.1 / 1.4 ms</td>
+<td>0.9 ms</td>
+</tr>
+<tr>
+<td>Linux, inline</td>
+<td>3 of 600</td>
+<td>5.6 / 8.7 ms</td>
+<td>0.6 ms</td>
+</tr>
+<tr>
+<td>Windows, shared memory</td>
+<td>0 of 600</td>
+<td>1.3 / 1.8 ms</td>
+<td>1.0 ms</td>
+</tr>
+<tr>
+<td>Windows, inline</td>
+<td>0 of 600</td>
+<td>7.7 / 10.3 ms</td>
+<td>1.6 ms</td>
+</tr>
+<tr>
+<td>macOS (Apple silicon), shared memory</td>
+<td>0 of 600</td>
+<td>0.8 / 1.6 ms</td>
+<td>0.9 ms</td>
+</tr>
+<tr>
+<td>macOS (Apple silicon), inline</td>
+<td>0 of 600</td>
+<td>3.5 / 4.7 ms</td>
+<td>0.5 ms</td>
+</tr>
+</tbody>
+</table>
+<p>A key press takes 8 µs (Linux), 26 µs (Windows) or 5 µs (macOS) to reach the
+plugin and come back. Run the benchmark with
+<code>cargo test -p mouser-mode-api --release -- --ignored</code>.</p>
+<h2 id="host-services">Host services</h2>
+<p>A plugin calls Mouser's services with a <code>Service</code> call. Each method needs a
+permission:</p>
+<table>
+<thead>
+<tr>
+<th>method</th>
+<th>permission</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>remote.location</code>, <code>remote.list</code></td>
+<td><code>remote.read</code></td>
+</tr>
+<tr>
+<td><code>prefs.schema</code>, <code>prefs.get</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>prefs.set</code></td>
+<td><code>prefs.write</code></td>
+</tr>
+<tr>
+<td><code>agent.models</code>, <code>agent.send</code>, <code>agent.cancel</code></td>
+<td><code>agent.use</code></td>
+</tr>
+<tr>
+<td><code>permissions.granted</code>, <code>permissions.request</code></td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>fetch</code></td>
+<td><code>net.fetch</code></td>
+</tr>
+</tbody>
+</table>
+<p>Effects that type into the shell (<code>Type</code>, <code>Run</code>, <code>Cd</code>) need <code>shell.type</code>, and
+<code>Open</code> needs <code>files.read</code>. Model calls go through <code>agent.*</code>, so a plugin never
+sees an API key. Tools run inside Mouser, after an approval popup that Mouser
+draws itself and a plugin can't cover or imitate.</p>
+<h2 id="crashes">Crashes</h2>
+<p>If a plugin exits or its pipe breaks, Mouser drops its view and starts it
+again after 1 s, then 2 s, then 4 s, and hands it the state it saved. After <code>max_restarts</code> crashes within
+30 seconds (a preference, 3 by default; 0 never restarts) Mouser stops
+trying. The plugin stays off, and the status bar shows it with a restart
+button, which starts the count again. Set it with <code>plugins.max_restarts</code> in preferences. Your shells keep running throughout,
+because they live in the session server, not in the plugin.</p>
+<p>See also: <a href="../user/modes.html">Modes</a>, <a href="../developer/plugins.html">Plugins</a>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/mode-protocol.md">docs/mode-protocol.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deploying the MCP server — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/" aria-current=page>MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="deploying-the-mcp-server">Deploying the MCP server</h1>
+<p>Mouser's MCP server (<a href="../mcp/mcp.html">MCP</a>) runs inside the Mouser window you have open;
+there is no separate daemon. For clients on the same machine nothing needs
+deploying: loopback HTTP or <code>mouser mcp serve --stdio</code>.</p>
+<p>To reach it from other machines:</p>
+<ol>
+<li>Turn on HTTPS (<code>mouser mcp enable --https</code>, or <code>[mcp.server] https = true</code>); plain HTTP never leaves 127.0.0.1.</li>
+<li>Set <code>bind</code> to the address to listen on. Off-loopback is HTTPS with the token only.</li>
+<li>Pick a certificate: your own (<code>cert</code> + <code>key</code>), the generated self-signed one
+   (clients must trust it), or Let's Encrypt (<code>[mcp.server.tls] source = "acme"</code>;
+   see <a href="../mcp/mcp.html#lets-encrypt">MCP §Let's Encrypt</a>). tls-alpn-01 needs a public DNS name
+   and port 443 forwarded to <code>https_port</code>, http-01 a port-80 listener, dns-01 a hook or
+   a TXT record set by hand.</li>
+<li>Check it with <code>mouser mcp status</code> and <code>mouser mcp cert status</code>; <code>mouser mcp cert renew</code> renews now.
+   Certificates renew 30 days before expiry without a restart.</li>
+<li>Give each client the token (<code>mouser mcp token --show</code>; <code>--rotate</code> replaces it) and keep it secret; the
+   permissions in <a href="../mcp/mcp.html#security">MCP §Security</a> still apply per tool.</li>
+</ol><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/deploy-mcp.md">docs/deploy-mcp.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

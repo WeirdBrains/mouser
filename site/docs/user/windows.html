@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windows — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="windows">Windows</h1>
+<h2 id="default-terminal">Default terminal</h2>
+<p>Windows can hand console programs (cmd.exe, PowerShell, anything started
+from Explorer or Run) to a <em>default terminal application</em> instead of the old
+console host. Mouser can be that terminal.</p>
+<p>How it works: when a console program starts, OpenConsole looks at
+<code>HKCU\Console\%%Startup</code> (<code>DelegationConsole</code>, <code>DelegationTerminal</code>) and calls
+the terminal's <code>ITerminalHandoff3::EstablishPtyHandoff</code> COM method with the
+session's pipes. Mouser registers a per-user COM local server,
+CLSID <code>{EE272979-892E-4723-9CE6-56F6C13F92EE}</code>, which Windows starts as
+<code>mouser.exe -Embedding</code>; Mouser then opens the handed-off session as its
+first tab.</p>
+<p>Windows Terminal must be installed: its OpenConsole is the console half of the
+handoff. Mouser can't appear in the Settings → "Default terminal application"
+dropdown (that list only shows packaged apps), so use the CLI:</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mouser default-terminal status</code></td>
+<td>Windows Terminal present? Mouser registered? Current default.</td>
+</tr>
+<tr>
+<td><code>mouser default-terminal register</code></td>
+<td>Register Mouser's handoff for this user. The installer runs this. The default is not changed.</td>
+</tr>
+<tr>
+<td><code>mouser default-terminal set</code></td>
+<td>Make Mouser the default, saving the current <code>DelegationConsole</code>/<code>DelegationTerminal</code> values.</td>
+</tr>
+<tr>
+<td><code>mouser default-terminal unset</code></td>
+<td>Restore the saved values.</td>
+</tr>
+<tr>
+<td><code>mouser default-terminal unregister</code></td>
+<td>Restore the previous default if Mouser is it, then remove the registration. The uninstaller runs this.</td>
+</tr>
+</tbody>
+</table>
+<p>Everything is under <code>HKCU</code>; no administrator rights are needed.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/windows.md">docs/windows.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

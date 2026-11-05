@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat mode (the agent) — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="chat-mode-the-agent">Chat mode (the agent)</h1>
+<p><code>chat</code> is a mode plugin, like commander. <code>esc :a Enter</code> (or <code>:a</code> on the F10 line) swaps
+commander out, and the chat docks above the prompt in the same slot. <code>esc :c</code> brings
+commander back. The conversation stays while you switch, and a running turn keeps
+running.</p>
+<p>It answers questions about your terminal and can act on it through tools. Every
+action that types, runs or writes shows an <strong>approval card</strong> with the real command,
+path and tab first.</p>
+<h2 id="keys">Keys</h2>
+<p>All keys can be remapped in <code>modes.toml</code> under <code>[chat.keys]</code>; <code>ctrl+shift+k</code> lists them.</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>alt+i</code> (or click the input)</td>
+<td>type a message; Enter sends, Ctrl+U clears</td>
+</tr>
+<tr>
+<td><code>esc</code>, <code>alt+x</code>, Ctrl+C, the <strong>cancel</strong> button</td>
+<td>cancel the running turn (the stream stops, an open card is denied, a running tool is told to stop: MCP servers get <code>notifications/cancelled</code>, and a stdio server that hasn't stopped within 1 s is killed and reconnected)</td>
+</tr>
+<tr>
+<td><code>alt+y</code> / <code>alt+a</code> / <code>alt+n</code></td>
+<td>card: allow once / allow for this chat / deny</td>
+</tr>
+<tr>
+<td><code>alt+m</code> (or click the model name in the header)</td>
+<td>switch model: configured models, then local/hosted ones to install; ● marks the current one, Esc keeps it. The choice becomes the default (as <code>mouser model default</code>) and applies from the next message; not while a turn runs</td>
+</tr>
+<tr>
+<td><code>alt+l</code></td>
+<td>new chat</td>
+</tr>
+<tr>
+<td><code>alt+pageup</code> / <code>alt+pagedown</code>, wheel</td>
+<td>scroll the transcript</td>
+</tr>
+<tr>
+<td>click a tool row</td>
+<td>show or hide its output</td>
+</tr>
+<tr>
+<td>click a link in a message</td>
+<td>open it (web, mail and file links only)</td>
+</tr>
+</tbody>
+</table>
+<p>Your messages and the model's replies are drawn as Markdown: headings, bold and
+italic, inline code, code blocks on a background (syntax highlighted by their
+language tag), lists, quotes, links and tables
+(<a href="../user/markdown.html">Markdown rendering</a>). A reply that is still streaming in is laid
+out as far as it has come; the rows above stay where they are.</p>
+<p>Cards are answered only with these alt keys or a click, so ordinary typing can never
+approve anything. With nothing running, <code>esc</code> leaves the input and keys go back to
+the shell.</p>
+<h2 id="what-it-sees">What it sees</h2>
+<p>Each message carries the active tab's place (folder or remote host), its visible
+screen and the last 200 scrollback lines (<code>CONTEXT_LINES</code>).</p>
+<ul>
+<li><strong>Secrets are redacted, best effort.</strong> API-key-like tokens (<code>sk-</code>, <code>ghp_</code>, <code>xoxb-</code>,
+  <code>AKIA…</code> and so on), <code>password=</code>/<code>token:</code> values, <code>Authorization: Bearer …</code>, text after a
+  password prompt and private key blocks are replaced with <code>[redacted]</code>. The same
+  filter runs on tool output.</li>
+<li>Screen text and tool output are wrapped in <code>&lt;untrusted source=…&gt;</code> and the system
+  prompt says to treat them as data, never instructions. The card always shows the
+  real action, whatever the model claims.</li>
+<li>A hosted provider shows a one-time note per chat: "Screen text is sent to
+  PROVIDER". A local model (gemma-local, or any loopback URL) keeps everything on
+  the machine.</li>
+</ul>
+<h2 id="tools-and-permissions">Tools and permissions</h2>
+<table>
+<thead>
+<tr>
+<th>Tools</th>
+<th>Names</th>
+<th>Permission</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Mouser's own (the P2 MCP server's, in-process)</td>
+<td><code>mouser.screen_read</code>, <code>mouser.shell_run</code>, <code>mouser.files_trash</code>, …</td>
+<td>reads run unless the broker says never for <code>chat</code>; <code>shell_*</code> and <code>files_mkdir/copy/move/trash</code> <strong>ask on every call</strong> (no "allow for this chat")</td>
+</tr>
+<tr>
+<td>Connected MCP servers and MCP plugins (P3)</td>
+<td><code>SERVER.TOOL</code>, <code>plugin:NAME.TOOL</code></td>
+<td>the server's broker entry (<code>mcp-server:NAME</code> / plugin, <code>tool.NAME</code>); <em>ask</em> shows the card, and "allow for this chat" is remembered until a new chat</td>
+</tr>
+</tbody>
+</table>
+<p>Tool-provider plugins are MCP plugins, so they appear in the second row once
+enabled. Names sent to the model replace dots with <code>__</code> (<code>mouser__shell_run</code>).
+<code>mouser plugin permissions chat shell.type=never</code> blocks a capability for the chat.</p>
+<h2 id="picking-a-model">Picking a model</h2>
+<p>If there is no usable default model (none set, a hosted preset without a key, or the
+local model not downloaded), <code>esc :a</code> opens a picker in the dock instead of the chat. A
+message typed before that is kept and sent once a model is ready. A chat restored at
+launch (the last mode) does not open the picker until you use it.</p>
+<p>The picker lists: Gemma 4 E2B local (default, ~2.84 GB), Gemma 4 E4B local
+(~4.59 GB), OpenAI, xAI, OpenRouter, Kimi (Moonshot), Anthropic, Google, and a custom
+OpenAI- or Anthropic-compatible URL. ↑/↓ and Enter or a click choose; Esc steps back.</p>
+<ul>
+<li><strong>Local</strong>: a consent screen shows the size, the source and the folder
+  (<code>MOUSER_MODELS_DIR</code>, else <code>[models.local] dir</code>, else <code>$MOUSER_HOME/models</code>). Nothing
+  downloads until you say so. A progress bar follows; Esc cancels (downloading again
+  resumes); the file is checked against its pinned SHA256.</li>
+<li><strong>Hosted</strong>: the API key field shows only dots. Tab moves to the optional model name
+  (and, for a custom URL, the URL and API). Enter sends one short test request with the
+  key in memory; only if it works is the key stored in the OS keychain (or a 0600 file,
+  with a warning) and the provider saved.</li>
+<li>Then it becomes the default (<code>[models] default</code>) and the chat continues.</li>
+</ul>
+<h2 id="model">Model</h2>
+<p>The chat uses <code>mouser model default</code> at each turn (docs/models.md). <code>gemma-local</code> is built
+in (<code>mouser model local enable</code>), or runs through <code>mouser model local url</code>. Any
+configured provider works too. The header shows <code>provider/model</code>.</p>
+<h2 id="limits-and-transcripts">Limits and transcripts</h2>
+<ul>
+<li>At most 8 tool steps per turn (<code>MAX_STEPS</code>). After that the model must answer, and
+  saying "continue" goes on. Replies are capped at 1024 tokens; tool output at
+  8,000 characters.</li>
+<li>Transcripts are kept in <code>$MOUSER_HOME/chats/&lt;date&gt;-&lt;id&gt;.jsonl</code> (0600) and rewritten
+  after each turn. Turn this off with <code>[chat] transcripts = false</code> in preferences.toml.
+  Delete the files to remove them; they never go anywhere except the chosen provider.</li>
+</ul>
+<h2 id="code">Code</h2>
+<ul>
+<li><code>mouser_core::agent</code>: <code>Chat</code> (send, cancel, answer, clear), <code>AgentHost</code> (context,
+  tools, check, call, model), redaction and untrusted marking, transcripts. Tested
+  with a scripted fake provider in <code>crates/mouser-core/tests/agent_tests.rs</code>.</li>
+<li><code>mouser_render::modes::chat::ChatMode</code>: the dock (header, transcript, card, input).
+  Tests are in <code>crates/mouser-render/tests/chat_render_tests.rs</code>.</li>
+<li><code>crates/mouser-app/src/chat_host.rs</code>: the app's host (tabs, AppTools with
+  <code>preapproved</code>, MCP clients, broker checks).</li>
+<li><code>cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"</code>:
+  a headless live run against the default model with a sandboxed <code>sh</code> tool.</li>
+</ul>
+<h2 id="as-a-plugin-program">As a plugin program</h2>
+<p><code>plugins/chat</code> (<code>mouser-chat</code>) is the chat mode as a separate program, built only on
+<code>mouser-mode-api</code> with its <code>markdown</code> feature. Installed as a <code>transport = "mode"</code>
+plugin named <code>chat</code>, it replaces the built-in mode (hotkey <code>a</code>). It needs the
+<code>agent.use</code> permission. The agent itself still runs inside Mouser: the plugin sends
+<code>agent.send</code> / <code>agent.cancel</code> / <code>agent.clear</code> and draws the transcript from
+<code>agent.state</code> events, so your keys and models never leave Mouser. Tool-call cards are
+drawn by Mouser's approval popup, not the plugin; the plugin only shows "waiting for
+your answer". The header's model button lists <code>agent.models</code> and sets the default
+with <code>agent.set_default</code>.</p>
+<p>Keys: <code>i</code> type, <code>Enter</code> send, <code>x</code> cancel, <code>m</code> model, <code>l</code> clear, <code>PageUp</code>/<code>PageDown</code>
+scroll. There is no model setup wizard in the plugin yet; with no model it points to
+the preferences mode or <code>mouser model add</code>. Tested through Mouser's StdioMode with a
+fake provider in <code>plugins/chat/tests/through_mouser.rs</code>.</p>
+<h2 id="not-yet">Not yet</h2>
+<ul>
+<li>The plan's <strong>Edit</strong> button on the card.</li>
+<li>A model picker in the dock (use <code>mouser model default</code>).</li>
+<li>Showing cost.</li>
+<li>Images.</li>
+<li>More than one chat at a time.</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/chat.md">docs/chat.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

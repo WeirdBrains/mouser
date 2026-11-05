@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fuzzball protocol — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="fuzzball-protocol">Fuzzball protocol</h1>
+<p>The Fuzzball spec now lives with the <a href="https://crates.io/crates/fuzzball"><code>fuzzball</code></a> crate,
+which Mouser uses for every Fuzzball encode and parse:</p>
+<ul>
+<li>Site: <a href="https://weirdbrains.github.io/fuzzball/">https://weirdbrains.github.io/fuzzball/</a></li>
+<li>Repo: <a href="https://github.com/WeirdBrains/fuzzball">https://github.com/WeirdBrains/fuzzball</a>, spec in <a href="https://github.com/WeirdBrains/fuzzball/tree/main/docs"><code>docs/</code></a></li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/README.md"><code>README.md</code></a>: framing, capabilities, versioning, errors</li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/graphics.md"><code>graphics.md</code></a>: images (upload, place, delete, query)</li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/keyboard.md"><code>keyboard.md</code></a>: structured key events</li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/plugins.md"><code>plugins.md</code></a>: plugin handshake</li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/shell.md"><code>shell.md</code></a>: silent shell actions</li>
+<li><a href="https://github.com/WeirdBrains/fuzzball/blob/main/docs/wire-format.md"><code>wire-format.md</code></a>: exact bytes Mouser sends</li>
+</ul>
+<p>References in Mouser's code to <code>fuzzball docs/&lt;file&gt;.md §N</code> point at those files.
+Mouser's terminal side (upload assembly, image store, placements, keyboard mode per
+screen, plugin grants) is in <code>crates/mouser-core/src/fuzzball.rs</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/protocol/README.md">docs/protocol/README.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>
