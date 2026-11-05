@@ -2,14 +2,15 @@
 //! directory, enable/disable and priority state, the registry by kind, and the
 //! command transport (an executable behind `[mouser]` line commands).
 //!
-//! Everything is a plugin (P6): the built-in modes (commander, chat) and
-//! engines (mouser, skia) are compiled-in plugins with their own `plugin.toml`
-//! ([`BUILTIN_MANIFESTS`], `transport = "builtin"`). Engines may be described
+//! Everything is a plugin (P6): the built-in modes (commander, chat,
+//! preferences) are compiled-in plugins with their own `plugin.toml`
+//! ([`BUILTIN_MANIFESTS`], `transport = "builtin"`); every engine, Mouser's own
+//! `mouser` and `skia` included, is a library. Engines may be described
 //! by `plugin.toml` (`kind = "engine"`, `transport = "library"`, `[engine]`) or
 //! the older `engine.toml`, which is read as the same manifest
 //! ([`Manifest::from_engine`]); their C ABI and loader stay in
-//! `crate::engines`. Built-ins can be disabled, except the `mouser` engine (the
-//! permanent fallback); with every mode off Mouser is a plain terminal.
+//! `crate::engines`. Built-ins can be disabled, and engines except `mouser`
+//! (the last engine tried); with every mode off Mouser is a plain terminal.
 
 use crate::storage;
 use anyhow::{Context, Result, bail};
@@ -535,6 +536,41 @@ pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
 
 pub fn find(name: &str) -> Option<Installed> {
     installed().into_iter().flatten().find(|i| i.manifest.name == name)
+}
+
+/// Refuse a plugin (in `dir`) whose line commands another plugin already provides.
+pub fn check_commands_free(dir: &Path) -> Result<()> {
+    let m = read_manifest(dir)?;
+    for i in installed().into_iter().flatten() {
+        if i.manifest.name != m.name {
+            for c in &m.run.commands {
+                if i.manifest.run.commands.contains(c) {
+                    bail!("command {c:?} is already provided by plugin {}", i.manifest.name);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Give a newly installed plugin its place in the priority order.
+pub fn note_installed(name: &str) {
+    let Some(i) = find(name) else { return };
+    let mut st = State::load();
+    if st.priority.iter().any(|n| n == name) {
+        return;
+    }
+    // A new mode goes after the built-in modes, so the default mode (the
+    // first) stays commander until the user moves it.
+    if i.manifest.provides.iter().any(|p| p.kind == Kind::Mode) {
+        for (b, k, _) in BUILTINS {
+            if k == Kind::Mode && !st.priority.iter().any(|n| n == b) {
+                st.priority.push(b.to_string());
+            }
+        }
+    }
+    st.priority.push(name.to_string());
+    let _ = st.save();
 }
 
 /// Copy a plugin directory (its `plugin.toml` and the files beside it, one level

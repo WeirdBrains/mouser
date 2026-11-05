@@ -48,6 +48,10 @@ tokio = { version = "1", features = ["rt", "time", "net", "io-util"] }
 webpki-roots = "1"
 minijinja = { version = "3", features = ["json", "loop_controls"] }
 minijinja-contrib = { version = "3", features = ["pycompat"] }
+# Plugin and engine downloads (docs/downloads.md): archives and minisign signatures.
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+minisign-verify = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
@@ -58,6 +62,8 @@ keyring = { version = "3", features = ["async-secret-service", "crypto-rust", "t
 
 [dev-dependencies]
 tempfile = "3.10.1"
+# Sign test assets for the download tests.
+minisign = "0.7"
 serial_test = "3.0.0"
 # mcp_acme tests: an in-memory ACME CA behind instant-acme's HttpClient.
 http = "1"

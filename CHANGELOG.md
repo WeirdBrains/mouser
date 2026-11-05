@@ -21,6 +21,7 @@
 - Mouser's Skia renderer is also an engine library on the C ABI (`crates/mouser-engine-skia`, engine `skia`, ABI v2), pixel-identical to the built-in skia engine in a new raster parity test.
 - Engines can ship with Mouser: `engines/<name>/` beside the executable (or the official libraries loose next to a development build) are found after the user's installs, can't be uninstalled, and `MOUSER_ENGINE_DIRS` overrides where they are looked for.
 - The `mouser` (wgpu) and `skia` engines are no longer compiled into Mouser: they ship as engine libraries in `engines/` beside it (a newer one can be installed over them), Mouser no longer links wgpu or Skia, and the `skia` cargo feature is gone. When neither starts, the basic renderer draws; `mouser` can now be skipped after a crash like any engine. The parity tests hold the libraries to golden frames saved from the old built-ins.
+- The install core behind plugin and engine downloads (mouser-core `install` and `downloads`): a download manager on its own threads (4 at once, 2 per server, cancel and retry), HTTPS-only fetching with a size limit and sha256, minisign verification (the official key, or an author's key remembered on first use), safe archive unpacking, and a versioned store (`<name>/<version>/` with `current`, two versions kept) that engine discovery now reads. The CLI and `esc :` commands come next. See docs/storage.md.
 
 ### Fixed
 

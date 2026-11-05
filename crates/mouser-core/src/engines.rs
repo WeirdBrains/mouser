@@ -156,7 +156,21 @@ fn scan(root: &Path, bundled: bool, out: &mut Vec<std::result::Result<Installed,
     dirs.sort();
     for d in dirs {
         let name = d.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let d = active_dir(&d);
         out.push(read_dir_manifest(&d).map(|manifest| Installed { manifest, dir: d.clone(), bundled }).map_err(|e| (name, format!("{e:#}"))));
+    }
+}
+
+/// An engine directory's active copy: the dir itself when it has a manifest,
+/// else the versioned layout `<name>/<version>/` that `current` names (what
+/// `mouser engine install|update` writes; docs/downloads.md).
+fn active_dir(d: &Path) -> PathBuf {
+    if d.join("engine.toml").is_file() || d.join("plugin.toml").is_file() {
+        return d.to_path_buf();
+    }
+    match fs::read_to_string(d.join("current")) {
+        Ok(v) if !v.trim().is_empty() && !v.trim().contains(['/', '\\']) && v.trim() != ".." => d.join(v.trim()),
+        _ => d.to_path_buf(),
     }
 }
 
@@ -261,7 +275,12 @@ pub fn uninstall(name: &str) -> Result<bool> {
             inst.dir.display()
         );
     }
-    fs::remove_dir_all(&inst.dir)?;
+    // The versioned layout: remove `<name>/`, every version with it.
+    let base = match inst.dir.parent() {
+        Some(p) if p.parent() == Some(dir().as_path()) => p.to_path_buf(),
+        _ => inst.dir.clone(),
+    };
+    fs::remove_dir_all(&base)?;
     clear_sentinel(name);
     clear_failure(name);
     let saved = saved_priority();

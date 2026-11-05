@@ -3,6 +3,7 @@ pub mod appearance;
 pub mod commander;
 pub mod compression;
 pub mod connections;
+pub mod downloads;
 pub mod engines;
 pub mod fetch;
 pub mod fileops;
@@ -13,6 +14,7 @@ pub mod grid;
 // Markdown and highlighting live in mouser-mode-api (plugins use them too).
 pub use mouser_mode_api::highlight;
 pub mod input;
+pub mod install;
 pub mod kitty;
 pub mod kitty_graphics;
 pub use mouser_mode_api::markdown;
