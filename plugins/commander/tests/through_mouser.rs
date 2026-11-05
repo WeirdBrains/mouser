@@ -62,10 +62,9 @@ fn draws_and_acts_like_the_built_in_commander() {
     for (step, what) in [("switch_view", "grid"), ("bigger", "bigger grid tiles"), ("switch_view", "carousel"), ("right", "carousel next")] {
         b.action(step, 0);
         m.action(step, 0);
-        let v = same(&mut b, &mut m, what);
-        if what != "list" {
-            assert!(!v.images.is_empty(), "{what}: images shown");
-        }
+        // Thumbnails load in the background on both sides: wait for them.
+        let v = same_when(&mut b, &mut m, what, |v| !v.images.is_empty());
+        assert!(!v.images.is_empty(), "{what}: images shown");
     }
     b.action("switch_view", 0);
     m.action("switch_view", 0);

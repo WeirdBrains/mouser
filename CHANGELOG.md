@@ -18,6 +18,7 @@
 
 - Tests: the headless test UI writes its status file through a per-process temp file and a rename, so a crashed UI and its replacement can't interleave their writes (a flaky engine-fallback test on macOS).
 - Tests: the commander folder test no longer depends on the filesystem's timestamp resolution.
+- Tests: the commander plugin parity test waits for the grid and carousel thumbnails on both sides instead of comparing two empty grids (failed on a fresh, fast machine).
 
 ## [1.3.0] - 2026-11-04
 
