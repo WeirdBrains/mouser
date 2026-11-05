@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
@@ -50,7 +50,21 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers patchelf desktop-file-utils appstream libxml2-utils
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev spirv-headers patchelf desktop-file-utils appstream libxml2-utils
+
+      # Linux builds on Ubuntu 22.04 (glibc 2.35) so the binary runs on older
+      # distributions. 22.04 has no glslc package and old Vulkan headers, so
+      # llama.cpp's Vulkan backend takes both from the LunarG SDK.
+      - name: Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/vk.tar.xz" https://sdk.lunarg.com/sdk/download/latest/linux/vulkan_sdk.tar.xz
+          mkdir -p "$RUNNER_TEMP/vk" && tar -xJf "$RUNNER_TEMP/vk.tar.xz" -C "$RUNNER_TEMP/vk"
+          sdk=$(ls -d "$RUNNER_TEMP"/vk/*/x86_64 | head -1)
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+          echo "CPATH=$sdk/include" >> "$GITHUB_ENV"
+          "$sdk/bin/glslc" --version
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
@@ -127,7 +141,7 @@ jobs:
           docker run --rm -v "$PWD/$W:/work" archlinux:base-devel bash /work/buildpkg.sh
           find "$W" -maxdepth 1 -name "mouser-bin-[0-9]*.pkg.tar.zst" -exec sudo mv {} dist/ \;
           # Checksums for packages
-          (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do [ -f "$f" ] && shasum -a 256 "$f" > "$f.sha256"; done)
+          (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do if [ -f "$f" ]; then shasum -a 256 "$f" > "$f.sha256"; fi; done)
           # Upload extra artifacts
           echo "EXTRA_DONE=1" >> $GITHUB_ENV
       - name: Upload Linux packages
