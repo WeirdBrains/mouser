@@ -50,7 +50,52 @@ mouser plugin permissions preferences run=allow prefs.write=allow
 <p>It reads and writes through Mouser's <code>prefs.*</code> calls, so Mouser still does the
 validation and the comment-keeping write. For a secret, Enter makes Mouser
 show its own key popup. The key you type goes from that popup to the keychain,
-and the plugin only hears that it was saved.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/preferences.md">docs/preferences.md</a></p></section></main>
+and the plugin only hears that it was saved.</p>
+<h2 id="audio">Audio</h2>
+<p>Where the player's sound goes (<code>[audio]</code> in preferences.toml; applies to the next
+clip you open).</p>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Values</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>audio.host</code></td>
+<td><code>auto</code>, <code>jack</code>, <code>alsa</code> (Linux); <code>auto</code> elsewhere</td>
+<td><code>auto</code></td>
+</tr>
+<tr>
+<td><code>audio.output_device</code></td>
+<td><code>default</code> or a device of that host (the dropdown lists them)</td>
+<td><code>default</code></td>
+</tr>
+<tr>
+<td>Active host</td>
+<td>read-only: the host <code>audio.host</code> resolves to right now</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>auto</strong> uses JACK when a JACK server answers (PipeWire's JACK, <code>pipewire-jack</code>,
+  counts), else ALSA. macOS always uses CoreAudio and Windows WASAPI.</li>
+<li><strong>jack</strong> also falls back to ALSA when no JACK server is reachable, so sound never
+  just stops.</li>
+<li>A device that is gone (unplugged, renamed) falls back to the host's default; the
+  player says <code>audio device "NAME" not found; using the default</code>. The player's status
+  shows the host playing, e.g. <code>playing · JACK</code>.</li>
+<li><strong>Building with JACK.</strong> JACK is the optional <code>jack</code> cargo feature
+  (<code>--features mouser-app/jack,mouser-commander/jack</code>); building it needs the JACK
+  headers and <code>jack.pc</code> (Debian/Ubuntu <code>libjack-jackd2-dev</code>, Arch <code>pipewire-jack</code> or
+  <code>jack2</code>). libjack itself is loaded at run time, so a JACK build still starts and
+  plays through ALSA on a machine without it. The official Linux builds include it.
+  Without the feature, <code>jack</code> plays through ALSA and Active host says
+  <code>ALSA (JACK not in this build)</code>.</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/preferences.md">docs/preferences.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
