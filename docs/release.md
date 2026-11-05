@@ -29,6 +29,14 @@ Engines in packages
   - Windows installer: `{app}\engines\`
 - Mouser looks in `engines/` beside itself, `../Resources/engines` (macOS) and `../lib/mouser/engines` (Unix); `MOUSER_ENGINE_DIRS` replaces those ([Engines](./engines.md)).
 
+Signing
+- Every signing step is skipped with a notice when its secrets aren't set, so a release without keys still builds (unsigned). No keys are configured yet.
+- macOS: `MACOS_CERT_P12` (base64 Developer ID Application .p12), `MACOS_CERT_PASSWORD`, `MACOS_SIGN_IDENTITY` sign `mouser-app`, the engine dylibs and `Mouser.app` (hardened runtime); with `APPLE_ID`, `APPLE_TEAM_ID` and `APPLE_APP_PASSWORD` the dmg is notarized and stapled.
+- Windows: `WINDOWS_CERT_PFX` (base64 .pfx) and `WINDOWS_CERT_PASSWORD` sign `mouser-app.exe`, the engine DLLs and `MouserSetup-<ver>.exe` (Authenticode, timestamped).
+- Release files: `MINISIGN_SECRET_KEY` (the key file's text) and `MINISIGN_PASSWORD` add `FILE.minisig` beside every file. The matching public key is the one Mouser pins as its official key (`OFFICIAL_KEY` in `crates/mouser-core/src/install.rs`, unset until then); see [Downloads](./downloads.md).
+- Plugins and engines published from their own repos are signed there.
+- `-full` offline bundles (the `plugins.lock` archives in `plugins/` beside Mouser) are built once the lock has entries; it is empty in this tree.
+
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.
 2. Bump versions (docs-only: PATCH; feature: MINOR), update `CHANGELOG.md`.

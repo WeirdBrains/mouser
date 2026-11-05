@@ -55,6 +55,38 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Sign binaries (macOS, Windows; skipped without the signing secrets)
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          set -eu
+          OUTDIR=target/${{ matrix.target }}/release
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            if [ -z "${MACOS_CERT_P12}" ]; then echo "::notice::MACOS_CERT_P12 not set; macOS binaries are unsigned"; exit 0; fi
+            echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p "" "$RUNNER_TEMP/sign.keychain"
+            security default-keychain -s "$RUNNER_TEMP/sign.keychain"
+            security unlock-keychain -p "" "$RUNNER_TEMP/sign.keychain"
+            security import "$RUNNER_TEMP/cert.p12" -k "$RUNNER_TEMP/sign.keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k "" "$RUNNER_TEMP/sign.keychain"
+            for f in "$OUTDIR/mouser-app" "$OUTDIR"/libmouser_engine_*.dylib; do
+              codesign --force --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" "$f"
+            done
+          else
+            if [ -z "${WINDOWS_CERT_PFX}" ]; then echo "::notice::WINDOWS_CERT_PFX not set; Windows binaries are unsigned"; exit 0; fi
+            echo "$WINDOWS_CERT_PFX" | base64 --decode > "$RUNNER_TEMP/cert.pfx"
+            SIGNTOOL=$(ls "/c/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe | tail -1)
+            for f in "$OUTDIR/mouser-app.exe" "$OUTDIR"/mouser_engine_*.dll; do
+              "$SIGNTOOL" sign /f "$RUNNER_TEMP/cert.pfx" /p "$WINDOWS_CERT_PASSWORD" /fd sha256 /tr http://timestamp.digicert.com /td sha256 "$f"
+            done
+          fi
+
       - name: Package
         shell: bash
         run: |
@@ -150,6 +182,10 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ github.ref_name }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           set -eux
           VER="${VERSION#v}"
@@ -173,7 +209,16 @@ jobs:
             <key>LSMinimumSystemVersion</key><string>10.13</string>
           </dict></plist>
           PLIST
+          if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+            codesign --force --deep --timestamp --options runtime --sign "$MACOS_SIGN_IDENTITY" Mouser.app
+          fi
           hdiutil create -fs HFS+ -volname "Mouser ${VER}" -srcfolder "Mouser.app" "Mouser-${{ matrix.target }}.dmg"
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+            xcrun notarytool submit "Mouser-${{ matrix.target }}.dmg" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+            xcrun stapler staple "Mouser-${{ matrix.target }}.dmg"
+          else
+            echo "::notice::APPLE_ID or MACOS_SIGN_IDENTITY not set; the dmg is not signed or notarized"
+          fi
           shasum -a 256 "Mouser-${{ matrix.target }}.dmg" > "Mouser-${{ matrix.target }}.dmg.sha256"
           echo "DMG_DONE=1" >> $GITHUB_ENV
       - name: Upload macOS DMG
@@ -190,6 +235,8 @@ jobs:
         shell: pwsh
         env:
           VERSION: ${{ github.ref_name }}
+          WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = "Stop"
           choco install -y innosetup
@@ -199,6 +246,12 @@ jobs:
           $ver = $Env:VERSION.Substring(1)
           (Get-Content packaging/windows/installer.iss.tmpl).Replace("@VERSION@",$ver) | Set-Content packaging/windows/installer.iss
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/windows/installer.iss
+          if ($Env:WINDOWS_CERT_PFX) {
+            $pfx = Join-Path $Env:RUNNER_TEMP "cert.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($Env:WINDOWS_CERT_PFX))
+            $signtool = (Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1).FullName
+            & $signtool sign /f $pfx /p $Env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 "dist\MouserSetup-$ver.exe"
+          } else { Write-Output "::notice::WINDOWS_CERT_PFX not set; the installer is unsigned" }
           Get-FileHash -Algorithm SHA256 "dist\MouserSetup-$ver.exe" | ForEach-Object { $_.Hash.ToLower() } | Out-File -FilePath "dist\MouserSetup-$ver.exe.sha256" -NoNewline -Encoding ASCII
       - name: Upload Windows installer
         if: runner.os == 'Windows'
@@ -240,6 +293,21 @@ jobs:
           echo "notes<<EOF" >> $GITHUB_OUTPUT
           cat notes.md >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: minisign the release files (skipped without MINISIGN_SECRET_KEY)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${MINISIGN_SECRET_KEY}" ]; then echo "::notice::MINISIGN_SECRET_KEY not set; release files are not minisigned"; exit 0; fi
+          curl -sSfL https://github.com/jedisct1/minisign/releases/download/0.11/minisign-0.11-linux.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          MS=$(find "$RUNNER_TEMP" -type f -name minisign -path '*x86_64*' | head -1)
+          echo "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          find dist -type f ! -name '*.sha256' ! -name '*.minisig' | while read -r f; do
+            echo "$MINISIGN_PASSWORD" | "$MS" -S -s "$RUNNER_TEMP/minisign.key" -m "$f"
+          done
+          rm -f "$RUNNER_TEMP/minisign.key"
 
       - name: Create Release
         env:

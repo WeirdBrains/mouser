@@ -25,6 +25,7 @@
 - `mouser plugin|engine install|update|rollback|remove|list|retry|cancel`, `mouser --install SRC [--wait] [--yes]` and `mouser downloads [--cancel ID|all]`: install from an official name, `gh:Owner/Repo[@tag]`, an `https://` URL, a path or archive, or `crate:NAME`, with every check shown on a card before installing (`--yes` skips the question). Engine libraries are probed in a separate process. See docs/downloads.md.
 - `esc :plugin VERB` / `:engine VERB` with the same verbs as the CLI, the short forms (`:pi`, `:ei`, `:pu`, `:eu`, …), `:downloads` and `:cancel`. Installs run on the download manager and ask on a card; progress shows on the status line. See docs/downloads.md.
 - `mouser engine bundle [--from DIR] --out DIR`: copies Mouser's engine libraries into `DIR/<name>/` with their engine.toml. Release archives, `.deb`/`.rpm`/Arch packages (`/usr/lib/mouser/engines`), `Mouser.app`, the Homebrew formula and the Windows installer now ship the engines, and Mouser also looks in `../lib/mouser/engines` beside itself on Unix. See docs/release.md.
+- Release signing, ready for keys: the release workflow signs the macOS binaries, engines and `Mouser.app` (and notarizes the dmg), Authenticode-signs the Windows binaries and installer, and minisigns every release file when the matching secrets are set; without them it builds unsigned with a notice. See docs/release.md.
 
 ### Fixed
 
