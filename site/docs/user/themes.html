@@ -15,44 +15,58 @@
 In system mode Mouser reads the desktop colour-scheme preference (GNOME/freedesktop
 <code>color-scheme</code>, macOS <code>AppleInterfaceStyle</code>); if the desktop does not explicitly prefer
 light, the dark variant is used. <code>MOUSER_SYSTEM_DARK=1|0</code> overrides detection.</p>
-<p>Built-in themes (dark/light variants):
-- Red Star (default)
-  - Dark: foreground <code>#E6FBFA</code>, background <code>#04192A</code>
-  - Light: foreground <code>#0B2A3F</code>, background <code>#F2FAFB</code>
-  - Unedited theme files from older releases are upgraded on start; edited files are kept.
-  - Palette source: <code>~/Pictures/Wallpapers/redstar-title-starlight/redstar-wallpaper-title-1080x2400-starlight.png</code>
-  - Extracted accents and highlights:
-    - Background gradient: top <code>#04192A</code> → bottom <code>#020F1B</code>
-    - Primary accent: <code>#2FD8E5</code>
-    - Secondary accents: <code>#2698A7</code>, <code>#44B9C1</code>, <code>#49B9C8</code>
-    - Highlights: <code>#94F3F2</code>, <code>#E6FBFA</code>
-- Tokyo Night
-- Catppuccin
-- Gruvbox
-- Dracula
-- Nord
-- One Dark / One Light
-- Solarized
-- Rose Pine
-- Kanagawa
-- GitHub</p>
-<p>Switching
-- Sidebar → <strong>Appearance</strong>, or <code>:theme</code>, opens the switcher: built-in themes first, then user themes
+<p>Built-in themes (dark/light variants):</p>
+<ul>
+<li>Red Star (default)</li>
+<li>Dark: foreground <code>#E6FBFA</code>, background <code>#04192A</code></li>
+<li>Light: foreground <code>#0B2A3F</code>, background <code>#F2FAFB</code></li>
+<li>Unedited theme files from older releases are upgraded on start; edited files are kept.</li>
+<li>Palette source: <code>~/Pictures/Wallpapers/redstar-title-starlight/redstar-wallpaper-title-1080x2400-starlight.png</code></li>
+<li>Extracted accents and highlights:<ul>
+<li>Background gradient: top <code>#04192A</code> → bottom <code>#020F1B</code></li>
+<li>Primary accent: <code>#2FD8E5</code></li>
+<li>Secondary accents: <code>#2698A7</code>, <code>#44B9C1</code>, <code>#49B9C8</code></li>
+<li>Highlights: <code>#94F3F2</code>, <code>#E6FBFA</code></li>
+</ul>
+</li>
+<li>Tokyo Night</li>
+<li>Catppuccin</li>
+<li>Gruvbox</li>
+<li>Dracula</li>
+<li>Nord</li>
+<li>One Dark / One Light</li>
+<li>Solarized</li>
+<li>Rose Pine</li>
+<li>Kanagawa</li>
+<li>GitHub</li>
+</ul>
+<p>Switching</p>
+<ul>
+<li>Sidebar → <strong>Appearance</strong>, or <code>:theme</code>, opens the switcher: built-in themes first, then user themes
   found in <code>~/.mouser/themes/</code>, plus dark/light/system mode. Moving the selection previews live;
-  Apply saves <code>theme</code>/<code>mode</code> to <code>preferences.toml</code>. <code>:theme &lt;name&gt;</code> and <code>:mode &lt;m&gt;</code> do the same directly.</p>
-<p>Editing
-- <strong>Edit colours &amp; font</strong> in the switcher (or <code>:edit-theme</code>) edits the active variant: foreground,
+  Apply saves <code>theme</code>/<code>mode</code> to <code>preferences.toml</code>. <code>:theme &lt;name&gt;</code> and <code>:mode &lt;m&gt;</code> do the same directly.</li>
+</ul>
+<p>Editing</p>
+<ul>
+<li><strong>Edit colours &amp; font</strong> in the switcher (or <code>:edit-theme</code>) edits the active variant: foreground,
   background, cursor, accent and the 16-colour palette as hex (<code>#rrggbb</code> or <code>#rgb</code>) with swatches,
-  plus font family and size. Valid edits preview live; invalid fields are outlined in red.
-- Save writes <code>~/.mouser/themes/&lt;Theme&gt;/&lt;variant&gt;.toml</code> and the font to <code>preferences.toml</code>.
-- Theme files may contain <code>cursor</code>, <code>accent</code> and <code>palette = [16 colours]</code>; all are optional.</p>
-<p>Accuracy
-- Palettes are sourced from each theme’s canonical definitions (foreground/background primaries).</p>
-<p>Storage
-- Themes live under <code>~/.mouser/themes/&lt;ThemeName&gt;/{dark.toml,light.toml}</code> (override with <code>MOUSER_HOME</code>).
-- Built-ins are written on first run; editing copies from built-ins.</p>
-<p>Mode and resolution
-- Preferences select <code>theme</code> and <code>mode</code> (<code>light</code>/<code>dark</code>/<code>system</code>). For tests, system mode is simulated via <code>MOUSER_SYSTEM_DARK=1</code>.</p>
+  plus font family and size. Valid edits preview live; invalid fields are outlined in red.</li>
+<li>Save writes <code>~/.mouser/themes/&lt;Theme&gt;/&lt;variant&gt;.toml</code> and the font to <code>preferences.toml</code>.</li>
+<li>Theme files may contain <code>cursor</code>, <code>accent</code> and <code>palette = [16 colours]</code>; all are optional.</li>
+</ul>
+<p>Accuracy</p>
+<ul>
+<li>Palettes are sourced from each theme’s canonical definitions (foreground/background primaries).</li>
+</ul>
+<p>Storage</p>
+<ul>
+<li>Themes live under <code>~/.mouser/themes/&lt;ThemeName&gt;/{dark.toml,light.toml}</code> (override with <code>MOUSER_HOME</code>).</li>
+<li>Built-ins are written on first run; editing copies from built-ins.</li>
+</ul>
+<p>Mode and resolution</p>
+<ul>
+<li>Preferences select <code>theme</code> and <code>mode</code> (<code>light</code>/<code>dark</code>/<code>system</code>). For tests, system mode is simulated via <code>MOUSER_SYSTEM_DARK=1</code>.</li>
+</ul>
 <h3 id="font-picker">Font picker</h3>
 <p>Clicking (or tabbing to) the editor's <strong>Font family</strong> field — or running <code>:font</code>
 with no argument — opens a list of the font families installed on the system,

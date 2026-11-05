@@ -254,14 +254,16 @@ stays unless the maintainer decides otherwise.</p>
 </ol>
 <h2 id="modes-phase-1-commander-oct-31-t153ut164u">Modes Phase 1: commander (Oct 31, t153u–t164u)</h2>
 <p>State: Phase 1 complete (see "Phase 1 finished" below).</p>
-<p>Decisions:
-- Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. <code>mouser_render::modes::{Mode trait, Host}</code>; core has no commander branching.
-- Commander is the only plugin and the default, active at startup.
-- <code>esc :</code> + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); <code>esc :c</code> again turns it on. Lone Esc waits 1200 ms (<code>[keys] leader_timeout_ms</code>; 500 ms before 1.0.1) then goes to the shell; <code>alt+:</code> opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).
-- View switch is in commander's own keymap: alt+t default (shadows readline transpose-words). All keys <code>&lt;alt&gt;+&lt;key&gt;</code>, remappable in <code>~/.mouser/modes.toml</code> <code>[commander.keys]</code>; unbound alt keys pass to the shell. ctrl+shift+k keymap window, ctrl+shift+m modes window.
-- Previews lazy on a worker thread, only what is on screen; queue replaced as you move. Carousel: 1 full (focused) + 2 partial neighbours (cropped via src rect).
-- Open: dir -&gt; types <code>^U cd -- '&lt;path&gt;'</code>; video/audio -&gt; xdg-open/open (not an in-app player, deviation); else full-width image/text view.
-- cwd: /proc/<pid>/cwd, fallback OSC 7.</p>
+<p>Decisions:</p>
+<ul>
+<li>Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. <code>mouser_render::modes::{Mode trait, Host}</code>; core has no commander branching.</li>
+<li>Commander is the only plugin and the default, active at startup.</li>
+<li><code>esc :</code> + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); <code>esc :c</code> again turns it on. Lone Esc waits 1200 ms (<code>[keys] leader_timeout_ms</code>; 500 ms before 1.0.1) then goes to the shell; <code>alt+:</code> opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).</li>
+<li>View switch is in commander's own keymap: alt+t default (shadows readline transpose-words). All keys <code>&lt;alt&gt;+&lt;key&gt;</code>, remappable in <code>~/.mouser/modes.toml</code> <code>[commander.keys]</code>; unbound alt keys pass to the shell. ctrl+shift+k keymap window, ctrl+shift+m modes window.</li>
+<li>Previews lazy on a worker thread, only what is on screen; queue replaced as you move. Carousel: 1 full (focused) + 2 partial neighbours (cropped via src rect).</li>
+<li>Open: dir -&gt; types <code>^U cd -- '&lt;path&gt;'</code>; video/audio -&gt; xdg-open/open (not an in-app player, deviation); else full-width image/text view.</li>
+<li>cwd: /proc/<pid>/cwd, fallback OSC 7.</li>
+</ul>
 <p>Files: crates/mouser-core/src/{modes.rs,commander.rs,lib.rs}; crates/mouser-render/src/modes/{mod.rs,commander.rs}, src/{lib.rs,ui.rs,frame.rs}, tests/commander_render_tests.rs, Cargo.toml; crates/mouser-app/src/{main.rs,tabs.rs}; Cargo.toml (image jpeg/gif/webp/bmp); docs/modes.md; CHANGELOG.md.</p>
 <p>Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arrows/enter, esc :c, ctrl+shift+k/m); build package (not installed) and give <code>sudo pacman -U</code> path; third-party mode loading (future, see docs/modes.md).</p>
 <h3 id="phase-1-finished-t167ut168u-stop-here-no-later-phase">Phase 1 finished (t167u/t168u) — STOP here, no later phase</h3>
