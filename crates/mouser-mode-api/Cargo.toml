@@ -13,6 +13,13 @@ serde_json.workspace = true
 serde_bytes = "0.11"
 rmp-serde = "1.3"
 memmap2 = "0.9"
+# Markdown layout and code highlighting (`markdown` feature).
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+unicode-width = { version = "0.1.14", optional = true }
+
+[features]
+# `markdown` and `highlight`: lay out Markdown into rows and panel items (chat, previews).
+markdown = ["dep:pulldown-cmark", "dep:unicode-width"]
 
 [lints]
 workspace = true

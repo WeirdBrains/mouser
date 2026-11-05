@@ -581,6 +581,13 @@ pub struct ModalState {
     pub rect: Rect,
 }
 
+#[allow(clippy::derivable_impls)]
+impl Default for UiAction {
+    fn default() -> Self {
+        UiAction::None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UiAction {
     /// Approval popup answer: 0 allow once, 1 always, 2 deny, 3 never.

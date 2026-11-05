@@ -1,0 +1,21 @@
+[package]
+name = "mouser-chat"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Mouser's chat mode as a plugin: the agent runs in Mouser (models, keys, tools), this program draws the conversation"
+publish = false
+
+[dependencies]
+mouser-mode-api = { path = "../../crates/mouser-mode-api", features = ["markdown"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+mouser-core = { path = "../../crates/mouser-core" }
+mouser-render = { path = "../../crates/mouser-render" }
+tempfile = "3.10.1"
+anyhow.workspace = true
+
+[lints]
+workspace = true

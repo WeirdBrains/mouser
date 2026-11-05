@@ -12,6 +12,7 @@ members = [
   "crates/mouser-llm",
   # Modes as plugin programs (transport = "mode"), on mouser-mode-api only.
   "plugins/preferences",
+  "plugins/chat",
 ]
 resolver = "2"
 
