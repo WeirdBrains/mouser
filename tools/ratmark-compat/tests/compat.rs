@@ -30,7 +30,13 @@ fn fix_rows_fit_by_ratatuis_width() {
     for d in corpus() {
         for w in [24, 40, 80] {
             let r = rows(Who::Fix, &d.src, w);
-            assert_eq!(over_unicode(&r, w), 0, "{} at {w}: {:?}", d.name, r.iter().filter(|x| unicode_width::UnicodeWidthStr::width(x.as_str()) > w).collect::<Vec<_>>());
+            assert_eq!(
+                over_unicode(&r, w),
+                0,
+                "{} at {w}: {:?}",
+                d.name,
+                r.iter().filter(|x| unicode_width::UnicodeWidthStr::width(x.as_str()) > w).collect::<Vec<_>>()
+            );
         }
     }
 }
