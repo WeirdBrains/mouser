@@ -44,6 +44,8 @@ fn plays_through_shared_memory_at_the_clip_rate() {
         std::env::set_var("MOUSER_PLUGIN_DIRS", "");
     }
     if !mouser_render::modes::player::available() {
+        // CI sets MOUSER_REQUIRE_FFMPEG so the 60 fps path can't be skipped silently.
+        assert!(std::env::var_os("MOUSER_REQUIRE_FFMPEG").is_none(), "MOUSER_REQUIRE_FFMPEG is set but ffmpeg is not installed");
         eprintln!("ffmpeg not installed, skipped");
         return;
     }
