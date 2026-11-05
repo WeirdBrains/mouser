@@ -6,6 +6,7 @@ members = [
   "crates/mouser-engine-abi",
   "crates/mouser-mode-api",
   "crates/mouser-engine-example",
+  "crates/mouser-engine-wgpu",
   "crates/mouser-app",
   "crates/icon-tools",
   # The built-in local model (llama.cpp); mouser-app's default `local-llm` feature.

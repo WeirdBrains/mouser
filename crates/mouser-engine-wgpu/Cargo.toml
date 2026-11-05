@@ -1,0 +1,18 @@
+[package]
+name = "mouser-engine-wgpu"
+edition = "2024"
+version = "0.1.0"
+license = "BSD-3-Clause"
+description = "Mouser's wgpu renderer (engine \"mouser\") as an engine library on the C ABI (mouser-engine-abi v2)"
+repository = ""
+publish = false
+
+[lib]
+name = "mouser_engine_wgpu"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mouser-engine-abi = { path = "../mouser-engine-abi" }
+wgpu.workspace = true
+pollster.workspace = true
+raw-window-handle = "0.6"

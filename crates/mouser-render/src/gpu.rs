@@ -72,7 +72,9 @@ struct Atlas {
 }
 
 pub struct GpuPainter {
-    surface: wgpu::Surface<'static>,
+    /// The window surface, or `None` when drawing offscreen into `target`.
+    surface: Option<wgpu::Surface<'static>>,
+    target: Option<wgpu::Texture>,
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
@@ -118,6 +120,47 @@ fn write_region(queue: &wgpu::Queue, texture: &wgpu::Texture, x: u32, y: u32, w:
     );
 }
 
+fn offscreen_target(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("mouser offscreen"),
+        size: wgpu::Extent3d { width: config.width, height: config.height, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: config.format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    })
+}
+
+/// Copy an `Rgba8Unorm` texture back as `0x00RRGGBB` pixels.
+fn read_texture(device: &wgpu::Device, queue: &wgpu::Queue, texture: &wgpu::Texture, w: u32, h: u32) -> Vec<u32> {
+    let row = (w * 4).div_ceil(256) * 256;
+    let buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("mouser readback"),
+        size: (row * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+    enc.copy_texture_to_buffer(
+        wgpu::ImageCopyTexture { texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::ImageCopyBuffer { buffer: &buf, layout: wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    queue.submit(Some(enc.finish()));
+    let slice = buf.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    device.poll(wgpu::Maintain::Wait);
+    let data = slice.get_mapped_range();
+    let mut out = Vec::with_capacity((w * h) as usize);
+    for y in 0..h as usize {
+        let r = &data[y * row as usize..][..w as usize * 4];
+        out.extend(r.as_chunks::<4>().0.iter().map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32));
+    }
+    out
+}
+
 fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }
@@ -127,9 +170,20 @@ impl GpuPainter {
     pub fn new(window: Arc<Window>, width: u32, height: u32) -> Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::PRIMARY, ..Default::default() });
         let surface = instance.create_surface(window).map_err(|e| anyhow!("surface: {e}"))?;
+        Self::with_target(&instance, Some(surface), width, height)
+    }
+
+    /// Draw into an offscreen `Rgba8Unorm` texture instead of a window (tests
+    /// compare it with the engine library; any adapter, software ones too).
+    pub fn offscreen(width: u32, height: u32) -> Result<Self> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
+        Self::with_target(&instance, None, width, height)
+    }
+
+    fn with_target(instance: &wgpu::Instance, surface: Option<wgpu::Surface<'static>>, width: u32, height: u32) -> Result<Self> {
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(&surface),
+            compatible_surface: surface.as_ref(),
             force_fallback_adapter: false,
         }))
         .ok_or_else(|| anyhow!("no compatible GPU adapter"))?;
@@ -143,19 +197,28 @@ impl GpuPainter {
             None,
         ))
         .map_err(|e| anyhow!("device: {e}"))?;
-        let caps = surface.get_capabilities(&adapter);
-        let format = *caps.formats.iter().find(|f| !f.is_srgb()).or(caps.formats.first()).ok_or_else(|| anyhow!("surface has no formats"))?;
+        let (format, alpha_mode) = match &surface {
+            Some(surface) => {
+                let caps = surface.get_capabilities(&adapter);
+                let format = *caps.formats.iter().find(|f| !f.is_srgb()).or(caps.formats.first()).ok_or_else(|| anyhow!("surface has no formats"))?;
+                (format, caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto))
+            }
+            None => (wgpu::TextureFormat::Rgba8Unorm, wgpu::CompositeAlphaMode::Auto),
+        };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
             width: width.max(1),
             height: height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: caps.alpha_modes.first().copied().unwrap_or(wgpu::CompositeAlphaMode::Auto),
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        if let Some(surface) = &surface {
+            surface.configure(&device, &config);
+        }
+        let target = surface.is_none().then(|| offscreen_target(&device, &config));
 
         let shader =
             device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("mouser"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
@@ -243,6 +306,7 @@ impl GpuPainter {
         let description = format!("{} ({:?}, {:?})", info.name, info.backend, format);
         Ok(Self {
             surface,
+            target,
             device,
             queue,
             config,
@@ -293,7 +357,15 @@ impl GpuPainter {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
-        self.surface.configure(&self.device, &self.config);
+        match &self.surface {
+            Some(s) => s.configure(&self.device, &self.config),
+            None => self.target = Some(offscreen_target(&self.device, &self.config)),
+        }
+    }
+
+    /// The offscreen target's pixels as `0x00RRGGBB`, row by row (`None` on a window).
+    pub fn read_pixels(&self) -> Option<Vec<u32>> {
+        Some(read_texture(&self.device, &self.queue, self.target.as_ref()?, self.config.width, self.config.height))
     }
 
     fn reset_atlas(&mut self, size: u32, generation: u64) {
@@ -457,18 +529,26 @@ impl GpuPainter {
         let ub: Vec<u8> = u.iter().flat_map(|f| f.to_ne_bytes()).collect();
         self.queue.write_buffer(&self.uniforms, 0, &ub);
 
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.surface.configure(&self.device, &self.config);
-                return false;
-            }
-            Err(e) => {
-                log::warn!("gpu frame skipped: {e}");
-                return false;
-            }
+        let frame = match &self.surface {
+            None => None,
+            Some(surface) => match surface.get_current_texture() {
+                Ok(f) => Some(f),
+                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    surface.configure(&self.device, &self.config);
+                    return false;
+                }
+                Err(e) => {
+                    log::warn!("gpu frame skipped: {e}");
+                    return false;
+                }
+            },
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let texture = match (&frame, &self.target) {
+            (Some(f), _) => &f.texture,
+            (None, Some(t)) => t,
+            (None, None) => return false,
+        };
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let bg = self.color(list.clear);
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
         {
@@ -507,7 +587,9 @@ impl GpuPainter {
             }
         }
         self.queue.submit(Some(encoder.finish()));
-        frame.present();
+        if let Some(frame) = frame {
+            frame.present();
+        }
         true
     }
 }

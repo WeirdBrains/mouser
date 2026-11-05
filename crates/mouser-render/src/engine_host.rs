@@ -145,7 +145,8 @@ pub fn serve(lib: &Path, name: &str, input: impl Read, output: impl Write) -> Re
                                 y: geti(&mut rx)?,
                                 w: geti(&mut rx)?,
                                 h: geti(&mut rx)?,
-                                color: get32(&mut rx)?,
+                                // v1 engines get opaque colours; v2 keep `255 - opacity` on top.
+                                color: get32(&mut rx)? & if lib.abi() >= 2 { u32::MAX } else { 0xFF_FFFF },
                             };
                             ops.push(abi::MouserOp { kind: abi::OP_RECT, index: rects.len() as u32 });
                             rects.push(r);

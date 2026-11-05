@@ -410,7 +410,8 @@ impl CustomEngine {
     pub fn create(lib: CustomLibrary, window: &Arc<Window>, width: u32, height: u32) -> Result<Self> {
         let surface = surface_of(window)?;
         let handle = lib.create_raw(&surface, width, height)?;
-        Ok(Self { handle, buf: FrameBuf::default(), _window: window.clone(), lib })
+        let buf = FrameBuf { keep_alpha: lib.abi() >= 2, ..Default::default() };
+        Ok(Self { handle, buf, _window: window.clone(), lib })
     }
 }
 
@@ -446,6 +447,9 @@ impl Engine for CustomEngine {
 /// Reusable C-side arrays for one frame.
 #[derive(Default)]
 pub struct FrameBuf {
+    /// ABI v2: keep a colour's top byte (`255 - opacity`, 0 = opaque) so the
+    /// engine can blend translucent fills; v1 engines get opaque colours.
+    pub keep_alpha: bool,
     ops: Vec<abi::MouserOp>,
     rects: Vec<abi::MouserRect>,
     glyphs: Vec<abi::MouserGlyph>,
@@ -465,7 +469,7 @@ impl FrameBuf {
             match *op {
                 DrawOp::Rect { x, y, w, h, color } => {
                     self.ops.push(abi::MouserOp { kind: abi::OP_RECT, index: self.rects.len() as u32 });
-                    self.rects.push(abi::MouserRect { x, y, w, h, color: color & 0xFF_FFFF });
+                    self.rects.push(abi::MouserRect { x, y, w, h, color: if self.keep_alpha { color } else { color & 0xFF_FFFF } });
                 }
                 DrawOp::Glyph { x, y, ch, color } => {
                     let g = fonts.glyph(ch);

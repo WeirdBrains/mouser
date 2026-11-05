@@ -162,6 +162,10 @@ typedef struct {
 const MouserEngineV2 *mouser_engine_v2(void);
 ```
 
+In v2, rect and glyph colours keep their top byte: `255 - opacity`
+(0 = opaque, so plain `0xRRGGBB` colours stay opaque). v2 engines blend
+translucent fills like the built-in renderers; v1 engines get opaque colours.
+
 Mouser tries `mouser_engine_v2` first and picks the newest ABI both sides
 speak (it speaks 1–2); a null return or a missing symbol falls back to
 `mouser_engine_v1`, so v1 engines keep loading. Export both entry points to
@@ -237,6 +241,28 @@ Each of these is also `mouser plugin <same> --kind engine`.
 
 Installing from a URL is not supported in v1: download the engine yourself and install
 the directory (no network access from the terminal, no unsigned code fetched for you).
+
+## Mouser's wgpu renderer as an engine library
+
+`crates/mouser-engine-wgpu` (library `mouser_engine_wgpu`, engine name
+`mouser`, ABI v2 only) is the built-in wgpu renderer ported to the C ABI: the
+same shaders, instanced quads, R8 glyph atlas (keyed by `MouserGlyph::key`),
+image textures and blending. It presents to the window surfaces (Wayland,
+Xlib, Xcb, AppKit, Win32) or, in the pixel host, renders offscreen and copies
+into `MouserPixels`. It also answers `caps` (max texture size) and `evict`.
+
+Parity is tested, not assumed: `crates/mouser-render/tests/wgpu_engine_parity.rs`
+renders a full frame (styled text, Unicode, the cursor, tabs, the sidebar, a
+status line, a scaled image and a translucent overlay) offscreen through the
+built-in `GpuPainter` and through the library's C ABI frame, twice (cold and
+warm caches) and after a resize, and requires every channel of every pixel
+to be within 2. It runs on any wgpu adapter, including software ones
+(llvmpipe/lavapipe); CI on Linux installs Mesa's and sets
+`MOUSER_REQUIRE_GPU=1` so it can't be skipped there.
+`crates/mouser-engine-wgpu/tests/c_abi.rs` drives the C table on the pixel
+surface. The built-in renderer stays until the library is shipped and
+installed by default (see the plan's step 6); the library can't be installed
+under the name `mouser` while the built-in engine has it.
 
 ## 6. Built-in engines
 

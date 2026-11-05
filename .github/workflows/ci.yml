@@ -39,7 +39,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers ffmpeg
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers ffmpeg mesa-vulkan-drivers libgl1-mesa-dri libegl1
 
       # ffmpeg for the player tests (the commander plugin's 60 fps shm path).
       - name: Install ffmpeg (macOS)
@@ -65,6 +65,9 @@ jobs:
       - name: test
         env:
           MOUSER_REQUIRE_FFMPEG: "1"
+          # Linux has a software adapter (lavapipe/llvmpipe): the wgpu engine
+          # parity tests must run there; elsewhere they run when wgpu finds one.
+          MOUSER_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo test --workspace
 
 
