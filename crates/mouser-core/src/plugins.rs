@@ -195,7 +195,12 @@ impl Manifest {
         if !crate::engines::valid_name(&self.name) {
             bail!("invalid plugin name {:?} (use a-z, 0-9, - and _)", self.name);
         }
-        if BUILTINS.iter().any(|b| b.0 == self.name) || crate::engines::is_builtin(&self.name) {
+        // A built-in mode's name may be taken by a `transport = "mode"`
+        // plugin, which replaces it (decision 5; how the plugin builds of
+        // commander, chat and preferences take over). Other built-in names
+        // stay reserved.
+        let takes_over = self.run.transport == Transport::Mode && self.provides.iter().all(|p| p.kind == Kind::Mode);
+        if BUILTINS.iter().any(|b| b.0 == self.name && !(b.1 == Kind::Mode && takes_over)) || crate::engines::is_builtin(&self.name) {
             bail!("{:?} is a built-in name", self.name);
         }
         if self.api != API {
@@ -315,7 +320,9 @@ fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
         bail!("[mode] hotkey must be one lowercase letter or digit, not {:?}", m.hotkey);
     }
     // `p` toggles the mode picker; built-in modes keep theirs.
-    if m.hotkey == "p" || builtin_hotkeys().contains(&m.hotkey) {
+    // A plugin taking over a built-in mode keeps that mode's hotkey.
+    let own = BUILTINS.iter().any(|b| b.0 == name) && builtin_manifest(name).and_then(|b| b.mode).is_some_and(|b| b.hotkey == m.hotkey);
+    if !own && (m.hotkey == "p" || builtin_hotkeys().contains(&m.hotkey)) {
         bail!("[mode] hotkey {:?} is taken by Mouser (built-ins use {})", m.hotkey, builtin_hotkeys().join(", "));
     }
     let mut ids = BTreeSet::new();
@@ -399,10 +406,58 @@ pub fn dir() -> PathBuf {
     storage::resolve_home().join("plugins")
 }
 
+/// Where an installed plugin was found. Earlier wins when two have the
+/// same name: a user install overrides the offline bundle, which overrides
+/// a system packager's copy (decision 5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// `$MOUSER_HOME/plugins` (user-writable; `install` and `uninstall` act here).
+    User,
+    /// `plugins/` beside the Mouser executable (the `-full` offline bundle;
+    /// on macOS also `Contents/Resources/plugins`).
+    Bundle,
+    /// A packager's read-only dir: `/usr/lib/mouser/plugins`,
+    /// `/usr/local/lib/mouser/plugins` (not on Windows).
+    System,
+}
+
+impl Source {
+    pub fn name(self) -> &'static str {
+        match self {
+            Source::User => "user",
+            Source::Bundle => "bundle",
+            Source::System => "system",
+        }
+    }
+}
+
+/// The plugin directories, best first. `MOUSER_PLUGIN_DIRS` (a path list)
+/// replaces the bundle and system dirs, for packagers and tests; set it empty
+/// to search only `$MOUSER_HOME/plugins`.
+pub fn roots() -> Vec<(Source, PathBuf)> {
+    let mut v = vec![(Source::User, dir())];
+    if let Some(list) = std::env::var_os("MOUSER_PLUGIN_DIRS") {
+        v.extend(std::env::split_paths(&list).filter(|p| !p.as_os_str().is_empty()).map(|p| (Source::System, p)));
+        return v;
+    }
+    if let Some(exe) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        v.push((Source::Bundle, exe.join("plugins")));
+        if cfg!(target_os = "macos") {
+            v.push((Source::Bundle, exe.join("../Resources/plugins")));
+        }
+    }
+    if !cfg!(windows) {
+        v.push((Source::System, PathBuf::from("/usr/lib/mouser/plugins")));
+        v.push((Source::System, PathBuf::from("/usr/local/lib/mouser/plugins")));
+    }
+    v
+}
+
 #[derive(Debug, Clone)]
 pub struct Installed {
     pub manifest: Manifest,
     pub dir: PathBuf,
+    pub source: Source,
 }
 
 impl Installed {
@@ -423,18 +478,49 @@ fn read_manifest(d: &Path) -> Result<Manifest> {
     Manifest::parse(&fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?)
 }
 
-/// Installed plugins (broken ones as errors), sorted by directory name.
-pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
-    let mut out = Vec::new();
-    let Ok(rd) = fs::read_dir(dir()) else { return out };
-    let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-    dirs.sort();
-    for d in dirs {
-        let name = d.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        if name.starts_with('.') {
-            continue;
+/// A plugin directory's active copy: the dir itself when it has a
+/// `plugin.toml`, else the versioned layout `<name>/<version>/` picked by
+/// `current` (a directory or symlink, or a file naming the version, since
+/// Windows symlinks need admin).
+fn active_dir(d: &Path) -> PathBuf {
+    if d.join("plugin.toml").is_file() {
+        return d.to_path_buf();
+    }
+    let cur = d.join("current");
+    if cur.is_dir() {
+        return cur;
+    }
+    if let Ok(v) = fs::read_to_string(&cur) {
+        let v = v.trim();
+        if !v.is_empty() && !v.contains(['/', '\\']) && v != ".." {
+            return d.join(v);
         }
-        out.push(read_manifest(&d).map(|manifest| Installed { manifest, dir: d.clone() }).map_err(|e| (name, format!("{e:#}"))));
+    }
+    d.to_path_buf()
+}
+
+/// Installed plugins from every [`roots`] dir (broken ones as errors), one per
+/// name: the first root wins. Sorted by directory name within a root.
+pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
+    let mut out: Vec<std::result::Result<Installed, (String, String)>> = Vec::new();
+    for (source, root) in roots() {
+        let Ok(rd) = fs::read_dir(&root) else { continue };
+        let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        dirs.sort();
+        for d in dirs {
+            let name = d.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let a = active_dir(&d);
+            let r = read_manifest(&a).map(|manifest| Installed { manifest, dir: a, source }).map_err(|e| (name.clone(), format!("{e:#}")));
+            let taken = |n: &str| out.iter().any(|o| matches!(o, Ok(i) if i.manifest.name == n));
+            match &r {
+                Ok(i) if taken(&i.manifest.name) => continue,
+                Err(_) if source != Source::User && taken(&name) => continue,
+                _ => out.push(r),
+            }
+        }
     }
     out
 }
@@ -477,7 +563,7 @@ pub fn install(src: &Path) -> Result<Installed> {
         st.priority.push(m.name.clone());
         st.save()?;
     }
-    Ok(Installed { manifest: m, dir: dest })
+    Ok(Installed { manifest: m, dir: dest, source: Source::User })
 }
 
 fn copy_tree(from: &Path, to: &Path, depth: u32) -> Result<()> {
@@ -500,6 +586,18 @@ fn copy_tree(from: &Path, to: &Path, depth: u32) -> Result<()> {
 
 pub fn uninstall(name: &str) -> Result<()> {
     let Some(i) = find(name) else { bail!("no plugin named {name} (see `mouser plugin list`)") };
+    if i.source != Source::User {
+        bail!(
+            "plugin {name} comes from the {} dir {} (read-only); disable it instead: `mouser plugin disable {name}`",
+            i.source.name(),
+            i.dir.display()
+        );
+    }
+    // The versioned layout removes `<name>/`, every version with it.
+    let i = match i.dir.parent() {
+        Some(p) if p.parent() == Some(dir().as_path()) => Installed { dir: p.to_path_buf(), ..i },
+        _ => i,
+    };
     fs::remove_dir_all(&i.dir)?;
     let mut st = State::load();
     st.priority.retain(|n| n != name);
@@ -623,6 +721,8 @@ pub struct Entry {
     pub enabled: bool,
     /// Installed directory (`None`: built in).
     pub dir: Option<PathBuf>,
+    /// Where it came from: `None` built in, else the [`Source`].
+    pub source: Option<Source>,
     pub commands: Vec<String>,
     pub permissions: Vec<String>,
     /// A mode's hotkey (`esc :<hotkey>`).
@@ -652,6 +752,7 @@ impl Registry {
                 transport: Transport::Builtin,
                 enabled: on(n),
                 dir: None,
+                source: None,
                 commands: vec![],
                 permissions: m.as_ref().map(|m| m.permissions.clone()).unwrap_or_default(),
                 hotkey: m.and_then(|m| m.mode).map(|m| m.hotkey),
@@ -668,6 +769,7 @@ impl Registry {
                     transport: i.manifest.run.transport,
                     enabled: on(&i.manifest.name),
                     dir: Some(i.dir.clone()),
+                    source: Some(i.source),
                     commands: i.manifest.run.commands.clone(),
                     permissions: i.manifest.permissions.clone(),
                     hotkey: i.manifest.mode.as_ref().map(|m| m.hotkey.clone()),
@@ -675,6 +777,9 @@ impl Registry {
                 Err(b) => broken.push(b),
             }
         }
+        // An installed plugin with a built-in's name replaces it (decision 5).
+        let names: Vec<String> = entries.iter().filter(|e| e.dir.is_some()).map(|e| e.name.clone()).collect();
+        entries.retain(|e| e.dir.is_some() || !names.contains(&e.name));
         let order = priority();
         entries.sort_by_key(|e| order.iter().position(|o| *o == e.name).unwrap_or(usize::MAX));
         // Engines have their own order (`mouser engine priority`, the saved
@@ -690,6 +795,7 @@ impl Registry {
                 transport: Transport::Builtin,
                 enabled: !can_disable(n) || on(n),
                 dir: None,
+                source: None,
                 commands: vec![],
                 permissions: vec![],
                 hotkey: None,
@@ -705,6 +811,7 @@ impl Registry {
                 transport: m.run.transport,
                 enabled: on(&m.name),
                 dir: Some(e.dir.clone()),
+                source: Some(Source::User),
                 commands: vec![],
                 permissions: vec![],
                 hotkey: None,
@@ -1057,6 +1164,49 @@ library = "libfancy.so"
         let e = run_command(&p, &CommandRequest { api: API, command: "echo".into(), args: vec!["slow".into()], cwd: None }).unwrap_err();
         assert!(e.to_string().contains("longer than"), "{e}");
         assert!(start.elapsed() < COMMAND_TIMEOUT + Duration::from_secs(3));
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+    #[test]
+    #[serial_test::serial]
+    fn discovery_roots_versions_and_overrides() {
+        let t = tempfile::tempdir().unwrap();
+        let home = t.path().join("home");
+        let sys = t.path().join("sys");
+        unsafe { std::env::set_var("MOUSER_HOME", &home) };
+        unsafe { std::env::set_var("MOUSER_PLUGIN_DIRS", &sys) };
+        let man = |d: &Path, name: &str, ver: &str| {
+            fs::create_dir_all(d).unwrap();
+            fs::write(d.join("plugin.toml"), format!("name = \"{name}\"\nversion = \"{ver}\"\ndescription = \"x\"\n[[provides]]\nkind = \"command\"\n[run]\ntransport = \"command\"\ncommand = [\"true\"]\ncommands = [\"{name}\"]\n")).unwrap();
+        };
+        // System: a plain dir and a versioned one picked by a `current` file.
+        man(&sys.join("alpha"), "alpha", "1.0.0");
+        man(&sys.join("beta/0.1.0"), "beta", "0.1.0");
+        man(&sys.join("beta/0.2.0"), "beta", "0.2.0");
+        fs::write(sys.join("beta/current"), "0.2.0\n").unwrap();
+        let got: Vec<_> = installed().into_iter().flatten().map(|i| (i.manifest.name, i.manifest.version, i.source)).collect();
+        assert_eq!(got, vec![("alpha".into(), "1.0.0".into(), Source::System), ("beta".into(), "0.2.0".into(), Source::System)]);
+        assert!(uninstall("alpha").unwrap_err().to_string().contains("read-only"));
+        // A user copy with the same name wins.
+        man(&dir().join("alpha/2.0.0"), "alpha", "2.0.0");
+        fs::write(dir().join("alpha/current"), "2.0.0").unwrap();
+        let a = find("alpha").unwrap();
+        assert_eq!((a.manifest.version.as_str(), a.source), ("2.0.0", Source::User));
+        let r = Registry::load();
+        let e = r.entries.iter().find(|e| e.name == "alpha").unwrap();
+        assert_eq!(e.source, Some(Source::User));
+        assert_eq!(r.entries.iter().filter(|e| e.name == "alpha").count(), 1);
+        // Uninstalling the user copy removes every version; the system one shows again.
+        uninstall("alpha").unwrap();
+        assert!(!dir().join("alpha").exists());
+        assert_eq!(find("alpha").unwrap().source, Source::System);
+        // A user install named like a built-in replaces it in the registry.
+        fs::create_dir_all(dir().join("preferences")).unwrap();
+        fs::write(dir().join("preferences/plugin.toml"), "name = \"preferences\"\nversion = \"9.0.0\"\ndescription = \"x\"\n[[provides]]\nkind = \"mode\"\n[mode]\nhotkey = \"p\"\n[run]\ntransport = \"mode\"\ncommand = [\"./run\"]\n").unwrap();
+        let r = Registry::load();
+        assert!(r.broken.is_empty(), "{:?}", r.broken);
+        let p: Vec<_> = r.entries.iter().filter(|e| e.name == "preferences").collect();
+        assert_eq!((p.len(), p[0].version.as_str()), (1, "9.0.0"));
+        unsafe { std::env::remove_var("MOUSER_PLUGIN_DIRS") };
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 }
