@@ -1,0 +1,53 @@
+name: Docs site
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "docs/**", "scripts/check-doc-sections.py", ".github/workflows/docs-site.yml" ]
+  pull_request:
+    paths: [ "docs/**" ]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: docs-site
+  cancel-in-progress: false
+jobs:
+  check:
+    name: every doc has a site section
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-doc-sections.py
+  publish:
+    name: rebuild the site's docs pages
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: main }
+      - uses: actions/checkout@v4
+        with: { ref: site, path: site }
+      - run: pip install markdown
+      - name: Build docs pages from main's docs/
+        run: python3 site/scripts/build_docs.py --docs main/docs --out site/site/docs
+      - name: Commit to the site branch
+        working-directory: site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site/docs
+          if git diff --cached --quiet; then echo "docs pages unchanged"; exit 0; fi
+          git commit -m "site: rebuild docs pages from main ${GITHUB_SHA::7}"
+          git push origin HEAD:site
+      # Pushes made with GITHUB_TOKEN don't start pages.yml, so deploy here too.
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site/site }
+      - id: deployment
+        uses: actions/deploy-pages@v4
