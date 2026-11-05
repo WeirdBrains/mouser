@@ -331,3 +331,39 @@ fn v2_engines_negotiate_and_report_caps_and_v1_still_loads() {
     // SAFETY: v1 has no caps call, so the handle is never used.
     assert!(unsafe { lib.caps(std::ptr::null_mut()) }.is_none(), "v1 has no caps call");
 }
+
+/// Mouser's own engines report Mouser's version (not mouser-core's), both
+/// from `mouser engine bundle` and when found loose beside a dev build.
+#[test]
+fn bundled_engines_report_mousers_version() {
+    let t = tempfile::tempdir().unwrap();
+    let deps = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let out = t.path().join("engines");
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_mouser-app"))
+        .env("MOUSER_HOME", t.path().join("home"))
+        .args(["engine", "bundle", "--from"])
+        .arg(&deps)
+        .arg("--out")
+        .arg(&out)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let want = format!("bundled mouser {}", env!("CARGO_PKG_VERSION"));
+    assert!(String::from_utf8_lossy(&o.stdout).contains(&want), "{}", String::from_utf8_lossy(&o.stdout));
+    for name in ["mouser", "skia"] {
+        let m = std::fs::read_to_string(out.join(name).join("engine.toml")).unwrap();
+        assert!(m.contains(&format!("version = \"{}\"", env!("CARGO_PKG_VERSION"))), "{name}: {m}");
+    }
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_mouser-app"))
+        .env("MOUSER_HOME", t.path().join("home"))
+        .env("MOUSER_ENGINE_DIRS", &out)
+        .args(["engine", "list"])
+        .output()
+        .unwrap();
+    let list = String::from_utf8_lossy(&o.stdout);
+    assert!(list.contains(env!("CARGO_PKG_VERSION")) && !list.contains(mouser_core_version()), "{list}");
+}
+
+fn mouser_core_version() -> &'static str {
+    "0.4.0"
+}
