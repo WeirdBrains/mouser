@@ -941,6 +941,10 @@ mod tests {
         c.set_cwd(Some(t.path().join("sub")));
         assert_eq!((c.selected, c.visible().len()), (0, 0), "empty folder: no . or ..");
         std::fs::write(t.path().join("sub/.dot"), b"").unwrap();
+        // Filesystems with coarse timestamps may keep the folder's mtime:
+        // move it on, as a later change would.
+        #[cfg(unix)]
+        std::fs::File::open(t.path().join("sub")).unwrap().set_modified(SystemTime::now() + std::time::Duration::from_secs(2)).unwrap();
         c.set_cwd(Some(t.path().join("sub")));
         assert_eq!(c.visible().len(), 1);
         c.apply(Action::Hidden, 1);

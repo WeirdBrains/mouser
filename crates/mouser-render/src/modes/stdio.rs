@@ -66,6 +66,8 @@ pub struct StdioMode {
     ctx: Option<Context>,
     seq: u64,
     view: View,
+    /// The keys the plugin said it takes (`Out::Wants`); `None`: guess from the view.
+    wants: Option<mouser_mode_api::protocol::Wants>,
     images: HashMap<u64, Arc<Vec<u8>>>,
     effects: Vec<Effect>,
     error: Option<String>,
@@ -83,6 +85,8 @@ pub struct StdioMode {
     agent_sent: Option<Value>,
     ssh: Option<mouser_core::remote::SshTarget>,
     remote_dir: Option<std::path::PathBuf>,
+    /// The shell's folder, told again whenever the plugin (re)starts.
+    cwd: Option<std::path::PathBuf>,
 }
 
 enum Waiting {
@@ -116,6 +120,7 @@ impl StdioMode {
             ctx: None,
             seq: 0,
             view: View::default(),
+            wants: None,
             images: HashMap::new(),
             effects: Vec::new(),
             error: None,
@@ -130,6 +135,7 @@ impl StdioMode {
             agent_sent: None,
             ssh: None,
             remote_dir: None,
+            cwd: None,
         })
     }
 
@@ -240,6 +246,7 @@ impl StdioMode {
                 self.images.retain(|k, _| keys.contains(k));
                 self.view = View { dock: dock.map(|p| p.map(UiAction::from)), panel: panel.map(|p| p.map(UiAction::from)), images: out, fullscreen };
             }
+            Out::Wants(w) => self.wants = Some(w),
             Out::Effect(e) => {
                 let granted = self.granted();
                 match e.permission() {
@@ -439,6 +446,9 @@ impl StdioMode {
     /// The view has a focused text field or an open dropdown (`Popup`):
     /// typing, Enter and arrows go to the plugin.
     fn typing(&self) -> bool {
+        if let Some(w) = &self.wants {
+            return w.text;
+        }
         self.view
             .dock
             .iter()
@@ -517,7 +527,8 @@ impl Mode for StdioMode {
     }
 
     fn cwd_changed(&mut self, dir: &Path) {
-        if self.granted().iter().any(|g| g == "files.read") {
+        self.cwd = Some(dir.to_path_buf());
+        if self.was_running && self.granted().iter().any(|g| g == "files.read") {
             self.event("shell.cwd_changed", json!({"dir": dir.display().to_string()}));
         }
     }
@@ -537,6 +548,15 @@ impl Mode for StdioMode {
         if !self.typing() {
             return None;
         }
+        // A mode that said what it takes: alt keys and other escape
+        // sequences go to the bindings and the shell unless it listed them.
+        if let Some(w) = &self.wants
+            && bytes.len() > 1
+            && bytes[0] == 0x1b
+            && !w.keys.iter().any(|k| k.as_bytes() == bytes)
+        {
+            return None;
+        }
         // Keys go as text; Enter, Backspace, Tab and arrows too (the plugin edits its own field).
         self.event("input.text", json!({"utf8": String::from_utf8_lossy(bytes)}));
         Some(Effect::None)
@@ -546,13 +566,20 @@ impl Mode for StdioMode {
         self.typing()
     }
 
-    fn wants_key(&self, _bytes: &[u8]) -> bool {
-        self.typing()
+    fn wants_key(&self, bytes: &[u8]) -> bool {
+        match &self.wants {
+            Some(w) => w.text && w.keys.iter().any(|k| k.as_bytes() == bytes),
+            None => self.typing(),
+        }
     }
 
     fn escape(&mut self) -> bool {
+        let took = match &self.wants {
+            Some(w) => w.escape,
+            None => self.typing(),
+        };
         self.event("input.escape", json!({}));
-        self.typing()
+        took
     }
 
     fn remote_ssh(&mut self, ssh: Option<&mouser_core::remote::SshTarget>) {
@@ -587,10 +614,20 @@ impl Mode for StdioMode {
         self.pump();
         self.agent_tick();
         let running = self.sup.as_ref().is_some_and(|s| *s.state() == State::Running);
-        if running && !self.was_running && self.active {
-            // Started, or back after a crash: tell it it's the current mode.
+        if running && !self.was_running {
+            // Started, or back after a crash: where the shell is, and
+            // whether it's the current mode.
             self.was_running = true;
-            self.event("mode.activated", json!({"via": "start"}));
+            if let Some(d) = self.cwd.clone().filter(|_| self.granted().iter().any(|g| g == "files.read")) {
+                self.event("shell.cwd_changed", json!({"dir": d.display().to_string()}));
+            }
+            if self.active {
+                self.event("mode.activated", json!({"via": "start"}));
+            }
+        }
+        if !running {
+            // A crashed or stopped plugin takes no keys.
+            self.wants = None;
         }
         self.was_running = running;
         if let Some(e) = &self.error {
