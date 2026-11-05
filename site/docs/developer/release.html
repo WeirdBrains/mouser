@@ -148,6 +148,24 @@ binary built against a newer glibc fails to start on older distributions
 (<code>GLIBC_2.43 not found</code>). 22.04 has no <code>glslc</code> package and its Vulkan headers are
 too old for llama.cpp, so the workflow unpacks the LunarG Vulkan SDK and puts its
 <code>bin/</code> first on PATH. The plugin and engine repos build on 22.04 for the same reason.</p>
+<p>Three checks keep it that way (v1.3.0 shipped built on a newer runner and needed
+<code>GLIBC_2.43</code>, issue #2; 1.3.1 fixed the build host):</p>
+<ul>
+<li><code>scripts/check-glibc.py --max 2.35 PATH...</code> prints the newest <code>GLIBC_x.y</code> any
+  ELF file needs (archives are unpacked) and fails above 2.35. The packaging step
+  runs it on <code>mouser</code>, <code>mouser-app</code> and <code>engines/</code>, and the <code>-full</code> step on the
+  bundle's <code>plugins/</code> archives and <code>engines/</code>, so a plugin or engine from
+  <code>plugins.lock</code> built on a newer host fails the release too.</li>
+<li>The <code>.deb</code> depends on <code>libc6 (&gt;= x.y)</code> and the <code>.rpm</code> on <code>glibc &gt;= x.y</code>, the
+  version the check found, so apt and dnf refuse a system that is too old instead
+  of installing a binary that cannot start.</li>
+<li>A clean <code>ubuntu:22.04</code> container installs the <code>.deb</code>, runs <code>mouser --version</code>,
+  checks every engine <code>.so</code> with <code>ldd</code>, and starts each bundled plugin with
+  <code>--manifest</code>.</li>
+</ul>
+<p>Check a downloaded build by hand the same way: <code>python3 scripts/check-glibc.py
+mouser_1.4.0_amd64.deb</code> does not read <code>.deb</code> files, so unpack it first
+(<code>dpkg-deb -x mouser_*.deb d &amp;&amp; python3 scripts/check-glibc.py --max 2.35 d</code>).</p>
 <p>Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
 without publishing: the publish job only runs for <code>v*</code> tags, and the packages are
 versioned <code>0.0.0</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/release.md">docs/release.md</a></p></section></main>
