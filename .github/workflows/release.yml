@@ -238,6 +238,29 @@ jobs:
           (cd dist && for f in *.{deb,rpm,pkg.tar.zst}; do if [ -f "$f" ]; then shasum -a 256 "$f" > "$f.sha256"; fi; done)
           # Upload extra artifacts
           echo "EXTRA_DONE=1" >> $GITHUB_ENV
+      # pacman -U <url> fetches <url>.sig and (with the default
+      # RemoteFileSigLevel = Required) refuses the package without an OpenPGP
+      # detached signature by a key the user trusts. That is not our minisign
+      # signature (.minisig): a different format pacman cannot read. With an
+      # Arch signing key in the secrets, the package gets its .sig; without,
+      # it ships unsigned and the documented install is download-then-install
+      # (docs/release.md §Arch).
+      - name: OpenPGP-sign the Arch package (skipped without ARCH_GPG_PRIVATE_KEY)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          ARCH_GPG_PRIVATE_KEY: ${{ secrets.ARCH_GPG_PRIVATE_KEY }}
+          ARCH_GPG_PASSPHRASE: ${{ secrets.ARCH_GPG_PASSPHRASE }}
+        run: |
+          set -eu
+          if [ -z "${ARCH_GPG_PRIVATE_KEY}" ]; then echo "::notice::ARCH_GPG_PRIVATE_KEY not set; the Arch package has no .sig (pacman -U needs a local file)"; exit 0; fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg" && mkdir -m 700 -p "$GNUPGHOME"
+          echo "$ARCH_GPG_PRIVATE_KEY" | gpg --batch --import
+          for f in dist/*.pkg.tar.zst; do
+            gpg --batch --pinentry-mode loopback --passphrase "${ARCH_GPG_PASSPHRASE:-}" --detach-sign --no-armor -o "$f.sig" "$f"
+            gpg --batch --verify "$f.sig" "$f"
+          done
+          rm -rf "$GNUPGHOME"
       - name: Upload Linux packages
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
@@ -247,6 +270,7 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.pkg.tar.zst
+            dist/*.pkg.tar.zst.sig
             dist/*.sha256
 
       - name: macOS app bundle + dmg

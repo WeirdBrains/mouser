@@ -218,10 +218,13 @@ Prebuilt install packages are attached to each GitHub Release:
 ### Arch Linux
 
 ```bash
-# Latest release (prebuilt):
-# (download first: pacman -U <url> also fetches a .sig, which releases do not ship)
-curl -LO https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
-sudo pacman -U mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+# Latest release (prebuilt). Download, check, then install the local file:
+# `pacman -U <url>` also fetches <url>.sig (an OpenPGP signature), which
+# releases do not ship yet, and fails with a 404.
+V=<ver>; B=https://github.com/WeirdBrains/mouser/releases/download/v$V
+curl -LO $B/mouser-bin-$V-1-x86_64.pkg.tar.zst -LO $B/mouser-bin-$V-1-x86_64.pkg.tar.zst.sha256
+sha256sum -c mouser-bin-$V-1-x86_64.pkg.tar.zst.sha256
+sudo pacman -U ./mouser-bin-$V-1-x86_64.pkg.tar.zst
 # Or build main from source:
 git clone https://github.com/WeirdBrains/mouser && cd mouser/packaging/arch/mouser-git && makepkg -si
 ```
