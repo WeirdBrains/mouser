@@ -1,7 +1,5 @@
 ---
 title: Demo app: a Flutter client for Mouser's MCP server
-status: draft
-note: this walkthrough is a draft. Screenshots and clips are still TODOs.
 ---
 # Demo app: a Flutter client for Mouser's MCP server
 
@@ -11,8 +9,9 @@ tools, call any tool from a form generated from its input schema, and follow a
 curated Demo page. Its MCP client (`lib/mcp/mcp_client.dart`) is plain Dart
 with no extra packages, so it's a good template for your own integration.
 
-> **TODO:** screenshots of the Connect, Protocol, Tools and Demo pages, and a
-> short clip of the Demo page.
+Each clip below is about 30 seconds long, with Mouser on the left and the demo
+app on the right. Clips of sending files to Mouser, HTTPS and stdio are coming
+later.
 
 ## What it covers
 
@@ -60,7 +59,7 @@ The protocol version offered is selectable. Mouser serves 2025-11-25,
 2025-06-18 and 2025-03-26, and answers with its newest for anything else. The
 Connect page then shows the status and server info.
 
-> **TODO:** screenshot of the Connect page.
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/01-connect-and-tools.jpg" width="1280" height="720"><source src="../../assets/demo/01-connect-and-tools.mp4" type="video/mp4"></video><figcaption>Connecting over HTTP, listing the tools and calling <code>tabs_list</code>.</figcaption></figure>
 
 ## 4. Protocol
 
@@ -68,7 +67,7 @@ Shows the session (server info, capabilities, session id, certificate SHA-256),
 `ping` with its round trip, a JSON-RPC batch, the capability probes, a raw
 JSON-RPC console, and "End HTTP session" (`DELETE /mcp`).
 
-> **TODO:** screenshot of the Protocol page.
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/08-protocol-ping-batch-probes.jpg" width="1280" height="720"><source src="../../assets/demo/08-protocol-ping-batch-probes.mp4" type="video/mp4"></video><figcaption>The Protocol page: <code>ping</code>, a JSON-RPC batch, and the probes Mouser answers with <code>-32601</code>.</figcaption></figure>
 
 ## 5. Tools
 
@@ -76,7 +75,7 @@ Lists every tool from `tools/list`, builds a form from each tool's input schema,
 and shows the result of `tools/call`. Write tools (`shell_*`,
 `files_mkdir`/`copy`/`move`/`trash`) show Mouser's approval popup first.
 
-> **TODO:** screenshot of the Tools page.
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/06-run-with-approval.jpg" width="1280" height="720"><source src="../../assets/demo/06-run-with-approval.mp4" type="video/mp4"></video><figcaption><code>shell_run</code> waits for the approval popup in Mouser; Allow once runs it.</figcaption></figure>
 
 ## 6. Demo
 
@@ -89,7 +88,15 @@ upload API.
 Tapping a file, or a path chip in any tool result, opens a viewer for text,
 images, .docx, PDF, video and audio (Linux needs `mpv` for media).
 
-> **TODO:** clip of the Demo page.
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/02-read-the-terminal.jpg" width="1280" height="720"><source src="../../assets/demo/02-read-the-terminal.mp4" type="video/mp4"></video><figcaption>Typing in Mouser, then List tabs and Read screen in the app.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/03-files-image-pdf-docx.jpg" width="1280" height="720"><source src="../../assets/demo/03-files-image-pdf-docx.mp4" type="video/mp4"></video><figcaption><code>files_list</code>, then the image, PDF, .docx and text viewers.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/04-video-player.jpg" width="1280" height="720"><source src="../../assets/demo/04-video-player.mp4" type="video/mp4"></video><figcaption>Playing a video from the file list (with sound).</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/05-music-player.jpg" width="1280" height="720"><source src="../../assets/demo/05-music-player.mp4" type="video/mp4"></video><figcaption>Playing music from the file list (with sound).</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/07-type-and-scrollback.jpg" width="1280" height="720"><source src="../../assets/demo/07-type-and-scrollback.mp4" type="video/mp4"></video><figcaption><code>shell_type</code> sends keystrokes; <code>scrollback_read</code> reads them back.</figcaption></figure>
 
 ## 7. Check your own client
 
