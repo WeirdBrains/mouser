@@ -28,6 +28,8 @@ def title_of(text, fallback):
     m = re.search(r"^# (.+)$", text, re.M)
     return m.group(1).strip() if m else fallback
 
+# Every page() body sits in <section class="light doc">; style.css alternates its h1/h2
+# headers through the front page's dark/light section bands, so new docs get it automatically.
 def page(title, body, depth, active=None, note=""):
     up = "../" * depth
     nav = "".join(
