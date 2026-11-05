@@ -39,7 +39,19 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev pkg-config cmake clang libclang-dev libvulkan-dev glslc spirv-headers ffmpeg
+
+      # ffmpeg for the player tests (the commander plugin's 60 fps shm path).
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          choco install ffmpeg -y --no-progress
+          echo "C:\ProgramData\chocolatey\bin" >> "$GITHUB_PATH"
 
       - name: rustfmt
         run: cargo fmt --all --check
@@ -51,6 +63,8 @@ jobs:
         run: cargo build --release
 
       - name: test
+        env:
+          MOUSER_REQUIRE_FFMPEG: "1"
         run: cargo test --workspace
 
 
