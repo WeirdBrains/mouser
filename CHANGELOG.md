@@ -5,6 +5,7 @@
 - `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.4.0. See docs/mode-protocol.md.
 - Mode plugin protocol: plugins register event listeners in the handshake, emit their own events (heard by themselves too, with loop and rate limits), and call host files/process APIs that never exceed your rights — elevation only through sudo in your visible terminal, UAC or the macOS prompt. See docs/mode-protocol.md.
 - Mode plugin SDK: a `Mode` trait and `serve()` for writing a plugin, panels with the plugin's own click actions, and a host supervisor that starts a plugin, runs the handshake and restarts it after a crash (1 s, 2 s, 4 s), giving up after `plugins.max_restarts` (a new preference, default 3) with a restart action. See docs/mode-protocol.md.
+- Plugins: `transport = "mode"` runs a mode plugin as a long-lived process on the mode protocol — views and images in the dock, effects checked against its permissions, its own events delivered back to it, crash restarts with a Restart button once it gives up. See docs/plugins.md and docs/mode-protocol.md.
 
 ## [1.3.0] - 2026-11-04
 

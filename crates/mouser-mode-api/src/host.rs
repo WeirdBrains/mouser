@@ -11,6 +11,7 @@ use crate::supervisor::{Decision, Restarts};
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -42,12 +43,21 @@ pub struct Connection {
     pub ring: Option<Ring>,
 }
 
+/// Called from the reader thread when a message arrives (wake the UI).
+pub type Notify = Arc<dyn Fn() + Send + Sync>;
+
 /// How long the plugin may take to say hello.
 pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Start `spec`, read its `Hello`, negotiate and answer. `grant` decides
 /// permissions; `restore` is the state it saved before a crash.
-pub fn connect(spec: &Spec, ctx: Context, restore: Option<Vec<u8>>, grant: &mut dyn FnMut(&Hello) -> Grants) -> Result<Connection, String> {
+pub fn connect(
+    spec: &Spec,
+    ctx: Context,
+    restore: Option<Vec<u8>>,
+    grant: &mut dyn FnMut(&Hello) -> Grants,
+    notify: Option<Notify>,
+) -> Result<Connection, String> {
     let mut cmd = Command::new(&spec.program);
     cmd.args(&spec.args).envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
     let mut child = cmd.spawn().map_err(|e| format!("can't start {}: {e}", spec.program.display()))?;
@@ -62,6 +72,14 @@ pub fn connect(spec: &Spec, ctx: Context, restore: Option<Vec<u8>>, grant: &mut 
                 if send.send(m).is_err() {
                     break;
                 }
+                if let Some(n) = &notify {
+                    n();
+                }
+            }
+            // The plugin is gone: let the UI notice now.
+            drop(send);
+            if let Some(n) = &notify {
+                n();
             }
         })
         .map_err(|e| e.to_string())?;
@@ -158,6 +176,7 @@ pub struct Supervisor {
     state: State,
     saved: Option<Vec<u8>>,
     crashes: u32,
+    notify: Option<Notify>,
 }
 
 impl Supervisor {
@@ -176,9 +195,33 @@ impl Supervisor {
             state: State::Waiting { until: Instant::now(), crashes: 0 },
             saved: None,
             crashes: 0,
+            notify: None,
         };
         s.start(Instant::now());
         s
+    }
+
+    /// Like [`Supervisor::new`], with a callback for arriving messages; it is
+    /// set before the first start.
+    pub fn with_notify(spec: Spec, ctx: Context, restarts: Restarts, notify: Notify, grant: impl FnMut(&Hello) -> Grants + Send + 'static) -> Self {
+        let mut s = Self {
+            spec,
+            ctx,
+            grant: Box::new(grant),
+            restarts,
+            conn: None,
+            state: State::Waiting { until: Instant::now(), crashes: 0 },
+            saved: None,
+            crashes: 0,
+            notify: Some(notify),
+        };
+        s.start(Instant::now());
+        s
+    }
+
+    /// Send the new drawing area to later restarts too.
+    pub fn set_ctx(&mut self, ctx: Context) {
+        self.ctx = ctx;
     }
 
     pub fn state(&self) -> &State {
@@ -190,7 +233,7 @@ impl Supervisor {
     }
 
     fn start(&mut self, now: Instant) {
-        match connect(&self.spec, self.ctx, self.saved.clone(), &mut *self.grant) {
+        match connect(&self.spec, self.ctx, self.saved.clone(), &mut *self.grant, self.notify.clone()) {
             Ok(c) => {
                 self.conn = Some(c);
                 self.state = State::Running;

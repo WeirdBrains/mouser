@@ -3,8 +3,9 @@
 Commander, chat and preferences are moving out of Mouser into plugin
 executables built on the public `mouser-mode-api` crate
 (`crates/mouser-mode-api`), the same API any third-party mode uses. This page
-describes that protocol. It is **api 0**: still changing, and not yet used by
-the shipped modes, which are compiled in until Mouser 1.4.0.
+describes that protocol. It is **api 0**: still changing. The shipped modes are
+still compiled in until Mouser 1.4.0, but you can install your own mode plugin
+on it now (below).
 
 ## Process model
 
@@ -13,6 +14,35 @@ the shipped modes, which are compiled in until Mouser 1.4.0.
   goes to Mouser's plugin log.
 - The plugin runs as you, with your rights. It is not a sandbox. Mouser checks
   every request and effect against the permissions the plugin was granted.
+
+## Installing a mode plugin
+
+```toml
+# plugin.toml
+name = "hello"
+version = "0.1.0"
+permissions = ["files.read"]     # shell.type to type into the shell, ...
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "mode"
+command = ["./hello-mode"]       # ./ is the plugin's directory
+
+[mode]
+hotkey = "h"
+keys = [{ id = "refresh", key = "r", describe = "refresh" }]
+```
+
+`mouser plugin install DIR`, then allow it to run with
+`mouser plugin permissions hello run=allow` (and any permission it lists). It
+joins the mode switcher (`esc :h`). Mouser starts it the first time it's drawn.
+A bound key or a click arrives as a `ui.action` event, typing as `input.text`,
+switching modes as `mode.activated`/`mode.deactivated`, and the shell's folder
+as `shell.cwd_changed` (with `files.read`). An effect it isn't allowed shows a
+status message instead. Its emits come back to its own listeners. Host calls
+(`Request`) answer "not available yet" until the host services land.
 
 ## Writing a plugin in Rust
 

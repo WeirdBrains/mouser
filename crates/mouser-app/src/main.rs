@@ -1121,7 +1121,7 @@ fn main() -> Result<()> {
         Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| tabs.lock().unwrap().resize(cols, rows, pw, ph, wake))
     };
     let get_ui_model = {
-        let (app_state, tabs) = (app_state.clone(), tabs.clone());
+        let (app_state, tabs, writer) = (app_state.clone(), tabs.clone(), shared_writer.clone());
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
             let (session, tab_h) = {
                 let t = tabs.lock().unwrap();
@@ -1133,7 +1133,12 @@ fn main() -> Result<()> {
             let mut st = app_state.lock().unwrap();
             plugin_hellos(&mut st, &sessions);
             let layout = ui_layout(&mut st, vp);
-            attach_mode_view(&mut st, layout, vp, tab_h, alt, place)
+            let layout = attach_mode_view(&mut st, layout, vp, tab_h, alt, place);
+            // Effects from mode plugin processes (docs/mode-protocol.md).
+            for e in st.modes.take_effects() {
+                apply_mode_effect(&mut st, e, &writer);
+            }
+            layout
         })
     };
     fn ui_layout(st: &mut AppState, vp: mouser_render::UiViewport) -> Option<ui::UiLayout> {

@@ -65,6 +65,9 @@ pub enum Transport {
     Http,
     /// A native engine library over the engine C ABI (`[engine]` table, docs/engines.md).
     Library,
+    /// A mode plugin kept running, speaking the mode protocol over stdio
+    /// (`mouser-mode-api`, docs/mode-protocol.md).
+    Mode,
 }
 
 impl Transport {
@@ -76,6 +79,7 @@ impl Transport {
             Transport::Command => "command",
             Transport::Http => "http",
             Transport::Library => "library",
+            Transport::Mode => "mode",
         }
     }
 }
@@ -223,9 +227,9 @@ impl Manifest {
             let Some(m) = &self.mode else { bail!("a mode plugin needs a [mode] table with a hotkey") };
             check_mode(&self.name, m)?;
             match self.run.transport {
-                Transport::Command => {}
-                Transport::Mcp => bail!("mode plugins over MCP are not supported yet; use transport = \"command\""),
-                t => bail!("a mode plugin uses transport = \"command\" (not {:?})", t.name()),
+                Transport::Mode | Transport::Command => {}
+                Transport::Mcp => bail!("mode plugins over MCP are not supported; use transport = \"mode\""),
+                t => bail!("a mode plugin uses transport = \"mode\" (or the older \"command\"), not {:?}", t.name()),
             }
         } else if self.mode.is_some() {
             bail!("[mode] is only for kind = \"mode\"");
@@ -237,7 +241,7 @@ impl Manifest {
         }
         match self.run.transport {
             Transport::Builtin => bail!("transport \"builtin\" is reserved for plugins compiled into Mouser"),
-            Transport::Mcp | Transport::Command if self.run.command.is_empty() => {
+            Transport::Mcp | Transport::Command | Transport::Mode if self.run.command.is_empty() => {
                 bail!("run.command is required for transport {:?}", self.run.transport.name())
             }
             Transport::Fuzzball if !self.run.command.is_empty() => bail!("a Fuzzball plugin runs in the terminal; it has no run.command"),
@@ -953,7 +957,11 @@ keys = [{ id = "again", key = "r", describe = "ask again" }]
         bad(MODE.replace("hotkey = \"s\"", "hotkey = \"c\""), "taken");
         bad(MODE.replace("hotkey = \"s\"", "hotkey = \"p\""), "taken");
         bad(MODE.replace("hotkey = \"s\"", "hotkey = \"Sx\""), "one lowercase");
-        bad(MODE.replace("transport = \"command\"", "transport = \"mcp\""), "not supported yet");
+        bad(MODE.replace("transport = \"command\"", "transport = \"mcp\""), "not supported");
+        let persistent = Manifest::parse(&MODE.replace("transport = \"command\"", "transport = \"mode\"")).unwrap();
+        assert_eq!(persistent.run.transport, Transport::Mode);
+        assert_eq!(Transport::Mode.name(), "mode");
+        bad(MODE.replace("transport = \"command\"", "transport = \"mode\"").replace("command = [\"./run\"]\n", ""), "run.command is required");
         bad(MODE.replace("key = \"r\"", "key = \"ctrl+r\""), "not a single");
         bad(MODE.replace("[mode]\nhotkey = \"s\"\nkeys = [{ id = \"again\", key = \"r\", describe = \"ask again\" }]", ""), "needs a [mode]");
         let eng = r#"
