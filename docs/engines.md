@@ -277,6 +277,20 @@ engine's drawing (`skia::render_raster`) and through the library, and
 requires every channel to be within 2. The built-in skia engine stays until
 the library ships.
 
+## Engines shipped with Mouser
+
+Besides `$MOUSER_HOME/engines/<name>/` (what `mouser engine install` writes),
+Mouser finds engines shipped with it in `engines/<name>/` beside its
+executable (and `../Resources/engines` in a macOS app), each with an
+`engine.toml` and the library. `engines::stage(lib, out)` writes that layout
+for Mouser's own libraries (`mouser_engine_wgpu` as `mouser`,
+`mouser_engine_skia` as `skia`). A development build also finds those
+libraries lying loose next to the executable, where `cargo build` leaves
+them. A user install of the same name wins; a shipped engine can't be
+uninstalled (move it down or disable it). `MOUSER_ENGINE_DIRS` (a path
+list) replaces the shipped locations, for packagers and tests; empty means
+none.
+
 ## 6. Built-in engines
 
 - `mouser`: the wgpu renderer (Vulkan/GL/Metal/DX12): instanced quads, a glyph atlas,

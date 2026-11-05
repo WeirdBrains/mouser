@@ -79,6 +79,8 @@ pub fn dir() -> PathBuf {
 pub struct Installed {
     pub manifest: Manifest,
     pub dir: PathBuf,
+    /// Shipped with Mouser (`engines/<name>/` beside the executable), not in `$MOUSER_HOME`.
+    pub bundled: bool,
 }
 
 impl Installed {
@@ -87,15 +89,115 @@ impl Installed {
     }
 }
 
-/// Installed engines (bad ones as errors), sorted by directory name.
-pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
-    let mut out = Vec::new();
-    let Ok(rd) = fs::read_dir(dir()) else { return out };
-    let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+/// Where Mouser's own engines are, after the user's `$MOUSER_HOME/engines`:
+/// `engines/` beside the executable (and `../Resources/engines` in a macOS
+/// app). `MOUSER_ENGINE_DIRS` (a path list) replaces them, for packagers and
+/// tests; set it empty for none.
+pub fn bundled_roots() -> Vec<PathBuf> {
+    if let Some(list) = std::env::var_os("MOUSER_ENGINE_DIRS") {
+        return std::env::split_paths(&list).filter(|p| !p.as_os_str().is_empty()).collect();
+    }
+    let mut v = Vec::new();
+    if let Some(exe) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
+        v.push(exe.join("engines"));
+        if cfg!(target_os = "macos") {
+            v.push(exe.join("../Resources/engines"));
+        }
+    }
+    v
+}
+
+/// Mouser's own engine libraries: (library stem, engine name, description).
+pub const OFFICIAL: [(&str, &str, &str); 2] = [
+    ("mouser_engine_wgpu", "mouser", "Mouser's wgpu GPU renderer (Vulkan/GL/Metal/DX12)"),
+    ("mouser_engine_skia", "skia", "Skia (Ganesh) over OpenGL"),
+];
+
+/// The platform file name of a library stem (`libx.so`, `libx.dylib`, `x.dll`).
+pub fn lib_file(stem: &str) -> String {
+    format!("{}{stem}{}", std::env::consts::DLL_PREFIX, std::env::consts::DLL_SUFFIX)
+}
+
+/// The manifest of an official engine library lying loose in `dir` (how
+/// `cargo build` leaves them next to `mouser`), if there.
+fn loose(dir: &Path) -> Vec<Installed> {
+    OFFICIAL
+        .iter()
+        .filter(|(stem, ..)| dir.join(lib_file(stem)).is_file())
+        .map(|(stem, name, desc)| Installed {
+            manifest: Manifest {
+                name: name.to_string(),
+                version: env!("CARGO_PKG_VERSION").into(),
+                abi: ABI_MAX,
+                library: lib_file(stem),
+                description: desc.to_string(),
+            },
+            dir: dir.to_path_buf(),
+            bundled: true,
+        })
+        .collect()
+}
+
+/// Copy an official engine library into `out/<name>/` with its
+/// `engine.toml` (the layout installers and the offline bundle ship).
+pub fn stage(lib: &Path, out: &Path) -> Result<Installed> {
+    let file = lib.file_name().and_then(|f| f.to_str()).context("library path")?.to_string();
+    let (stem, name, desc) =
+        OFFICIAL.iter().find(|(stem, ..)| lib_file(stem) == file).with_context(|| format!("{file} is not one of Mouser's engine libraries"))?;
+    let m = Manifest {
+        name: name.to_string(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        abi: ABI_MAX,
+        library: lib_file(stem),
+        description: desc.to_string(),
+    };
+    let d = out.join(name);
+    fs::create_dir_all(&d)?;
+    fs::copy(lib, d.join(&m.library)).with_context(|| format!("copying {}", lib.display()))?;
+    fs::write(d.join("engine.toml"), toml::to_string_pretty(&m)?)?;
+    Ok(Installed { manifest: m, dir: d, bundled: true })
+}
+
+fn scan(root: &Path, bundled: bool, out: &mut Vec<std::result::Result<Installed, (String, String)>>) {
+    let Ok(rd) = fs::read_dir(root) else { return };
+    let mut dirs: Vec<PathBuf> =
+        rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && !p.file_name().is_some_and(|n| n.to_string_lossy().starts_with('.'))).collect();
     dirs.sort();
     for d in dirs {
         let name = d.file_name().unwrap_or_default().to_string_lossy().into_owned();
-        out.push(read_dir_manifest(&d).map(|manifest| Installed { manifest, dir: d.clone() }).map_err(|e| (name, format!("{e:#}"))));
+        out.push(read_dir_manifest(&d).map(|manifest| Installed { manifest, dir: d.clone(), bundled }).map_err(|e| (name, format!("{e:#}"))));
+    }
+}
+
+/// Installed engines (bad ones as errors): the user's, sorted by directory
+/// name, then the bundled ones whose name the user hasn't installed.
+pub fn installed() -> Vec<std::result::Result<Installed, (String, String)>> {
+    let mut out = Vec::new();
+    scan(&dir(), false, &mut out);
+    let mut roots: Vec<(PathBuf, bool)> = bundled_roots().into_iter().map(|r| (r, false)).collect();
+    if std::env::var_os("MOUSER_ENGINE_DIRS").is_none()
+        && let Some(exe) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        roots.push((exe, true));
+    }
+    for (root, loose_libs) in roots {
+        let mut more = Vec::new();
+        if loose_libs {
+            more.extend(loose(&root).into_iter().map(Ok));
+        } else {
+            scan(&root, true, &mut more);
+        }
+        for m in more {
+            let dup = match &m {
+                // While `mouser` and `skia` are still compiled in, their libraries wait.
+                Ok(i) if is_builtin(&i.manifest.name) => true,
+                Ok(i) => out.iter().flatten().any(|o| o.manifest.name == i.manifest.name),
+                Err(_) => false,
+            };
+            if !dup {
+                out.push(m);
+            }
+        }
     }
     out
 }
@@ -154,7 +256,7 @@ pub fn install(m: &Manifest, lib: &Path) -> Result<Installed> {
     fs::rename(&tmp, &dest)?;
     clear_sentinel(&m.name);
     clear_failure(&m.name);
-    Ok(Installed { manifest: m.clone(), dir: dest })
+    Ok(Installed { manifest: m.clone(), dir: dest, bundled: false })
 }
 
 /// Remove an installed engine (and drop it from the priority list). Returns
@@ -170,6 +272,12 @@ pub fn uninstall(name: &str) -> Result<bool> {
         bail!("{name} is built in and cannot be uninstalled (move it down with `mouser engine move {name} last`)");
     }
     let inst = find(name).with_context(|| format!("no installed engine named {name}"))?;
+    if inst.bundled {
+        bail!(
+            "{name} ships with Mouser ({}) and can't be uninstalled; move it down with `mouser engine move {name} last` or disable it",
+            inst.dir.display()
+        );
+    }
     fs::remove_dir_all(&inst.dir)?;
     clear_sentinel(name);
     clear_failure(name);
@@ -457,6 +565,7 @@ mod tests {
         unsafe {
             std::env::set_var("MOUSER_HOME", t.path());
             std::env::remove_var("MOUSER_ENGINE");
+            std::env::set_var("MOUSER_ENGINE_DIRS", "");
         }
         t
     }
@@ -467,6 +576,52 @@ mod tests {
         fs::write(d.join("engine.toml"), format!("name = \"{name}\"\nversion = \"1.0\"\nabi = {abi}\nlibrary = \"lib{name}.so\"\n")).unwrap();
         fs::write(d.join(format!("lib{name}.so")), b"not really").unwrap();
         d
+    }
+
+    #[test]
+    #[serial]
+    fn bundled_engines_are_found_after_the_users_and_cant_be_uninstalled() {
+        let t = home();
+        let bundle = t.path().join("bundle");
+        let src = fake_engine(t.path(), "glow", 1);
+        fs::create_dir_all(bundle.join("glow")).unwrap();
+        for f in ["engine.toml", "libglow.so"] {
+            fs::copy(src.join(f), bundle.join("glow").join(f)).unwrap();
+        }
+        // SAFETY: serial test.
+        unsafe { std::env::set_var("MOUSER_ENGINE_DIRS", &bundle) };
+        let g = find("glow").unwrap();
+        assert!(g.bundled && g.dir == bundle.join("glow"));
+        assert!(uninstall("glow").unwrap_err().to_string().contains("ships with Mouser"));
+        // A user install of the same name wins.
+        let (m, lib) = source(&src).unwrap();
+        install(&m, &lib).unwrap();
+        let g = find("glow").unwrap();
+        assert!(!g.bundled);
+        assert_eq!(installed().len(), 1, "listed once");
+        uninstall("glow").unwrap();
+        assert!(find("glow").unwrap().bundled, "the bundled one is back");
+        unsafe { std::env::set_var("MOUSER_ENGINE_DIRS", "") };
+        assert!(find("glow").is_none());
+        unsafe { std::env::remove_var("MOUSER_ENGINE_DIRS") };
+    }
+
+    #[test]
+    fn official_libraries_are_staged_and_found_loose() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join(lib_file("mouser_engine_skia"));
+        fs::write(&lib, b"lib").unwrap();
+        let found = loose(t.path());
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].manifest.name.as_str(), found[0].manifest.abi), ("skia", 2));
+        let out = t.path().join("engines");
+        let st = stage(&lib, &out).unwrap();
+        assert_eq!(st.dir, out.join("skia"));
+        let m = read_dir_manifest(&out.join("skia"));
+        // `skia` is a built-in name until the built-ins are removed; the file is right.
+        assert!(fs::read_to_string(out.join("skia/engine.toml")).unwrap().contains("abi = 2"), "{m:?}");
+        assert!(out.join("skia").join(lib_file("mouser_engine_skia")).is_file());
+        assert!(stage(&t.path().join("libother.so"), &out).is_err());
     }
 
     #[test]
