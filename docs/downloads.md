@@ -25,8 +25,10 @@ without a window and exits (add `--yes`, since nothing can ask).
 
 ## Sources
 
-- **A name** (`commander`, `skia`): an official item from the `plugins.lock`
-  compiled into this Mouser, at the version it pins.
+- **A name** (`commander`, `chat`, `preferences`, `mouser`, `skia`): an official item
+  from the `plugins.lock` compiled into this Mouser, at the version it pins. Each
+  comes from the signed release of its WeirdBrains repo (`WeirdBrains/mouser-commander`,
+  `mouser-chat`, `mouser-preferences`, `mouser-engine-wgpu`, `mouser-engine-skia`).
 - **`gh:Owner/Repo[@tag]`**: a GitHub release (the latest without a tag). If
   the release has `mouser-plugin.json` (`{"version", "key", "assets": [{"target",
   "url", "sha256", "size", "minisig"}]}`) it is used; otherwise the asset named

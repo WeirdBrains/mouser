@@ -2,6 +2,7 @@
 
 ### Added
 
+- `plugins.lock` pins the first signed releases of the official plugins and engines (commander, chat, preferences 0.1.0; engines `mouser` and `skia` 0.1.0) from their own WeirdBrains repos, so `mouser plugin install commander` and first run fetch and verify them. See docs/downloads.md.
 - The official WeirdBrains minisign key (`61BA1720747F9146`) is pinned: `plugins.lock` items must verify against it, and Mouser's release files are minisigned with it. See docs/downloads.md.
 
 - `mouser-mode-api`: the protocol mode plugins will use — a persistent child process speaking MessagePack (or JSON) over stdio, version negotiation, shared-memory images (1080p at 60 fps with no dropped frames), host services gated by permissions, and crash restarts that back off and stop after `max_restarts`. Commander, chat and preferences move onto it in 1.4.0. See docs/mode-protocol.md.
