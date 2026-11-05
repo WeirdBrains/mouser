@@ -90,7 +90,7 @@
 </ul>
 </li>
 <li>Arch (see "Arch packages" below):<ul>
-<li>Prebuilt: <code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v&lt;ver&gt;/mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst &amp;&amp; sudo pacman -U mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> (download first; URL installs look for a .sig we do not publish)</li>
+<li>Prebuilt: download <code>mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> and its <code>.sha256</code>, <code>sha256sum -c</code> it, then <code>sudo pacman -U ./mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> (see §Arch signatures; <code>pacman -U &lt;url&gt;</code> fails on the missing <code>.sig</code>)</li>
 <li>From source: <code>cd packaging/arch/mouser-git &amp;&amp; makepkg -si</code></li>
 <li>Planned: <code>yay -S mouser-git</code> (or <code>mouser-bin</code>) once published to the AUR.</li>
 </ul>
@@ -168,7 +168,26 @@ mouser_1.4.0_amd64.deb</code> does not read <code>.deb</code> files, so unpack i
 (<code>dpkg-deb -x mouser_*.deb d &amp;&amp; python3 scripts/check-glibc.py --max 2.35 d</code>).</p>
 <p>Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
 without publishing: the publish job only runs for <code>v*</code> tags, and the packages are
-versioned <code>0.0.0</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/release.md">docs/release.md</a></p></section></main>
+versioned <code>0.0.0</code>.</p>
+<h2 id="arch-signatures">Arch signatures</h2>
+<p><code>pacman -U https://…/mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> downloads the package,
+then <code>&lt;url&gt;.sig</code>, because pacman's <code>RemoteFileSigLevel</code> (default <code>Required</code>)
+wants an OpenPGP detached signature from a key in pacman's keyring for anything
+installed from a URL. Releases have no <code>.sig</code> yet, so that fails with a 404.
+<code>LocalFileSigLevel</code> (default <code>Optional</code>) lets a downloaded file install without
+one, so the supported install is download, <code>sha256sum -c</code> against the release's
+<code>.sha256</code> (and, from 1.4.0, <code>minisign -Vm &lt;file&gt; -P &lt;key&gt;</code> against its
+<code>.minisig</code>; key in docs/downloads.md), then <code>sudo pacman -U ./&lt;file&gt;</code>. Never turn
+signature checking off in <code>pacman.conf</code> for this.</p>
+<p>The two signatures are different things: <code>.minisig</code> is WeirdBrains' minisign
+signature (key <code>61BA1720747F9146</code>, for Mouser's own downloads and <code>plugins.lock</code>),
+which pacman cannot read; <code>.sig</code> is OpenPGP, what pacman checks. The release
+workflow makes <code>.pkg.tar.zst.sig</code> when the <code>ARCH_GPG_PRIVATE_KEY</code> (and
+<code>ARCH_GPG_PASSPHRASE</code>) secrets exist; then a URL install works after the user
+trusts the key once (<code>sudo pacman-key --recv-keys &lt;fingerprint&gt;</code> or <code>--add</code>,
+then <code>sudo pacman-key --lsign-key &lt;fingerprint&gt;</code>). Making that key and
+publishing its fingerprint is a maintainer decision; until then the package
+ships without <code>.sig</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/release.md">docs/release.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
