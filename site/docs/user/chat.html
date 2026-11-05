@@ -19,7 +19,7 @@ running.</p>
 action that types, runs or writes shows an <strong>approval card</strong> with the real command,
 path and tab first.</p>
 <h2 id="keys">Keys</h2>
-<p>All keys can be remapped in <code>modes.toml</code> under <code>[chat.keys]</code>; <code>ctrl+shift+k</code> lists them.</p>
+<p>Keys are plain and work while chat has the keyboard (switching to it with <code>esc :a</code>, a click, or ctrl+alt+k; Esc or ctrl+alt+k gives it back, docs/modes.md). All keys can be remapped in <code>modes.toml</code> under <code>[chat.keys]</code>; <code>ctrl+shift+k</code> lists them.</p>
 <table>
 <thead>
 <tr>
@@ -29,27 +29,27 @@ path and tab first.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>alt+i</code> (or click the input)</td>
+<td><code>i</code> (or click the input)</td>
 <td>type a message; Enter sends, Ctrl+U clears</td>
 </tr>
 <tr>
-<td><code>esc</code>, <code>alt+x</code>, Ctrl+C, the <strong>cancel</strong> button</td>
+<td><code>esc</code>, <code>x</code>, Ctrl+C, the <strong>cancel</strong> button</td>
 <td>cancel the running turn (the stream stops, an open card is denied, a running tool is told to stop: MCP servers get <code>notifications/cancelled</code>, and a stdio server that hasn't stopped within 1 s is killed and reconnected)</td>
 </tr>
 <tr>
-<td><code>alt+y</code> / <code>alt+a</code> / <code>alt+n</code></td>
+<td><code>y</code> / <code>a</code> / <code>n</code></td>
 <td>card: allow once / allow for this chat / deny</td>
 </tr>
 <tr>
-<td><code>alt+m</code> (or click the model name in the header)</td>
+<td><code>m</code> (or click the model name in the header)</td>
 <td>switch model: configured models, then local/hosted ones to install; ● marks the current one, Esc keeps it. The choice becomes the default (as <code>mouser model default</code>) and applies from the next message; not while a turn runs</td>
 </tr>
 <tr>
-<td><code>alt+l</code></td>
+<td><code>l</code></td>
 <td>new chat</td>
 </tr>
 <tr>
-<td><code>alt+pageup</code> / <code>alt+pagedown</code>, wheel</td>
+<td>PgUp / PgDn, wheel</td>
 <td>scroll the transcript</td>
 </tr>
 <tr>

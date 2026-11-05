@@ -17,13 +17,13 @@ setting in <code>$MOUSER_HOME/preferences.toml</code> by section: Appearance, Wi
 Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
 <code>plugins.max_restarts</code>: how many crashes within 30 s a plugin may have before
 it stays off (default 3; 0 never restarts; see <a href="../developer/mode-protocol.html">Mode plugin protocol</a>).</p>
-<p>Keys (alt+key by default; remap them in <code>modes.toml</code> under <code>[preferences.keys]</code>):</p>
+<p>Keys while the preferences mode has the keyboard (switching to it with <code>esc :p</code> gives it; ctrl+alt+k or Esc gives it back, docs/modes.md §Focus; remap them in <code>modes.toml</code> under <code>[preferences.keys]</code>):</p>
 <ul>
-<li>alt+↑ / alt+↓ move, alt+PgUp / alt+PgDn page;</li>
-<li>alt+← / alt+→ change the value: the previous/next choice, on/off, or ±1 for numbers;</li>
-<li>alt+Enter edits: on/off toggles, choices open a dropdown (↑/↓, Enter picks,
+<li>↑ / ↓ move, PgUp / PgDn page;</li>
+<li>← / → change the value: the previous/next choice, on/off, or ±1 for numbers;</li>
+<li>Enter edits: on/off toggles, choices open a dropdown (↑/↓, Enter picks,
   Esc closes), other fields take typed text (Enter saves, Esc cancels);</li>
-<li>alt+r resets the row to its default (the key is removed from the file).</li>
+<li>r resets the row to its default (the key is removed from the file).</li>
 </ul>
 <p>Rows are clickable: the value edits it, <code>reset</code> resets it.</p>
 <p>Every value is validated before it is saved (ranges, choices, http(s) URLs),
