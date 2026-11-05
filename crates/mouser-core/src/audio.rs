@@ -87,19 +87,47 @@ pub fn open(pref_host: Option<&str>, pref_device: Option<&str>) -> Result<(cpal:
     Err("no audio output device".into())
 }
 
+/// Probing runs on one long-lived thread: cpal hosts (WASAPI's COM above all)
+/// must not be enumerated from many threads at once.
+fn probe<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    type Job = Box<dyn FnOnce() + Send>;
+    static WORKER: std::sync::OnceLock<std::sync::Mutex<std::sync::mpsc::Sender<Job>>> = std::sync::OnceLock::new();
+    let tx = WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Job>();
+        std::thread::Builder::new()
+            .name("audio-probe".into())
+            .spawn(move || {
+                for job in rx {
+                    job();
+                }
+            })
+            .expect("audio probe thread");
+        std::sync::Mutex::new(tx)
+    });
+    let (rtx, rrx) = std::sync::mpsc::channel();
+    let job: Job = Box::new(move || {
+        let _ = rtx.send(f());
+    });
+    tx.lock().unwrap().send(job).expect("audio probe thread");
+    rrx.recv().expect("audio probe thread")
+}
+
 /// The host `audio.host` resolves to right now (`"none"` without one).
 pub fn active_host(pref_host: Option<&str>) -> &'static str {
     if cfg!(all(target_os = "linux", not(feature = "jack"))) && parse_host(pref_host) == HostPref::Jack {
         return "ALSA (JACK not in this build)";
     }
-    for id in order(parse_host(pref_host)) {
-        if let Ok(h) = cpal::host_from_id(id)
-            && h.default_output_device().is_some()
-        {
-            return id.name();
+    let pref = parse_host(pref_host);
+    probe(move || {
+        for id in order(pref) {
+            if let Ok(h) = cpal::host_from_id(id)
+                && h.default_output_device().is_some()
+            {
+                return id.name();
+            }
         }
-    }
-    "none"
+        "none"
+    })
 }
 
 /// Output device names of the host `audio.host` resolves to (cached briefly:
@@ -107,26 +135,28 @@ pub fn active_host(pref_host: Option<&str>) -> &'static str {
 pub fn output_devices(pref_host: Option<&str>) -> Vec<String> {
     static CACHE: std::sync::Mutex<Option<(Instant, HostPref, Vec<String>)>> = std::sync::Mutex::new(None);
     let pref = parse_host(pref_host);
-    let mut c = CACHE.lock().unwrap();
-    if let Some((t, p, v)) = c.as_ref()
+    if let Some((t, p, v)) = CACHE.lock().unwrap().as_ref()
         && *p == pref
         && t.elapsed() < Duration::from_secs(3)
     {
         return v.clone();
     }
-    let mut v = Vec::new();
-    for id in order(pref) {
-        let Ok(host) = cpal::host_from_id(id) else { continue };
-        if host.default_output_device().is_none() {
-            continue;
+    let v = probe(move || {
+        let mut v = Vec::new();
+        for id in order(pref) {
+            let Ok(host) = cpal::host_from_id(id) else { continue };
+            if host.default_output_device().is_none() {
+                continue;
+            }
+            if let Ok(devs) = host.output_devices() {
+                v = devs.filter_map(|d| d.name().ok()).collect();
+            }
+            break;
         }
-        if let Ok(devs) = host.output_devices() {
-            v = devs.filter_map(|d| d.name().ok()).collect();
-        }
-        break;
-    }
-    v.dedup();
-    *c = Some((Instant::now(), pref, v.clone()));
+        v.dedup();
+        v
+    });
+    *CACHE.lock().unwrap() = Some((Instant::now(), pref, v.clone()));
     v
 }
 

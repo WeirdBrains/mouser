@@ -35,6 +35,7 @@
 
 ### Fixed
 
+- Windows: listing audio devices for preferences no longer crashes when several callers probe at once; probing runs on one thread.
 - macOS: dingbats missing from the primary font and Apple Symbols, such as oh-my-zsh's prompt arrow ➜ (U+279C) with Cascadia Mono PL, no longer show as boxes: Menlo, Zapf Dingbats and Arial Unicode MS follow Apple Symbols in the fallback list.
 - Installs: archives made with `tar -C dir -czf x.tar.gz .` (a leading `./` entry) unpack instead of failing with "empty archive entry name".
 - Mouser's own engines (bundled, staged or beside a dev build) report Mouser's version instead of 0.4.0 (mouser-core's).
