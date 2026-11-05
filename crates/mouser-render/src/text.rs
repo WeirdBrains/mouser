@@ -38,6 +38,11 @@ const FALLBACK_FAMILIES: &[&str] = &[
     "Noto Sans CJK SC",
     "Segoe UI Symbol",
     "Apple Symbols",
+    // macOS: Apple Symbols lacks dingbats such as oh-my-zsh's prompt arrow
+    // ➜ (U+279C); these have them.
+    "Menlo",
+    "Zapf Dingbats",
+    "Arial Unicode MS",
 ];
 
 #[derive(Debug, Clone)]
@@ -953,5 +958,15 @@ mod translucent_tests {
         assert_eq!(buf[1], 0x808080);
         assert_eq!(opacity(0x123456), 255);
         assert_eq!(opacity(translucent(0x123456, 10)), 10);
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    #[test]
+    fn mac_dingbat_faces_follow_apple_symbols() {
+        let f = super::FALLBACK_FAMILIES;
+        let at = f.iter().position(|n| *n == "Apple Symbols").expect("Apple Symbols");
+        assert_eq!(&f[at + 1..at + 4], ["Menlo", "Zapf Dingbats", "Arial Unicode MS"]);
     }
 }
