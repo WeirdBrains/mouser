@@ -10,8 +10,7 @@ curated Demo page. Its MCP client (`lib/mcp/mcp_client.dart`) is plain Dart
 with no extra packages, so it's a good template for your own integration.
 
 Each clip below is about 30 seconds long, with Mouser on the left and the demo
-app on the right. Clips of sending files to Mouser, HTTPS and stdio are coming
-later.
+app on the right.
 
 ## What it covers
 
@@ -61,6 +60,10 @@ Connect page then shows the status and server info.
 
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/01-connect-and-tools.jpg" width="1280" height="720"><source src="../../assets/demo/01-connect-and-tools.mp4" type="video/mp4"></video><figcaption>Connecting over HTTP, listing the tools and calling <code>tabs_list</code>.</figcaption></figure>
 
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/10-connect-https.jpg" width="1280" height="720"><source src="../../assets/demo/10-connect-https.mp4" type="video/mp4"></video><figcaption>HTTPS on port 7802, pinning the certificate SHA-256 from <code>mouser mcp status</code>.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/11-connect-stdio.jpg" width="1280" height="720"><source src="../../assets/demo/11-connect-stdio.mp4" type="video/mp4"></video><figcaption>stdio: the app spawns <code>mouser mcp serve --stdio</code>, which bridges to the running Mouser.</figcaption></figure>
+
 ## 4. Protocol
 
 Shows the session (server info, capabilities, session id, certificate SHA-256),
@@ -92,11 +95,13 @@ images, .docx, PDF, video and audio (Linux needs `mpv` for media).
 
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/03-files-image-pdf-docx.jpg" width="1280" height="720"><source src="../../assets/demo/03-files-image-pdf-docx.mp4" type="video/mp4"></video><figcaption><code>files_list</code>, then the image, PDF, .docx and text viewers.</figcaption></figure>
 
-<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/04-video-player.jpg" width="1280" height="720"><source src="../../assets/demo/04-video-player.mp4" type="video/mp4"></video><figcaption>Playing a video from the file list (with sound).</figcaption></figure>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/04-video-player.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/04-video-player.mp4?v=2" type="video/mp4"></video><figcaption>Playing a video from the file list (with sound).</figcaption></figure>
 
-<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/05-music-player.jpg" width="1280" height="720"><source src="../../assets/demo/05-music-player.mp4" type="video/mp4"></video><figcaption>Playing music from the file list (with sound).</figcaption></figure>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/05-music-player.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/05-music-player.mp4?v=2" type="video/mp4"></video><figcaption>Playing music from the file list (with sound).</figcaption></figure>
 
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/07-type-and-scrollback.jpg" width="1280" height="720"><source src="../../assets/demo/07-type-and-scrollback.mp4" type="video/mp4"></video><figcaption><code>shell_type</code> sends keystrokes; <code>scrollback_read</code> reads them back.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/09-send-files-picker.jpg" width="1280" height="720"><source src="../../assets/demo/09-send-files-picker.mp4" type="video/mp4"></video><figcaption>Send files to Mouser: pick a local file, copy it into the tab folder, make a folder; Mouser asks first.</figcaption></figure>
 
 ## 7. Check your own client
 
