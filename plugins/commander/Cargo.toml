@@ -20,6 +20,9 @@ cpal = "0.15"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+time.workspace = true
+
 [dev-dependencies]
 mouser-core = { path = "../../crates/mouser-core" }
 mouser-render = { path = "../../crates/mouser-render" }
