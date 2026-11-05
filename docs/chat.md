@@ -118,8 +118,8 @@ configured provider works too. The header shows `provider/model`.
 - `mouser_core::agent`: `Chat` (send, cancel, answer, clear), `AgentHost` (context,
   tools, check, call, model), redaction and untrusted marking, transcripts. Tested
   with a scripted fake provider in `crates/mouser-core/tests/agent_tests.rs`.
-- `mouser_render::modes::chat::ChatMode`: the dock (header, transcript, card, input).
-  Tests are in `crates/mouser-render/tests/chat_render_tests.rs`.
+- `plugins/chat` (`mouser-chat`): the dock (header, transcript, card, input), a mode
+  plugin; `plugins/chat/tests/through_mouser.rs` drives it through Mouser.
 - `crates/mouser-app/src/chat_host.rs`: the app's host (tabs, AppTools with
   `preapproved`, MCP clients, broker checks).
 - `cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"`:
@@ -129,7 +129,8 @@ configured provider works too. The header shows `provider/model`.
 
 `plugins/chat` (`mouser-chat`) is the chat mode as a separate program, built only on
 `mouser-mode-api` with its `markdown` feature. Installed as a `transport = "mode"`
-plugin named `chat`, it replaces the built-in mode (hotkey `a`). It needs the
+plugin named `chat`, it is the chat mode (hotkey `a`; Mouser has no built-in chat
+since 1.4.0). It needs the
 `agent.use` permission. The agent itself still runs inside Mouser: the plugin sends
 `agent.send` / `agent.cancel` / `agent.clear` and draws the transcript from
 `agent.state` events, so your keys and models never leave Mouser. Tool-call cards are

@@ -135,21 +135,18 @@ fn engines_and_modes_through_the_plugin_cli() {
     cli(Action::Enable("skia".into())).unwrap();
     assert!(mouser_core::plugins::is_enabled("skia"));
     assert_eq!(kind(Action::List, Some("engine")).unwrap(), engine_list());
-    // Built-in modes: listed with their hotkeys, and can be turned off.
-    let l = kind(Action::List, Some("mode")).unwrap();
-    assert!(l.contains("commander") && l.contains("switch: esc :c") && l.contains("chat") && !l.contains("openai"), "{l}");
-    cli(Action::Disable("commander".into())).unwrap();
-    cli(Action::Disable("chat".into())).unwrap();
-    cli(Action::Disable("preferences".into())).unwrap();
-    let l = cli(Action::List).unwrap();
-    assert!(l.contains("[disabled]") && l.contains("plain terminal"), "{l}");
-    cli(Action::Enable("commander".into())).unwrap();
-    cli(Action::Enable("chat".into())).unwrap();
-    cli(Action::Enable("preferences".into())).unwrap();
-    // A mode plugin installs like any plugin.
+    // No built-in modes: with nothing installed there are none, and Mouser is a plain terminal.
+    assert!(kind(Action::List, Some("mode")).unwrap().contains("(none)"));
+    assert!(cli(Action::List).unwrap().contains("plain terminal"));
+    // A mode plugin installs like any plugin, is listed with its hotkey, and can be turned off.
     let o = cli(Action::Install(examples().join("hello-mode").display().to_string())).unwrap();
     assert!(o.contains("installed hello-mode 0.1.0 (mode)") && o.contains("run"), "{o}");
     assert!(kind(Action::List, Some("mode")).unwrap().contains("switch: esc :h"));
+    cli(Action::Disable("hello-mode".into())).unwrap();
+    let l = cli(Action::List).unwrap();
+    assert!(l.contains("[disabled]") && l.contains("plain terminal"), "{l}");
+    cli(Action::Enable("hello-mode".into())).unwrap();
+    assert!(!cli(Action::List).unwrap().contains("plain terminal"));
     assert!(kind(Action::Use("hello-mode".into()), None).is_err());
     unsafe { std::env::remove_var("MOUSER_HOME") };
 }

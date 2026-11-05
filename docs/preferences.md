@@ -1,7 +1,7 @@
 # Preferences mode
 
-`esc :p` opens the preferences mode (a built-in mode plugin, like commander
-and chat; `mouser plugin disable preferences` turns it off). It lists every
+`esc :p` opens the preferences mode (a mode plugin, `mouser-preferences`, like
+commander and chat; `mouser plugin disable preferences` turns it off). It lists every
 setting in `$MOUSER_HOME/preferences.toml` by section: Appearance, Window,
 Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
 `plugins.max_restarts`: how many crashes within 30 s a plugin may have before
@@ -33,10 +33,9 @@ moved with `mouser model local move <dir>`.
 
 ## As a plugin program
 
-`plugins/preferences` is the same mode as a separate program
-(`mouser-preferences`, `transport = "mode"`), built only on `mouser-mode-api`.
-Installed, it replaces the built-in preferences mode (`mouser plugin list`
-marks it `[overrides built-in]`):
+`plugins/preferences` is the mode's program (`mouser-preferences`,
+`transport = "mode"`), built only on `mouser-mode-api`; Mouser has no built-in
+preferences mode since 1.4.0. To run your own build instead of the official one:
 
 ```
 cargo build --release -p mouser-preferences

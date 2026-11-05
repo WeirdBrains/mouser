@@ -665,7 +665,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     if let Some(on_act) = &hooks.on_ui_action
                         && (dock_press || last_ui.as_ref().is_some_and(|l| l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(px, py))))
                     {
-                        on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::commander::pack_xy(px, py) });
+                        on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::pack_xy(px, py) });
                         dirty = true;
                         if dock_press {
                             return;
@@ -713,7 +713,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     if dock_press && button == winit::event::MouseButton::Left {
                         dock_press = false;
                         if let (Some(on_act), Some(p)) = (&hooks.on_ui_action, cursor_pos) {
-                            on_act(ui::UiAction::Mode { action: "pointer_up".into(), arg: modes::commander::pack_xy(p.x as i32, p.y as i32) });
+                            on_act(ui::UiAction::Mode { action: "pointer_up".into(), arg: modes::pack_xy(p.x as i32, p.y as i32) });
                         }
                         mouse_down = None;
                         dirty = true;
@@ -769,7 +769,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                             return;
                         }
                         if button == winit::event::MouseButton::Right && r.contains(px, py) {
-                            on_act(ui::UiAction::Mode { action: modes::MENU_AT.into(), arg: modes::commander::pack_xy(px, py) });
+                            on_act(ui::UiAction::Mode { action: modes::MENU_AT.into(), arg: modes::pack_xy(px, py) });
                             dirty = true;
                             return;
                         }

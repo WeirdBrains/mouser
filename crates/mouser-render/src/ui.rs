@@ -1056,7 +1056,7 @@ fn over_dock(l: &UiLayout, x: i32, y: i32) -> bool {
 /// A left press over a mode's view: the mode sees the press (seek bar, image
 /// pan), then the item under it is clicked. `None`: not over the view.
 pub fn dock_press(l: &UiLayout, x: i32, y: i32) -> Option<Vec<UiAction>> {
-    over_dock(l, x, y).then(|| vec![UiAction::Mode { action: "pointer_down".into(), arg: crate::modes::commander::pack_xy(x, y) }, hit_test(l, x, y)])
+    over_dock(l, x, y).then(|| vec![UiAction::Mode { action: "pointer_down".into(), arg: crate::modes::pack_xy(x, y) }, hit_test(l, x, y)])
 }
 
 /// The wheel over a mode's view (`lines` > 0 is up): "scroll", or with Ctrl
@@ -1069,7 +1069,7 @@ pub fn dock_wheel(l: &UiLayout, x: i32, y: i32, lines: isize, ctrl: bool) -> Opt
     Some(match (lines, ctrl) {
         (0, _) => vec![],
         (_, true) => vec![
-            UiAction::Mode { action: "pointer_move".into(), arg: crate::modes::commander::pack_xy(x, y) },
+            UiAction::Mode { action: "pointer_move".into(), arg: crate::modes::pack_xy(x, y) },
             UiAction::Mode { action: "zoom_wheel".into(), arg: n },
         ],
         _ => vec![UiAction::Mode { action: "scroll".into(), arg: -n }],

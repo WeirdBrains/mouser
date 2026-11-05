@@ -2,10 +2,11 @@
 //! directory, enable/disable and priority state, the registry by kind, and the
 //! command transport (an executable behind `[mouser]` line commands).
 //!
-//! Everything is a plugin (P6): the built-in modes (commander, chat,
-//! preferences) are compiled-in plugins with their own `plugin.toml`
-//! ([`BUILTIN_MANIFESTS`], `transport = "builtin"`); every engine, Mouser's own
-//! `mouser` and `skia` included, is a library. Engines may be described
+//! Everything is a plugin (P6): the official modes (commander, chat,
+//! preferences) are plugin programs from their own crates, installed through
+//! `plugins.lock` like any other (none is compiled in); every engine, Mouser's
+//! own `mouser` and `skia` included, is a library. Only the model providers
+//! are built in (`transport = "builtin"`). Engines may be described
 //! by `plugin.toml` (`kind = "engine"`, `transport = "library"`, `[engine]`) or
 //! the older `engine.toml`, which is read as the same manifest
 //! ([`Manifest::from_engine`]); their C ABI and loader stay in
@@ -201,12 +202,8 @@ impl Manifest {
         if !crate::engines::valid_name(&self.name) {
             bail!("invalid plugin name {:?} (use a-z, 0-9, - and _)", self.name);
         }
-        // A built-in mode's name may be taken by a `transport = "mode"`
-        // plugin, which replaces it (decision 5; how the plugin builds of
-        // commander, chat and preferences take over). Other built-in names
-        // stay reserved.
-        let takes_over = self.run.transport == Transport::Mode && self.provides.iter().all(|p| p.kind == Kind::Mode);
-        if BUILTINS.iter().any(|b| b.0 == self.name && !(b.1 == Kind::Mode && takes_over)) {
+        // The built-in model providers' names stay reserved.
+        if BUILTINS.iter().any(|b| b.0 == self.name) {
             bail!("{:?} is a built-in name", self.name);
         }
         if self.api != API {
@@ -309,9 +306,11 @@ impl Manifest {
     }
 }
 
-/// Hotkeys the built-in modes use (a plugin mode can't take them).
+/// The official modes' hotkeys (`plugins.lock`): another plugin can't take them.
+pub const OFFICIAL_HOTKEYS: [(&str, &str); 3] = [("commander", "c"), ("chat", "a"), ("preferences", "p")];
+
 fn builtin_hotkeys() -> Vec<String> {
-    BUILTIN_MANIFESTS.iter().filter_map(|(_, s)| builtin_parse(s).mode.map(|m| m.hotkey)).collect()
+    OFFICIAL_HOTKEYS.iter().map(|(_, h)| h.to_string()).collect()
 }
 
 fn valid_key(k: &str) -> bool {
@@ -329,11 +328,10 @@ fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
     if !matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit()) {
         bail!("[mode] hotkey must be one lowercase letter or digit, not {:?}", m.hotkey);
     }
-    // `p` toggles the mode picker; built-in modes keep theirs.
-    // A plugin taking over a built-in mode keeps that mode's hotkey.
-    let own = BUILTINS.iter().any(|b| b.0 == name) && builtin_manifest(name).and_then(|b| b.mode).is_some_and(|b| b.hotkey == m.hotkey);
-    if !own && (m.hotkey == "p" || builtin_hotkeys().contains(&m.hotkey)) {
-        bail!("[mode] hotkey {:?} is taken by Mouser (built-ins use {})", m.hotkey, builtin_hotkeys().join(", "));
+    // The official modes keep their hotkeys (`p` is preferences').
+    let own = OFFICIAL_HOTKEYS.iter().any(|(n, h)| *n == name && *h == m.hotkey);
+    if !own && builtin_hotkeys().contains(&m.hotkey) {
+        bail!("[mode] hotkey {:?} is taken by Mouser's official modes ({})", m.hotkey, builtin_hotkeys().join(", "));
     }
     let mut ids = BTreeSet::new();
     for k in &m.keys {
@@ -379,33 +377,14 @@ pub const RESERVED_COMMANDS: [&str; 16] = [
     "c",
 ];
 
-/// The compiled-in plugins that have a full manifest (the built-in modes;
-/// every engine is a library, docs/engines.md).
-pub const BUILTIN_MANIFESTS: [(&str, &str); 3] = [
-    ("commander", include_str!("builtin/commander.toml")),
-    ("chat", include_str!("builtin/chat.toml")),
-    ("preferences", include_str!("builtin/preferences.toml")),
-];
-
-fn builtin_parse(s: &str) -> Manifest {
-    toml::from_str(s).expect("built-in plugin.toml")
-}
-
-/// The compiled-in manifest of a built-in mode.
-pub fn builtin_manifest(name: &str) -> Option<Manifest> {
-    BUILTIN_MANIFESTS.iter().find(|(n, _)| *n == name).map(|(_, s)| builtin_parse(s))
-}
-
 /// The one plugin that can't be disabled: the permanent engine fallback.
 pub fn can_disable(name: &str) -> bool {
     name != crate::engines::DEFAULT
 }
 
-/// Built-in providers that are not engines, in their default order (modes first).
-pub const BUILTINS: [(&str, Kind, &str); 10] = [
-    ("commander", Kind::Mode, "file commander mode (built in)"),
-    ("chat", Kind::Mode, "agent chat mode (built in)"),
-    ("preferences", Kind::Mode, "preferences mode (built in)"),
+/// Built-in providers (model providers only; every mode and engine is a
+/// plugin), in their default order.
+pub const BUILTINS: [(&str, Kind, &str); 7] = [
     ("openai", Kind::ModelProvider, "OpenAI (built in; mouser model add openai)"),
     ("xai", Kind::ModelProvider, "xAI Grok (built in, OpenAI-compatible)"),
     ("openrouter", Kind::ModelProvider, "OpenRouter (built in, OpenAI-compatible)"),
@@ -716,8 +695,12 @@ pub fn is_enabled(name: &str) -> bool {
 /// Every known plugin name in priority order (saved order first, then the rest by name).
 pub fn priority() -> Vec<String> {
     let st = State::load();
-    let mut all: Vec<String> = BUILTINS.iter().map(|b| b.0.to_string()).collect();
-    all.extend(installed().into_iter().flatten().map(|i| i.manifest.name));
+    // The official modes first when installed (commander is the default), then
+    // the built-in providers, then the other plugins.
+    let inst: Vec<String> = installed().into_iter().flatten().map(|i| i.manifest.name).collect();
+    let mut all: Vec<String> = OFFICIAL_HOTKEYS.iter().map(|(n, _)| n.to_string()).filter(|n| inst.contains(n)).collect();
+    all.extend(BUILTINS.iter().map(|b| b.0.to_string()));
+    all.extend(inst.into_iter().filter(|n| !all.contains(n)).collect::<Vec<_>>());
     let mut out: Vec<String> = st.priority.iter().filter(|n| all.contains(n)).cloned().collect();
     for n in all {
         if !out.contains(&n) {
@@ -791,19 +774,18 @@ impl Registry {
         let on = |n: &str| !st.disabled.iter().any(|d| d == n);
         let mut entries = Vec::new();
         for (n, k, d) in BUILTINS {
-            let m = builtin_manifest(n);
             entries.push(Entry {
                 name: n.into(),
                 version: "built-in".into(),
-                description: m.as_ref().map_or(d.to_string(), |m| m.description.clone()),
+                description: d.to_string(),
                 kinds: vec![k],
                 transport: Transport::Builtin,
                 enabled: on(n),
                 dir: None,
                 source: None,
                 commands: vec![],
-                permissions: m.as_ref().map(|m| m.permissions.clone()).unwrap_or_default(),
-                hotkey: m.and_then(|m| m.mode).map(|m| m.hotkey),
+                permissions: vec![],
+                hotkey: None,
             });
         }
         let mut broken = Vec::new();
@@ -993,7 +975,7 @@ commands = ["hello"]
         assert!(Manifest::parse(&CMD.replace("command = [\"./hello.sh\"]\n", "")).is_err());
         assert!(Manifest::parse(&CMD.replace("kind = \"command\"", "kind = \"engine\"")).is_err());
         assert!(Manifest::parse(&CMD.replace("transport = \"command\"", "transport = \"builtin\"")).is_err());
-        assert!(Manifest::parse(&CMD.replace("name = \"hello\"", "name = \"commander\"")).is_err());
+        assert!(Manifest::parse(&CMD.replace("name = \"hello\"", "name = \"openai\"")).is_err());
         let mp =
             "name = \"m\"\nversion = \"1\"\n[[provides]]\nkind = \"model-provider\"\nid = \"gemma\"\n[run]\ntransport = \"mcp\"\ncommand = [\"x\"]\n";
         assert_eq!(Manifest::parse(mp).unwrap().kinds(), vec![Kind::ModelProvider]);
@@ -1027,14 +1009,14 @@ commands = ["hello"]
         install(&plugin(t.path(), "beta", &["yo"])).unwrap();
         assert!(install(&plugin(t.path(), "gamma", &["hi"])).unwrap_err().to_string().contains("already provided"));
         // Installed plugins go first (in install order); built-ins follow until placed.
-        assert_eq!(priority()[..3], ["alpha", "beta", "commander"]);
+        assert_eq!(priority()[..3], ["alpha", "beta", "openai"]);
         let r = Registry::load();
         assert_eq!(r.command("hi").unwrap().name, "alpha");
         assert!(r.providers(Kind::Engine).iter().any(|e| e.name == "mouser"));
-        assert_eq!(r.providers(Kind::Mode)[0].name, "commander");
-        assert_eq!(move_to("beta", 0).unwrap()[..3], ["beta", "alpha", "commander"]);
-        assert_eq!(move_to("commander", 0).unwrap()[..3], ["commander", "beta", "alpha"]);
-        assert_eq!(move_by("alpha", -1).unwrap()[..3], ["commander", "alpha", "beta"]);
+        assert!(r.providers(Kind::Mode).is_empty(), "no mode is built in");
+        assert_eq!(move_to("beta", 0).unwrap()[..3], ["beta", "alpha", "openai"]);
+        assert_eq!(move_to("openai", 0).unwrap()[..3], ["openai", "beta", "alpha"]);
+        assert_eq!(move_by("alpha", -1).unwrap()[..3], ["openai", "alpha", "beta"]);
         set_enabled("alpha", false).unwrap();
         assert!(!is_enabled("alpha"));
         assert!(Registry::load().command("hi").is_none());
@@ -1042,9 +1024,9 @@ commands = ["hello"]
         assert!(Registry::load().command("hi").is_some());
         assert!(set_enabled("nope", false).is_err());
         // P6: built-ins can be turned off, except the permanent engine.
-        set_enabled("commander", false).unwrap();
-        assert!(Registry::load().modes().iter().all(|e| e.name != "commander"));
-        set_enabled("commander", true).unwrap();
+        set_enabled("openai", false).unwrap();
+        assert!(!Registry::load().entries.iter().any(|e| e.name == "openai" && e.enabled));
+        set_enabled("openai", true).unwrap();
         assert!(set_enabled("mouser", false).unwrap_err().to_string().contains("permanent"));
         // A broken manifest is listed, not fatal.
         fs::create_dir_all(dir().join("broken")).unwrap();
@@ -1057,18 +1039,18 @@ commands = ["hello"]
     }
 
     #[test]
-    fn builtin_manifests_are_plugin_toml() {
-        for (n, _) in BUILTIN_MANIFESTS {
-            let m = builtin_manifest(n).unwrap();
-            assert_eq!(m.name, n);
-            assert_eq!(m.run.transport, Transport::Builtin);
-            assert!(m.permissions.iter().all(|c| known_capability(c)), "{n}");
+    fn official_modes_are_plugins_with_their_hotkeys() {
+        assert!(!BUILTINS.iter().any(|b| b.1 == Kind::Mode), "no mode is compiled in");
+        for (n, h) in OFFICIAL_HOTKEYS {
+            let m = MODE
+                .replace("\"shout\"", &format!("{n:?}"))
+                .replace("transport = \"command\"\ncommand = [\"./run\"]", "transport = \"mode\"\ncommand = [\"./run\"]")
+                .replace("hotkey = \"s\"", &format!("hotkey = {h:?}"));
+            assert!(Manifest::parse(&m).is_ok(), "{n} keeps {h}");
         }
-        assert_eq!(builtin_manifest("commander").unwrap().mode.unwrap().hotkey, "c");
-        assert_eq!(builtin_manifest("chat").unwrap().mode.unwrap().hotkey, "a");
-        assert!(builtin_manifest("mouser").is_none() && builtin_manifest("skia").is_none(), "engines are libraries");
-        // A plugin can't reuse a built-in name.
-        assert!(Manifest::parse(&MODE.replace("\"shout\"", "\"chat\"")).unwrap_err().to_string().contains("built-in"));
+        // Another plugin can't take an official hotkey or a provider's name.
+        assert!(Manifest::parse(&MODE.replace("hotkey = \"s\"", "hotkey = \"a\"")).unwrap_err().to_string().contains("taken"));
+        assert!(Manifest::parse(&MODE.replace("\"shout\"", "\"openai\"")).unwrap_err().to_string().contains("built-in"));
     }
 
     const MODE: &str = r#"
@@ -1168,10 +1150,7 @@ library = "libfancy.so"
         assert_eq!(crate::engines::priority(), ["fancy", "mouser"]);
         unsafe { std::env::remove_var("MOUSER_ENGINE") };
         assert!(set_enabled("mouser", false).is_err());
-        // Every mode off: no modes (Mouser falls back to the plain terminal).
-        set_enabled("commander", false).unwrap();
-        set_enabled("chat", false).unwrap();
-        set_enabled("preferences", false).unwrap();
+        // No mode plugin installed: no modes (Mouser is a plain terminal).
         assert!(Registry::load().modes().is_empty());
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }

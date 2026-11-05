@@ -1,7 +1,6 @@
-//! The commander plugin on a remote shell, against the built-in mode: with
-//! `remote.read` Mouser tells it the ssh session and the listing, and it
-//! previews and views the remote files over that ssh like the built-in mode
-//! (a fake ssh here, which runs the commands locally).
+//! The commander plugin on a remote shell: with `remote.read` Mouser tells
+//! it the ssh session and the listing, and it previews and views the remote
+//! files over that ssh (a fake ssh here, which runs the commands locally).
 
 // The fake ssh is a shell script.
 #![cfg(unix)]
@@ -13,12 +12,11 @@ use mouser_core::commander::BINDINGS;
 use mouser_core::modes::Keymap;
 use mouser_core::permissions::{Decision, Store};
 use mouser_render::modes::Mode;
-use mouser_render::modes::commander::CommanderMode;
 use mouser_render::modes::stdio::StdioMode;
 use std::time::{Duration, Instant};
 
 #[test]
-fn remote_folders_preview_and_view_like_the_built_in() {
+fn remote_folders_preview_and_view_through_mouser() {
     use mouser_core::commander::{Entry, kind_of};
     use std::os::unix::fs::PermissionsExt;
     let home = tempfile::tempdir().unwrap();
@@ -60,54 +58,41 @@ fn remote_folders_preview_and_view_like_the_built_in() {
     };
     let target = mouser_core::remote::SshTarget { opts: vec![], dest: "fakehost".into() };
 
-    let mut b = CommanderMode::new();
     let p = mouser_core::plugins::find("commander").unwrap();
     let mut m = StdioMode::new(p, 3).unwrap();
     let keys = Keymap::new(BINDINGS);
-    let tell = |x: &mut dyn Mode, listing: Option<Result<Vec<Entry>, String>>| {
-        x.remote_ssh(Some(&target));
-        x.remote_changed("fakehost", Some(&srv), listing);
-    };
-    for x in [&mut b as &mut dyn Mode, &mut m] {
-        x.activate();
-    }
+    m.activate();
     // Mouser calls these every frame; the plugin hears only changes.
     let end = Instant::now() + Duration::from_secs(10);
     loop {
-        for x in [&mut b as &mut dyn Mode, &mut m] {
-            tell(x, None);
-            let _ = x.view(&ctx(), &keys);
-        }
-        for x in [&mut b as &mut dyn Mode, &mut m] {
-            tell(x, Some(Ok(vec![ent("notes.txt"), ent("r.png")])));
-        }
+        m.remote_ssh(Some(&target));
+        m.remote_changed("fakehost", Some(&srv), None);
+        let _ = m.view(&ctx(), &keys);
+        m.remote_changed("fakehost", Some(&srv), Some(Ok(vec![ent("notes.txt"), ent("r.png")])));
         let v = m.view(&ctx(), &keys);
-        if v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains("r.png")) || Instant::now() > end {
+        if shows(&v, "r.png") || Instant::now() > end {
             break;
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let v = same(&mut b, &mut m, "remote list");
-    assert!(v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains("fakehost")), "the header names the host");
+    let v = settle(&mut m, "remote list");
+    assert!(shows(&v, "fakehost"), "the header names the host");
+    assert!(shows(&v, "notes.txt") && shows(&v, "r.png"));
 
     // Grid: the image tile and the text snippet come over "ssh".
-    b.action("view", 1);
     m.action("view", 1);
-    same_when(&mut b, &mut m, "remote grid with its tile and snippet", |v| {
+    settle_when(&mut m, "remote grid with its tile and snippet", |v| {
         !v.images.is_empty() && v.dock.iter().flat_map(|d| &d.items).any(|i| i.text == "line one")
     });
 
     // The viewer (picked from the list): the image fetched whole, then the text.
-    b.action("view", 0);
     m.action("view", 0);
-    select(&mut b, &mut m, "r.png");
-    b.action("open", 0);
+    select(&mut m, "r.png");
     m.action("open", 0);
-    same_when(&mut b, &mut m, "remote image view, fetched whole", |v| v.images.first().map(|i| (i.width, i.height)) == Some((300, 100)));
-    assert!(b.escape() && m.escape());
-    select(&mut b, &mut m, "notes.txt");
-    b.action("open", 0);
+    settle_when(&mut m, "remote image view, fetched whole", |v| v.images.first().map(|i| (i.width, i.height)) == Some((300, 100)));
+    assert!(m.escape());
+    select(&mut m, "notes.txt");
     m.action("open", 0);
-    same_when(&mut b, &mut m, "remote text view", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| i.text == "line two"));
+    settle_when(&mut m, "remote text view", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| i.text == "line two"));
     drop(m);
 }

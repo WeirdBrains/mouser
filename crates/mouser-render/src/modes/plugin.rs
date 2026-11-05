@@ -179,7 +179,7 @@ impl Mode for PluginMode {
         }
         let cols = ((a.w - 2 * PADDING - 20) / cw).max(10) as usize;
         for l in &s.lines {
-            body.push((super::chat::wrap(l, cols).join("\n"), PanelStyle::Label));
+            body.push((wrap(l, cols).join("\n"), PanelStyle::Label));
         }
         if s.lines.is_empty() && s.error.is_none() {
             body.push((if s.busy { "…".into() } else { "(nothing yet)".into() }, PanelStyle::Hint));
@@ -213,4 +213,31 @@ impl Mode for PluginMode {
     fn set_waker(&mut self, w: Waker) {
         self.waker = Some(w);
     }
+}
+
+/// Wrap to `cols` characters (hard-wraps long words).
+pub fn wrap(text: &str, cols: usize) -> Vec<String> {
+    let cols = cols.max(8);
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        for word in para.split(' ') {
+            let wl = word.chars().count();
+            let ll = line.chars().count();
+            if ll > 0 && ll + 1 + wl > cols {
+                out.push(std::mem::take(&mut line));
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+            while line.chars().count() > cols {
+                let head: String = line.chars().take(cols).collect();
+                line = line.chars().skip(cols).collect();
+                out.push(head);
+            }
+        }
+        out.push(line);
+    }
+    out
 }

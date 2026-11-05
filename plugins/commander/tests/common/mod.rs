@@ -1,11 +1,10 @@
-//! What both through-Mouser tests share: the window, and drawing the
-//! built-in mode and the plugin side by side until they agree.
+//! What the through-Mouser tests share: the window, and drawing the plugin
+//! through Mouser's adapter until its view settles.
 
 #![allow(dead_code)]
 
 use mouser_core::commander::BINDINGS;
 use mouser_core::modes::Keymap;
-use mouser_render::modes::commander::CommanderMode;
 use mouser_render::modes::stdio::StdioMode;
 use mouser_render::modes::{Context, Effect, Mode, View};
 use std::path::Path;
@@ -31,35 +30,35 @@ pub fn shape(v: &View) -> String {
     format!("{:#?}\n{:#?}\n{imgs:?}\n{}", v.dock, v.panel, v.fullscreen)
 }
 
-/// Draw both until they agree (thumbnails decode on threads in both).
-pub fn same(b: &mut CommanderMode, p: &mut StdioMode, what: &str) -> View {
-    same_when(b, p, what, |_| true)
+/// Draw the plugin until its view settles (two frames alike; thumbnails
+/// decode on threads) with a dock.
+pub fn settle(p: &mut StdioMode, what: &str) -> View {
+    settle_when(p, what, |_| true)
 }
 
-/// Draw both until they agree and `ready` holds for the view.
-pub fn same_when(b: &mut CommanderMode, p: &mut StdioMode, what: &str, ready: impl Fn(&View) -> bool) -> View {
+/// Draw the plugin until its view settles and `ready` holds for it.
+pub fn settle_when(p: &mut StdioMode, what: &str, ready: impl Fn(&View) -> bool) -> View {
     let keys = Keymap::new(BINDINGS);
     let end = Instant::now() + Duration::from_secs(20);
-    let (mut vb, mut vp);
+    let mut last = String::new();
     loop {
-        vb = b.view(&ctx(), &keys);
-        vp = p.view(&ctx(), &keys);
-        if shape(&vb) == shape(&vp) && vp.dock.is_some() && ready(&vp) {
-            return vp;
+        let v = p.view(&ctx(), &keys);
+        let s = shape(&v);
+        if s == last && v.dock.is_some() && ready(&v) {
+            return v;
         }
         if Instant::now() > end {
-            break;
+            let _ = std::fs::write(std::env::temp_dir().join("commander-plugin.txt"), &s);
+            panic!("{what}: the plugin's view never settled (commander-plugin.txt in the temp dir)\n{s}");
         }
+        last = s;
         std::thread::sleep(Duration::from_millis(20));
     }
-    let t = std::env::temp_dir();
-    let _ = std::fs::write(t.join("commander-builtin.txt"), shape(&vb));
-    let _ = std::fs::write(t.join("commander-plugin.txt"), shape(&vp));
-    panic!(
-        "{what}: the plugin draws differently (both in the temp dir: commander-builtin.txt, commander-plugin.txt)\n--- built-in\n{}\n--- plugin\n{}",
-        shape(&vb),
-        shape(&vp)
-    );
+}
+
+/// Whether any dock item's text contains `t`.
+pub fn shows(v: &View, t: &str) -> bool {
+    v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains(t))
 }
 
 /// The plugin's effects (they come back after a round trip).
@@ -74,13 +73,11 @@ pub fn effects(p: &mut StdioMode, want: usize) -> Vec<Effect> {
     got
 }
 
-/// Move both down from the top to the row named `name`.
-pub fn select(b: &mut CommanderMode, m: &mut StdioMode, name: &str) {
-    for x in [&mut *b as &mut dyn Mode, &mut *m] {
-        x.action("first", 0);
-    }
+/// Move down from the top to the row named `name`.
+pub fn select(m: &mut StdioMode, name: &str) {
+    m.action("first", 0);
     for _ in 0..20 {
-        let v = same(b, m, name);
+        let v = settle(m, name);
         let sel = v
             .dock
             .iter()
@@ -90,10 +87,14 @@ pub fn select(b: &mut CommanderMode, m: &mut StdioMode, name: &str) {
         if sel.as_deref().is_some_and(|t| t.split_whitespace().any(|w| w.trim_end_matches('/') == name)) {
             return;
         }
-        b.action("down", 0);
         m.action("down", 0);
     }
     panic!("{name} not in the list");
+}
+
+/// ffmpeg is on the PATH (the player needs it).
+pub fn ffmpeg() -> bool {
+    std::process::Command::new("ffmpeg").arg("-version").output().is_ok_and(|o| o.status.success())
 }
 
 pub fn png(p: &Path, w: u32, h: u32) {

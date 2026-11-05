@@ -4,9 +4,10 @@ Mouser plugins add modes, tools, model providers and `[mouser]` line commands.
 This is phase 1 of docs/plans/mcp-agent.md: the manifest, registry, CLI,
 permission broker with approval popups, and the three transports. Mouser's MCP
 server (P2), the MCP client in the sidebar (P3), model providers (P4) and the chat
-mode (P5) build on it. Since P6 everything is a plugin: the built-in modes
-(commander, chat) and engines (mouser, skia) are compiled-in plugins with their
-own `plugin.toml` (§Built-in plugins), and engines install, list and switch through
+mode (P5) build on it. Since P6 everything is a plugin, and since 1.4.0 no mode
+is compiled in: commander, chat and preferences are plugin programs installed
+from `plugins.lock`, the engines (mouser, skia) are libraries, and only the model
+providers are built in (§Built-in plugins); engines install, list and switch through
 the same registry.
 
 ## Transports
@@ -108,24 +109,23 @@ A plugin folder holds `plugin.toml` directly, or one folder per version
 symlinks need admin rights). Uninstalling a versioned plugin removes every
 version.
 
-A `transport = "mode"` plugin may use a built-in mode's name and hotkey
-(`commander`, `chat`, `preferences`). It then replaces the built-in, and `plugin
-list` marks it `[overrides built-in]` (decision 5). Other built-in names stay
-reserved.
+The official modes' names and hotkeys (`commander` `c`, `chat` `a`,
+`preferences` `p`) belong to those plugins: your own build of one installs
+under the same name and replaces the official one (your copy in
+`$MOUSER_HOME/plugins` wins), and no other plugin may take those hotkeys. The
+built-in model providers' names stay reserved.
 
 ### Built-in plugins
 
 | name | kind | hotkey | can be disabled |
 |---|---|---|---|
-| `commander` | mode | `c` | yes |
-| `chat` | mode | `a` | yes |
 | `openai`, `xai`, `openrouter`, `moonshot`, `anthropic`, `google`, `gemma-local` | model-provider | | yes |
 
 The engines `mouser` (can't be disabled; the last engine tried) and `skia` are
 libraries shipped with Mouser, not built in ([Engines](./engines.md)).
-The built-ins' manifests are compiled in (`crates/mouser-core/src/builtin/*.toml`,
-`transport = "builtin"`; no dynamic loading of Mouser's own code). Disabling
-commander and chat leaves no mode: Mouser is then a plain terminal (the mode-less
+The official modes are not in this table: they are plugins (`mouser plugin list`
+shows them with their versions). Disabling (or not installing) commander, chat
+and preferences leaves no mode: Mouser is then a plain terminal (the mode-less
 fallback), and `mouser plugin list` says so. A disabled engine is passed over when
 a window picks its engine and is hidden from the sidebar; `MOUSER_ENGINE=a,b`
 still forces an order for one run, as given.
@@ -153,7 +153,7 @@ letter, digit or punctuation key (not `:`), `alt+<key>`, `ctrl+alt+<letter>`, or
 `home`, `end`, `tab`, `space` or `backspace`. Without focus the mode gets no key at
 all (the focus toggle, ctrl+alt+k, is the host's).
 
-It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the built-in modes and
+It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the official modes and
 docks above the prompt like them. Mouser runs its program once per event, off the
 UI thread, with the command-plugin contract (10 s limit, scrubbed environment):
 `{"api":1,"command":"mode","args":[EVENT,ID],"cwd":...}` with EVENT `activate`,
