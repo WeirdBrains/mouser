@@ -163,22 +163,104 @@ impl SkiaEngine {
             _window: window,
         })
     }
-
-    fn image_for(&mut self, img: &crate::frame::ImageDraw) -> Option<Image> {
-        if let Some(i) = self.images.get(&img.key) {
-            return Some(i.clone());
-        }
-        let info = ImageInfo::new((img.img_w as i32, img.img_h as i32), ColorType::RGBA8888, AlphaType::Unpremul, None);
-        let i = skia_safe::images::raster_from_data(&info, Data::new_copy(&img.rgba), img.img_w as usize * 4)?;
-        self.images.insert(img.key, i.clone());
-        Some(i)
-    }
 }
 
 impl Drop for SkiaEngine {
     fn drop(&mut self) {
         self.gr.release_resources_and_abandon();
     }
+}
+
+/// Give every glyph of `list` an atlas slot (starting over once if full).
+fn prepare_atlas(atlas: &mut Atlas, list: &DisplayList, fonts: &mut FontStack) {
+    if atlas.generation != fonts.generation {
+        *atlas = Atlas::new(fonts.generation);
+    }
+    let mut full = false;
+    for op in &list.ops {
+        if let DrawOp::Glyph { ch, .. } = *op
+            && atlas.slot(fonts, ch).is_none()
+            && fonts.glyph(ch).metrics.width > 0
+        {
+            full = true;
+            break;
+        }
+    }
+    if full {
+        *atlas = Atlas::new(fonts.generation);
+    }
+}
+
+fn image_for(cache: &mut HashMap<u64, Image>, img: &crate::frame::ImageDraw) -> Option<Image> {
+    if let Some(i) = cache.get(&img.key) {
+        return Some(i.clone());
+    }
+    let info = ImageInfo::new((img.img_w as i32, img.img_h as i32), ColorType::RGBA8888, AlphaType::Unpremul, None);
+    let i = skia_safe::images::raster_from_data(&info, Data::new_copy(&img.rgba), img.img_w as usize * 4)?;
+    cache.insert(img.key, i.clone());
+    Some(i)
+}
+
+/// Draw a display list on any Skia canvas (the GL window or a raster surface).
+fn paint_list(
+    canvas: &skia_safe::Canvas,
+    list: &DisplayList,
+    atlas: Option<&Image>,
+    slots: &HashMap<char, (i32, i32, i32, i32)>,
+    images: &[Option<Image>],
+) {
+    let near = SamplingOptions::default();
+    let mut paint = Paint::default();
+    paint.set_anti_alias(false);
+    canvas.clear(color(list.clear));
+    for op in &list.ops {
+        match *op {
+            DrawOp::Rect { x, y, w, h, color: c } => {
+                paint.set_color(color(c));
+                canvas.draw_rect(Rect::from_xywh(x as f32, y as f32, w as f32, h as f32), &paint);
+            }
+            DrawOp::Glyph { x, y, ch, color: c } => {
+                let (Some(a), Some(&(sx, sy, w, h))) = (atlas, slots.get(&ch)) else { continue };
+                paint.set_color(color(c));
+                canvas.draw_image_rect_with_sampling_options(
+                    a,
+                    Some((&Rect::from_xywh(sx as f32, sy as f32, w as f32, h as f32), SrcRectConstraint::Strict)),
+                    Rect::from_xywh(x as f32, y as f32, w as f32, h as f32),
+                    near,
+                    &paint,
+                );
+            }
+            DrawOp::Image { index, x, y } => {
+                let (Some(Some(im)), Some(d)) = (images.get(index), list.images.get(index)) else { continue };
+                let (sx, sy, sw, sh) = d.src;
+                paint.set_color(Color::WHITE);
+                canvas.draw_image_rect_with_sampling_options(
+                    im,
+                    Some((&Rect::from_xywh(sx as f32, sy as f32, sw as f32, sh as f32), SrcRectConstraint::Strict)),
+                    Rect::from_xywh(x as f32, y as f32, d.width as f32, d.height as f32),
+                    near,
+                    &paint,
+                );
+            }
+        }
+    }
+}
+
+/// The built-in Skia drawing on a CPU raster surface, as `0x00RRGGBB` pixels
+/// (the reference for the skia engine library's parity test).
+pub fn render_raster(list: &DisplayList, fonts: &mut FontStack) -> Vec<u32> {
+    let mut atlas = Atlas::new(fonts.generation);
+    prepare_atlas(&mut atlas, list, fonts);
+    let mut cache = HashMap::new();
+    let images: Vec<Option<Image>> = list.images.iter().map(|i| image_for(&mut cache, i)).collect();
+    let a = atlas.image().cloned();
+    let (w, h) = (list.width.max(1) as i32, list.height.max(1) as i32);
+    let info = ImageInfo::new((w, h), ColorType::RGBA8888, AlphaType::Premul, None);
+    let mut surface = skia_safe::surfaces::raster(&info, None, None).expect("raster surface");
+    paint_list(surface.canvas(), list, a.as_ref(), &atlas.slots, &images);
+    let mut px = vec![0u8; (w * h * 4) as usize];
+    assert!(surface.read_pixels(&info, &mut px, (w * 4) as usize, (0, 0)));
+    px.as_chunks::<4>().0.iter().map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32).collect()
 }
 
 fn color(c: u32) -> Color {
@@ -209,63 +291,12 @@ impl Engine for SkiaEngine {
         if (list.width as u32, list.height as u32) != (self.width, self.height) {
             self.resize(list.width as u32, list.height as u32);
         }
-        if self.atlas.generation != fonts.generation {
-            self.atlas = Atlas::new(fonts.generation);
-        }
-        // Make sure every glyph has a slot before drawing (start over once if full).
-        let mut full = false;
-        for op in &list.ops {
-            if let DrawOp::Glyph { ch, .. } = *op
-                && self.atlas.slot(fonts, ch).is_none()
-                && fonts.glyph(ch).metrics.width > 0
-            {
-                full = true;
-                break;
-            }
-        }
-        if full {
-            self.atlas = Atlas::new(fonts.generation);
-        }
+        prepare_atlas(&mut self.atlas, list, fonts);
         let used: std::collections::HashSet<u64> = list.images.iter().map(|i| i.key).collect();
         self.images.retain(|k, _| used.contains(k));
-        let images: Vec<Option<Image>> = list.images.iter().map(|i| self.image_for(i)).collect();
+        let images: Vec<Option<Image>> = list.images.iter().map(|i| image_for(&mut self.images, i)).collect();
         let atlas = self.atlas.image().cloned();
-        let near = SamplingOptions::default();
-        let mut paint = Paint::default();
-        paint.set_anti_alias(false);
-        let canvas = self.surface.canvas();
-        canvas.clear(color(list.clear));
-        for op in &list.ops {
-            match *op {
-                DrawOp::Rect { x, y, w, h, color: c } => {
-                    paint.set_color(color(c));
-                    canvas.draw_rect(Rect::from_xywh(x as f32, y as f32, w as f32, h as f32), &paint);
-                }
-                DrawOp::Glyph { x, y, ch, color: c } => {
-                    let (Some(a), Some(&(sx, sy, w, h))) = (&atlas, self.atlas.slots.get(&ch)) else { continue };
-                    paint.set_color(color(c));
-                    canvas.draw_image_rect_with_sampling_options(
-                        a,
-                        Some((&Rect::from_xywh(sx as f32, sy as f32, w as f32, h as f32), SrcRectConstraint::Strict)),
-                        Rect::from_xywh(x as f32, y as f32, w as f32, h as f32),
-                        near,
-                        &paint,
-                    );
-                }
-                DrawOp::Image { index, x, y } => {
-                    let (Some(Some(im)), Some(d)) = (images.get(index), list.images.get(index)) else { continue };
-                    let (sx, sy, sw, sh) = d.src;
-                    paint.set_color(Color::WHITE);
-                    canvas.draw_image_rect_with_sampling_options(
-                        im,
-                        Some((&Rect::from_xywh(sx as f32, sy as f32, sw as f32, sh as f32), SrcRectConstraint::Strict)),
-                        Rect::from_xywh(x as f32, y as f32, d.width as f32, d.height as f32),
-                        near,
-                        &paint,
-                    );
-                }
-            }
-        }
+        paint_list(self.surface.canvas(), list, atlas.as_ref(), &self.atlas.slots, &images);
         let t0 = std::time::Instant::now();
         let _ = self.gr.flush_and_submit();
         let t1 = std::time::Instant::now();

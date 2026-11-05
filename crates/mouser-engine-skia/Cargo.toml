@@ -1,0 +1,18 @@
+[package]
+name = "mouser-engine-skia"
+edition = "2024"
+version = "0.1.0"
+license = "BSD-3-Clause"
+description = "Mouser's Skia renderer (engine \"skia\") as an engine library on the C ABI (mouser-engine-abi v2)"
+repository = ""
+publish = false
+
+[lib]
+name = "mouser_engine_skia"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mouser-engine-abi = { path = "../mouser-engine-abi" }
+skia-safe = { version = "0.156.0", features = ["gl"] }
+glutin = "0.32.3"
+raw-window-handle = "0.6"

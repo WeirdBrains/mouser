@@ -18,6 +18,7 @@
 - The basic renderer: Mouser's built-in CPU drawing is named and labelled in the status bar ("basic renderer — no GPU engine running yet") whenever no engine starts, switches live to an engine once one can start, and can never be removed (`basic` and `cpu` are reserved engine names). `engine.toml` may declare ABI 1 or 2.
 - Tests: with no usable engine the basic renderer draws the terminal, and when an engine becomes usable the same UI switches to it live with its shell and tabs (the headless test UI now re-checks the engine order like a window does).
 - Mouser's wgpu renderer is also an engine library on the C ABI (`crates/mouser-engine-wgpu`, engine `mouser`, ABI v2), pixel-identical to the built-in renderer in a new offscreen parity test that CI runs on a software adapter. ABI v2 frames keep translucent colours (top byte `255 - opacity`); v1 engines still get opaque ones.
+- Mouser's Skia renderer is also an engine library on the C ABI (`crates/mouser-engine-skia`, engine `skia`, ABI v2), pixel-identical to the built-in skia engine in a new raster parity test.
 
 ### Fixed
 

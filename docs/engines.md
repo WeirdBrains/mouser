@@ -264,6 +264,19 @@ surface. The built-in renderer stays until the library is shipped and
 installed by default (see the plan's step 6); the library can't be installed
 under the name `mouser` while the built-in engine has it.
 
+## Mouser's Skia renderer as an engine library
+
+`crates/mouser-engine-skia` (library `mouser_engine_skia`, engine name `skia`,
+ABI v2 only) is the built-in Skia engine on the C ABI: Ganesh over OpenGL
+through glutin (EGL on Linux, CGL on macOS, WGL then EGL on Windows) for a
+window, or a Skia CPU raster surface for the pixel host. The drawing is the
+same: Skia rects, one A8 glyph atlas tinted per glyph, nearest-neighbour
+images, translucent fills. `crates/mouser-render/tests/skia_engine_parity.rs`
+paints the same full frame as the wgpu parity test through the built-in
+engine's drawing (`skia::render_raster`) and through the library, and
+requires every channel to be within 2. The built-in skia engine stays until
+the library ships.
+
 ## 6. Built-in engines
 
 - `mouser`: the wgpu renderer (Vulkan/GL/Metal/DX12): instanced quads, a glyph atlas,
