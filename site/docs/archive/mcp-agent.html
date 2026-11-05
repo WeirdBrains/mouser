@@ -466,11 +466,13 @@ auth = &quot;keychain:docs-token&quot;                 # or &quot;oauth&quot; (r
 <p><strong>M-L, 2-3 weeks.</strong></p>
 <h2 id="6-p4b-the-embedded-local-model-optional-plugin">6. P4b: the embedded local model (optional plugin)</h2>
 <h3 id="choice-of-model">Choice of model</h3>
-<p><strong>Gemma 4 E2B-it as the default, E4B as the step up.</strong>
-- Both have native function calling.
-- Licence: Apache-2.0.
-- Context: 128K.
-- Size: official QAT Q4_0 GGUF, about 2.9 GB for E2B and 4.5 GB for E4B.</p>
+<p><strong>Gemma 4 E2B-it as the default, E4B as the step up.</strong></p>
+<ul>
+<li>Both have native function calling.</li>
+<li>Licence: Apache-2.0.</li>
+<li>Context: 128K.</li>
+<li>Size: official QAT Q4_0 GGUF, about 2.9 GB for E2B and 4.5 GB for E4B.</li>
+</ul>
 <p>FunctionGemma 270M (Gemma 3 based, about 290 MB, Gemma Terms of Use) is the lightest
 tool caller. Its own model card and independent benchmarks say it needs fine-tuning:
 base multi-turn tool calling scores 10-39%. So it is offered as an "experimental /

@@ -11,48 +11,62 @@
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
 <main id="main"><section class="light doc"><h1 id="releases">Releases</h1>
-<p>CI
-- <code>.github/workflows/ci.yml</code> runs on pushes to <code>main</code> across Ubuntu, macOS and Windows:
-  - <code>cargo fmt --check</code>
-  - <code>cargo clippy --all-targets -- -D warnings</code>
-  - <code>cargo build --release</code>
-  - <code>cargo test --workspace</code>
-  - Linux installs X11/Wayland/fontconfig dev packages.</p>
-<p>Release workflow
-- <code>.github/workflows/release.yml</code> runs on <code>v*</code> tag pushes and:
-  - Builds release binaries for Linux (x86_64), macOS (x86_64 + arm64) and Windows (x86_64)
-  - Produces installable packages from the prebuilt binaries (no Rust toolchain required to install):
-    - Debian/Ubuntu: <code>.deb</code> via <code>nfpm</code> (maps <code>/usr/bin/mouser</code>, <code>.desktop</code>, icons, AppStream)
-    - Fedora: <code>.rpm</code> via <code>nfpm</code> (same contents as <code>.deb</code>)
-    - Arch: <code>mouser-bin</code> PKGBUILD generated and built in an <code>archlinux</code> container to a <code>.pkg.tar.zst</code>
-    - macOS: <code>Mouser.app</code> bundle and a <code>.dmg</code>; Homebrew formula (CLI) and Cask (App)
-    - Windows: portable <code>.zip</code> and an installer built with Inno Setup (<code>MouserSetup-&lt;ver&gt;.exe</code>)
-  - Validates desktop integration on Linux: <code>desktop-file-validate</code> and <code>appstreamcli validate</code>
-  - Publishes a GitHub Release with the CHANGELOG section for that version as notes and uploads all artifacts with checksums</p>
-<p>Engines in packages
-- Mouser's renderers are libraries (<code>mouser_engine_wgpu</code>, <code>mouser_engine_skia</code>); <code>cargo build --release</code> builds them next to <code>mouser-app</code>.
-- <code>mouser engine bundle --from target/&lt;triple&gt;/release --out DIR</code> copies them into <code>DIR/&lt;name&gt;/</code> with their <code>engine.toml</code> (<code>--from</code> defaults to the folder of the running mouser). The release workflow runs it once per target and ships the result:
-  - <code>.tar.gz</code>/<code>.zip</code>: <code>engines/</code> beside <code>mouser-app</code>
-  - <code>.deb</code>/<code>.rpm</code>/Arch: <code>/usr/lib/mouser/engines/</code>
-  - <code>Mouser.app</code>: <code>Contents/Resources/engines/</code>; Homebrew formula: <code>lib/mouser/engines/</code>
-  - Windows installer: <code>{app}\engines\</code>
-- Mouser looks in <code>engines/</code> beside itself, <code>../Resources/engines</code> (macOS) and <code>../lib/mouser/engines</code> (Unix); <code>MOUSER_ENGINE_DIRS</code> replaces those (<a href="../developer/engines.html">Engines</a>).</p>
-<p>Signing
-- Every signing step is skipped with a notice when its secrets aren't set, so a release without keys still builds (unsigned). The minisign secrets are set on WeirdBrains/mouser; the macOS and Windows certificates aren't yet.
-- macOS: <code>MACOS_CERT_P12</code> (base64 Developer ID Application .p12), <code>MACOS_CERT_PASSWORD</code>, <code>MACOS_SIGN_IDENTITY</code> sign <code>mouser-app</code>, the engine dylibs and <code>Mouser.app</code> (hardened runtime); with <code>APPLE_ID</code>, <code>APPLE_TEAM_ID</code> and <code>APPLE_APP_PASSWORD</code> the dmg is notarized and stapled.
-- Windows: <code>WINDOWS_CERT_PFX</code> (base64 .pfx) and <code>WINDOWS_CERT_PASSWORD</code> sign <code>mouser-app.exe</code>, the engine DLLs and <code>MouserSetup-&lt;ver&gt;.exe</code> (Authenticode, timestamped).
-- Release files: <code>MINISIGN_SECRET_KEY</code> (the key file's text) and <code>MINISIGN_PASSWORD</code> add <code>FILE.minisig</code> beside every file. The matching public key is the one Mouser pins as its official key (<code>OFFICIAL_KEY</code> in <code>crates/mouser-core/src/install.rs</code>: <code>61BA1720747F9146</code>); see <a href="../user/downloads.html">Downloads</a>.
-- Plugins and engines published from their own repos are signed there.
-- <code>-full</code> offline bundles (the <code>plugins.lock</code> archives in <code>plugins/</code> beside Mouser) are built once the lock has entries; it is empty in this tree.</p>
-<p>Local steps (per AGENTS.md)
-1. Ensure quality bar passes locally: <code>cargo fmt --check</code>, <code>cargo clippy --all-targets -- -D warnings</code>, <code>timeout 120 cargo test --workspace</code>.
-2. Bump versions (docs-only: PATCH; feature: MINOR), update <code>CHANGELOG.md</code>.
-3. Commit as <code>release: vX.Y.Z</code> and create an annotated tag <code>vX.Y.Z</code>.
-4. Push: <code>git push origin main --follow-tags</code>.</p>
-<p>Notes
-- Waypipe and X11 are Linux features; on macOS and Windows they are disabled in UI with an explanation (XQuartz/VcXsrv hints).
-- Mode <code>system</code> follows OS theme preference (Linux via dark-light where available; macOS/Windows supported).
-- Windows PTY uses ConPTY via <code>portable-pty</code>; default shell is PowerShell/cmd there, <code>$SHELL</code> on Unix.</p>
+<p>CI</p>
+<ul>
+<li><code>.github/workflows/ci.yml</code> runs on pushes to <code>main</code> across Ubuntu, macOS and Windows:</li>
+<li><code>cargo fmt --check</code></li>
+<li><code>cargo clippy --all-targets -- -D warnings</code></li>
+<li><code>cargo build --release</code></li>
+<li><code>cargo test --workspace</code></li>
+<li>Linux installs X11/Wayland/fontconfig dev packages.</li>
+</ul>
+<p>Release workflow</p>
+<ul>
+<li><code>.github/workflows/release.yml</code> runs on <code>v*</code> tag pushes and:</li>
+<li>Builds release binaries for Linux (x86_64), macOS (x86_64 + arm64) and Windows (x86_64)</li>
+<li>Produces installable packages from the prebuilt binaries (no Rust toolchain required to install):<ul>
+<li>Debian/Ubuntu: <code>.deb</code> via <code>nfpm</code> (maps <code>/usr/bin/mouser</code>, <code>.desktop</code>, icons, AppStream)</li>
+<li>Fedora: <code>.rpm</code> via <code>nfpm</code> (same contents as <code>.deb</code>)</li>
+<li>Arch: <code>mouser-bin</code> PKGBUILD generated and built in an <code>archlinux</code> container to a <code>.pkg.tar.zst</code></li>
+<li>macOS: <code>Mouser.app</code> bundle and a <code>.dmg</code>; Homebrew formula (CLI) and Cask (App)</li>
+<li>Windows: portable <code>.zip</code> and an installer built with Inno Setup (<code>MouserSetup-&lt;ver&gt;.exe</code>)</li>
+</ul>
+</li>
+<li>Validates desktop integration on Linux: <code>desktop-file-validate</code> and <code>appstreamcli validate</code></li>
+<li>Publishes a GitHub Release with the CHANGELOG section for that version as notes and uploads all artifacts with checksums</li>
+</ul>
+<p>Engines in packages</p>
+<ul>
+<li>Mouser's renderers are libraries (<code>mouser_engine_wgpu</code>, <code>mouser_engine_skia</code>); <code>cargo build --release</code> builds them next to <code>mouser-app</code>.</li>
+<li><code>mouser engine bundle --from target/&lt;triple&gt;/release --out DIR</code> copies them into <code>DIR/&lt;name&gt;/</code> with their <code>engine.toml</code> (<code>--from</code> defaults to the folder of the running mouser). The release workflow runs it once per target and ships the result:</li>
+<li><code>.tar.gz</code>/<code>.zip</code>: <code>engines/</code> beside <code>mouser-app</code></li>
+<li><code>.deb</code>/<code>.rpm</code>/Arch: <code>/usr/lib/mouser/engines/</code></li>
+<li><code>Mouser.app</code>: <code>Contents/Resources/engines/</code>; Homebrew formula: <code>lib/mouser/engines/</code></li>
+<li>Windows installer: <code>{app}\engines\</code></li>
+<li>Mouser looks in <code>engines/</code> beside itself, <code>../Resources/engines</code> (macOS) and <code>../lib/mouser/engines</code> (Unix); <code>MOUSER_ENGINE_DIRS</code> replaces those (<a href="../developer/engines.html">Engines</a>).</li>
+</ul>
+<p>Signing</p>
+<ul>
+<li>Every signing step is skipped with a notice when its secrets aren't set, so a release without keys still builds (unsigned). The minisign secrets are set on WeirdBrains/mouser; the macOS and Windows certificates aren't yet.</li>
+<li>macOS: <code>MACOS_CERT_P12</code> (base64 Developer ID Application .p12), <code>MACOS_CERT_PASSWORD</code>, <code>MACOS_SIGN_IDENTITY</code> sign <code>mouser-app</code>, the engine dylibs and <code>Mouser.app</code> (hardened runtime); with <code>APPLE_ID</code>, <code>APPLE_TEAM_ID</code> and <code>APPLE_APP_PASSWORD</code> the dmg is notarized and stapled.</li>
+<li>Windows: <code>WINDOWS_CERT_PFX</code> (base64 .pfx) and <code>WINDOWS_CERT_PASSWORD</code> sign <code>mouser-app.exe</code>, the engine DLLs and <code>MouserSetup-&lt;ver&gt;.exe</code> (Authenticode, timestamped).</li>
+<li>Release files: <code>MINISIGN_SECRET_KEY</code> (the key file's text) and <code>MINISIGN_PASSWORD</code> add <code>FILE.minisig</code> beside every file. The matching public key is the one Mouser pins as its official key (<code>OFFICIAL_KEY</code> in <code>crates/mouser-core/src/install.rs</code>: <code>61BA1720747F9146</code>); see <a href="../user/downloads.html">Downloads</a>.</li>
+<li>Plugins and engines published from their own repos are signed there.</li>
+<li><code>-full</code> offline bundles (the <code>plugins.lock</code> archives in <code>plugins/</code> beside Mouser) are built once the lock has entries; it is empty in this tree.</li>
+</ul>
+<p>Local steps (per AGENTS.md)</p>
+<ol>
+<li>Ensure quality bar passes locally: <code>cargo fmt --check</code>, <code>cargo clippy --all-targets -- -D warnings</code>, <code>timeout 120 cargo test --workspace</code>.</li>
+<li>Bump versions (docs-only: PATCH; feature: MINOR), update <code>CHANGELOG.md</code>.</li>
+<li>Commit as <code>release: vX.Y.Z</code> and create an annotated tag <code>vX.Y.Z</code>.</li>
+<li>Push: <code>git push origin main --follow-tags</code>.</li>
+</ol>
+<p>Notes</p>
+<ul>
+<li>Waypipe and X11 are Linux features; on macOS and Windows they are disabled in UI with an explanation (XQuartz/VcXsrv hints).</li>
+<li>Mode <code>system</code> follows OS theme preference (Linux via dark-light where available; macOS/Windows supported).</li>
+<li>Windows PTY uses ConPTY via <code>portable-pty</code>; default shell is PowerShell/cmd there, <code>$SHELL</code> on Unix.</li>
+</ul>
 <h2 id="install">Install</h2>
 <ul>
 <li>Debian/Ubuntu:</li>
@@ -103,13 +117,15 @@ commits it with the Homebrew update. Regenerate both <code>.SRCINFO</code> files
 <p>Upgrading a machine after a release: download <code>mouser-bin-&lt;ver&gt;-1-x86_64.pkg.tar.zst</code> from the release with <code>curl -LO</code>, then <code>sudo pacman -U</code> the local file
 (same package name, so a plain upgrade).</p>
 <h3 id="publishing-to-the-aur-not-done-yet">Publishing to the AUR (not done yet)</h3>
-<p>Needs the maintainer's personal AUR account (registration is closed at the moment):
-1. Add an SSH key to the AUR account, then
-   <code>git clone ssh://aur@aur.archlinux.org/mouser-git.git</code> (and <code>mouser-bin.git</code>).
-2. Copy <code>PKGBUILD</code> and <code>.SRCINFO</code> in, set the <code># Maintainer:</code> line, commit, push.
-3. The repo's <code>LICENSE</code> (BSD-3-Clause) must ship in <code>/usr/share/licenses/&lt;pkg&gt;/</code>;
-   both PKGBUILDs install it.
-4. Per release, push the updated <code>mouser-bin</code> PKGBUILD/.SRCINFO to the AUR.</p>
+<p>Needs the maintainer's personal AUR account (registration is closed at the moment):</p>
+<ol>
+<li>Add an SSH key to the AUR account, then
+   <code>git clone ssh://aur@aur.archlinux.org/mouser-git.git</code> (and <code>mouser-bin.git</code>).</li>
+<li>Copy <code>PKGBUILD</code> and <code>.SRCINFO</code> in, set the <code># Maintainer:</code> line, commit, push.</li>
+<li>The repo's <code>LICENSE</code> (BSD-3-Clause) must ship in <code>/usr/share/licenses/&lt;pkg&gt;/</code>;
+   both PKGBUILDs install it.</li>
+<li>Per release, push the updated <code>mouser-bin</code> PKGBUILD/.SRCINFO to the AUR.</li>
+</ol>
 <h2 id="linux-build-host">Linux build host</h2>
 <p>The Linux release builds on Ubuntu 22.04 (glibc 2.35), not <code>ubuntu-latest</code>: a
 binary built against a newer glibc fails to start on older distributions

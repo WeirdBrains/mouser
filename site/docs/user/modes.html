@@ -20,23 +20,29 @@ you work with the files under the shell, and the <strong>input modes</strong> of
 <li>Command: <code>:</code> command line for actions (e.g., <code>:open-sidebar</code>, <code>:connect &lt;name&gt;</code>, <code>:theme &lt;name&gt;</code>).</li>
 <li>Config: reserved for in-app editing of preferences/themes.</li>
 </ul>
-<p>Mode switching
-- Enter Command: F10 by default (configurable in future). Esc returns to Shell.
-- Mode indicator: the command line is shown at the bottom when in Command mode.</p>
-<p>Actions
-- <code>:open-sidebar</code> / <code>:close-sidebar</code>
-- <code>:list-conns</code>, <code>:connect &lt;name&gt;</code>
-- <code>:theme</code> — open the theme switcher; <code>:theme &lt;name&gt;</code> — switch theme (saved)
-- <code>:mode dark|light|system</code> — switch variant mode (saved)
-- <code>:edit-theme</code> — open the theme &amp; font editor for the active theme variant
-- <code>:font-size &lt;6-48&gt;</code>, <code>:font &lt;family&gt;</code> (<code>:font</code> alone resets to the default stack)</p>
-<p>Keybindings
-- F10: command line. Alt+Esc: toggle the connections sidebar.
-- Ctrl+= / Ctrl++ bigger font, Ctrl+- smaller, Ctrl+0 reset to <code>config.toml</code>'s size (saved to
-  <code>preferences.toml</code>; the grid reflows and the shell is resized).
-- Theme switcher: ↑/↓ theme (live preview), ←/→ or d/l/s mode, e editor, Enter apply, Esc cancel.
-- Editor: Tab/Shift+Tab or ↑/↓ move between fields, type to edit (live preview when valid),
-  Ctrl+S save, Esc cancel. Fields are also clickable.</p>
+<p>Mode switching</p>
+<ul>
+<li>Enter Command: F10 by default (configurable in future). Esc returns to Shell.</li>
+<li>Mode indicator: the command line is shown at the bottom when in Command mode.</li>
+</ul>
+<p>Actions</p>
+<ul>
+<li><code>:open-sidebar</code> / <code>:close-sidebar</code></li>
+<li><code>:list-conns</code>, <code>:connect &lt;name&gt;</code></li>
+<li><code>:theme</code> — open the theme switcher; <code>:theme &lt;name&gt;</code> — switch theme (saved)</li>
+<li><code>:mode dark|light|system</code> — switch variant mode (saved)</li>
+<li><code>:edit-theme</code> — open the theme &amp; font editor for the active theme variant</li>
+<li><code>:font-size &lt;6-48&gt;</code>, <code>:font &lt;family&gt;</code> (<code>:font</code> alone resets to the default stack)</li>
+</ul>
+<p>Keybindings</p>
+<ul>
+<li>F10: command line. Alt+Esc: toggle the connections sidebar.</li>
+<li>Ctrl+= / Ctrl++ bigger font, Ctrl+- smaller, Ctrl+0 reset to <code>config.toml</code>'s size (saved to
+  <code>preferences.toml</code>; the grid reflows and the shell is resized).</li>
+<li>Theme switcher: ↑/↓ theme (live preview), ←/→ or d/l/s mode, e editor, Enter apply, Esc cancel.</li>
+<li>Editor: Tab/Shift+Tab or ↑/↓ move between fields, type to edit (live preview when valid),
+  Ctrl+S save, Esc cancel. Fields are also clickable.</li>
+</ul>
 <p>Menus, keybindings and the command line dispatch the same named actions.</p>
 <h2 id="mode-plugins">Mode plugins</h2>
 <p>Built in: commander (<code>esc :c</code>), chat (<code>esc :a</code>) and preferences (<code>esc :p</code>, <a href="../user/preferences.html">preferences.md</a>).</p>

@@ -96,7 +96,23 @@ def main():
             return f"{label}(https://github.com/WeirdBrains/mouser/blob/main/{gh}{anchor})"
         return re.sub(r"(\]\s*)\(([^)\s]+)\)", sub, text)
 
-    md = lambda t: markdown.markdown(t, extensions=["fenced_code", "tables", "toc", "sane_lists"])
+    def list_breaks(t):
+        # GitHub (CommonMark) lets a list start right under a paragraph line; Python-Markdown
+        # needs a blank line first, or the items run on as text. Add it, outside code fences.
+        out_lines, fence, prev = [], False, ""
+        item = re.compile(r"([-*+]|1[.)])\s")
+        any_item = re.compile(r"\s*([-*+]|\d+[.)])\s")
+        for line in t.split("\n"):
+            if line.lstrip().startswith(("```", "~~~")):
+                fence = not fence
+            elif (not fence and item.match(line) and prev.strip() and not prev[0].isspace()
+                  and not any_item.match(prev) and not prev.lstrip().startswith(("|", ">", "#"))):
+                out_lines.append("")
+            out_lines.append(line)
+            prev = line
+        return "\n".join(out_lines)
+
+    md = lambda t: markdown.markdown(list_breaks(t), extensions=["fenced_code", "tables", "toc", "sane_lists"])
     lists = {k: [] for k in list(SECTIONS) + ["archive"]}
     for rel, (sec, slug) in sorted(where.items()):
         text = (docs / rel).read_text()
