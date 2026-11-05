@@ -43,7 +43,9 @@ after the last engine crashes. While it draws, the status bar says
 (installed, unskipped or moved in the priority list), the window switches to
 it live, keeping its tabs. `MOUSER_RENDERER=cpu` forces the basic renderer and
 turns the label and the live switch off. `mouser engine list` ends with
-"then the basic renderer".
+"then the basic renderer". Tested in `crates/mouser-app/tests/split_tests.rs`
+(no engine, then an engine taking over live with the same shell and tabs; an
+engine crash moving to the next engine, and from `mouser` to the basic renderer).
 ## 2. Interface
 
 In Rust (`mouser-render/src/engine.rs`):

@@ -221,3 +221,29 @@ fn tab_then_backspace_reaches_zsh_with_commander_on() {
     let d = wait_for(&s.dump, "X typed after the backspaces", |d| d.screen.lines().next().is_some_and(|l| l.trim_end() == "$ X"));
     assert!(d.screen.starts_with("$ X"), "{}", d.screen);
 }
+
+#[test]
+#[serial]
+fn with_no_engine_the_basic_renderer_draws_and_an_engine_takes_over_live_keeping_tabs() {
+    let home = tempfile::tempdir().unwrap();
+    let home_path = home.path().to_path_buf();
+    // The only engine crashed Mouser last time: nothing can start.
+    let engines = home_path.join(".mouser/engines");
+    std::fs::create_dir_all(&engines).unwrap();
+    std::fs::write(engines.join(".starting-mouser"), "reason=test\n").unwrap();
+    let s = start(home, &[("MOUSER_ENGINE", "mouser"), ("MOUSER_TEST_UI_ACTIONS", "NewTab")]);
+    let a = wait_for(&s.dump, "the basic renderer with two tabs", |d| d.engine == "cpu" && d.shell_pid.is_some() && d.tabs == 2);
+    // Unskip it (what `mouser engine unskip mouser` does): the same UI switches.
+    let st = Command::new(env!("CARGO_BIN_EXE_mouser-app"))
+        .args(["engine", "unskip", "mouser"])
+        .env("HOME", &home_path)
+        .env_remove("MOUSER_HOME")
+        .env_remove("MOUSER_ENGINE")
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let b = wait_for(&s.dump, "the mouser engine, live", |d| d.engine == "mouser");
+    assert_eq!(b.ui_pid, a.ui_pid, "switched live, not by restarting the UI");
+    assert_eq!(b.shell_pid, a.shell_pid, "same shell");
+    assert_eq!(b.tabs, 2, "tabs kept");
+}
