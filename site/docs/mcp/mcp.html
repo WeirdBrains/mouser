@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mouser and MCP — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/" aria-current=page>MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="mouser-and-mcp">Mouser and MCP</h1>
+<p>Mouser is both an MCP <strong>server</strong> (P2, below) and an MCP <strong>client</strong> (P3,
+<a href="#client-mouser-uses-mcp-servers">Client</a>).</p>
+<h1 id="mousers-mcp-server">Mouser's MCP server</h1>
+<p>Mouser can act as an MCP server, so agents and editors can see and drive your
+terminal with your approval: its tabs, screens, scrollback, shell and files.
+This is P2 of docs/plans/mcp-agent.md. The server is <strong>off by default</strong>.</p>
+<h2 id="turn-it-on">Turn it on</h2>
+<pre><code>mouser mcp enable            # loopback HTTP on 127.0.0.1:7801
+mouser mcp enable --https    # plus HTTPS on 127.0.0.1:7802 (self-signed, or your cert)
+mouser mcp status            # endpoints, certificate fingerprint, where the token lives
+mouser mcp disable
+</code></pre>
+<p>Restart Mouser after changing it. The settings live in <code>preferences.toml</code>:</p>
+<pre><code class="language-toml">[mcp.server]
+enabled = true
+port = 7801
+https = true
+https_port = 7802
+# cert = &quot;/path/fullchain.pem&quot;   # both or neither; unset = self-signed in $MOUSER_HOME/mcp/
+# key  = &quot;/path/key.pem&quot;
+</code></pre>
+<h2 id="transports">Transports</h2>
+<table>
+<thead>
+<tr>
+<th>transport</th>
+<th>for</th>
+<th>how</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>stdio</td>
+<td>clients that start a server process</td>
+<td><code>mouser mcp serve --stdio</code>, which bridges to the running Mouser (reads the token itself)</td>
+</tr>
+<tr>
+<td>HTTP</td>
+<td>local clients that connect to a URL</td>
+<td><code>http://127.0.0.1:7801/mcp</code>, Streamable HTTP, JSON replies</td>
+</tr>
+<tr>
+<td>HTTPS</td>
+<td>clients that require TLS</td>
+<td><code>https://127.0.0.1:7802/mcp</code>; trust <code>$MOUSER_HOME/mcp/cert.pem</code> or pin the SHA256 shown by <code>mouser mcp status</code></td>
+</tr>
+</tbody>
+</table>
+<p>A stdio client config:</p>
+<pre><code class="language-json">{&quot;mcpServers&quot;: {&quot;mouser&quot;: {&quot;command&quot;: &quot;mouser&quot;, &quot;args&quot;: [&quot;mcp&quot;, &quot;serve&quot;, &quot;--stdio&quot;]}}}
+</code></pre>
+<p>HTTP and HTTPS clients send <code>Authorization: Bearer &lt;token&gt;</code>. Get the token
+with <code>mouser mcp token --show</code>, and replace it with <code>--rotate</code>.</p>
+<h2 id="tools">Tools</h2>
+<table>
+<thead>
+<tr>
+<th>tool</th>
+<th>what it does</th>
+<th>asks you?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tabs_list</code></td>
+<td>tabs: index, title, active, local folder or remote host, at prompt</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>screen_read</code></td>
+<td>the visible text of a tab</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>scrollback_read</code></td>
+<td>the last N lines (≤ 5000) of a tab's scrollback</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>shell_type</code></td>
+<td>type text into a tab (no Enter)</td>
+<td><strong>yes</strong> (<code>shell.type</code>)</td>
+</tr>
+<tr>
+<td><code>shell_run</code></td>
+<td>run one command line, only when the shell is at its prompt</td>
+<td><strong>yes</strong> (<code>shell.type</code>)</td>
+</tr>
+<tr>
+<td><code>files_list</code>, <code>files_read</code></td>
+<td>list a folder, read up to 1 MiB of a file</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>files_mkdir</code>, <code>files_copy</code>, <code>files_move</code></td>
+<td>create, copy, move or rename (never overwrite)</td>
+<td><strong>yes</strong> (<code>files.write</code>)</td>
+</tr>
+<tr>
+<td><code>files_trash</code></td>
+<td>move to <code>$MOUSER_HOME/trash</code> (nothing is deleted for good)</td>
+<td><strong>yes</strong> (<code>files.write</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Relative paths are resolved in the tab's local folder. A tool argument <code>tab</code>
+picks a tab; the default is the active one.</p>
+<h2 id="security">Security</h2>
+<ul>
+<li>Nothing listens unless you enable it. It binds <strong>127.0.0.1</strong> unless you set
+  <code>bind</code> for HTTPS (below). Mouser refuses to listen on any other address
+  without HTTPS and a token, and plain HTTP always stays on 127.0.0.1.</li>
+<li><strong>A token is required</strong> on HTTP and HTTPS. It is 32 random bytes, compared in
+  constant time. It is kept in the OS keychain: macOS Keychain, Windows
+  Credential Manager, or Secret Service on Linux. Without a keychain it goes to
+  <code>$MOUSER_HOME/secrets/mcp-token</code> (0600), and Mouser warns you.
+  <code>MOUSER_SECRET_STORE=file</code> forces the file.</li>
+<li>The <code>Host</code> and <code>Origin</code> headers must be loopback, or one of the names in
+  <code>[mcp.server.tls] domains</code> (an <code>Origin</code> must then be <code>https://</code>), which
+  blocks DNS-rebinding attacks from web pages. Bodies are capped at 4 MiB.</li>
+<li>Typing, running and file changes go through the plugin permission broker
+  (docs/plugins.md) under <code>mcp:&lt;client name&gt;</code>. They show Mouser's approval
+  popup with the exact text, command or path, and the call waits up to 5 minutes
+  for your answer. Choose Always or Never there, or later with
+  <code>mouser plugin permissions mcp:&lt;client&gt; …</code>. A <code>never</code> for <code>screen.read</code>,
+  <code>scrollback.read</code> or <code>files.read</code> also blocks those reads.</li>
+<li>The client name comes from the client itself (<code>clientInfo.name</code>). The token
+  is what proves access; the name only keeps grants apart.</li>
+</ul>
+<h2 id="lets-encrypt">Let's Encrypt</h2>
+<p>To reach the server from other machines with a certificate every client
+trusts, let Mouser get one from Let's Encrypt and renew it itself.</p>
+<p>Before you start:</p>
+<ol>
+<li>A <strong>public DNS name</strong> (A/AAAA record) that points at this computer, e.g.
+   <code>mcp.example.com</code>. Let's Encrypt doesn't issue for IP addresses,
+   <code>localhost</code> or private names.</li>
+<li>The CA must reach you from the internet. For the default <code>tls-alpn-01</code>
+   challenge that's <strong>port 443</strong> of that name, forwarded to Mouser's
+   <code>https_port</code> (or set <code>https_port = 443</code> if Mouser may bind it). For
+   <code>http-01</code> it's <strong>port 80</strong> to <code>http_port</code>. Open them in your router (port
+   forwarding) and firewall, e.g. <code>sudo ufw allow 443/tcp</code>, or allow Mouser in
+   the Windows Defender Firewall / macOS firewall prompt. Ports under 1024
+   need privileges on Linux (<code>sudo setcap cap_net_bind_service=+ep $(which mouser-app)</code>)
+   or a forward from 443 to 7802.</li>
+<li><code>dns-01</code> needs neither port: Mouser runs your <code>dns_hook</code> (or asks you, in
+   <code>mouser mcp cert renew</code>) to add a <code>_acme-challenge</code> TXT record. It is the
+   only way to get a wildcard (<code>*.example.com</code>). There are no DNS provider
+   integrations; the hook is any command, e.g. one calling your provider's CLI.
+   It gets <code>MOUSER_ACME_ACTION</code> (<code>present</code>/<code>cleanup</code>), <code>MOUSER_ACME_DOMAIN</code>,
+   <code>MOUSER_ACME_NAME</code> and <code>MOUSER_ACME_TXT</code>.</li>
+</ol>
+<pre><code class="language-toml">[mcp.server]
+enabled = true
+https = true
+https_port = 7802
+bind = &quot;0.0.0.0&quot;                  # listen on the network (HTTPS + token only)
+
+[mcp.server.tls]
+source = &quot;acme&quot;                   # self-signed | files | acme
+domains = &quot;mcp.example.com&quot;       # comma-separated
+email = &quot;you@example.com&quot;         # optional: Let's Encrypt expiry notices
+# staging = true                  # Let's Encrypt's staging CA, for trying it out
+# challenge = &quot;http-01&quot;           # tls-alpn-01 (default) | http-01 | dns-01
+# http_port = 80                  # http-01 listener (answers only the challenge)
+# dns_hook = &quot;/usr/local/bin/my-dns-hook&quot;
+# directory = &quot;https://…/directory&quot;  # another ACME CA
+</code></pre>
+<p>All of these are in preferences mode under <em>MCP server</em> (dropdowns for the
+source and challenge); saving keeps your comments.</p>
+<ul>
+<li>Mouser asks for the certificate when it starts and serves HTTPS with it as
+  soon as it arrives. It renews <strong>30 days before expiry</strong> in the background
+  and swaps the new certificate in without a restart; open connections keep
+  the old one.</li>
+<li>A failed attempt keeps the current certificate, is logged, and is retried
+  after 1 h, 2 h, 4 h, … up to once a day. That stays within Let's Encrypt's
+  <a href="https://letsencrypt.org/docs/rate-limits/">rate limits</a>. A forced renewal
+  is refused within a day of the last certificate.</li>
+<li>The account key, certificate, private key and renewal state live in
+  <code>$MOUSER_HOME/mcp/acme/</code>, readable only by you (0600).</li>
+<li>Production is the default; <code>staging = true</code> gives untrusted test
+  certificates with looser limits. Changing the names or the CA gets a new
+  certificate.</li>
+</ul>
+<pre><code class="language-sh">mouser mcp cert status          # source, names, expiry, next renewal, last error
+mouser mcp cert renew           # renew now if due (asks the running Mouser)
+mouser mcp cert renew --force   # even if not due
+</code></pre>
+<p>Clients then use <code>https://mcp.example.com/mcp</code> (or <code>:7802</code> without a forward)
+with the token, and no CA file. Anyone who can reach the port can try the
+token, so keep it secret, and rotate it (<code>mouser mcp token --rotate</code>) if it
+leaks; approvals for typing, running and file changes still pop up on your
+screen.</p>
+<h1 id="client-mouser-uses-mcp-servers">Client: Mouser uses MCP servers</h1>
+<p>P3 of docs/plans/mcp-agent.md. Mouser connects to the MCP servers you list and
+to every enabled MCP plugin (<code>transport = "mcp"</code>, docs/plugins.md), shows their
+tools in the sidebar, and calls them only through the permission broker. The
+chat mode (docs/chat.md) uses the same connections.</p>
+<h2 id="add-a-server">Add a server</h2>
+<pre><code class="language-sh"># A stdio server: Mouser starts it (scrubbed environment + --env values).
+mouser mcp servers add hello -- python3 /path/to/server.py
+mouser mcp servers add gh --env GITHUB_TOKEN=keychain:gh -- github-mcp-server stdio
+
+# A Streamable HTTP(S) server. The token is read from stdin into the OS keychain.
+printf %s &quot;$TOKEN&quot; | mouser mcp servers add docs --url https://example.com/mcp --token-stdin
+
+# Mouser's own server (P2), e.g. from a second profile; trust its self-signed cert.
+mouser mcp token --show | mouser mcp servers add self --url https://localhost:7802/mcp \
+    --token-stdin --ca ~/.mouser/mcp/cert.pem
+
+mouser mcp servers list            # configured servers and MCP plugins
+mouser mcp servers test docs       # connect and list its tools
+mouser mcp servers test docs --call search --args '{&quot;q&quot;:&quot;mouser&quot;}'   # asks first
+mouser mcp servers remove docs     # also deletes its token and permissions
+</code></pre>
+<p>They are stored in <code>preferences.toml</code>; secrets are only references:</p>
+<pre><code class="language-toml">[[mcp.servers]]
+name = &quot;docs&quot;
+url = &quot;https://example.com/mcp&quot;
+token = &quot;keychain:mcp-server-docs&quot;   # sent as Authorization: Bearer
+# ca = &quot;/path/ca.pem&quot;                # trust this cert/CA instead of the public roots
+
+[[mcp.servers]]
+name = &quot;gh&quot;
+command = [&quot;github-mcp-server&quot;, &quot;stdio&quot;]
+env = { GITHUB_TOKEN = &quot;keychain:gh&quot; }   # plain values work but are warned about
+# enabled = false                        # keep it listed but don't connect
+</code></pre>
+<ul>
+<li><code>keychain:NAME</code> is the OS keychain (Keychain, Credential Manager, Secret
+  Service), or the 0600 file fallback in <code>$MOUSER_HOME/secrets/</code> with a warning.</li>
+<li>Plain <code>http://</code> is only accepted for this computer (127.0.0.1, localhost, ::1).
+  Remote servers need <code>https://</code>; certificates are checked against the Mozilla
+  roots unless <code>ca</code> is set.</li>
+<li>Replies may be JSON or SSE; the <code>Mcp-Session-Id</code> is kept for the connection.</li>
+<li>Mouser offers protocol 2025-06-18 and accepts what the server answers.</li>
+</ul>
+<h2 id="connections">Connections</h2>
+<p>Each server has a background connection. It reconnects with backoff (1 s, doubling
+to 5 min) after a failure and pings every 30 s; a stdio server that exits is
+restarted. Changes to the list apply on the next start.</p>
+<p>An MCP plugin also needs its <code>run</code> permission before Mouser starts it. Until then
+its row says <strong>ask</strong>; click it to see the approval popup (Allow once starts it for
+this session, Allow always remembers).</p>
+<h2 id="sidebar">Sidebar</h2>
+<p>The <strong>MCP</strong> section (below the connections, above Engines) lists every server
+with its state: connecting, connected, failed (with the reason and the retry
+time), ask, denied, off.</p>
+<ul>
+<li>Click a connected server (<code>▸ name (N)</code>) to show or hide its tools.</li>
+<li>Click a failed or connecting server to retry now.</li>
+<li>Click a tool to call it with no arguments. A tool with required arguments shows
+  what it needs instead; use the <code>[mouser]</code> line for those.</li>
+</ul>
+<p><code>[mouser]</code> line (F10): <code>mcp</code> (states), <code>mcp tools ID</code>, <code>mcp reconnect ID</code>,
+<code>mcp call ID TOOL [JSON]</code>, e.g. <code>mcp call hello greet {"name":"Michael"}</code>. The
+result is shown as a notice.</p>
+<h2 id="permissions">Permissions</h2>
+<p>Every call goes through the broker. The "plugin" is <code>mcp-server:&lt;name&gt;</code> for a
+configured server and the plugin's own name for an MCP plugin; the capability is
+<code>tool.&lt;tool name&gt;</code>. The first call shows the approval popup (Allow once, Allow
+always, Deny, Never). Tool annotations such as <code>readOnlyHint</code> are never trusted
+to allow anything.</p>
+<pre><code class="language-sh">mouser plugin permissions mcp-server:docs                    # what is saved
+mouser plugin permissions mcp-server:docs tool.search=allow  # or ask / never
+mouser plugin permissions 'mcp-server:docs' revoke
+</code></pre>
+<p><code>mouser mcp servers test --call</code> asks the same question in the terminal (y once,
+a always) and refuses without a terminal.</p>
+<h2 id="not-yet">Not yet</h2>
+<p>Resources, prompts, list-changed notifications, OAuth and a project-local
+<code>.mouser/mcp.toml</code> are not in P3 (plan questions 7 and 8).</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/mcp.md">docs/mcp.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

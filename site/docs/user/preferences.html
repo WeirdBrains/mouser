@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Preferences mode — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="preferences-mode">Preferences mode</h1>
+<p><code>esc :p</code> opens the preferences mode (a built-in mode plugin, like commander
+and chat; <code>mouser plugin disable preferences</code> turns it off). It lists every
+setting in <code>$MOUSER_HOME/preferences.toml</code> by section: Appearance, Window,
+Keys, Plugins, Chat, Models, Local model and MCP server. Plugins has
+<code>plugins.max_restarts</code>: how many crashes within 30 s a plugin may have before
+it stays off (default 3; 0 never restarts; see <a href="../developer/mode-protocol.html">Mode plugin protocol</a>).</p>
+<p>Keys (alt+key by default; remap them in <code>modes.toml</code> under <code>[preferences.keys]</code>):</p>
+<ul>
+<li>alt+↑ / alt+↓ move, alt+PgUp / alt+PgDn page;</li>
+<li>alt+← / alt+→ change the value: the previous/next choice, on/off, or ±1 for numbers;</li>
+<li>alt+Enter edits: on/off toggles, choices open a dropdown (↑/↓, Enter picks,
+  Esc closes), other fields take typed text (Enter saves, Esc cancels);</li>
+<li>alt+r resets the row to its default (the key is removed from the file).</li>
+</ul>
+<p>Rows are clickable: the value edits it, <code>reset</code> resets it.</p>
+<p>Every value is validated before it is saved (ranges, choices, http(s) URLs),
+and the file is only written when Mouser can still read it: the change goes
+through <code>toml_edit</code>, so comments, ordering and keys Mouser doesn't know are
+kept, and it is written atomically (temp file + rename). A preferences.toml that
+doesn't parse is never overwritten; the mode says so instead.</p>
+<p>Theme, light/dark, the Esc wait, chat and model settings apply at once; rows
+marked "new windows" (font, sidebar, MCP server) apply to windows opened later.</p>
+<p>Secrets (the local model server key) go only to the OS keychain; the file
+keeps a <code>keychain:NAME</code> reference and the mode shows "set (keychain)". With no
+keychain available the secret is not saved. The model folder is shown but
+moved with <code>mouser model local move &lt;dir&gt;</code>.</p>
+<h2 id="as-a-plugin-program">As a plugin program</h2>
+<p><code>plugins/preferences</code> is the same mode as a separate program
+(<code>mouser-preferences</code>, <code>transport = "mode"</code>), built only on <code>mouser-mode-api</code>.
+Installed, it replaces the built-in preferences mode (<code>mouser plugin list</code>
+marks it <code>[overrides built-in]</code>):</p>
+<pre><code>cargo build --release -p mouser-preferences
+mkdir -p /tmp/prefs-plugin &amp;&amp; cp plugins/preferences/plugin.toml target/release/mouser-preferences /tmp/prefs-plugin/
+mouser plugin install /tmp/prefs-plugin
+mouser plugin permissions preferences run=allow prefs.write=allow
+</code></pre>
+<p>It reads and writes through Mouser's <code>prefs.*</code> calls, so Mouser still does the
+validation and the comment-keeping write. For a secret, Enter makes Mouser
+show its own key popup. The key you type goes from that popup to the keychain,
+and the plugin only hears that it was saved.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/preferences.md">docs/preferences.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

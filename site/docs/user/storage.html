@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storage — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="storage">Storage</h1>
+<p>Mouser stores preferences, themes and connections under <code>~/.mouser</code> (override with <code>MOUSER_HOME</code>):</p>
+<ul>
+<li><code>~/.mouser/preferences.toml</code></li>
+<li><code>~/.mouser/themes/&lt;ThemeName&gt;/{dark.toml,light.toml}</code></li>
+<li><code>~/.mouser/connections/*.toml</code></li>
+<li><code>~/.mouser/plugins/&lt;name&gt;/&lt;version&gt;/</code> and <code>~/.mouser/engines/&lt;name&gt;/&lt;version&gt;/</code>: installed plugins and engines, one folder per version (the newest two are kept); <code>&lt;name&gt;/current</code> names the active version and <code>&lt;name&gt;/source.toml</code> where it came from. <code>plugins/keys.toml</code> holds the signing keys remembered per source.</li>
+<li><code>~/.mouser/downloads/jobs.toml</code>: the download manager's jobs while Mouser runs.</li>
+<li><code>~/.mouser/logs/plugins-audit.log</code>: every install, update and rollback.</li>
+</ul>
+<p>Tests and manual runs must use a temporary <code>MOUSER_HOME</code> and never touch the real <code>~/.mouser</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/storage.md">docs/storage.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

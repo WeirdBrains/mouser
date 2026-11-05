@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modes — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="modes">Modes</h1>
+<p>Mouser has two kinds of modes: <strong>mode plugins</strong> (commander, below), which change how
+you work with the files under the shell, and the <strong>input modes</strong> of the command line.</p>
+<h2 id="input-modes">Input modes</h2>
+<p>Mouser supports vim-style input modes:</p>
+<ul>
+<li>Shell (default): input goes to the PTY.</li>
+<li>Command: <code>:</code> command line for actions (e.g., <code>:open-sidebar</code>, <code>:connect &lt;name&gt;</code>, <code>:theme &lt;name&gt;</code>).</li>
+<li>Config: reserved for in-app editing of preferences/themes.</li>
+</ul>
+<p>Mode switching
+- Enter Command: F10 by default (configurable in future). Esc returns to Shell.
+- Mode indicator: the command line is shown at the bottom when in Command mode.</p>
+<p>Actions
+- <code>:open-sidebar</code> / <code>:close-sidebar</code>
+- <code>:list-conns</code>, <code>:connect &lt;name&gt;</code>
+- <code>:theme</code> — open the theme switcher; <code>:theme &lt;name&gt;</code> — switch theme (saved)
+- <code>:mode dark|light|system</code> — switch variant mode (saved)
+- <code>:edit-theme</code> — open the theme &amp; font editor for the active theme variant
+- <code>:font-size &lt;6-48&gt;</code>, <code>:font &lt;family&gt;</code> (<code>:font</code> alone resets to the default stack)</p>
+<p>Keybindings
+- F10: command line. Alt+Esc: toggle the connections sidebar.
+- Ctrl+= / Ctrl++ bigger font, Ctrl+- smaller, Ctrl+0 reset to <code>config.toml</code>'s size (saved to
+  <code>preferences.toml</code>; the grid reflows and the shell is resized).
+- Theme switcher: ↑/↓ theme (live preview), ←/→ or d/l/s mode, e editor, Enter apply, Esc cancel.
+- Editor: Tab/Shift+Tab or ↑/↓ move between fields, type to edit (live preview when valid),
+  Ctrl+S save, Esc cancel. Fields are also clickable.</p>
+<p>Menus, keybindings and the command line dispatch the same named actions.</p>
+<h2 id="mode-plugins">Mode plugins</h2>
+<p>Built in: commander (<code>esc :c</code>), chat (<code>esc :a</code>) and preferences (<code>esc :p</code>, <a href="../user/preferences.html">preferences.md</a>).</p>
+<h3 id="the-last-mode-is-remembered">The last mode is remembered</h3>
+<p>When a window closes, Mouser saves the mode it was in (or <code>none</code> if no mode was on) to
+<code>$MOUSER_HOME/state/last-mode</code> (state, not configuration), and the next launch starts in
+it. With several windows, the last one to close wins. A remembered mode that has since
+been disabled or uninstalled is skipped quietly (no mode). Restoring only switches the
+mode: the chat starts empty and sends nothing, and no model is picked or downloaded until
+you use it. Delete the file to go back to the default (the first enabled mode).</p>
+<p>Exactly one mode plugin is active at a time (or none). Mouser starts in the default
+mode, <strong>commander</strong>. Switching replaces the current mode; there is no stacking.
+The second built-in mode is <strong>chat</strong> (<code>esc :a</code>), the agent; see docs/chat.md.
+The modes are plugins (P6): the switcher lists the enabled modes from the plugin
+registry in priority order, and the first is the default. <code>mouser plugin disable
+commander</code> (or chat) takes one out; with every mode off Mouser is a plain terminal.
+Installed mode plugins (<code>kind = "mode"</code> over the command transport, with a
+<code>[mode]</code> hotkey) join after the built-ins; see docs/plugins.md §Mode plugins and
+<code>examples/plugins/hello-mode</code>.</p>
+<ul>
+<li><code>esc :</code> then the mode's hotkey and Enter switches to it (<code>esc :c</code> = commander).</li>
+<li>After <code>esc</code>, Mouser waits <strong>1200 ms</strong> for the <code>:</code> (was 500 ms before 1.0.1). Set it in
+  <code>preferences.toml</code> with <code>[keys] leader_timeout_ms = 1500</code> (100–10000). If the time runs
+  out, or another key comes first, the Esc goes to the shell ahead of that key, in order.
+  Once <code>:</code> is caught, the command line stays open until Enter or Esc, however slowly you
+  type. On the alternate screen (vim, less) Esc is never held.
+  Typing the hotkey of the mode that is already on turns modes off (plain terminal);
+  <code>esc :c</code> again turns commander back on. <code>:c</code> / <code>:commander</code> work from F10 too.</li>
+<li>A lone Esc waits 500 ms for the <code>:</code>; without it the Esc goes to the shell
+  unchanged (so <code>esc</code> keeps working in readline/vi-mode shells, just 500 ms later).
+  <code>alt+:</code> opens the command line at once. A line whose first word is not a Mouser
+  command runs in the tab's shell (typed like commander's cd: what you had typed is
+  kept and comes back), so <code>echo "hello, world!"</code> just works; in an SSH tab it runs
+  remotely. Mouser commands win on a name clash; a leading <code>!</code> forces the shell
+  (<code>!theme</code> runs a program called theme). If another program owns the terminal the
+  line is not typed and a notice says so. Esc first closes an open mode window or
+  search.</li>
+<li>Full-screen programs (the alternate screen: vim, less, htop ...) get the whole
+  window: the mode's view is hidden and no key is taken, Esc included.</li>
+<li><code>ctrl+shift+k</code>: the key mappings of the current mode. <code>ctrl+shift+m</code>: all modes
+  (click one to switch).</li>
+<li>Every mode key is <code>&lt;modifier&gt;+&lt;key&gt;</code> (modifier <code>alt</code>). Only the keys a mode binds
+  are taken; every other key, other alt keys too, goes to the shell.</li>
+</ul>
+<h3 id="remapping">Remapping</h3>
+<p><code>~/.mouser/modes.toml</code> (the Mouser home), one section per mode:</p>
+<pre><code class="language-toml">[commander]
+modifier = &quot;alt&quot;        # only alt for now
+[commander.keys]
+switch_view = &quot;v&quot;       # a character, or up / down / left / right / enter
+</code></pre>
+<p>An unknown action or key is reported in the status bar and the defaults are kept.</p>
+<h3 id="commander">Commander</h3>
+<p>A view docked above the prompt (the terminal grid moves down; about half the
+window) that follows the shell's working directory (<code>/proc/&lt;pid&gt;/cwd</code> on Linux,
+OSC 7 elsewhere) and re-lists when the directory changes. Header: the directory,
+item count and the equivalent <code>ls</code> flags, then the view, <code>options</code>, <code>man</code> and <code>help</code>
+buttons; a search field filters the folder as you type.</p>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th>action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>key (alt+)</td>
+<td>list</td>
+</tr>
+<tr>
+<td>---</td>
+<td>---</td>
+</tr>
+<tr>
+<td>t</td>
+<td>switch view: list → grid → carousel</td>
+</tr>
+<tr>
+<td>↑ / ↓</td>
+<td>previous / next row</td>
+</tr>
+<tr>
+<td>← / →</td>
+<td>previous / next item</td>
+</tr>
+<tr>
+<td>PgUp / PgDn</td>
+<td>a screen of rows</td>
+</tr>
+<tr>
+<td>Home / End</td>
+<td>first / last</td>
+</tr>
+<tr>
+<td>p, Backspace</td>
+<td>back: where you came from (like <code>popd</code>), else the parent folder; in the file view / player it closes the view</td>
+</tr>
+<tr>
+<td>Enter</td>
+<td>open: a folder is <code>cd</code>'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files)</td>
+</tr>
+<tr>
+<td>q (or Esc)</td>
+<td>close the file view / window</td>
+</tr>
+<tr>
+<td>s</td>
+<td>search: type to filter (the first match is selected), Enter keeps the filter, Esc clears it</td>
+</tr>
+<tr>
+<td>space</td>
+<td>mark / unmark the item (then moves on in list and carousel)</td>
+</tr>
+<tr>
+<td>*</td>
+<td>mark all / clear marks</td>
+</tr>
+<tr>
+<td>|</td>
+<td>pipe: a prompt in the view; Enter types <code>printf '%s\n' &lt;paths&gt; \| &lt;cmd&gt;</code> into the shell, so the output lands in the shell</td>
+</tr>
+<tr>
+<td>z / x</td>
+<td></td>
+</tr>
+<tr>
+<td>a</td>
+<td>dotfiles on/off (<code>ls -a</code>)</td>
+</tr>
+<tr>
+<td>o / m</td>
+<td>options window / manual</td>
+</tr>
+</tbody>
+</table>
+<p>Back works like <code>popd</code>, inside commander (it never runs <code>pushd</code>/<code>popd</code>). Entering a
+folder or opening a file pushes where you were onto a navigation stack: the path as
+you saw it (a symlink stays a symlink), the selection and the scroll. Back pops it
+and puts you exactly there again. With nothing on the stack (after a <code>cd</code> you typed,
+a breadcrumb jump, or at startup) back goes to the parent of the path you see, not
+of the resolved one, so leaving a symlinked folder never lands in its target's real
+parent. Remote (SSH) folders work the same way.</p>
+<p><strong>Player.</strong> Video and audio open in commander's own player (MODES.md: "a player will
+appear"). Video frames are decoded by <code>ffmpeg</code> to RGBA, fitted to the view's width and
+drawn through Mouser's image path; Mouser plays the sound itself (cpal: ALSA/PipeWire on
+Linux, CoreAudio, WASAPI). Audio files get a minimal view: name, progress bar, time,
+volume and the keys. Keys (remappable, they only act while a player is open; otherwise
+they go to the shell):</p>
+<table>
+<thead>
+<tr>
+<th>key</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>alt+k</td>
+<td>play / pause</td>
+</tr>
+<tr>
+<td>alt+j / alt+l</td>
+<td>back / forward 10 s</td>
+</tr>
+<tr>
+<td>alt+- / alt+=</td>
+<td>volume down / up (10 %)</td>
+</tr>
+<tr>
+<td>alt+q or Esc</td>
+<td>close</td>
+</tr>
+<tr>
+<td>alt+e</td>
+<td>fullscreen (below)</td>
+</tr>
+</tbody>
+</table>
+<p>How it stays in sync: two <code>ffmpeg</code> readers of the same file start at the same seek point,
+one for video (<code>-an</code>, RGBA at the file's frame rate, each frame stamped with its PTS =
+start + n/fps) and one for audio (<code>-vn</code>, f32 at the device rate). The audio output
+callback counts the samples it hands to the device and notes when each buffer was
+handed over; the clock is the frame being played now: that buffer's first frame plus the
+time since, minus the device latency the backend reports (so it moves smoothly instead of
+in buffer-sized steps), never past what the device was given. Frames can only appear
+when the window redraws, so the clock is read half a redraw interval ahead (measured as
+a moving average): the error is centred on zero. A due frame is shown unless it is
+already a whole frame late and the next one is due too; only then is it dropped; early
+frames are held. Files without audio use a wall clock. Pause silences the output and
+freezes the clock (the readers just wait, nothing restarts); volume is applied to the
+samples in-process. A seek flushes both queues and restarts both readers with <code>-ss</code> at
+the target, so audio and video start together. Measured (Linux, 25 fps test file with a
+flash and a beep each second, 64 s of play plus 7 seeks, 2350 frames): video vs the
+audio clock mean -0.2 ms, p95 9.5 ms, max 24.7 ms, 0 frames dropped, no drift
+(first 10 s +0.5 ms, last 10 s -2.9 ms); 61-76 ms from a seek key to the first new frame.
+<code>MOUSER_PLAYER_LOG=&lt;file&gt;</code> writes <code>clock pts</code> per shown frame and the seek gaps.</p>
+<p>Nothing is started until a file is opened; playback stops (the readers are killed) when
+the viewer closes, another file is shown or the mode is left. Without <code>ffmpeg</code> and
+<code>ffprobe</code> on PATH, media falls back to the desktop opener (<code>xdg-open</code>, <code>open</code> on macOS).</p>
+<p><strong>What you have typed is kept.</strong> <code>cd</code> (open a folder, alt+p) and pipe run without
+losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to
+the shell's kill ring), the command and Enter, then, once the shell is the terminal's
+foreground process again (the command finished), Ctrl+Y and Backspace to put the line
+back (the cursor ends at its end). The added space makes sure an empty line stays empty
+instead of yanking an older kill.</p>
+<table>
+<thead>
+<tr>
+<th>shell</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bash (readline, emacs mode)</td>
+<td>kept (tested)</td>
+</tr>
+<tr>
+<td>zsh (zle, emacs keymap)</td>
+<td>kept (tested)</td>
+</tr>
+<tr>
+<td>fish</td>
+<td>kept (Ctrl+U/Ctrl+Y use its kill ring; tested when installed)</td>
+</tr>
+<tr>
+<td>vi keymaps (<code>set -o vi</code>, <code>bindkey -v</code>)</td>
+<td>not supported: in insert mode Ctrl+E/Ctrl+Y differ; leave the line empty before opening</td>
+</tr>
+<tr>
+<td>a program reading the terminal (<code>less</code>) after pipe</td>
+<td>the yank waits until it exits</td>
+</tr>
+</tbody>
+</table>
+<p>On Windows the shell's foreground state cannot be read, so the line is put back after
+a short pause.</p>
+<p>Mouse in every view: a click selects, a double-click (400 ms) opens, the wheel moves the
+selection (it scrolls the file view and the manual). The selection is highlighted and
+the view scrolls to keep it on screen. Marks show as <code>*</code> and as a count in the header.
+Pipe takes the marked paths in listing order, or the selected path when nothing is
+marked; paths are single-quoted (<code>'</code> becomes <code>'\''</code>). Marks are per folder.</p>
+<p>The defaults avoid readline's alt keys except <code>alt+t</code> (transpose-words, from
+MODES.md), which commander takes while it is on. Clicks: a click selects an item, a
+second click opens it; the wheel over the view moves the selection.</p>
+<p><code>.</code> and <code>..</code> are never listed. Going up is the <strong>back</strong> control in the header
+(<code>‹ back (alt+p)</code>, <code>‹ back</code> when narrow; greyed out at <code>/</code>), <code>alt+p</code> or
+<code>alt+Backspace</code> (both remappable, both in <code>ctrl+shift+k</code>; alt+Backspace shadows
+readline's backward-kill-word while commander is on). Going up selects the folder you
+came from. The header path is clickable: each segment goes to that folder (long paths
+lose their leading segments to <code>…</code>).</p>
+<p>Search (<code>alt+s</code> or a click on the field) is the only thing that takes plain keys,
+and only while it is focused (bright field, "searching · type to filter" hint). It
+filters as you type and shows <code>N matches for "q"</code> or <code>no matches for "q"</code>; Enter
+keeps the filter, Esc cancels. Everything else you type, viewer or player open or not,
+goes straight to the shell. An Esc right after an Esc that closed a viewer or window
+(within 1.5 s) is swallowed instead of being held for the shell: held, it reached the
+shell glued to the next key (Esc c is readline's meta-c), which ate the first letter of
+what you typed next.</p>
+<ul>
+<li><strong>List</strong>: <code>ls -lah</code> columns (attributes, size, name, last modified).</li>
+<li><strong>Grid</strong>: tiles with a preview by type (images scaled, a frame of each video, the
+  first lines of text files (Markdown rendered, <a href="../user/markdown.html">Markdown rendering</a>), a label for folders and audio) and the name below.</li>
+<li><strong>Carousel</strong>: the focused item large in the middle and its two neighbours cut
+  off at the edges. Every item's name floats over its box in the same place
+  (near the bottom, centred): a slightly see-through rounded tag with a soft
+  shadow, drawn on top of the preview. Long names end in <code>…</code> inside the tag.
+  A folder shows a folder icon in the middle of its box, with its name tag
+  under it. The date, size and <code>n of N</code> are under the strip.</li>
+</ul>
+<p><strong>Type badges.</strong> Every grid tile and carousel item has a small round badge for
+its type, centred exactly on the box's top-right corner and drawn on top of the
+preview: a folder shape for folders, else a short mark (<code>IMG</code> image, <code>VID</code>
+video, <code>AUD</code> audio, <code>TXT</code> text, <code>&lt;/&gt;</code> code, <code>MD</code> Markdown, <code>PDF</code>, <code>ZIP</code>
+archive, <code>BIN</code> binary or executable, <code>{}</code> JSON/TOML/YAML config, <code>Aa</code> font,
+<code>DOC</code> document or spreadsheet, <code>…</code> anything else). The type comes from the file
+extension (the same detection the previews use); a file with an execute bit and
+no known type is a binary. Grid and carousel leave room above and between the
+boxes for the overhang. The badges are drawn by Mouser itself (no image assets).</p>
+<p>Previews load lazily on a worker thread: only what is on screen is requested
+(grid: the visible tiles; carousel: the focused item and its two neighbours) and
+the queue is replaced as you move, so off-screen items are skipped. They load in
+order: grid tiles top-left first, the carousel's focused item before its
+neighbours. Until one is ready the tile shows its kind dimly (<code>image</code>, <code>▶ video</code>).
+Formats: PNG, JPEG, GIF, WebP, BMP. Video thumbnails: one <code>ffmpeg</code> frame at 10 % of
+the duration (at most 30 s in; 1 s if unknown; the first frame if that fails), scaled
+to the tile, cached in memory and on disk in <code>$MOUSER_HOME/cache/thumbs/</code> keyed by
+path, mtime, size and tile size. Without ffmpeg the tile says <code>▶ video</code>.</p>
+<p>Previews and player frames are clipped to the view (never over the prompt), and are
+left out under the options and manual windows so nothing shows through them.</p>
+<p><strong>Carousel motion.</strong> Moving between items slides the strip (the focused item and the
+partial neighbours together) over 180 ms with an ease-in-out curve (cubic; ease-in alone
+looked like it lurched at the stop). A key during a slide retargets from where the strip
+is, without a jump; jumps of more than 3 items only slide the last one. Redraws are
+requested only while it moves (a ticker every 8 ms, stopped at the end). Measured
+(Linux, release, 655 px window): 50 fps while sliding (frame p50 19.8 ms, p95 20.0,
+max 38.6), idle frames only on other events. Loading stays lazy: what is on the strip
+plus the selection's neighbours, so the incoming item loads during the slide.</p>
+<p><strong>SSH sessions.</strong> When the tab's shell is on another host commander lists that host:</p>
+<ul>
+<li>Remote when the terminal's foreground process is <code>ssh</code> (typed, or the sidebar's
+  launcher), or when an OSC 7 <code>file://host/path</code> names a host other than this one while
+  the local shell is not in the foreground. Folder: the remote shell's OSC 7 (the
+  remote shell must send it, e.g. <code>PROMPT_COMMAND='printf "\033]7;file://%s%s\007"
+  "$HOSTNAME" "$PWD"'</code>).</li>
+<li>Listing: <code>ls -la</code> on the host through a side channel: <code>ssh</code> with the running
+  command's own connection options (<code>-p -l -i -F -J -o -4 -6</code>; <code>-F $MOUSER_SSH_CONFIG</code>
+  if the command has none), <code>BatchMode=yes</code> (never prompts), multiplexed with
+  <code>ControlMaster=auto</code>, <code>ControlPath=$MOUSER_HOME/cache/ssh/%C</code>, <code>ControlPersist=120</code>.
+  Fetched on a thread, refreshed every 5 s while shown.</li>
+<li>Header: <code>user@host:/path</code> (clickable segments, back works); <code>cd</code>, back and pipe are
+  typed into the PTY, so they run remotely.</li>
+<li>Previews are not fetched: tiles show their kind with a <code>· remote</code> badge. Opening a
+  remote file (viewer or player) is not supported: a notice says so (pipe it into a
+  command instead).</li>
+<li>No OSC 7 yet: <code>remote (host): no directory info ...</code> with a hint; no side channel
+  (mosh, a nested ssh): <code>remote: no ssh side channel ...</code>; the side channel failing
+  (password-only host): ssh's error and a hint. Local files are never shown for a
+  remote shell. After <code>exit</code> the local shell is back and so is its folder.</li>
+</ul>
+<h4 id="image-zoom-player-controls-header-menu">Image zoom, player controls, header menu</h4>
+<ul>
+<li>Image view: <code>alt+=</code> / <code>alt+-</code> zoom (they are the player's volume keys too: in the image view they zoom, in the player they change volume; remap <code>zoom_in</code>/<code>zoom_out</code> to split them), <code>alt+0</code> fit, <code>alt+1</code> 100%. Ctrl+wheel zooms about the pointer; when zoomed, drag, <code>alt+arrows</code> or the wheel pan. The header shows <code>fit 37%</code> / <code>200%</code>. Past 2048 px the full image is decoded (the preview shows until it is ready). Images stay inside the view and clear of its rounded corners (the renderers have no per-pixel clip, so images are inset rather than masked).</li>
+<li>Player: <code>« 10s</code>, play/pause and <code>10s »</code> buttons; the seek bar seeks on click, scrubs on drag (seeks at most every 120 ms, a final one on release) and shows the hovered time; the volume bar takes click, drag and wheel. Clicking the video toggles play.</li>
+<li>Fullscreen: <code>alt+e</code> (<code>fullscreen</code>), the header's <code>fullscreen (alt+e)</code> button, or a
+  double-click on the picture or video. Commander's image viewer or player then fills
+  the whole window, local or remote. The shell, tab bar and sidebar are hidden, and the
+  terminal keeps its size, so nothing is resized under the shell. Esc or <code>alt+e</code> again
+  leaves.</li>
+<li>Images are fitted whole and letterboxed on a dark backdrop, and keep zoom and pan.
+    Video is letterboxed the same way and keeps play/pause, seeking and the clickable
+    seek and volume bars.</li>
+<li>A title strip with <code>exit fullscreen</code>, plus the player's controls for video, shows on
+    entry and after any pointer move or key. It hides after 2.5 s, and the picture then
+    takes the whole window.</li>
+<li>Audio gets a centred full-window controls view, always shown.</li>
+<li>Keys while fullscreen: Space plays or pauses, ←/→ seek 10 s, ↑/↓ change the volume.
+    In the image view the arrows step or pan. Other typing is swallowed rather than sent
+    to the hidden shell, and alt keys still work. Outside fullscreen the usual rule
+    applies (only alt keys act).</li>
+<li>The view follows window resizes. Sizes are physical pixels, so HiDPI is sharp.</li>
+<li>The view is closed (and fullscreen dropped) by alt+q, Back or opening something
+    else.</li>
+<li>Header: when narrow, the path is elided first (down to ~16 columns), then the buttons that still do not fit go, one by one from the left, into a <code>•••</code> menu (<code>menu</code>, default <code>alt+i</code>).</li>
+<li>Boxes: 8 px rounded corners and a three-layer soft shadow (stronger on dark themes, faint on light), built from rects so every renderer draws them.</li>
+</ul>
+<h4 id="remote-files-ssh-sessions">Remote files (SSH sessions)</h4>
+<p>Remote listings preview, view and play like local ones, through <code>mouser_core::fetch</code>:</p>
+<ul>
+<li>Side channel: the session's own ssh options, <code>BatchMode</code>, ControlMaster under <code>$MOUSER_HOME/cache/ssh</code> (<code>MOUSER_SSH_CONFIG</code> for Mouser's config, <code>MOUSER_SSH_BIN</code> to swap ssh in tests).</li>
+<li>Reads: <code>tail -c +N | head -c L</code> ranges, 3 at a time per file, 3 files at once (others queue). The first is the 256 KB head (image header, start of text, video start); after that 2 MB chunks from the priority offset, wrapping. Seeks (player, through a local HTTP Range server ffmpeg reads) and scrolls (text) move the priority.</li>
+<li>Cache: <code>$MOUSER_HOME/cache/remote/&lt;key&gt;.data</code> (sparse) + <code>.map</code> (filled ranges); key = host + path + size + mtime, so an unchanged file is never fetched again. LRU-trimmed to <code>MOUSER_REMOTE_CACHE_MB</code> (2048).</li>
+<li>When nothing shows a file any more its reads stop; files up to <code>MOUSER_REMOTE_COMPLETE_MB</code> (64) finish into the cache: rsync <code>--inplace</code> (when both ends have it; what is cached is not resent), else scp, else the ranged reads. <code>MOUSER_REMOTE_BACKEND=rsync|scp|cat</code> forces one.</li>
+<li>Thumbnails: the host's ffmpeg makes a small PNG (only that crosses); without it images are fetched whole (up to 64 MB for tiles) and videos decoded locally from ranged reads. Cached in <code>cache/thumbs</code>.</li>
+<li>Viewer: the header bytes give the size at once; a 1024 px preview shows scaled up, the full image replaces it when fetched; a status line shows progress or the error. Text shows what has arrived and grows.</li>
+<li>Measured on a localhost sshd throttled to 4 MB/s per read: 33 MB 8000x6000 JPEG header 0.1 s, first preview 0.65 s, full 3.4 s; 153 MB 1080p video (moov at the end) first frame 1.7 s, seek to an unfetched 90 s 1.3 s, all here 12.9 s; A/V offset p5 -3.5 / p95 4.0 ms.</li>
+<li>Future: the fetch layer (range map, cache keys, backends, transfer queue) is its own module so a local&lt;-&gt;remote sync can reuse it; sync itself is not built.</li>
+<li>Images fit the terminal's width (default and <code>alt+0</code>).</li>
+</ul>
+<h4 id="scroll-position">Scroll position</h4>
+<p>When a view doesn't fit, commander shows where you are: a slim scrollbar on the right of the list, grid and text views, and <code>x–y of N</code> (text: <code>lines x–y of N</code>) at the right of the search row. The carousel shows <code>n of N</code> and a track under the picture.</p>
+<h4 id="as-a-plugin-program">As a plugin program</h4>
+<p><code>plugins/commander</code> is the same mode as a separate program (<code>mouser-commander</code>,
+<code>transport = "mode"</code>), built only on <code>mouser-mode-api</code>; installed, it replaces the
+built-in commander (<code>mouser plugin list</code> marks it <code>[overrides built-in]</code>). It runs as
+you, like any program you start: it lists the folder and decodes thumbnails and
+previews itself, and its view goes to Mouser with the images inline (sent once,
+then reused by key). It needs <code>files.read</code> (to be told the shell's folder) and
+<code>shell.type</code> (cd, pipe, and keys it passes on), and <code>remote.read</code> for remote
+shells (Mouser tells it the ssh session and the folder's listing; it fetches
+previews and files over that session's ssh like the built-in mode, below):</p>
+<pre><code>cargo build --release -p mouser-commander
+mkdir -p /tmp/commander-plugin &amp;&amp; cp plugins/commander/plugin.toml target/release/mouser-commander /tmp/commander-plugin/
+mouser plugin install /tmp/commander-plugin
+mouser plugin permissions commander run=allow files.read=allow shell.type=allow remote.read=allow
+</code></pre>
+<p><code>mouser-commander --manifest</code> prints its <code>plugin.toml</code>. Keys, remaps in
+<code>modes.toml</code>, the views, search, pipe, the file view with Markdown, and image
+zoom match the built-in mode: <code>plugins/commander/tests/through_mouser.rs</code> starts the
+program through Mouser's adapter and checks that it draws exactly what the built-in
+mode draws (list, grid, carousel, search, the file view, images) and asks for the
+same effects; <code>remote_through_mouser.rs</code> does the same for a remote folder over a
+fake ssh (list, grid tiles and snippets, the image and text views). A bound key the
+mode passes on (<code>alt+k</code> with no player) is typed into the shell as the built-in mode
+let it through. The player runs in the plugin too: it starts ffmpeg itself, plays the
+audio, and hands each frame to Mouser through shared memory
+(<code>player_through_mouser.rs</code>: a 1280x720 60 fps clip arrives at 61.5 fps through the
+plugin and 61.5 fps in the built-in mode, debug build on Linux).</p>
+<h3 id="plugin-api-mouser_rendermodes">Plugin API (<code>mouser_render::modes</code>)</h3>
+<p>A mode implements the <code>Mode</code> trait and is registered with <code>Host::new</code> (the first
+mode is the default). Built-in modes are listed in <code>Host::builtin</code>.</p>
+<table>
+<thead>
+<tr>
+<th>item</th>
+<th>what the mode provides</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name()</code>, <code>hotkey()</code></td>
+<td>name and the letter typed after <code>esc :</code></td>
+</tr>
+<tr>
+<td><code>bindings()</code></td>
+<td>default bindings <code>Binding { id, key, describe }</code>; the host loads <code>modes.toml</code> overrides, shows them in <code>ctrl+shift+k</code> and routes a bound key to <code>action(id, 0)</code></td>
+</tr>
+<tr>
+<td><code>activate()</code>, <code>deactivate()</code></td>
+<td>lifecycle; <code>deactivate</code> drops transient state</td>
+</tr>
+<tr>
+<td><code>cwd_changed(dir)</code></td>
+<td>the shell's directory (called every frame; cheap when unchanged)</td>
+</tr>
+<tr>
+<td><code>action(id, arg)</code></td>
+<td>a bound key, or a click on an item with <code>UiAction::Mode { action, arg }</code>; the wheel over the view sends <code>"scroll"</code> with ±steps</td>
+</tr>
+<tr>
+<td><code>wants_text()</code>, <code>text(bytes)</code></td>
+<td>a focused input (search) takes plain typing</td>
+</tr>
+<tr>
+<td><code>escape()</code></td>
+<td>close the mode's window or input</td>
+</tr>
+<tr>
+<td><code>view(ctx, keymap)</code></td>
+<td>the render contribution: <code>View { dock, panel, images }</code> — a panel docked above the prompt inside <code>ctx.area</code>, an optional floating window and images (window pixels plus source rect)</td>
+</tr>
+<tr>
+<td><code>set_waker(w)</code></td>
+<td>redraw from another thread (e.g. when a preview finished)</td>
+</tr>
+</tbody>
+</table>
+<p>Actions return an <code>Effect</code> for Mouser to carry out: <code>Type</code> text into the shell,
+<code>Open</code> a file with the desktop opener, <code>ShowKeys</code>, <code>Say</code> (status bar). The core
+has no commander-specific code: key routing, <code>esc :</code>, the key and mode windows and
+remapping are generic.</p>
+<p>The interface passes plain data only (ids, paths, panels, pixels), so it can be
+served across a C ABI or a socket later.</p>
+<p><strong>Future work:</strong> third-party modes, loaded like engines (a shared library with a
+versioned ABI or a helper process speaking the same calls), installed under
+<code>~/.mouser/modes/</code>; more modifiers than <code>alt</code>; DJ, Director, Debugger and Artist
+from MODES.md.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/modes.md">docs/modes.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

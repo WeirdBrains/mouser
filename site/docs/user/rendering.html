@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendering and fonts — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="rendering-and-fonts">Rendering and fonts</h1>
+<p>Mouser draws text on the CPU (fontdue + softbuffer) on a fixed monospace grid.</p>
+<p>Fonts
+- Family: <code>font_family</code> in config/preferences; otherwise the first installed of JetBrains Mono
+  (incl. Nerd Font), Fira Code, Cascadia Mono, DejaVu Sans Mono, Noto Sans Mono, Hack,
+  Source Code Pro, Menlo, Consolas, Liberation Mono, Adwaita Mono.
+- Fallback: characters missing from the primary font come from symbol/Nerd Font/CJK faces,
+  then from the bundled Liberation Mono (SIL OFL 1.1, <code>crates/mouser-render/assets/fonts</code>).
+- Size: <code>font_size</code> (logical px), scaled by the window's scale factor.</p>
+<p>Cells
+- Cell width is the font's advance; cell height is ascent + descent (+ line gap).
+- Every glyph is placed from its own metrics against one shared baseline per row, so letters
+  line up and underscores/descenders sit below the text.</p>
+<p>Terminal
+- The shell is <code>$SHELL -l</code>, started at the window's real grid size, with <code>TERM=mouser</code>
+  when that terminfo entry exists and <code>xterm-256color</code> otherwise.
+- Supported: deferred autowrap, cursor movement/positioning, erase, insert/delete,
+  scroll regions, alternate screen, cursor reports. Colours (SGR) are not drawn yet.
+- Scroll back with the mouse wheel; typing returns to the live screen.</p>
+<h2 id="renderers">Renderers</h2>
+<p>Mouser picks a renderer at startup and logs it (<code>mouser: renderer: ...</code> on stderr):</p>
+<ul>
+<li><strong>GPU (default):</strong> a swappable engine, see <a href="../developer/engines.html">engines.md</a>: <code>mouser</code>
+  (wgpu, below) by default, <code>skia</code>, or an installed custom engine; any failure falls
+  back to <code>mouser</code>. The <code>mouser</code> engine is wgpu. Glyphs are rasterised with fontdue into an R8 atlas
+  texture; each rect and glyph of the frame's display list is one instanced quad
+  with its colour. Blending matches the CPU path.</li>
+<li><strong>CPU fallback:</strong> softbuffer with the per-size glyph cache. Used when wgpu can't
+  get an adapter, device or surface, or when <code>MOUSER_RENDERER=cpu</code> is set.</li>
+</ul>
+<p>Both are event driven: the loop sleeps in <code>ControlFlow::Wait</code> and redraws only on
+input or a wake-up from the PTY/config threads, capped at ~120 fps.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/rendering.md">docs/rendering.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

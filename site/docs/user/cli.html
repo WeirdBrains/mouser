@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Command line — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="command-line">Command line</h1>
+<p><code>mouser</code> with no command opens a window running your login shell. Every flag,
+command and environment variable is also in the man pages (<code>man mouser</code>,
+<code>man mouser-model-add</code>, …), generated from the same definitions.</p>
+<h2 id="window-flags">Window flags</h2>
+<table>
+<thead>
+<tr>
+<th>Flag</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>-e, --command CMD…</code></td>
+<td>Run a command instead of the login shell; everything after it is its arguments.</td>
+</tr>
+<tr>
+<td><code>-- CMD…</code></td>
+<td>Same as <code>-e</code>.</td>
+</tr>
+<tr>
+<td><code>--working-directory DIR</code> (<code>--dir</code>)</td>
+<td>Start in this directory instead of <code>$HOME</code>.</td>
+</tr>
+<tr>
+<td><code>-T, --title TITLE</code></td>
+<td>Window title until the program sets its own.</td>
+</tr>
+<tr>
+<td><code>--class CLASS</code> (<code>--app-id</code>)</td>
+<td>Wayland app_id / X11 WM_CLASS (default <code>Mouser</code>).</td>
+</tr>
+<tr>
+<td><code>--hold</code></td>
+<td>Keep the window open after the command exits.</td>
+</tr>
+<tr>
+<td><code>--config PATH</code></td>
+<td>TOML config file to use.</td>
+</tr>
+<tr>
+<td><code>--config-dir DIR</code></td>
+<td>Config directory to use (tests, manual runs).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="commands">Commands</h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mouser md [FILE…]</code></td>
+<td>Markdown formatted into the terminal, stdin when no file (<a href="../user/markdown.html">Markdown rendering</a>)</td>
+</tr>
+<tr>
+<td><code>mouser show FILE…</code></td>
+<td>Images in any Fuzzball or Kitty-graphics terminal (<a href="../user/terminal.html">Terminal</a>)</td>
+</tr>
+<tr>
+<td><code>mouser shell-integration zsh\|bash\|fish</code></td>
+<td>Directory reports and commander's silent <code>cd</code> (<a href="../user/modes.html">Modes</a>)</td>
+</tr>
+<tr>
+<td><code>mouser engine …</code></td>
+<td>Rendering engines (<a href="../developer/engines.html">Engines</a>)</td>
+</tr>
+<tr>
+<td><code>mouser plugin …</code></td>
+<td>Plugins (<a href="../developer/plugins.html">Plugins</a>)</td>
+</tr>
+<tr>
+<td><code>mouser model …</code></td>
+<td>Model providers, including grok (<a href="../user/models.html">Models</a>)</td>
+</tr>
+<tr>
+<td><code>mouser mcp …</code></td>
+<td>MCP server and clients, Let's Encrypt (<a href="../mcp/mcp.html">MCP</a>)</td>
+</tr>
+<tr>
+<td><code>mouser default-terminal …</code></td>
+<td>Windows default terminal (<a href="../user/windows.html">Windows</a>)</td>
+</tr>
+<tr>
+<td><code>mouser help [TOPIC \| search WORDS]</code></td>
+<td>These guides, built in (<a href="../user/help.html">Help</a>)</td>
+</tr>
+<tr>
+<td><code>mouser man [--out DIR]</code></td>
+<td>Write the man pages (default <code>man/</code>)</td>
+</tr>
+</tbody>
+</table>
+<p><code>mouser help COMMAND</code> (for example <code>mouser help model add</code>) prints that command's
+usage when no guide has that name; <code>mouser COMMAND --help</code> always does.</p>
+<h2 id="environment">Environment</h2>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>MOUSER_HOME</code></td>
+<td>Root directory instead of <code>~/.mouser</code> (config, themes, plugins, models, logs).</td>
+</tr>
+<tr>
+<td><code>MOUSER_ENGINE</code></td>
+<td>Rendering engine for this run (<code>mouser</code>, <code>skia</code> or a custom engine's name), ahead of the saved order.</td>
+</tr>
+<tr>
+<td><code>MOUSER_RENDERER</code></td>
+<td><code>cpu</code>: the CPU renderer instead of a GPU engine.</td>
+</tr>
+<tr>
+<td><code>MOUSER_PROC_FORK</code></td>
+<td><code>0</code>: sessions and window in one process (no session server / UI split; Unix).</td>
+</tr>
+<tr>
+<td><code>MOUSER_UI</code></td>
+<td><code>headless</code>: the session server without a window (tests).</td>
+</tr>
+<tr>
+<td><code>MOUSER_SYSTEM_DARK</code></td>
+<td><code>1</code> or <code>0</code>: whether the desktop prefers dark, overriding detection.</td>
+</tr>
+<tr>
+<td><code>MOUSER_OPEN_SIDEBAR</code></td>
+<td>Open the sidebar for this run.</td>
+</tr>
+<tr>
+<td><code>MOUSER_MODELS_DIR</code></td>
+<td>Where local model weights live (before <code>[models.local] dir</code> and <code>&lt;home&gt;/models</code>).</td>
+</tr>
+<tr>
+<td><code>MOUSER_MODEL_URL_OVERRIDE</code></td>
+<td>Download URL for <code>mouser model download</code> instead of the pinned one.</td>
+</tr>
+<tr>
+<td><code>MOUSER_GROKBOT_HOME</code></td>
+<td>Grok Bot desktop home for <code>mouser model add grok --desktop</code>.</td>
+</tr>
+<tr>
+<td><code>MOUSER_GROK_POLL_MS</code></td>
+<td>Poll interval (ms) of the grok Cursor-agents and desktop providers.</td>
+</tr>
+<tr>
+<td><code>MOUSER_SECRET_STORE</code></td>
+<td><code>file</code>: keys and tokens in a 0600 file under the home instead of the OS keychain.</td>
+</tr>
+<tr>
+<td><code>MOUSER_SSH_BIN</code></td>
+<td>ssh binary for remote commander and the connection manager.</td>
+</tr>
+<tr>
+<td><code>MOUSER_SSH_CONFIG</code></td>
+<td>SSH config Mouser reads and edits (default <code>~/.ssh/config</code>).</td>
+</tr>
+<tr>
+<td><code>MOUSER_REMOTE_BACKEND</code></td>
+<td><code>rsync</code>, <code>scp</code> or <code>cat</code>: force how remote files are fetched.</td>
+</tr>
+<tr>
+<td><code>MOUSER_PLAYER_LOG</code></td>
+<td>Write the media player's log to this file.</td>
+</tr>
+<tr>
+<td><code>MOUSER_LLM_TIMINGS</code></td>
+<td>Print llama.cpp timings for the built-in local model.</td>
+</tr>
+<tr>
+<td><code>MOUSER_PLUGIN_DIRS</code></td>
+<td>Plugin folders (a path list) replacing the offline bundle and system folders; empty: only <code>$MOUSER_HOME/plugins</code> (<a href="../developer/plugins.html">Plugins</a>).</td>
+</tr>
+<tr>
+<td><code>MOUSER_ENGINE_DIRS</code></td>
+<td>Folders of engines shipped with Mouser (a path list) replacing <code>engines/</code> beside the executable; empty: none (<a href="../developer/engines.html">Engines</a>).</td>
+</tr>
+<tr>
+<td><code>MOUSER_OFFLINE_BUNDLE</code></td>
+<td>Folder with the offline bundle's <code>plugins.lock</code> archives, instead of <code>plugins/</code> beside the executable (<a href="../user/storage.html">Storage</a>).</td>
+</tr>
+<tr>
+<td><code>MOUSER_CARGO</code></td>
+<td>cargo used for <code>install crate:NAME</code> (default <code>cargo</code>; needs cargo-binstall).</td>
+</tr>
+<tr>
+<td><code>MOUSER_MODE_WIRE</code></td>
+<td><code>json</code>: mode plugins speak JSON instead of MessagePack on stdio, for debugging (<a href="../developer/mode-protocol.html">Mode plugin protocol</a>).</td>
+</tr>
+<tr>
+<td><code>RUST_LOG</code></td>
+<td>Log filter, e.g. <code>debug</code>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="exit-status">Exit status</h2>
+<p>0 on success, 1 on an error (message on stderr), 2 for a usage error.</p>
+<h2 id="man-pages">Man pages</h2>
+<p>The pages in <code>man/</code> are generated: after changing a flag, command or variable run
+<code>cargo run -p mouser-app -- man --out man</code> and commit the result. A test fails
+when they are stale or when the code reads a <code>MOUSER_*</code> variable that is not listed.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/cli.md">docs/cli.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

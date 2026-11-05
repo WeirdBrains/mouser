@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plugins — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="plugins">Plugins</h1>
+<p>Mouser plugins add modes, tools, model providers and <code>[mouser]</code> line commands.
+This is phase 1 of docs/plans/mcp-agent.md: the manifest, registry, CLI,
+permission broker with approval popups, and the three transports. Mouser's MCP
+server (P2), the MCP client in the sidebar (P3), model providers (P4) and the chat
+mode (P5) build on it. Since P6 everything is a plugin: the built-in modes
+(commander, chat) and engines (mouser, skia) are compiled-in plugins with their
+own <code>plugin.toml</code> (§Built-in plugins), and engines install, list and switch through
+the same registry.</p>
+<h2 id="transports">Transports</h2>
+<table>
+<thead>
+<tr>
+<th>transport</th>
+<th>what it is</th>
+<th>lifetime</th>
+<th>trust</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mcp</code></td>
+<td>a program speaking MCP over stdio (<code>run.command</code>)</td>
+<td>started on demand</td>
+<td>installed: asks, then remembers what you choose</td>
+</tr>
+<tr>
+<td><code>fuzzball</code></td>
+<td>a program running <em>in</em> a tab, over Fuzzball <code>p</code> (fuzzball docs/plugins.md)</td>
+<td>while it runs, that tab only</td>
+<td>untrusted; over ssh it asks every time</td>
+</tr>
+<tr>
+<td><code>mode</code></td>
+<td>a mode plugin kept running, speaking the mode protocol over stdio: events in; views, effects and images (shared memory) out (docs/mode-protocol.md)</td>
+<td>started when first drawn; restarted after a crash (1 s, 2 s, 4 s), off after <code>plugins.max_restarts</code> crashes in 30 s</td>
+<td>installed: asks (<code>run</code>), then remembers; effects and events checked against its permissions</td>
+</tr>
+<tr>
+<td><code>command</code></td>
+<td>an executable behind <code>[mouser]</code> line words: one JSON request on stdin, one JSON reply on stdout</td>
+<td>one run per command (10 s limit)</td>
+<td>installed: asks, then remembers</td>
+</tr>
+<tr>
+<td><code>http</code></td>
+<td>a model provider reached over HTTP: a <code>[model]</code> table with <code>api</code> (openai, anthropic, google), <code>url</code>, <code>models</code>, <code>default</code> (docs/models.md)</td>
+<td>when a model is used</td>
+<td>built in or listed by you</td>
+</tr>
+<tr>
+<td><code>library</code></td>
+<td>an engine: a native library over the engine C ABI, with an <code>[engine]</code> table (docs/engines.md)</td>
+<td>loaded when it draws</td>
+<td>installed by you; checked (name, ABI) at install and load</td>
+</tr>
+<tr>
+<td><code>builtin</code></td>
+<td>compiled into Mouser (commander, chat, preferences, the model adapters); reserved</td>
+<td>always there</td>
+<td>part of Mouser</td>
+</tr>
+</tbody>
+</table>
+<p>Native libraries are only for engines (kind <code>engine</code>, transport <code>library</code>); their
+C ABI is unchanged (docs/engines.md).</p>
+<h2 id="the-manifest-plugintoml">The manifest: <code>plugin.toml</code></h2>
+<pre><code class="language-toml">name = &quot;hello-command&quot;          # a-z 0-9 - _ ; not a built-in name
+version = &quot;0.1.0&quot;
+api = 1                         # optional; plugin API version (1)
+description = &quot;says hello from the [mouser] line&quot;
+permissions = [&quot;run&quot;, &quot;notify&quot;] # what it may ask for (below)
+
+[[provides]]                    # one or more
+kind = &quot;command&quot;                # mode | engine | model-provider | tool-provider | command
+id = &quot;hello&quot;                    # optional; defaults to the name
+
+[run]
+transport = &quot;command&quot;           # mcp | fuzzball | command | mode
+command = [&quot;sh&quot;, &quot;./hello.sh&quot;]  # ./ is the plugin's directory; other names come from PATH
+commands = [&quot;hello&quot;]            # command plugins only
+</code></pre>
+<p>A mode plugin adds <code>[mode]</code> (hotkey and keys, §Mode plugins). An engine plugin
+provides only <code>kind = "engine"</code>, uses <code>transport = "library"</code> and adds</p>
+<pre><code class="language-toml">[engine]
+abi = 1                         # engine C ABI version
+library = &quot;libmouser_engine_flat.so&quot;   # a file in the plugin directory
+</code></pre>
+<p>The older <code>engine.toml</code> (<code>name</code>, <code>version</code>, <code>abi</code>, <code>library</code>, <code>description</code>) is
+read as the same manifest, so existing engines keep working; an engine directory
+may hold either. <code>mouser plugin install</code> hands an engine directory to the engine
+installer (it lands in <code>$MOUSER_HOME/engines/&lt;name&gt;</code>).
+Bringing in a model is a plugin of kind <code>model-provider</code>. The llama.cpp/Gemma
+plugin (P4b) and the hosted adapters (P4) are the first of these, and anyone can
+add another.</p>
+<h2 id="cli">CLI</h2>
+<pre><code>mouser plugin list                       # by priority: version, transport, kinds, commands
+mouser plugin install &lt;dir|plugin.toml&gt;  # copies the directory into $MOUSER_HOME/plugins/&lt;name&gt;
+mouser plugin uninstall &lt;name&gt;           # also forgets its permissions
+mouser plugin enable|disable &lt;name&gt;
+mouser plugin priority &lt;a&gt; &lt;b&gt; ...       # the rest follow in their order
+mouser plugin move &lt;name&gt; first|last|up|down|&lt;n&gt;
+mouser plugin permissions                # every saved permission, by key
+mouser plugin permissions &lt;key&gt; [cap=allow|ask|never ...]    # `*=never` for all; fuzzball:&lt;name&gt;, ssh:… too
+mouser plugin permissions '&lt;key&gt;' revoke  # forget it; it asks again
+mouser plugin probe &lt;name&gt;               # MCP: handshake and list its tools
+</code></pre>
+<p><code>--kind mode|engine|model-provider|tool-provider|command</code> limits any of these to
+one kind. <strong><code>mouser engine X</code> is <code>mouser plugin X --kind engine</code></strong>: the same
+parser and code (<code>mouser engine list</code> and <code>mouser plugin list --kind engine</code> print
+the same thing). Engines also have <code>use &lt;name&gt;</code> (put first, unskip) and
+<code>unskip &lt;name&gt;|--all</code>; without <code>--kind</code>, <code>enable</code>/<code>disable</code>/<code>use</code>/<code>unskip</code> with an
+engine's name reach the engine. <code>install</code>, <code>update</code>, <code>rollback</code>, <code>remove</code>, <code>retry</code>
+and <code>cancel</code> take the same sources and checks for plugins and engines
+(<a href="../user/downloads.html">Downloads</a>). State lives
+in <code>$MOUSER_HOME/plugins/</code>: one directory per plugin, <code>state.toml</code> (priority,
+disabled; engines' disabled flags too) and <code>permissions.toml</code>. The engine order
+stays in the <code>engines</code> preference (<code>mouser engine priority</code>), not in <code>state.toml</code>.</p>
+<h3 id="where-mouser-finds-plugins">Where Mouser finds plugins</h3>
+<p>Mouser searches these folders in order. The first one with a given plugin name
+wins, and <code>mouser plugin list</code> marks where each one came from:</p>
+<ol>
+<li><code>$MOUSER_HOME/plugins/</code> (yours; <code>install</code> and <code>uninstall</code> act only here).</li>
+<li><code>plugins/</code> beside the Mouser executable (the <code>-full</code> offline bundle), and on
+   macOS also <code>Mouser.app/Contents/Resources/plugins/</code>. Marked <code>[bundle]</code>.</li>
+<li><code>/usr/lib/mouser/plugins/</code> and <code>/usr/local/lib/mouser/plugins/</code>, for system
+   packagers (not on Windows). Marked <code>[system]</code>.</li>
+</ol>
+<p><code>MOUSER_PLUGIN_DIRS</code> (a path list, like <code>PATH</code>) replaces folders 2 and 3; set it
+empty to search only <code>$MOUSER_HOME/plugins/</code>. Bundle and system plugins are
+read-only: <code>uninstall</code> refuses them, but <code>disable</code> works.</p>
+<p>A plugin folder holds <code>plugin.toml</code> directly, or one folder per version
+(<code>&lt;name&gt;/&lt;version&gt;/plugin.toml</code>) with <code>current</code> choosing the active one.
+<code>current</code> can be a folder or symlink, or a file containing the version (Windows
+symlinks need admin rights). Uninstalling a versioned plugin removes every
+version.</p>
+<p>A <code>transport = "mode"</code> plugin may use a built-in mode's name and hotkey
+(<code>commander</code>, <code>chat</code>, <code>preferences</code>). It then replaces the built-in, and <code>plugin
+list</code> marks it <code>[overrides built-in]</code> (decision 5). Other built-in names stay
+reserved.</p>
+<h3 id="built-in-plugins">Built-in plugins</h3>
+<table>
+<thead>
+<tr>
+<th>name</th>
+<th>kind</th>
+<th>hotkey</th>
+<th>can be disabled</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>commander</code></td>
+<td>mode</td>
+<td><code>c</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>chat</code></td>
+<td>mode</td>
+<td><code>a</code></td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>openai</code>, <code>xai</code>, <code>openrouter</code>, <code>moonshot</code>, <code>anthropic</code>, <code>google</code>, <code>gemma-local</code></td>
+<td>model-provider</td>
+<td></td>
+<td>yes</td>
+</tr>
+</tbody>
+</table>
+<p>The engines <code>mouser</code> (can't be disabled; the last engine tried) and <code>skia</code> are
+libraries shipped with Mouser, not built in (<a href="../developer/engines.html">Engines</a>).
+The built-ins' manifests are compiled in (<code>crates/mouser-core/src/builtin/*.toml</code>,
+<code>transport = "builtin"</code>; no dynamic loading of Mouser's own code). Disabling
+commander and chat leaves no mode: Mouser is then a plain terminal (the mode-less
+fallback), and <code>mouser plugin list</code> says so. A disabled engine is passed over when
+a window picks its engine and is hidden from the sidebar; <code>MOUSER_ENGINE=a,b</code>
+still forces an order for one run, as given.</p>
+<h3 id="mode-plugins">Mode plugins</h3>
+<p>A mode plugin uses <code>transport = "mode"</code>: Mouser starts the program once and keeps
+it running, talking the mode protocol over its stdin and stdout
+(<a href="../developer/mode-protocol.html">Mode plugin protocol</a>). It gets events, draws panels and
+images, and asks for effects, all checked against its permissions. Write one in
+Rust with the <code>mouser-mode-api</code> crate's <code>Mode</code> trait and <code>serve()</code>.</p>
+<p>The older <code>transport = "command"</code> (deprecated, removed in 2.0) runs the program
+once per event instead. Either way it's a <code>plugin.toml</code> with <code>kind = "mode"</code> and
+a <code>[mode]</code> table (example: <code>examples/plugins/hello-mode</code>):</p>
+<pre><code class="language-toml">[mode]
+hotkey = &quot;h&quot;                    # one letter/digit; not c, a (built-ins) or p
+keys = [{ id = &quot;time&quot;, key = &quot;t&quot;, describe = &quot;show the time&quot; }]
+</code></pre>
+<p>A key is a letter, digit or punctuation key (not <code>:</code>), or <code>up</code>, <code>down</code>, <code>left</code>,
+<code>right</code>, <code>enter</code>, <code>pageup</code>, <code>pagedown</code>, <code>home</code>, <code>end</code>, <code>tab</code>, <code>space</code> or <code>backspace</code>;
+each is pressed with the mode's modifier (alt).</p>
+<p>It joins the mode switcher (<code>esc :h</code>; listed in <code>ctrl+shift+m</code>) after the built-in modes and
+docks above the prompt like them. Mouser runs its program once per event, off the
+UI thread, with the command-plugin contract (10 s limit, scrubbed environment):
+<code>{"api":1,"command":"mode","args":[EVENT,ID],"cwd":...}</code> with EVENT <code>activate</code>,
+<code>key</code> (ID = a <code>[[mode.keys]]</code> id, remappable in <code>modes.toml</code>) or <code>cwd</code>; the reply
+<code>{"title":..., "lines":[...], "text":...}</code> sets the dock (40 lines at most) and its
+status. It runs only once <code>run</code> is allowed (<code>mouser plugin permissions NAME
+run=allow</code>; until then the dock says how), and the shell's directory is sent only
+with <code>files.read</code> allowed. A mode plugin shows text and reacts to keys; it can't type
+into the shell or read the screen. Mode plugins over MCP are not supported yet
+(the manifest check says so); two plugins with the same hotkey: the later one is
+left out with a notice.</p>
+<h2 id="permissions">Permissions</h2>
+<table>
+<thead>
+<tr>
+<th>capability</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>run</code></td>
+<td>run its program on this computer</td>
+</tr>
+<tr>
+<td><code>notify</code></td>
+<td>show notices</td>
+</tr>
+<tr>
+<td><code>screen.read</code></td>
+<td>read the visible text of the tab</td>
+</tr>
+<tr>
+<td><code>scrollback.read</code></td>
+<td>read the tab's scrollback</td>
+</tr>
+<tr>
+<td><code>shell.type</code></td>
+<td>type or run commands in a shell</td>
+</tr>
+<tr>
+<td><code>files.read</code> / <code>files.write</code></td>
+<td>read / change or delete files</td>
+</tr>
+<tr>
+<td><code>network</code></td>
+<td>use the network</td>
+</tr>
+<tr>
+<td><code>models.download</code></td>
+<td>download or start a model</td>
+</tr>
+<tr>
+<td><code>remote.read</code></td>
+<td>list and read files on the shell's remote host (mode plugins)</td>
+</tr>
+<tr>
+<td><code>agent.use</code></td>
+<td>talk to your AI models through Mouser; keys stay in Mouser (mode plugins)</td>
+</tr>
+<tr>
+<td><code>prefs.write</code></td>
+<td>change your preferences (mode plugins; keys only through Mouser's popup)</td>
+</tr>
+<tr>
+<td><code>net.fetch</code></td>
+<td>make web requests through Mouser (mode plugins)</td>
+</tr>
+</tbody>
+</table>
+<p>Each plugin and capability is <code>allow</code>, <code>ask</code> (the default) or <code>never</code>. When a
+plugin needs a capability, the broker checks it:</p>
+<ul>
+<li>any <code>never</code>: refused;</li>
+<li>everything <code>allow</code>: goes ahead;</li>
+<li>otherwise: the <strong>approval popup</strong>.</li>
+</ul>
+<p>The popup offers <strong>Allow once [y]</strong>, <strong>Always [a]</strong>, <strong>Deny [n]/Esc</strong> and
+<strong>Never [N]</strong>. Always and Never are saved.</p>
+<h3 id="the-approval-popup-cant-be-spoofed">The approval popup can't be spoofed</h3>
+<ul>
+<li>Mouser draws it as its own panel above the terminal, never as terminal text.
+  Programs only write into the grid, which it covers.</li>
+<li>While it is open, it takes every key, paste and click. Nothing reaches the
+  tab, the mode or the <code>[mouser]</code> line, so a program can't answer it.</li>
+<li>Buttons and keys do nothing for the first 400 ms (no click-through). Esc
+  (deny) always works.</li>
+<li>It names who is asking: an installed plugin, a program in this tab, or a
+  <strong>REMOTE</strong> program over ssh. Remote programs get Allow once, <strong>Allow always</strong>
+  and Deny (no Never). Allow always is saved under
+  <code>ssh:&lt;user@host:port&gt; &lt;SHA256 host key&gt;/&lt;plugin&gt;</code>, one entry per capability, so
+  another host, a changed host key, or extra capabilities ask again. There is no
+  Allow always when the host can't be identified.</li>
+</ul>
+<p>Command and MCP plugins run with a scrubbed environment (PATH, HOME, LANG, plus
+<code>MOUSER_PLUGIN_API</code> and <code>MOUSER_PLUGIN_NAME</code>), so tokens and API keys in your
+environment don't reach them.</p>
+<h2 id="command-plugins">Command plugins</h2>
+<p>On the <code>[mouser]</code> line (F10), a word that belongs to an enabled command plugin
+runs that plugin instead of going to the shell (<code>!word</code> still forces the
+shell). The first run asks for <code>run</code>. Then:</p>
+<ul>
+<li>Mouser sends <code>{"api":1,"command":"hello","args":["Michael"],"cwd":"..."}</code> on stdin.</li>
+<li>It reads <code>{"text":"Hello, Michael!"}</code>, or <code>{"error":"..."}</code>, from stdout (64 KB
+  at most).</li>
+<li>The reply becomes a notice. A plugin that runs longer than 10 s is stopped.</li>
+</ul>
+<p>Plugins can't take Mouser's own words (<code>theme</code>, <code>font</code>, <code>set</code>, <code>connect</code>, …), and
+two plugins can't claim the same word.</p>
+<h2 id="mcp-plugins">MCP plugins</h2>
+<p><code>run.command</code> starts a stdio MCP server (newline-delimited JSON-RPC 2.0). In
+P1, Mouser does <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code> and
+<code>tools/call</code> (<code>mouser_core::mcp::Client</code>); <code>mouser plugin probe</code> shows the
+result. Since P3 every enabled MCP plugin is also a connection in the sidebar's
+MCP section (<code>plugin:&lt;name&gt;</code>). It starts once its <code>run</code> permission is granted
+(click its row), and each tool call asks via the broker with capability
+<code>tool.&lt;name&gt;</code>. See docs/mcp.md §Client.</p>
+<h2 id="fuzzball-plugins">Fuzzball plugins</h2>
+<p>A program in a tab sends <code>ESC P = F z p h ; id=1,name=…,caps=a+b ESC \</code>, and
+Mouser answers after the popup (fuzzball docs/plugins.md). Grants belong to
+that tab and end with it. A <code>plugin.toml</code> with <code>transport = "fuzzball"</code> is
+optional; it only lists the plugin.</p>
+<h2 id="examples-examplesplugins">Examples (examples/plugins)</h2>
+<ul>
+<li><code>hello-command</code>: <code>hello [name]</code> on the <code>[mouser]</code> line (POSIX sh).</li>
+<li><code>hello-mcp</code>: a stdio MCP server with a <code>greet</code> tool (python3, stdlib only).</li>
+<li><code>hello-fuzzball</code>: <code>./hello-fuzzball.sh</code> asks for <code>notify</code> + <code>screen.read</code> and prints the answer.</li>
+<li><code>hello-mode</code>: a mode on <code>h</code> that shows the directory and the time (POSIX sh).</li>
+</ul>
+<pre><code>mouser plugin install examples/plugins/hello-command
+mouser plugin install examples/plugins/hello-mcp &amp;&amp; mouser plugin probe hello-mcp
+sh examples/plugins/hello-fuzzball/hello-fuzzball.sh   # inside a Mouser tab
+</code></pre>
+<h2 id="how-it-fits-together-p6">How it fits together (P6)</h2>
+<ul>
+<li><code>mouser_core::plugins::Registry::load()</code> lists every plugin: built-ins (from
+  their compiled-in manifests), installed plugins by priority, then engines in the
+  engine order. <code>modes()</code> and <code>engines()</code> are the enabled ones, best first.</li>
+<li>The app builds the mode switcher with <code>Host::from_registry</code> (commander, chat,
+  command-transport mode plugins), and the sidebar's engine list and
+  <code>mouser engine list</code> come from <code>Registry::engines()</code>. Engine selection
+  (<code>engines::priority()</code>, crash sentinels, live switching) is unchanged apart from
+  passing over disabled engines.</li>
+<li>The <code>Mode</code> trait and the engine C ABI did not change.</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/plugins.md">docs/plugins.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

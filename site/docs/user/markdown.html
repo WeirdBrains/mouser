@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown rendering — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="markdown-rendering">Markdown rendering</h1>
+<p>Mouser renders Markdown (CommonMark with tables, ~~strikethrough~~ and task lists)
+instead of showing the raw markup:</p>
+<ul>
+<li><strong>Commander previews</strong>: <code>.md</code>, <code>.markdown</code>, <code>.mdown</code> and <code>.mkd</code> files in the grid,
+  the carousel and the file view (<a href="../user/modes.html">Modes</a>).</li>
+<li><strong>Chat</strong>: your messages and the model's replies (<a href="../user/chat.html">Chat</a>). Links are
+  clickable (web, mail and <code>file://</code> only, never through a shell). A reply still
+  streaming in is laid out as far as it has come: an open code fence is code to the
+  end, an unclosed <code>**</code> shows as typed until it closes, and the rows above the one
+  being written do not move.</li>
+<li><strong>The terminal</strong>: <code>mouser md FILE…</code> (or <code>mouser md -</code>, or piped stdin) prints a
+  file formatted, see <a href="#in-the-terminal-mouser-md">below</a>.</li>
+</ul>
+<h2 id="what-is-drawn">What is drawn</h2>
+<table>
+<thead>
+<tr>
+<th>Markdown</th>
+<th>Drawn as</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code># Heading</code></td>
+<td>bold; levels 1–2 in the theme accent, level 1 underlined</td>
+</tr>
+<tr>
+<td><code>**bold**</code>, <code>*italic*</code>, <code>~~strike~~</code></td>
+<td>bold, slanted, struck through</td>
+</tr>
+<tr>
+<td><code>`code`</code></td>
+<td>on a small rounded shade</td>
+</tr>
+<tr>
+<td>fenced / indented code</td>
+<td>monospaced on a rounded background box; fenced blocks with a known language are syntax highlighted (<a href="#code-blocks">Code</a>)</td>
+</tr>
+<tr>
+<td><code>&gt; quote</code></td>
+<td>an accent bar per level</td>
+</tr>
+<tr>
+<td>lists, <code>- [x]</code> tasks</td>
+<td><code>•</code> or <code>1.</code> marks, nested lists indented</td>
+</tr>
+<tr>
+<td><code>[text](https://github.com/WeirdBrains/mouser/blob/main/docs/url)</code></td>
+<td>underlined in the accent</td>
+</tr>
+<tr>
+<td>tables</td>
+<td>aligned columns with <code>│</code> and a rule under the header; wide tables shrink, cells end in <code>…</code></td>
+</tr>
+<tr>
+<td><code>---</code></td>
+<td>a rule across the width</td>
+</tr>
+<tr>
+<td><code>![alt](https://github.com/WeirdBrains/mouser/blob/main/docs/img)</code></td>
+<td>an <code>[image: alt]</code> placeholder</td>
+</tr>
+</tbody>
+</table>
+<p>Text wraps at word boundaries to the width it is shown at (long words break).
+Everything is one cell grid with the terminal font, so previews use the same face
+and theme colours as the rest of Mouser.</p>
+<h2 id="code-blocks">Code blocks</h2>
+<p>A fenced block's language tag picks the highlighter (only the first word counts,
+so <code>rust,ignore</code> and <code>py title=x.py</code> work):</p>
+<table>
+<thead>
+<tr>
+<th>Language</th>
+<th>Tags</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Rust</td>
+<td><code>rust</code>, <code>rs</code></td>
+</tr>
+<tr>
+<td>Python</td>
+<td><code>python</code>, <code>py</code></td>
+</tr>
+<tr>
+<td>JavaScript / TypeScript</td>
+<td><code>js</code>, <code>jsx</code>, <code>ts</code>, <code>tsx</code>, <code>javascript</code>, <code>typescript</code></td>
+</tr>
+<tr>
+<td>Shell</td>
+<td><code>sh</code>, <code>bash</code>, <code>zsh</code>, <code>shell</code>, <code>console</code>, <code>fish</code></td>
+</tr>
+<tr>
+<td>JSON, TOML, YAML</td>
+<td><code>json</code>, <code>toml</code>, <code>yaml</code>, <code>yml</code></td>
+</tr>
+<tr>
+<td>Go</td>
+<td><code>go</code></td>
+</tr>
+<tr>
+<td>C / C++</td>
+<td><code>c</code>, <code>h</code>, <code>cpp</code>, <code>c++</code>, <code>cc</code>, <code>hpp</code></td>
+</tr>
+<tr>
+<td>HTML / XML, CSS</td>
+<td><code>html</code>, <code>xml</code>, <code>svg</code>, <code>css</code>, <code>scss</code></td>
+</tr>
+<tr>
+<td>SQL</td>
+<td><code>sql</code></td>
+</tr>
+<tr>
+<td>Markdown, diffs</td>
+<td><code>md</code>, <code>markdown</code>, <code>diff</code>, <code>patch</code></td>
+</tr>
+</tbody>
+</table>
+<p>Any other tag, or none, stays plain monospace. Keywords, types, strings, numbers,
+function calls, comments and diff <code>+</code>/<code>-</code> lines take colours from the active
+theme's ANSI palette (the bright slots on dark themes, the normal ones on light
+themes; comments are muted text), so every theme brings its own highlighting.
+<code>mouser md</code> writes the same classes as ANSI colours, which your terminal's theme
+resolves.</p>
+<p>The highlighter is a small built-in lexer (no extra dependencies). It works line
+by line and only carries state forward (an open <code>/* comment */</code>), so a code block
+that is still streaming in never recolours the rows above it.</p>
+<h2 id="in-the-terminal-mouser-md">In the terminal: <code>mouser md</code></h2>
+<pre><code class="language-sh">mouser md README.md            # one file
+mouser md a.md b.md            # one after another
+curl -s …/notes.md | mouser md # stdin (or `mouser md -`)
+mouser md --width 72 NOTES.md  # lay out at 72 columns
+mouser md --color never x.md   # plain text, no escapes
+</code></pre>
+<p>The output is ordinary text with SGR styles (bold, italic, underline, colours, a
+background behind code blocks) and OSC 8 hyperlinks, so it lands in the grid and the
+scrollback like any other output: scroll back with the wheel or <code>shift+pageup</code>, select
+and copy it, run it over SSH or inside tmux, in Mouser or any other terminal.</p>
+<ul>
+<li><code>--width N</code>: columns to lay out at; the default is the terminal's width (then
+  <code>COLUMNS</code>, then 80).</li>
+<li><code>--color auto|always|never</code>: <code>auto</code> (default) styles the output only when stdout is
+  a terminal, so <code>mouser md x.md &gt; out.txt</code> writes plain wrapped text.</li>
+</ul>
+<p>Links are OSC 8: Mouser makes them clickable (ctrl+click), other terminals that
+support OSC 8 do the same, and the rest show the link text.</p>
+<h2 id="how-it-works">How it works</h2>
+<p><code>mouser_core::markdown</code> parses with <a href="https://crates.io/crates/pulldown-cmark">pulldown-cmark</a>
+and lays the document out as rows of styled spans (bold, italic, code, link, strike,
+muted; heading level, quote depth, indent). Each surface draws those rows its own way:
+the frame draws them as panel items in the theme's colours (commander, chat), and
+<code>mouser md</code> writes them as SGR-styled text (<code>markdown::to_ansi</code>).</p>
+<p>Control characters in the text and in link targets are shown as <code>�</code> (or dropped),
+never passed through, so a file cannot send escape sequences to your terminal.</p>
+<p>The parser and highlighter live in <code>mouser-mode-api</code> behind its <code>markdown</code> feature
+(<code>mouser_mode_api::markdown</code>, <code>::highlight</code>), so mode plugins draw the same Markdown;
+<code>mouser_core</code> re-exports both. <code>markdown::items</code> turns Markdown into panel items for
+any action type.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/markdown.md">docs/markdown.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

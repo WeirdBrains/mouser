@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal emulation — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="terminal-emulation">Terminal emulation</h1>
+<p>Mouser emulates a modern xterm (VT220+ with xterm and ECMA-48 extensions).</p>
+<h2 id="input">Input</h2>
+<table>
+<thead>
+<tr>
+<th>Key / action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Drag</td>
+<td>Select characters (screen and scrollback; dragging past the top/bottom edge scrolls).</td>
+</tr>
+<tr>
+<td>Double-click / triple-click</td>
+<td>Select a word / a line. Word characters are letters, digits and <code>[selection] word_chars</code> (default <code>@-./_~?&amp;=%+#:</code>).</td>
+</tr>
+<tr>
+<td>Shift+click</td>
+<td>Extend the selection.</td>
+</tr>
+<tr>
+<td>Alt+drag</td>
+<td>Block (rectangular) selection.</td>
+</tr>
+<tr>
+<td>Ctrl+Shift+C (Cmd+C on macOS)</td>
+<td>Copy the selection to the clipboard. Selecting also sets PRIMARY on Linux.</td>
+</tr>
+<tr>
+<td>Ctrl+Shift+V (Cmd+V on macOS)</td>
+<td>Paste the clipboard. Wrapped in <code>ESC[200~ … ESC[201~</code> when the app enabled bracketed paste (mode 2004). Control characters other than tab, LF and CR are dropped.</td>
+</tr>
+<tr>
+<td>Middle-click / Shift+Insert</td>
+<td>Paste PRIMARY (Linux; Shift+Insert pastes the clipboard elsewhere).</td>
+</tr>
+<tr>
+<td>Ctrl+click</td>
+<td>Open an OSC 8 hyperlink under the pointer (<code>http</code>, <code>https</code>, <code>mailto</code>, <code>file</code> only, via <code>xdg-open</code>).</td>
+</tr>
+<tr>
+<td>Shift+mouse</td>
+<td>Bypass mouse reporting when an app (vim, tmux…) has grabbed the mouse.</td>
+</tr>
+<tr>
+<td>Mouse wheel</td>
+<td>Scrollback; reported to the app in mouse modes; arrow keys on the alternate screen.</td>
+</tr>
+<tr>
+<td>Trackpad</td>
+<td>Same as the wheel. Small pixel deltas (Wayland, macOS) add up until they make a whole line, so slow two-finger scrolls move too; programs with mouse reporting get one wheel report per line.</td>
+</tr>
+</tbody>
+</table>
+<p>Resizing the window re-wraps the main screen and the scrollback: lines that wrapped
+because they were too long are joined and split again at the new width, hard line breaks
+stay, double-width characters are never split, attributes, links and combining marks are
+kept, and the cursor stays on the same character. The old screen's first row stays at the
+top unless the cursor would fall off the bottom. Images move with their text, and a
+fitted image that grows or shrinks takes or gives back the empty lines under it. The
+alternate screen (full-screen apps) is only cut or padded; the app redraws it. A resize
+clears the selection. A resize re-wraps the screen and the newest 2000 scrollback rows at
+once (about 1 ms); older scrollback lines are re-wrapped right after on a worker in
+8192-row steps (about 3 ms each, 200 000 lines in about 60 ms), so dragging the window
+edge stays smooth with any scrollback size. Until then, very old lines may still show at
+the previous width. <code>RUST_LOG=mouser_frame=debug</code> logs frame and resize timings.</p>
+<p>Copied text joins soft-wrapped lines, ends hard lines with a newline and trims trailing blanks. The selection clears when its text changes or a typed key is sent to the app. It is drawn with the theme's <code>selection_foreground</code>/<code>selection_background</code>, or inverse colours. Clipboard access uses the Wayland connection, then <code>wl-copy</code>/<code>wl-paste</code>, <code>xclip</code>/<code>xsel</code> on X11, <code>pbcopy</code>/<code>pbpaste</code> on macOS.</p>
+<p>OSC 52 clipboard <em>writes</em> are passed to <code>wl-copy</code>; clipboard <em>reads</em> are never answered.</p>
+<h2 id="supported-sequences">Supported sequences</h2>
+<ul>
+<li>SGR: 16 / bright / 256 / truecolor (<code>;</code> and <code>:</code> forms), bold, dim, italic (synthetic slant), underline styles <code>4:1</code>–<code>4:5</code>, double underline 21, underline colour 58/59, blink (drawn steady), inverse, hidden, strike, overline.</li>
+<li>Wide East Asian and emoji characters take two cells; combining marks and ZWJ attach to their base cell.</li>
+<li>Cursor movement, DECSTBM, ICH/DCH/IL/DL/ECH/REP, IRM, HTS/TBC/CHT/CBT, DECSC/DECRC, DECOM, DECAWM, DECSCUSR, DECSTR, DECALN, DECCKM, DECKPAM.</li>
+<li>Modes 1000/1002/1003/1006/1016 mouse, 1004 focus, 1049/1047/47 alternate screen, 2004 bracketed paste, 2026 synchronized output, 2027 grapheme clustering.</li>
+<li>OSC 0/2 title, 4/10/11/12 colour query and set, 104/110–112 reset, 7 cwd, 8 hyperlinks, 52 clipboard, 133 prompt marks.</li>
+<li>DEC Special Graphics and British sets in G0/G1 (<code>ESC ( 0</code>, <code>ESC ) 0</code>, SI/SO), DECSCNM reverse video, LNM (mode 20).</li>
+<li>DA1/DA2/DA3, DSR 5/6, DECRQM, DECREQTPARM, XTVERSION, XTGETTCAP, DECRQSS, window reports 11/13/14/16/18/20/21t, Fuzzball <code>DCS = Fz c q</code>.</li>
+<li>The PTY gets the grid's pixel size (<code>TIOCSWINSZ</code>).</li>
+</ul>
+<p>Not yet: DECSLRM (left/right margins), DECCOLM 132-column switching, double-size lines (DECDHL/DECDWL), G2/G3 and NRC sets, protected areas (DECSCA), user-defined keys, colour emoji, an italic face from the font family, visible blink.</p>
+<h2 id="term-and-terminfo">TERM and terminfo</h2>
+<p>Mouser sets <code>COLORTERM=truecolor</code> and picks <code>TERM</code> in this order: <code>mouser</code> (if its terminfo is installed), then <code>xterm-256color</code>.</p>
+<p>To install Mouser's own entry for your user (styled underlines, truecolor, synchronized output, bracketed paste and focus capabilities):</p>
+<pre><code class="language-sh">tic -x -o ~/.terminfo extra/mouser.terminfo
+</code></pre>
+<h2 id="commands">Commands</h2>
+<p><code>mouser [OPTIONS] [-e CMD ARGS... | -- CMD ARGS...]</code> opens a window. Options:</p>
+<ul>
+<li><code>-e, --command CMD ARGS...</code> runs <code>CMD</code> (no shell in between) instead of the login
+  shell; everything after <code>-e</code> is passed to it. <code>mouser -- CMD ARGS...</code> is the same.
+  The window closes when the command exits.</li>
+<li><code>--hold</code> keeps it open with <code>[process exited N]</code> instead.</li>
+<li><code>--working-directory DIR</code> (alias <code>--dir</code>) starts the first tab in <code>DIR</code> instead of
+  <code>$HOME</code>; a missing directory is reported on stderr and <code>$HOME</code> used.</li>
+<li><code>-T, --title TITLE</code> sets the window title until the program sets one.</li>
+<li><code>--class CLASS</code> (alias <code>--app-id</code>) sets the Wayland app_id / X11 WM_CLASS
+  (default <code>Mouser</code>), for window rules.</li>
+<li><code>-V, --version</code> prints the version.</li>
+</ul>
+<p>The desktop entry declares these for
+<a href="https://github.com/Vladimir-csp/xdg-terminal-exec">xdg-terminal-exec</a>
+(<code>X-TerminalArgExec=-e</code>, <code>X-TerminalArgDir=--working-directory</code>,
+<code>X-TerminalArgTitle=--title</code>, <code>X-TerminalArgAppId=--class</code>, <code>X-TerminalArgHold=--hold</code>),
+so with <code>mouser.desktop</code> first in <code>~/.config/xdg-terminals.list</code> launchers such as
+Omarchy's run <code>xdg-terminal-exec btop</code> as <code>mouser -e btop</code>.</p>
+<p><code>mouser show [--width N] [--height N] [--fit|--original] [--id N] &lt;file|-&gt;...</code> shows
+images. It sends <code>DCS = F z c q</code>, the Kitty query <code>ESC _ G i=31,s=1,v=1,a=q,t=d,f=24;AAAA ESC \</code>,
+<code>CSI 16 t</code>, <code>CSI 18 t</code>, <code>CSI 6 n</code> and DA1, and waits up to 1.5 s for the replies (DA1
+ends the wait outside tmux). With a Fuzzball reply it uploads each image in base64
+chunks of at most <code>max_chunk</code>, starts a new line if the cursor is not in column 0 and
+places the image across the whole terminal width (scaled up or down, aspect kept) with
+<code>fit=w</code>, so it keeps filling the width when the window is resized; it then moves the
+cursor below it. <code>--width</code>/<code>--height</code> give a fixed size and <code>--original</code> the natural
+pixel size instead. An image too tall to fill the width within 1000 rows is shrunk to
+fit 1000 rows. With only a Kitty reply it sends <code>a=T</code> in 4096-byte chunks with <code>q=1</code>
+(errors only) and <code>c</code>/<code>r</code> for the full width (Kitty has no fill mode, so it does not
+follow later resizes; it still moves with its text). <code>fit=w</code> is sent only when the
+terminal advertises <code>g_fit=w</code>. PNG within the
+published limits is sent as-is; JPEG, GIF (first frame), WebP and BMP are decoded to
+RGBA and scaled down to <code>g_max_dim</code> / <code>g_mem</code> if needed. Video and audio are out of
+scope. Inside tmux every message is wrapped for passthrough. tmux answers DA1 itself and
+forwards the outer terminal's replies afterwards, so there <code>mouser show</code> waits for the
+graphics replies instead. If the outer terminal answers the Kitty query, the image is
+transmitted quietly (<code>q=2</code>), given a <code>U=1</code> virtual placement and printed as rows of
+<code>U+10EEEE</code> placeholders (id low byte in a 256-colour foreground, high byte in the
+third diacritic; at most 297x297 cells), so tmux moves and redraws it; otherwise
+Fuzzball is passed through. Without any reply it points at <code>allow-passthrough</code>.
+Code: <code>crates/mouser-app/src/show.rs</code>.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/terminal.md">docs/terminal.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

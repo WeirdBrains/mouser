@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installing and updating plugins and engines — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="installing-and-updating-plugins-and-engines">Installing and updating plugins and engines</h1>
+<p>Mouser installs plugins and engines from a name, a GitHub release, a URL, a
+local folder or archive, or a crate. Every download is checked before
+anything runs, and each item gets its own version folder so you can roll back.
+Plugins and engines use the same verbs, flags and output:</p>
+<table>
+<thead>
+<tr>
+<th>verb</th>
+<th><code>mouser plugin …</code></th>
+<th><code>mouser engine …</code></th>
+<th><code>esc :</code> line</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>install</td>
+<td><code>mouser plugin install SRC</code></td>
+<td><code>mouser engine install SRC</code></td>
+<td><code>:plugin install SRC</code>, <code>:pi SRC</code> / <code>:engine install SRC</code>, <code>:ei SRC</code></td>
+</tr>
+<tr>
+<td>update</td>
+<td><code>mouser plugin update NAME\|--all</code></td>
+<td><code>mouser engine update NAME\|--all</code></td>
+<td><code>:plugin update [NAME]</code>, <code>:pu</code> / <code>:engine update</code>, <code>:eu</code></td>
+</tr>
+<tr>
+<td>rollback</td>
+<td><code>mouser plugin rollback NAME</code></td>
+<td><code>mouser engine rollback NAME</code></td>
+<td><code>:prb NAME</code> / <code>:erb NAME</code></td>
+</tr>
+<tr>
+<td>remove</td>
+<td><code>mouser plugin remove NAME</code></td>
+<td><code>mouser engine remove NAME</code></td>
+<td><code>:prm NAME</code> / <code>:erm NAME</code></td>
+</tr>
+<tr>
+<td>list</td>
+<td><code>mouser plugin list</code></td>
+<td><code>mouser engine list</code></td>
+<td><code>:pl</code> / <code>:el</code></td>
+</tr>
+<tr>
+<td>retry</td>
+<td><code>mouser plugin retry</code></td>
+<td><code>mouser engine retry</code></td>
+<td><code>:plugin retry</code>, <code>:pr</code> / <code>:engine retry</code>, <code>:er</code></td>
+</tr>
+<tr>
+<td>cancel</td>
+<td><code>mouser plugin cancel ID\|--all</code></td>
+<td><code>mouser engine cancel ID\|--all</code></td>
+<td><code>:cancel ID\|all</code>, <code>:pc</code> / <code>:ec</code></td>
+</tr>
+</tbody>
+</table>
+<p>Every verb takes <code>--yes</code> (don't ask), <code>--version VERSION</code> and <code>--wait</code> (the
+CLI always waits; on the <code>esc :</code> line downloads run in the background).
+<code>remove</code> is also spelled <code>uninstall</code>. <code>mouser downloads</code> lists the running
+Mouser's jobs and <code>mouser downloads --cancel ID|all</code> stops them; on the <code>esc :</code>
+line that's <code>:downloads</code> and <code>:cancel</code>. <code>mouser --install SRC</code> (repeatable)
+starts Mouser and installs in the background; with <code>--wait</code> it installs
+without a window and exits (add <code>--yes</code>, since nothing can ask).</p>
+<h2 id="sources">Sources</h2>
+<ul>
+<li><strong>A name</strong> (<code>commander</code>, <code>chat</code>, <code>preferences</code>, <code>mouser</code>, <code>skia</code>): an official item
+  from the <code>plugins.lock</code> compiled into this Mouser, at the version it pins. Each
+  comes from the signed release of its WeirdBrains repo (<code>WeirdBrains/mouser-commander</code>,
+  <code>mouser-chat</code>, <code>mouser-preferences</code>, <code>mouser-engine-wgpu</code>, <code>mouser-engine-skia</code>).</li>
+<li><strong><code>gh:Owner/Repo[@tag]</code></strong>: a GitHub release (the latest without a tag). If
+  the release has <code>mouser-plugin.json</code> (<code>{"version", "key", "assets": [{"target",
+  "url", "sha256", "size", "minisig"}]}</code>) it is used; otherwise the asset named
+  <code>NAME-VERSION-TARGET.EXT</code> for this machine, with <code>ASSET.sha256</code>,
+  <code>ASSET.minisig</code> and <code>minisign.pub</code> beside it when the author publishes them.</li>
+<li><strong><code>https://…</code></strong>: an asset (its <code>.sha256</code> and <code>.minisig</code> are looked for beside
+  it, and <code>minisign.pub</code> in the same folder), or a release manifest ending in
+  <code>.json</code> or <code>.toml</code> in the <code>mouser-plugin.json</code> shape.</li>
+<li><strong>A path</strong>: a folder with <code>plugin.toml</code> or <code>engine.toml</code>, the manifest
+  itself, a library next to <code>engine.toml</code>, or a <code>.tar.gz</code>/<code>.zip</code>.</li>
+<li><strong><code>crate:NAME</code></strong>: <code>cargo binstall NAME</code> (needs cargo-binstall; mode plugins
+  only), registered from the binary's <code>--manifest</code> output.</li>
+</ul>
+<p>TARGET is a Rust triple: <code>x86_64-unknown-linux-gnu</code> (then <code>-musl</code>),
+<code>aarch64-…</code>, <code>universal-apple-darwin</code> (then the arch's own),
+<code>x86_64-pc-windows-msvc</code>. With no asset for this machine the error lists the
+targets the release has.</p>
+<h2 id="what-is-checked">What is checked</h2>
+<p>In this order; any failure stops that install and nothing else:</p>
+<ol>
+<li>HTTPS only, on every redirect.</li>
+<li>A size limit of 200 MB.</li>
+<li>sha256: from the lock, the release manifest or <code>ASSET.sha256</code>. Official
+   items must have one.</li>
+<li>A minisign signature. Official items must verify against the WeirdBrains
+   key pinned in Mouser (minisign key <code>61BA1720747F9146</code>,
+   <code>RWRGkX90IBe6YaOypKF9r1wz4OqpCp3Ggb1Ag2omAzxTRaqoHzsNQSdP</code>). Third-party items verify against their
+   author's <code>minisign.pub</code>. Mouser remembers that key the first time
+   (<code>$MOUSER_HOME/plugins/keys.toml</code>, by source) and refuses a later file signed
+   with another key, or unsigned, from the same source. An unsigned item
+   installs only after a warning.</li>
+<li>The archive is unpacked into a temporary folder. Absolute paths, <code>..</code>,
+   links and devices are refused.</li>
+<li>A probe: an engine library is loaded in a separate process
+   (<code>mouser __engine-probe</code>), never in Mouser, and must report the name in its
+   manifest. A plugin's <code>plugin.toml</code> must parse.</li>
+<li>The plugin API or engine ABI range.</li>
+<li>macOS: <code>codesign --verify</code> (a warning when unsigned), then the quarantine
+   flag is cleared. Windows: Authenticode (a warning when unsigned).</li>
+</ol>
+<p>Then a card shows the name, version, source, signer, the permissions it asks
+for and any warnings, with Install and Cancel (in a window it is a popup; on
+the CLI it is a <code>y/N</code> question, or <code>--yes</code>). Official items on first run
+don't ask. A local folder asks only when an update adds permissions. Every
+install, update and rollback goes to <code>$MOUSER_HOME/logs/plugins-audit.log</code>.</p>
+<h2 id="versions-update-and-rollback">Versions, update and rollback</h2>
+<p>An install goes to <code>$MOUSER_HOME/plugins/&lt;name&gt;/&lt;version&gt;/</code> (engines:
+<code>$MOUSER_HOME/engines/&lt;name&gt;/&lt;version&gt;/</code>). The <code>current</code> file switches to it
+only after the checks pass. <code>&lt;name&gt;/source.toml</code> records where it came from,
+for <code>update</code>. The newest two versions are kept. <code>rollback</code> switches <code>current</code>
+to the other one, and <code>remove</code> deletes every version. An install from before
+this layout (<code>&lt;name&gt;/plugin.toml</code>) is kept as <code>&lt;name&gt;/previous/</code>.</p>
+<h2 id="the-download-manager">The download manager</h2>
+<p>Installs and updates run on their own threads, never the UI or render thread.
+At most 4 run at once, and at most 2 per server. Progress shows on the status
+line; <code>:downloads</code> lists the jobs with their state and why one failed. A
+running Mouser writes the list to <code>$MOUSER_HOME/downloads/jobs.toml</code> and picks up
+<code>mouser downloads --cancel</code> requests from there.</p>
+<h2 id="first-run-and-the-offline-bundle">First run and the offline bundle</h2>
+<p>On start, Mouser queues every <code>plugins.lock</code> item that isn't installed or
+shipped beside it. They download in parallel while the terminal works on the
+basic renderer, and each is used as soon as its own download verifies. If one
+fails (offline, say), Mouser carries on as a plain terminal with a note, and
+<code>esc :plugin retry</code> tries again.</p>
+<p>The <code>-full</code> offline bundle carries the lock's archives in <code>plugins/</code> beside
+Mouser (<code>Contents/Resources/plugins</code> on macOS; <code>MOUSER_OFFLINE_BUNDLE</code> names
+another folder). First run installs from there with the same checks and no
+network.</p>
+<p>Mouser's own engines also ship unpacked in <code>engines/</code> beside it (<a href="../developer/engines.html">Engines</a>).</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/downloads.md">docs/downloads.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

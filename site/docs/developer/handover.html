@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mouser handover notes — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="mouser-handover-notes">Mouser handover notes</h1>
+<p>Repository: https://github.com/WeirdBrains/mouser (moved from m3talsmith/mouser on 2026-10-31). Current release: v1.3.0 (2026-11-04). Homebrew formula/cask are updated automatically by the Release workflow. CI covers Linux, macOS and Windows.</p>
+<p>Public notes for whoever picks up Mouser next. Machine-specific paths, local
+branch/worktree state and other private context live in <code>HANDOVER.local.md</code>
+at the repo root (gitignored; ask the maintainer if you don't have it).</p>
+<h2 id="features-and-how-to-test">Features and how to test</h2>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>What it does</th>
+<th>How to test</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Shell exit / Ctrl+D</td>
+<td>Tab/window closes when the shell exits</td>
+<td>Run the app, press Ctrl+D</td>
+</tr>
+<tr>
+<td>Tabs</td>
+<td>Each tab has its own PTY, screen, scrollback, title. Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Tab / Ctrl+Shift+Tab cycle, Alt+1..9 jump</td>
+<td>Open several tabs</td>
+</tr>
+<tr>
+<td>Connections sidebar</td>
+<td>Hosts come from your ssh config; clicking one opens <code>ssh &lt;alias&gt;</code> in a new tab</td>
+<td>Set <code>MOUSER_SSH_CONFIG</code> to a temp config</td>
+</tr>
+<tr>
+<td>Sidebar state</td>
+<td>Starts collapsed unless <code>MOUSER_OPEN_SIDEBAR</code> is set; remembers last open/closed state</td>
+<td>Toggle, restart (use a temp <code>HOME</code>)</td>
+</tr>
+<tr>
+<td>Event-driven redraws</td>
+<td><code>ControlFlow::Wait</code> + <code>EventLoopProxy</code>, glyph cache; ~0% idle CPU</td>
+<td>Watch <code>top</code> while idle</td>
+</tr>
+<tr>
+<td>GPU renderer</td>
+<td>wgpu glyph atlas drawn as instanced quads; <code>MOUSER_RENDERER=cpu</code> forces the softbuffer fallback</td>
+<td>Run both ways and compare</td>
+</tr>
+<tr>
+<td>Font picker</td>
+<td>Click the font field to list installed families alphabetically; typing fuzzy-filters</td>
+<td>Appearance panel</td>
+</tr>
+<tr>
+<td>Kitty keyboard</td>
+<td>Only Kitty protocol; fallback behind Fuzzball keyboard. Matrix in <code>docs/kitty-compliance.md</code></td>
+<td><code>kitten show-key -m kitty</code></td>
+</tr>
+<tr>
+<td>Fuzzball</td>
+<td>v0.1: graphics (upload/place/delete/query) + keyboard mode, <code>crates/mouser-core/src/fuzzball.rs</code></td>
+<td><code>tools/fuzzball-demo.py</code> inside Mouser</td>
+</tr>
+<tr>
+<td>xterm / ECMA-48</td>
+<td>SGR (truecolour, curly/coloured underline), wide chars, tab stops, modes, DA/DSR, mouse, focus, bracketed paste, OSC titles, OSC 8 links (Ctrl+click), OSC 52, window reports 11/13/20/21t</td>
+<td><code>cargo test --workspace</code> + manual</td>
+</tr>
+<tr>
+<td>vttest fixes</td>
+<td>DEC line drawing, SI/SO, DECSCNM, LNM, DECREQTPARM, DA1</td>
+<td>Run <code>vttest</code> inside Mouser</td>
+</tr>
+<tr>
+<td>Run a command</td>
+<td><code>mouser -e cmd args</code>, <code>mouser -- cmd args</code>, <code>--working-directory</code>/<code>--dir</code>, <code>--title</code>, <code>--class</code>, <code>--hold</code>, <code>--version</code>; desktop entry has xdg-terminal-exec keys so it can be a default terminal (e.g. on Omarchy)</td>
+<td><code>mouser -e btop</code>, <code>xdg-terminal-exec btop</code></td>
+</tr>
+<tr>
+<td>terminfo</td>
+<td><code>tic -x -o ~/.terminfo extra/mouser.terminfo</code>, then <code>TERM=mouser</code></td>
+<td><code>infocmp mouser</code></td>
+</tr>
+</tbody>
+</table>
+<p>Verified live (wtype, 2026-10-30): Fuzzball key events, Kitty keyboard flags 1/9/27/31 and <code>CSI ? u</code>, vttest menu 5 cursor keys (normal + application) and function keys F1–F12 (F10 is Mouser's command line, so it never reaches the app; F13+ send nothing in legacy mode). Clicking a sidebar connection opens it in a new tab (ydotool click; a failed ssh shows "[process exited 255] press any key to close" and a key closes the tab). wtype uses a virtual keymap, so <code>code=</code> reads <code>Escape</code> and Shift does not change the character; physical codes need a real keyboard.
+Not yet verified live: vttest menu 5 subtests other than cursor and function keys, and the cause of vttest's LNM "Not expected".</p>
+<h2 id="known-bugs">Known bugs</h2>
+<ul>
+<li>(Fixed in 0.7.1: dashed box-drawing lines, now drawn procedurally with one shared integer geometry (light, heavy and double lines) in <code>crates/mouser-render/src/boxdraw.rs</code>, identical on CPU and GPU; the "81 wide" vttest report was the window really being 81 columns, covered by a regression test.)</li>
+<li>Website install code blocks clip long commands (scroll sideways).</li>
+</ul>
+<h2 id="known-gaps">Known gaps</h2>
+<p>DECSLRM · colour emoji · real italic face (synthetic now) · visible blink ·
+DECCOLM 132-column · G2/G3/national charsets · protected areas · ENQ answerback ·
+OSC 133 UI.</p>
+<h2 id="fuzzball">Fuzzball</h2>
+<p>Spec v0.1 with resolved decisions in <code>fuzzball docs/README.md</code> §10. OSC 1337 and xterm-kitty
+were removed. Kitty keyboard and Kitty graphics are fallbacks; Fuzzball takes precedence.
+Placements follow their text (scroll regions, IL/DL, scrollback, resize) and are removed
+when their anchor row leaves the scrollback; abandoned uploads expire on a timer
+(<code>Session::watch_graphics</code> in <code>crates/mouser-app/src/tabs.rs</code>, which also plays Kitty
+animations and is kicked through a condvar when new timer work arrives). Resize scales placements to the screen width, shrinking in place (<code>Placement::fit</code>, requested
+col/cols/rows kept) and <code>ImageScaler</code> caches area-averaged downscales for both renderers.
+Decisions: protocol README §10 #10–15.
+<code>mouser show</code> (crates/mouser-app/src/show.rs, tested in crates/mouser-app/tests/show_tests.rs) displays images: Fuzzball first, Kitty fallback, Kitty Unicode placeholders inside tmux (README §10 #19-20).</p>
+<h2 id="kitty-graphics">Kitty graphics</h2>
+<p><code>crates/mouser-core/src/kitty_graphics.rs</code> (own <code>Graphics</code> store with <code>kitty: true</code>, shared
+lifecycle methods in <code>graphics.rs</code>, APC interception in <code>TerminalParser::feed</code>), tests in
+<code>crates/mouser-core/tests/kitty_graphics_tests.rs</code>. Renderer layers (<code>frame.rs</code>): z below
+<code>KITTY_BELOW_BG</code> under cell backgrounds, other negative z between backgrounds and text.
+Placeholders are drawn by <code>KittyGraphics::placeholder_draws</code> from the live screen cells
+(three combining marks per cell). Supported set and deliberate limits: graphics.md §7.
+Not yet done: IME events, lock-key state.</p>
+<h2 id="website">Website</h2>
+<ul>
+<li>Lives on the <code>site</code> branch in <code>site/</code> (plain HTML/CSS/JS).</li>
+<li><code>.github/workflows/pages.yml</code> deploys GitHub Pages on pushes to <code>site</code>.</li>
+<li>Sections alternate light/dark with subtle gradients, starting light (hero).</li>
+<li>Rounded corners use <code>--radius: 20px</code> in <code>site/style.css</code> (cards, code, buttons, images, tables).</li>
+<li>To do: confirm feature claims (compressed scrollback, Windows builds, Homebrew
+  macOS); retake <code>site/assets/mouser-app.png</code> with an opaque background.</li>
+</ul>
+<h2 id="release-process-see-agentsmd">Release process (see AGENTS.md)</h2>
+<ol>
+<li>Bump version and update CHANGELOG.</li>
+<li>Commit <code>release: vX.Y.Z</code>, create an annotated tag <code>vX.Y.Z</code>.</li>
+<li><code>git push origin main --follow-tags</code>.</li>
+<li>Check CI with <code>gh run list</code> / <code>gh run watch</code>.
+Releases happen only with the maintainer's explicit approval.</li>
+</ol>
+<h2 id="rules">Rules</h2>
+<ul>
+<li>Work on <code>main</code>, no PRs/branches (exception: <code>site</code> for the website).</li>
+<li><code>cargo fmt --all --check</code>, <code>cargo clippy --workspace --all-targets -- -D warnings</code>
+  and <code>cargo test --workspace</code> must pass.</li>
+<li>Never touch the real <code>~/.mouser</code>; never force-push; ask before adding dependencies.</li>
+<li>Tests use <code>MOUSER_SSH_CONFIG</code> and a temp <code>HOME</code>, never the real <code>~/.ssh</code>.</li>
+</ul>
+<h2 id="ideas-in-progress">Ideas in progress</h2>
+<p><code>MODES.md</code> (repo root) is the maintainer's early draft of interaction modes:
+commander, dj, director, debugger, artist. Switch with <code>esc :</code> plus the mode's key
+(e.g. <code>esc :c</code>), <code>ctrl-shift-k</code> shows mappings, <code>ctrl-shift-m</code> lists modes.
+Commander shows a scrollable file list above the prompt after <code>cd</code>; <code>t</code> cycles views.
+Only commander is described so far; wait for the maintainer before building it.</p>
+<h2 id="packaging">Packaging</h2>
+<p>CI may only use GitHub-owned or verified actions (WeirdBrains org policy); any other
+action fails the run at startup with no jobs. The workflows install Rust with <code>rustup</code>,
+cache with <code>actions/cache</code> and publish with <code>gh release create</code> (2737875); the release
+path is untested until the next tag.
+Arch: <code>packaging/arch/mouser-git</code> (source) and <code>packaging/arch/mouser-bin</code> (release
+binary) PKGBUILDs with <code>.SRCINFO</code>; details and AUR steps in <code>docs/release.md</code>. Both
+conflict with each other and replace older <code>mouser-bin</code> installs. The release workflow
+builds the <code>mouser-bin</code> <code>.pkg.tar.zst</code> and then commits real checksums via
+<code>packaging/arch/update-bin.sh</code>. AUR publishing waits: registration is closed and it needs
+the maintainer's account; the repo also needs a <code>LICENSE</code> file first (namcap error).
+All URLs now point at WeirdBrains/mouser; the app ID <code>io.github.m3talsmith.mouser</code>
+stays unless the maintainer decides otherwise.</p>
+<h2 id="recent-work-on-main-since-v072">Recent work on main (since v0.7.2)</h2>
+<ul>
+<li>Kitty graphics fallback: 8332289, 5628141, 529c968, 75e5bcf, docs f9212d7.</li>
+<li>Command-line launching and xdg-terminal-exec desktop entry: 88e50c1; CI fixes
+  2737875 (actions policy), 5da1891 (non-Linux warning), 4b70ea7 (Windows test).</li>
+<li>Arch packaging (mouser-git, mouser-bin) and URL move to WeirdBrains: see Packaging.</li>
+<li>Selection, copy and paste: 3acc2a1 (model <code>mouser-core/src/selection.rs</code>, app glue
+  <code>mouser-app/src/select.rs</code>, renderer hooks), c21b8c0 (paste sanitising, Shift+Insert),
+  022c8a6 (smithay-clipboard: Hyprland ignores <code>wl-copy --primary</code> over data-control, so
+  PRIMARY/clipboard are set through Mouser's own Wayland connection; auto-scroll keeps
+  going when the compositor stops sending motion after the pointer leaves). Live-verified
+  on Hyprland (word, line, drag+copy, block, auto-scroll into scrollback, Ctrl+Shift+V and
+  middle-click paste into <code>cat</code>, clear on typing). Gaps: no Windows clipboard; X11 PRIMARY
+  needs xclip/xsel.</li>
+<li>Images always fit the width (t132u): <code>fit=w</code> Fuzzball key, <code>mouser show</code> fills the
+  width and follows resizes; overhanging placements move to column 0 (no more 1-column pin).</li>
+<li>Re-wrap on resize (t133u): <code>mouser-core/src/reflow.rs</code> (Layout: join soft-wrapped rows,
+  track points, split), <code>TerminalParser::reflow</code> (scrollback + main screen, placements,
+  empty-row adjustment for images whose height changes), <code>Screen::finish_reflow</code>,
+  <code>Scrollback::replace_all</code>. <code>attr::WRAP_PAD</code> marks the blank left when a wide char wraps
+  early. Tests: <code>mouser-core/tests/reflow_tests.rs</code> (perf: <code>--release -- --ignored</code>).
+  Fuzzball spec: <code>g_fit=w</code>, <code>g_reflow=1</code> in the capability reply; graphics.md §2.2/§3/§4,
+  README §10 #12/#13/#20/#21.
+  Edge cases left: the scrollback keeps colours and attributes (<code>sbstyle</code>, 1.0) but not OSC 8 links;
+  a line longer than the scrollback limit after narrowing drops oldest lines; an anchor
+  in the blanks before the cursor moves with the cursor's padding; Kitty placeholder text
+  is re-wrapped as text (an image wider than the new width breaks into rows); rows-only
+  resizes do not re-wrap (nothing to do) or pull lines back from the scrollback.</li>
+<li>Multi-image invariant tests: <code>mouser-core/tests/multi_image_tests.rs</code> (t135u). Lazy
+  scrollback re-wrap (t136u): <code>TerminalParser::reflow_step</code>, <code>reflow_sync_rows</code>
+  (<code>REFLOW_SYNC_ROWS</code> 2000, <code>REFLOW_STEP_ROWS</code> 8192), worker in <code>Session::settle_reflow</code>,
+  <code>Scrollback::splice</code>/<code>line_start</code>/<code>lines_wrapped</code>. Bench: <code>cargo test --release -p
+  mouser-core --test reflow_tests perf -- --ignored --nocapture</code> (<code>SYNC=1000000</code> = old
+  full re-wrap). Live sweep harness /tmp/mx/img/sweep.sh. Known: an occasional 0.3–1 s
+  frame at the start/end of a Hyprland resize is spent blocked in present (compositor
+  frame pacing), not in Mouser's code.</li>
+<li>Swappable GPU engines (t137u/t138u): design docs/engines.md (85cad5b). Trait
+  <code>mouser-render/src/engine.rs</code> (<code>Engine</code>, <code>MouserEngine</code> wraps <code>gpu::GpuPainter</code>,
+  <code>CustomLibrary</code>/<code>CustomEngine</code>, <code>FrameBuf</code> = DisplayList -&gt; C frame, <code>load_installed</code>),
+  <code>mouser-render/src/skia.rs</code> (feature <code>skia</code>, glutin + skia-safe, A8 glyph atlas,
+  DontWait swaps), <code>mouser-core/src/engines.rs</code> (manifests, install/uninstall/select,
+  <code>chosen()</code>, crash sentinel <code>engines/.starting-&lt;name&gt;</code>), <code>mouser-app/src/engine_cli.rs</code>,
+  crates <code>mouser-engine-abi</code> and <code>mouser-engine-example</code>. Tests:
+  <code>mouser-app/tests/engine_tests.rs</code> (builds the example into target/engine-tests),
+  <code>mouser-render/tests/engine_frame_tests.rs</code>, unit tests in engines.rs and the ABI crate.
+  Live (alien-blue, 1100x760 multi-image screen, drag-resize sweep): mouser 57 fps,
+  skia 59–60, flat 59. Gaps: no hot swap, no URL install, full-frame damage only.</li>
+<li>Engine skip state (t140u): <code>engines::State</code>, <code>unskip</code>/<code>unskip_all</code>, <code>.failed-&lt;name&gt;</code>
+  records, <code>engine::skip_check</code>/<code>fallback_message</code>/<code>Guarded</code> (crash marker for skia and
+  custom), status-bar notice <code>NOTICE</code> in mouser-render/src/lib.rs; CLI <code>unskip</code>/<code>restore</code>.</li>
+<li>Engine priority (t142u/t144u): <code>engines::{priority, saved_priority, normalize,
+  set_priority, move_to, move_by}</code>, <code>Preferences::engines</code>; <code>engine::create(order)</code> walks
+  it, <code>engine::after(order, failed)</code> for runtime fallback. mouser never skipped/removable.</li>
+<li>Engine switching + isolation (t141u): design docs/engines.md §7 (82675c5), host
+  <code>mouser-render/src/engine_host.rs</code>, <code>Painter::{switch, fall_back}</code> and the
+  <code>engine-prefs</code> watcher thread (UserEvent::Engines) in mouser-render/src/lib.rs,
+  <code>engine::first_usable</code>, <code>engines::mark_skipped</code>. Tests
+  <code>mouser-app/tests/engine_host_tests.rs</code> (pixels match, start failure, crash -&gt; PTY shell
+  alive, skipped, unskip). Switching itself is only live-tested (needs a window).</li>
+<li>Session/UI split + sidebar Engines (t145u): design docs/engines.md §8 (8ea37b6), code
+  1e5e45e, 1af7013. <code>mouser-render/src/split.rs</code> (server <code>serve</code>, UI <code>ui_main</code>, headless
+  test UI), <code>clipboard::set_remote</code>, <code>RenderHooks::{on_engine, on_window_size}</code>,
+  <code>ui::{add_engines, EngineRow, EngineState}</code>, <code>UiAction::UseEngine</code>, app
+  <code>engine_rows</code>/<code>use_engine</code>, <code>engines::clear_own_sentinels</code> and live-pid-aware
+  <code>crashed_last_time</code>. Tests <code>mouser-app/tests/split_tests.rs</code>,
+  <code>mouser-render/tests/sidebar_engines_tests.rs</code>. <strong>Rollback point: annotated tag
+  <code>pre-session-split</code> (adf349b)</strong>, do not move or delete it. Off with <code>MOUSER_PROC_FORK=0</code> (was <code>MOUSER_SPLIT</code> before any release; no alias).
+  Drag-to-reorder engines (t149u): <code>ui::EngineDrag</code> etc., drag state in <code>run</code>, drawn in
+  <code>frame.rs</code>, <code>UiAction::ReorderEngines</code> -&gt; app <code>reorder_engines</code> (<code>set_priority</code>).</li>
+<li>Still open: Fuzzball IME events and lock-key state; the known gaps; the <code>site</code> branch
+  is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
+  ratatui#2854.</li>
+</ul>
+<h2 id="open-decisions">Open decisions</h2>
+<ul>
+<li>Inside tmux, <code>mouser show</code> prefers Kitty placeholders over Fuzzball (one-line flip).</li>
+</ul>
+<h2 id="suggested-next-steps">Suggested next steps</h2>
+<ol start="0">
+<li>Install the new package on the maintainer's machine (mouser-git from main or the next mouser-bin release) so command launching works there.</li>
+<li>Add a LICENSE file and publish the AUR packages (maintainer).</li>
+<li>Live-verify the remaining vttest menu 5 subtests and LNM; check Fuzzball physical key codes on a real keyboard.</li>
+<li>Confirm website claims, retake the screenshot, publish the site.</li>
+<li>Cut the next release once approved.</li>
+<li>Fuzzball: IME events and lock-key state.</li>
+<li>Work through the known gaps.</li>
+</ol>
+<h2 id="modes-phase-1-commander-oct-31-t153ut164u">Modes Phase 1: commander (Oct 31, t153u–t164u)</h2>
+<p>State: Phase 1 complete (see "Phase 1 finished" below).</p>
+<p>Decisions:
+- Modes are stateful plugins: exactly one active (or none), switching replaces, no stacking. <code>mouser_render::modes::{Mode trait, Host}</code>; core has no commander branching.
+- Commander is the only plugin and the default, active at startup.
+- <code>esc :</code> + hotkey + Enter switches; the active mode's own hotkey turns modes off (assumption, MODES.md silent); <code>esc :c</code> again turns it on. Lone Esc waits 1200 ms (<code>[keys] leader_timeout_ms</code>; 500 ms before 1.0.1) then goes to the shell; <code>alt+:</code> opens the command line at once; nothing is intercepted on the alternate screen (view hidden too).
+- View switch is in commander's own keymap: alt+t default (shadows readline transpose-words). All keys <code>&lt;alt&gt;+&lt;key&gt;</code>, remappable in <code>~/.mouser/modes.toml</code> <code>[commander.keys]</code>; unbound alt keys pass to the shell. ctrl+shift+k keymap window, ctrl+shift+m modes window.
+- Previews lazy on a worker thread, only what is on screen; queue replaced as you move. Carousel: 1 full (focused) + 2 partial neighbours (cropped via src rect).
+- Open: dir -&gt; types <code>^U cd -- '&lt;path&gt;'</code>; video/audio -&gt; xdg-open/open (not an in-app player, deviation); else full-width image/text view.
+- cwd: /proc/<pid>/cwd, fallback OSC 7.</p>
+<p>Files: crates/mouser-core/src/{modes.rs,commander.rs,lib.rs}; crates/mouser-render/src/modes/{mod.rs,commander.rs}, src/{lib.rs,ui.rs,frame.rs}, tests/commander_render_tests.rs, Cargo.toml; crates/mouser-app/src/{main.rs,tabs.rs}; Cargo.toml (image jpeg/gif/webp/bmp); docs/modes.md; CHANGELOG.md.</p>
+<p>Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arrows/enter, esc :c, ctrl+shift+k/m); build package (not installed) and give <code>sudo pacman -U</code> path; third-party mode loading (future, see docs/modes.md).</p>
+<h3 id="phase-1-finished-t167ut168u-stop-here-no-later-phase">Phase 1 finished (t167u/t168u) — STOP here, no later phase</h3>
+<ul>
+<li>8ee6963 navigation in every view (alt+arrows, PgUp/PgDn, Home/End, alt+p parent, alt+q/Esc close file view, click select / double-click open (400 ms) / wheel), multi-select (alt+space mark, alt+* all/clear, <code>*</code> + "N marked" shown), alt+| pipe prompt -&gt; types <code>^U printf '%s\n' '&lt;paths&gt;' | &lt;cmd&gt;</code> (single-quoted, marked paths in listing order, else the selection); 1d683a5 Windows path fix in a test. Full table in docs/modes.md.</li>
+<li>Full suite, fmt, clippy green locally. Live (Hyprland focuswindow + verified activewindow, wtype): grid/carousel/pipe/file view/esc :c off-on all OK; screenshots ~/.cache/mouser-shots/live-*.png, mark.png. Note: wtype <code>-M alt space</code> types the word "space" — use <code>-k space</code>.</li>
+<li>Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r68.g1d683a5-1-x86_64.pkg.tar.zst (not installed).</li>
+<li>Open: in-app media player (uses xdg-open), third-party mode loading, modifiers other than alt.</li>
+</ul>
+<h3 id="typed-line-kept-media-player-t170ut171u">Typed line kept + media player (t170u/t171u)</h3>
+<ul>
+<li>7a8db14: cd/pipe keep the half-typed line: Ctrl+E, space, Ctrl+U (kill ring), command, Enter; when the shell is the PTY foreground again (tcgetpgrp == shell pid; Windows: short pause) Ctrl+Y + Backspace. Tested in a PTY with bash and zsh (tests/keep_line_tests.rs; fish not installed, test covers it if present); live on Michael's zsh. vi keymaps unsupported (documented).</li>
+<li>0ddda31: in-app player (src/modes/player.rs): ffprobe for streams, <code>ffmpeg -re ... rawvideo rgba</code> frames through the image path fitted to width, <code>ffplay -nodisp -vn</code> for sound; alt+k play/pause, alt+j/l seek 10s, alt+-/= volume, alt+q/Esc close; keys pass to the shell when no player is open (Effect::Pass). Stops on close/selection change. Desktop opener only without ffmpeg. Live: frames change (player-video-1/2.png), ffplay running, 0 helpers after pause/close; audio view player-audio.png.</li>
+<li>Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r72.g0ddda31-1-x86_64.pkg.tar.zst. CI green on 0ddda31 (all 3 OSes).</li>
+<li>
+<p>Open: A/V sync is by common start (no drift correction); pause/seek restart helpers (brief gap); no ffmpeg on CI macOS/Windows means the decode tests skip there. (superseded by a3a960d below)</p>
+</li>
+<li>
+<p>a3a960d: player rewritten: no ffplay; cpal audio sample clock (minus device latency) drives video frames by PTS (late dropped), wall clock without audio; pause/volume in-process; seek restarts both ffmpeg readers at -ss. Measured on Linux: A/V offset mean 20 ms (half a 25 fps frame), no drift over 66 s, seek gap ~80 ms. Needs alsa-lib (libasound2-dev on CI).</p>
+</li>
+<li>
+<p>3f44c83 / c33f5cf: Phase 1 follow-ups. Player sync centred (mean -0.2 ms, p95 9.5 ms, 0 drops); back control (‹ back, alt+p, alt+Backspace, clickable path, no . / ..); video thumbnails (cached in $MOUSER_HOME/cache/thumbs); search feedback; popups opaque over previews; <code>[mouser]</code> line runs non-Mouser commands in the shell (<code>!</code> forces); double-Esc after closing a viewer no longer eats the next key; commander follows SSH sessions (OSC 7 + ssh side channel); carousel slides (180 ms ease-in-out).</p>
+</li>
+</ul>
+<h3 id="t181ut182u-zoom-interactive-player-rounded-boxes-shadows-header-menu">t181u/t182u: zoom, interactive player, rounded boxes + shadows, header ••• menu</h3>
+<ul>
+<li>frame.rs: <code>round_rect</code>, <code>round_box</code>, <code>drop_shadow</code>, <code>RADIUS</code>=8; all panel styles, buttons, sidebar engine rows, modal, tabs; new <code>PanelStyle::Progress{done,hover}</code>.</li>
+<li>commander.rs: <code>Zoom</code>, <code>zoom_rect</code>, <code>zoom_about</code>, <code>header_fit</code>, <code>Hits</code>, <code>pointer_*</code> actions (<code>pack_xy</code>); lib.rs routes left press/move/release over the dock and ctrl+wheel (<code>zoom_wheel</code>).</li>
+<li>Not done: t185u remote ranged/parallel fetch with sparse cache + range map (and the separate fetch module for future sync, t186u). Remote files still show the "pipe it" notice.</li>
+</ul>
+<h3 id="t183u-t186u-remote-files">t183u-t186u: remote files</h3>
+<ul>
+<li>mouser-core/src/fetch.rs: RangeMap, Remote (ssh side channel, tools), RemoteFile key, open()-&gt;Handle (prioritize, wait, read, url() HTTP range server, on_progress), backends rsync/scp/cat, LRU evict. Tests: range map, next() priority, HTTP parse, fake-ssh parallel fetch + priority + HTTP + head-only + LRU.</li>
+<li>commander (render): Previews has 3 workers + RemoteCtx; decode_remote (remote ffmpeg thumbs, early low-res, whole fetch); open_remote handle for viewer/player; heads for text tiles; fit = width. Player::open_input + keep.</li>
+<li>Host::set_remote(.., ssh); Mode::remote_ssh.</li>
+<li>measure: <code>MX_REMOTE_DIR=/tmp/mx/rmedia MX_SSH_DEST=fakehost MOUSER_SSH_CONFIG=/tmp/mx/sshd/ssh_config [MOUSER_SSH_BIN=/tmp/mx/slow-ssh MOUSER_REMOTE_BACKEND=cat] cargo test -p mouser-render --lib --release measure_remote -- --ignored --nocapture</code>.</li>
+<li>Live: inside the window, <code>ssh -F /tmp/mx/sshd/ssh_config -t fakehost bash --rcfile /tmp/mx/sshd/rc -i</code> (a plain ssh hits Michael's zsh/omz update prompt).</li>
+<li>Fixed: post-seek A/V catch-up spike on slow links (was up to ~570 ms): audio now holds after a seek until the first video frame is queued (<code>Shared::gate</code>, max 3 s). Open: first grid load sometimes slow to appear; sync not built.</li>
+</ul>
+<h3 id="t198u-p1-plugin-system-docsplansmcp-agentmd-docspluginsmd">t198u: P1 plugin system (docs/plans/mcp-agent.md, docs/plugins.md)</h3>
+<ul>
+<li>8368b48: the plan records Michael's decisions (t196u-t197u): MCP + Fuzzball + command transports, no native libs in v1; MCP server stdio + loopback HTTP + HTTPS option (P2); llama.cpp built in + OpenAI/Anthropic-compatible URL; Gemma 4 E2B default with an E4B switch; any model is a <code>model-provider</code> plugin.</li>
+<li>a3c9f88 (core):</li>
+<li><code>plugins.rs</code>: the manifest, <code>$MOUSER_HOME/plugins/&lt;name&gt;</code>, <code>state.toml</code> (priority, disabled), and <code>Registry</code> with <code>providers(kind)</code> and <code>command(word)</code>. It lists commander and the engines as built-ins, and has <code>run_command</code> (JSON stdin/stdout, 10 s, scrubbed env).</li>
+<li><code>permissions.rs</code>: <code>Store</code>/<code>Broker</code> (allow/ask/never, <code>Scope</code> Installed / FuzzballLocal / FuzzballRemote; remote is never persisted).</li>
+<li><code>mcp.rs</code>: a hand-rolled stdio JSON-RPC client (initialize, tools/list, tools/call). rmcp was approved, but it is deferred to P3 to keep tokio out of P1.</li>
+<li><code>fuzzball.rs</code>: <code>p h</code>/<code>p q</code>/<code>p b</code>, <code>plugin_hellos</code>, <code>plugin_grants</code>, <code>sub=gkp</code>. Caps are joined with <code>+</code>, because <code>:</code> is the payload separator.</li>
+<li>d90247d (app):</li>
+<li><code>plugin_cli.rs</code> (<code>mouser plugin …</code>; an engine dir goes to the engine installer).</li>
+<li><code>approval_ui.rs</code>: a queue, 400 ms arming, and remote requests get only once/deny.</li>
+<li>In main.rs, <code>plugin_hellos</code> is polled each layout from every tab. <code>resolve_approval</code> and <code>command_plugin</code>/<code>spawn_command_plugin</code> sit before the shell fallback on the <code>[mouser]</code> line. While a popup is open it takes keys, clicks and pastes.</li>
+<li>In render: <code>ui::approval_panel</code>, <code>UiAction::Approve(u8)</code>.</li>
+<li>bcec94d: examples/plugins (hello-command sh, hello-mcp python3, hello-fuzzball sh), docs/plugins.md, the CHANGELOG.</li>
+<li>Tests: manifest/registry/priority/enable, command roundtrip + timeout + env scrub, the broker, the MCP fake server, Fuzzball <code>p</code> (and fuzzed), the CLI end to end with the examples, and popup layout/hit-test. CI green on bcec94d (all 3 OSes).</li>
+<li>Live (isolated temp HOME/MOUSER_HOME window; focus verified via <code>hyprctl dispatch 'hl.dsp.focus({ window = "address:0x…" })'</code>, since Hyprland 0.56 Lua needs the hl.dsp form; focus was given back to Michael's window after):</li>
+<li>the Fuzzball popup, then <code>y</code>, gives <code>granted: notify+screen.read</code>;</li>
+<li>F10 <code>hello Michael</code> shows the command popup, then <code>a</code> gives the notice "[hello-command] Hello, Michael!" and <code>run = "allow"</code> is saved.</li>
+<li>Shots: ~/.cache/mouser-shots/p1-approval-fuzzball.png, p1-fuzzball-popup.png, p1-fuzzball-granted.png, p1-command-popup.png, p1-command-ran.png.</li>
+<li>Package (not installed): ~/.cache/mouser-pkg/mouser-git-0.7.2.r88.gbcec94d-1-x86_64.pkg.tar.zst.</li>
+<li>Open:</li>
+<li>"a mouser command" is read as <code>[mouser]</code> line commands; Michael may clarify.</li>
+<li>Granted capabilities are recorded, but nothing consumes them until P2/P3 (screen.read etc. become real with Mouser's MCP tools).</li>
+<li>Built-ins can't be disabled yet (P6).</li>
+<li>MCP plugins start only through <code>plugin probe</code> (P3 wires them to the sidebar and agent).</li>
+<li>No approval UI on Windows for command plugins with sh (the examples need sh/python3).</li>
+</ul>
+<h3 id="t200u-allow-always-over-ssh">t200u: Allow always over ssh</h3>
+<ul>
+<li>b83c7a7: <code>Scope::FuzzballRemote { host }</code>. The host is <code>SshTarget::identity()</code>: <code>ssh -G</code> gives user@hostname:port, and <code>ssh-keygen -l -F</code> on ssh's UserKnownHostsFile gives the SHA256 fingerprint. The key is <code>ssh:&lt;id&gt;/&lt;plugin&gt;</code> with one allow per capability, so extra capabilities, another host or another key ask again. Remote gets Allow once / Allow always / Deny (no Never); with no identity, once/deny only. <code>mouser plugin permissions</code> (no name) lists grants; <code>permissions '&lt;key&gt;' revoke</code> removes one. <code>ui::approval_panel</code> takes an <code>offer</code> list.</li>
+<li>Live: the test sshd (<code>sshd -f /tmp/mx/sshd/sshd_config</code>, port 22422, stopped afterwards); the window was started with <code>hl.dsp.exec_cmd(cmd, {float=true, no_initial_focus=true})</code> so it never steals focus. A script with <code>set -m</code> (so ssh is the tab's foreground) connects twice: the first shows the REMOTE popup, <code>a</code> is pressed, and the second is granted with no prompt. Shot: ~/.cache/mouser-shots/p1-ssh-sheet.png (popup | reconnect).</li>
+<li>CI green on b83c7a7 (3 OSes). Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r90.gb83c7a7-1-x86_64.pkg.tar.zst.</li>
+<li>Next: P2, Mouser's MCP server (stdio, loopback HTTP, HTTPS option), per docs/plans/mcp-agent.md.</li>
+</ul>
+<h3 id="p2-mousers-mcp-server-docsmcpmd">P2: Mouser's MCP server (docs/mcp.md)</h3>
+<ul>
+<li>7006d97 (core):</li>
+<li><code>mcp_server.rs</code>: JSON-RPC MCP over Streamable HTTP. It is written on std (no tokio; rmcp not needed), with JSON replies and no SSE; sessions are keyed by <code>Mcp-Session-Id</code>, so the server knows each client's name. Checks: Bearer token compared in constant time, Host/Origin loopback, 4 MiB body cap, 32 connections at most.</li>
+<li>TLS is rustls with ring (no aws-lc, so no cmake). The self-signed cert is made by rcgen in <code>$MOUSER_HOME/mcp/{cert,key}.pem</code> (key 0600), or the user's PEM pair is used. <code>stdio_bridge</code> and the <code>post</code>/<code>client_tls</code> test client are here too.</li>
+<li><code>secrets.rs</code>: keyring 3 (Keychain / Credential Manager / Secret Service over zbus, so no libdbus). The account is <code>name@hash(MOUSER_HOME)</code>. Fallback is a <code>$MOUSER_HOME/secrets/&lt;name&gt;</code> 0600 file; <code>MOUSER_SECRET_STORE=file</code> forces it, and every test uses that.</li>
+<li><code>fileops.rs</code>: list, read, mkdir, copy, move, trash (to <code>$MOUSER_HOME/trash</code>).</li>
+<li><code>storage::McpServerPrefs</code> holds <code>[mcp.server]</code>.</li>
+<li>f872e56 (app):</li>
+<li><code>mcp_tools.rs</code>: <code>AppTools</code> with 11 tools. Reads need only the token, but a saved <code>never</code> still blocks them. Mutating tools call <code>ask()</code>: the broker key is <code>mcp:&lt;client&gt;</code>, a popup is shown with <code>Origin::Mcp{reply}</code>, and the call blocks up to 5 min. <code>start()</code> runs at launch when enabled.</li>
+<li><code>mcp_cli.rs</code>: <code>mouser mcp serve --stdio | status | enable [--https] | disable | token --show|--rotate</code>.</li>
+<li>Live (temp HOME/MOUSER_HOME, file secret store, ports 17801/17802; a stdlib Python MCP client covered all three transports):</li>
+<li>initialize, tools/list (11), tabs_list and screen_read worked over stdio/HTTP/HTTPS; a bad token gets 401.</li>
+<li>shell_run over HTTP showed the popup; <code>y</code> was sent with <code>hl.dsp.send_shortcut({key="y", window="address:…"})</code>, which needs <strong>no focus</strong>, and his active window stayed the same. MCP-WAS-HERE then appeared in screen_read.</li>
+<li>files_mkdir over HTTPS showed the popup; <code>n</code> gave "the user denied it" and no folder was made.</li>
+<li>The window was opened with <code>hl.dsp.exec_cmd(cmd, {float=true, no_initial_focus=true, ...})</code>, and it was checked that it was not focused.</li>
+<li>Shots: ~/.cache/mouser-shots/p2-sheet.png (shell popup | ran | files popup).</li>
+<li>CI green on f872e56 (3 OSes). Package: ~/.cache/mouser-pkg/mouser-git-0.7.2.r93.gf872e56-1-x86_64.pkg.tar.zst.</li>
+<li>Open:</li>
+<li>No SSE/streaming (JSON only) and no <code>notifications/*</code> from the server.</li>
+<li>Not tried live: the real OS keychain. That was deliberate, to keep test entries out of his keychain; the CLI shows the store in use.</li>
+<li>The server starts only at launch (restart after <code>enable</code>).</li>
+<li>Client names are self-declared (the token is the trust boundary).</li>
+<li>The stdio bridge needs the HTTP listener (it is always on when enabled).</li>
+</ul>
+<h3 id="p3-mcp-client-and-the-sidebar-mcp-section-docsmcpmd-client">P3: MCP client and the sidebar MCP section (docs/mcp.md §Client)</h3>
+<ul>
+<li>Commits:</li>
+<li>173566f core;</li>
+<li>abc0e60 app;</li>
+<li>f5f2cda docs.</li>
+<li>Package: <code>~/.cache/mouser-pkg/mouser-git-0.7.2.r97.gf5f2cda-1-x86_64.pkg.tar.zst</code> (not installed).</li>
+<li>Core:</li>
+<li><code>mcp.rs</code>: <code>Client</code> over stdio and Streamable HTTP(S) via <code>Client::connect(url, token, ca)</code>.<ul>
+<li><code>Target::parse</code> refuses plain http to non-loopback hosts.</li>
+<li><code>post_to</code> tries every resolved address.</li>
+<li>Replies may be JSON or SSE.</li>
+<li><code>ping</code> counts any reply as alive.</li>
+<li>Public roots come from <code>webpki-roots</code>.</li>
+</ul>
+</li>
+<li><code>mcp_client.rs</code>: <code>Manager</code> with a thread per server.<ul>
+<li>States: Connecting, Connected, Failed(reason, retry), NeedsApproval, Denied, Disabled.</li>
+<li>Backoff from 1 s to 5 min; ping every 30 s.</li>
+<li>Sources are <code>[[mcp.servers]]</code> plus enabled MCP plugins (<code>plugin:&lt;name&gt;</code>).</li>
+<li><code>broker_name</code> gives <code>mcp-server:&lt;name&gt;</code> or the plugin name; <code>tool_cap</code> gives <code>tool.&lt;name&gt;</code>.</li>
+</ul>
+</li>
+<li><code>storage::McpServerEntry</code>: name, command, env, url, token (<code>keychain:NAME</code>), ca, enabled.</li>
+<li>App (main.rs):</li>
+<li><code>mcp_clients()</code> (OnceLock), <code>mcp_rows</code>, <code>mcp_server_click</code>, <code>mcp_tool_click</code>/<code>mcp_call</code>, <code>spawn_mcp_call</code> and <code>mcp_command</code> (the <code>[mouser]</code> line: <code>mcp</code>, <code>mcp tools|reconnect ID</code>, <code>mcp call ID TOOL [JSON]</code>).</li>
+<li>New approval origins: <code>McpRun</code> and <code>McpTool</code>.</li>
+<li>The secret for each server's token is named <code>mcp-server-NAME</code>, with no colon so the file fallback is Windows-safe.</li>
+<li><code>mouser plugin permissions mcp-server:NAME tool.X=allow</code> works.</li>
+<li>Render: <code>ui::add_mcp</code> runs before <code>add_engines</code>; the McpRow kinds are Title, Server, Tool and Note. Clicking a connected server toggles its tool list.</li>
+<li>Live check:</li>
+<li>Temp MOUSER_HOME/HOME, <code>SHELL=/bin/sh</code>, file secret store, ports 17801/17802.</li>
+<li>The window was floating and unfocused (verified), and keys were sent with send_shortcut.</li>
+<li>self over http and self-https (with <code>--ca</code>) were connected to Mouser's own P2 server with 11 tools each; hello (stdio) and plugin:hello-mcp (after the <code>run</code> popup) were connected too.</li>
+<li>tabs_list and <code>greet {"name":"Michael"}</code> ran through the broker popup.</li>
+<li>Screenshots: <code>~/.cache/mouser-shots/p3-b.png</code> and <code>p3-sheet.png</code> / <code>p3-combo.png</code>.</li>
+<li>Deferred: resources, prompts, list-changed, OAuth, project-local config, sidebar enable toggles, and live reload of prefs (applies on the next start).</li>
+<li>Next: P4 (model providers). It needs Michael's go-ahead, and it hits the hard stops (llama.cpp deps, model downloads).</li>
+</ul>
+<h3 id="p4-model-providers-as-plugins-docsmodelsmd">P4: model providers as plugins (docs/models.md)</h3>
+<ul>
+<li>Commits:</li>
+<li>a350df0 core;</li>
+<li>3c891ca app;</li>
+<li>9b4089f docs.</li>
+<li>CI: run 41342521462, green on Linux, macOS and Windows.</li>
+<li>Package: <code>~/.cache/mouser-pkg/mouser-git-0.7.2.r101.g9b4089f-1-x86_64.pkg.tar.zst</code> (not installed).</li>
+<li>Core (<code>crates/mouser-core/src/models/</code>):</li>
+<li><code>mod.rs</code>: <code>ModelProvider</code>, <code>ChatRequest</code>/<code>Message</code>/<code>Part</code>/<code>ToolSpec</code>/<code>ToolChoice</code>, <code>Event</code> (Text, ToolStart, ToolArgs, Usage, Done), <code>ChatSink</code> with <code>cancelled()</code>, the <code>Collect</code> sink, <code>PRESETS</code>, <code>[models]</code> prefs and the registry (<code>all</code>/<code>find</code>/<code>open</code>).</li>
+<li><code>http.rs</code>: a std + rustls client with chunked and SSE line streaming. Plain http goes to loopback only.</li>
+<li>Adapters:<ul>
+<li><code>openai.rs</code>: Chat Completions, including the Kimi K2 quirks.</li>
+<li><code>anthropic.rs</code>: Messages, version 2023-06-01.</li>
+<li><code>google.rs</code>: <code>streamGenerateContent?alt=sse</code>.</li>
+</ul>
+</li>
+<li>Plugins: the <code>model-provider</code> kind gets the <code>http</code> transport plus a <code>[model]</code> table. BUILTINS has 8 entries (six presets, gemma-local and the others).</li>
+<li>Keys are <code>keychain:model-NAME</code> refs; preferences.toml never holds a key.</li>
+<li>App: <code>model_cli.rs</code> provides <code>mouser model list | add | remove | test | default</code>. <code>add</code> takes <code>--key-stdin</code>, <code>--api</code>, <code>--url</code>, <code>--model</code> and <code>--ca</code>.</li>
+<li>Tests: mock HTTP servers only (streaming, tool deltas, chunked bodies, errors, cancel, Kimi quirks, registry). A live binary smoke test ran against a Python mock for all three adapters. No real keys were used.</li>
+<li>Deferred: the Responses API, images, retries, <code>/models</code> listing and the plugin <code>network</code> grant.</li>
+</ul>
+<h3 id="p4b-the-built-in-local-model-docsmodelsmd-the-local-model">P4b: the built-in local model (docs/models.md §The local model)</h3>
+<ul>
+<li>Commits:</li>
+<li>143858b core;</li>
+<li>c61fc45 app + mouser-llm;</li>
+<li>37cb9d8 docs/PKGBUILD;</li>
+<li>then a macOS test-race fix and the variant deps (see git log).</li>
+<li>Packages (not installed):</li>
+<li>default: <code>~/.cache/mouser-pkg/mouser-git-0.7.2.r105.g37cb9d8-1-x86_64.pkg.tar.zst</code> (29 MB binary);</li>
+<li>local-llm: <code>~/.cache/mouser-pkg/llm/mouser-git-0.7.2.r105.g37cb9d8-1-x86_64.pkg.tar.zst</code> (73 MB binary, links libvulkan.so.1, so the variant <code>depends</code> on vulkan-icd-loader).</li>
+<li>Core (<code>models/local.rs</code>):</li>
+<li>The weights catalog has E2B and E4B Q4_0 from ggml-org, with pinned sizes and SHA256.</li>
+<li><code>dir()</code>: <code>MOUSER_MODELS_DIR</code>, then <code>[models.local] dir</code>, then <code>$MOUSER_HOME/models</code>.</li>
+<li><code>download(Consent, url, progress)</code> resumes the <code>.part</code>, verifies size and SHA256, and needs a <code>Consent</code> value.</li>
+<li><code>LocalBackend</code> registry, <code>LocalPrefs</code>, and the <code>Local</code> provider: a url delegates to the openai/anthropic adapter; otherwise the weights and the backend are required.</li>
+<li><code>render()</code> runs the GGUF Jinja template through minijinja (with pycompat); <code>render_fallback()</code> produces the Gemma format.</li>
+<li>Tools: <code>tool_prompt</code> plus the <code>ToolParser</code> for <code>&lt;tool_call&gt;</code> tags.</li>
+<li><code>http.rs</code> gained <code>request</code>/<code>get</code> with redirects.</li>
+<li><code>crates/mouser-llm</code>: llama-cpp-2 0.1.160 (Vulkan; Metal on macOS) implementing <code>LocalBackend</code>.</li>
+<li>The model stays cached, and all layers go on the GPU by default.</li>
+<li>Context 8192, prompt batches of 512.</li>
+<li>Sampling: top_k 64, top_p 0.95, temp 1.0, or greedy at temperature 0.</li>
+<li>Output is UTF-8 safe and streams through the ToolParser, with cancel checks. <code>MOUSER_LLM_TIMINGS=1</code> prints speeds.</li>
+<li>The crate is in the workspace <code>exclude</code> list, so <code>--workspace</code> builds and CI never compile llama.cpp. mouser-app's feature <code>local-llm</code> = <code>dep:mouser-llm</code>, and main registers it at startup.</li>
+<li>App:</li>
+<li><code>mouser model local [status] | download [ID] [--yes] | delete ID | url URL [--api] [--model] [--key-stdin] / --clear | dir PATH / --clear</code>.</li>
+<li><code>[mouser] model download [ID]</code> opens a once-only approval popup (<code>approval_ui::Request::once</code>, never passed to the broker) and then downloads in the background with 10% notices.</li>
+<li><code>mouser model test --tool</code> does a full round trip with a demo tool result.</li>
+<li>Packaging: <code>MOUSER_LOCAL_LLM=1 makepkg</code> adds <code>--features local-llm</code>. Default deps are unchanged; the variant also needs cmake, clang, vulkan-headers, shaderc and spirv-headers.</li>
+<li>No CI job for the feature, because it needs Vulkan headers and shaderc that the runners don't have. Instead it was build-checked locally: release build plus <code>clippy --features local-llm -D warnings</code>.</li>
+<li>Live check (Michael OK'd the E2B download, t206u):</li>
+<li>The weights were downloaded with Mouser's own downloader into <code>/mnt/ext1/home/m3talsmith/Projects/.models/gemma/</code> and verified against the published SHA256.</li>
+<li>Run with a temp HOME/MOUSER_HOME and <code>MOUSER_MODELS_DIR</code> pointing there.</li>
+<li>RTX 3060 via Vulkan: load about 1.0 s warm, prompt 2,700-5,400 t/s, generation 91-119 t/s.</li>
+<li>VRAM: 1,227 MiB baseline → 3,396 MiB peak, so about 2.2 GB for E2B plus an 8k context.</li>
+<li>The file was re-verified with sha256sum against the HF API LFS oid.</li>
+<li>The <code>get_time {"city":"Oslo"}</code> call → demo result → "The current time in Oslo is 14:05."</li>
+<li>The first long prompt is slow once, while the NVIDIA driver compiles shaders.</li>
+<li>In-app popup: screenshots <code>~/.cache/mouser-shots/p4b-popup.png</code> and <code>p4b-denied.png</code>. Deny downloads nothing and saves no permission.</li>
+<li>Deferred: E4B not downloaded; no GPU selection or KV-cache reuse across turns; the popup can't cancel a running download; chat mode is P5.</li>
+</ul>
+<h3 id="p5-chat-mode-the-agent-docschatmd">P5: chat mode, the agent (docs/chat.md)</h3>
+<ul>
+<li>Commits:</li>
+<li>42ec7b0 core;</li>
+<li>bcae534 render;</li>
+<li>15b2524 app;</li>
+<li>e737bed docs.</li>
+<li>CI: run 41351536334, green on Linux, macOS and Windows.</li>
+<li>Packages (not installed), in <code>/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-pkg/</code>. Big build dirs now live on /mnt/ext1, not /tmp or ~/.cache.</li>
+<li>default: <code>mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst</code>;</li>
+<li>local-llm: <code>llm/mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst</code> (depends on vulkan-icd-loader).</li>
+<li>Core: <code>agent.rs</code>.</li>
+<li><code>Chat</code> (send/cancel/answer/clear, <code>State</code> with entries and the pending card) and the <code>AgentHost</code> trait.</li>
+<li><code>Check</code> (Allow / Deny / Ask lines) and <code>Answer</code> (Once / ForChat / Deny).</li>
+<li><code>redact()</code>, <code>untrusted()</code>, MAX_STEPS 8, tool output capped at 8,000 characters, transcripts <code>$MOUSER_HOME/chats/*.jsonl</code> (0600).</li>
+<li><code>Preferences.chat</code> (<code>[chat] transcripts</code>).</li>
+<li>Malformed calls with an empty name are dropped; small models sometimes emit them.</li>
+<li>Render: <code>modes/chat.rs</code> <code>ChatMode</code> (hotkey <code>a</code>, the bindings, the dock with header, transcript, card and input) and <code>Host::push</code>.</li>
+<li>App:</li>
+<li><code>chat_host.rs</code> <code>ChatHost</code>. Mouser tools run through <code>AppTools { preapproved: true }</code> after the chat card. Mutating tools always ask; reads obey only a broker "never" for <code>chat</code>. MCP tools follow <code>broker_name</code>/<code>tool_cap</code>.</li>
+<li>Registered after <code>mcp_tools::start</code> in main.</li>
+<li><code>examples/chat_live.rs</code> (required feature local-llm).</li>
+<li>Tests: <code>agent_tests</code> (8: allow, card once/deny/never, for-chat vs always-ask, cancel mid-stream/card/tool (the tool sees the cancel), step limit, transcript, redaction, nameless call) and <code>chat_render_tests</code> (2).</li>
+<li>Live check:</li>
+<li>Temp HOME/MOUSER_HOME, <code>SHELL=/bin/sh</code>, scratch in <code>/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-p5</code>.</li>
+<li>Mock provider (loopback, port 17901) in a floating, unfocused window:<ul>
+<li>redacted token (<code>p5-1-mock-redacted.png</code>);</li>
+<li>the <code>shell_run</code> card (<code>p5-2-card.png</code>), allowed and ran in the tab (<code>p5-3-allowed.png</code>);</li>
+<li>Esc cancel mid-stream (<code>p5-4-cancelled.png</code>);</li>
+<li>deny (<code>p5-5-denied.png</code>), all in <code>~/.cache/mouser-shots/</code>.</li>
+</ul>
+</li>
+<li>Gemma 4 E2B via Vulkan, headless <code>chat_live</code> with a sandboxed sh:<ul>
+<li><code>ls -la</code> card → allow → output → correct file list;</li>
+<li>the token question was answered with <code>DEMO_TOKEN=[redacted]</code>;</li>
+<li>warm: prompt 5,000–8,900 t/s, generation 75–110 t/s, a turn takes 1.4–2.4 s (10.8 s when a new prompt size compiles shaders).</li>
+</ul>
+</li>
+<li>The GUI Gemma screenshot was skipped: the test window was moved to another workspace mid-test, so a region capture would only show the user's screen.</li>
+<li>Open: the Edit button on the card, a model picker in the dock, cost, images, a light-theme screenshot, and open questions 12–14 (answered with the plan's proposals).</li>
+</ul>
+<h3 id="p6-modes-and-engines-are-plugins-docspluginsmd">P6: modes and engines are plugins (docs/plugins.md)</h3>
+<ul>
+<li>Commits:</li>
+<li>7975623 core;</li>
+<li>33c424e render/app/CLI + example;</li>
+<li>1ff252f docs;</li>
+<li>3be0167 queued-event cwd fix;</li>
+<li>4ee3e76 Windows clippy fix.</li>
+<li>CI:</li>
+<li>run 41356839191 failed on Windows clippy (unix-only test helpers), fixed in 4ee3e76;</li>
+<li>run 41357399586 green on Linux, macOS and Windows.</li>
+<li>Packages (not installed), in <code>/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-pkg/</code>:</li>
+<li>default <code>mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst</code>;</li>
+<li>local-llm <code>llm/mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst</code>.</li>
+<li>Core (<code>plugins.rs</code>):</li>
+<li>compiled-in manifests <code>src/builtin/{commander,chat,mouser,skia}.toml</code> (<code>BUILTIN_MANIFESTS</code>, <code>builtin_manifest()</code>);</li>
+<li><code>[engine]</code> (transport <code>library</code>) and <code>[mode]</code> (hotkey, <code>[[mode.keys]]</code>) tables;</li>
+<li><code>Manifest::from_engine</code> / <code>to_engine</code>: engine.toml read as plugin.toml, and <code>engines::read_dir_manifest</code> prefers plugin.toml;</li>
+<li><code>set_enabled</code> works for built-ins and engines except <code>mouser</code> (<code>can_disable</code>);</li>
+<li><code>Registry::modes()</code> / <code>engines()</code>, <code>Entry.hotkey</code>;</li>
+<li><code>CommandReply</code> gains <code>lines</code> and <code>title</code>;</li>
+<li>installing a mode keeps the built-in modes ahead of it.</li>
+<li>Core (<code>engines.rs</code>):</li>
+<li><code>priority()</code> drops disabled engines (they keep their place in prefs);</li>
+<li><code>select</code> refuses disabled ones;</li>
+<li><code>MOUSER_ENGINE</code> is unfiltered.</li>
+<li>The engine order stays in the <code>engines</code> preference, not <code>plugins.order.engine</code>; see plan §8 "As built".</li>
+<li>Render:</li>
+<li><code>Host::from_registry(&amp;Registry, make)</code>: priority order; hotkey clashes are left out with a note; none enabled gives a plain terminal;</li>
+<li><code>Host::names()</code>;</li>
+<li><code>modes/plugin.rs</code> <code>PluginMode</code>: the command transport, one background run per event (activate, key, cwd; latest queued). <code>run</code> must be allowed, and <code>files.read</code> is needed for the cwd.</li>
+<li>App:</li>
+<li>main builds the mode host from the registry where chat used to be pushed; notes are shown after that;</li>
+<li>the sidebar engine list comes from <code>Registry::engines()</code>;</li>
+<li>one clap enum serves <code>plugin</code> and <code>engine</code> (<code>plugin_action</code>), with <code>--kind</code> global on <code>plugin</code>;</li>
+<li><code>plugin_cli::run_kind</code> routes kind engine to <code>engine_cli</code>;</li>
+<li><code>engine_cli::list</code> is registry-driven and shows disabled engines.</li>
+<li>Example: <code>examples/plugins/hello-mode</code> (mode on <code>h</code>, keys t and f).</li>
+<li>Tests:</li>
+<li>core <code>builtin_manifests_are_plugin_toml</code>, <code>mode_and_engine_manifest_checks</code>, <code>engines_are_plugins_disable_and_migrate</code> (old <code>engine = "skia"</code> key);</li>
+<li>render <code>mode_registry_tests</code>;</li>
+<li>app <code>engines_and_modes_through_the_plugin_cli</code> (engine list == plugin list --kind engine) and <code>plugin_toml_engine_installs_through_the_plugin_cli</code> (real flat engine);</li>
+<li>main.rs parse test: engine X == plugin X --kind engine;</li>
+<li>existing commander and engine tests unchanged.</li>
+<li>Full workspace: 423 passed, 0 failed, 4 ignored.</li>
+<li>Live check (release build, temp HOME/MOUSER_HOME, <code>SHELL=/bin/sh</code>, scratch <code>/mnt/ext1/home/m3talsmith/Projects/.cache/mouser-p6</code>):</li>
+<li>in the CLI: engine list == plugin list --kind engine (diff), <code>disable mouser</code> refused, <code>use</code> of a disabled skia refused;</li>
+<li>in a floating, unfocused window: <code>esc :h</code> switched to hello-mode, and its program logged <code>activate</code>, <code>cwd</code>, <code>key time</code>, <code>key files</code> with the cwd; switched to <code>:a</code> and <code>:c</code>.</li>
+<li>No P6 screenshots: the test window is translucent, so a region capture shows what is behind it. Captures that did were deleted at once. Next time make the test window opaque first, or capture headless.</li>
+<li>Open:</li>
+<li>MCP-transport modes (rejected with a message);</li>
+<li>mode plugins can't type into the shell or read the screen;</li>
+<li>the skia row is listed even when not in the order (as before);</li>
+<li>questions 15–16 (engine alias kept; skia stays in the package);</li>
+<li>the full test suite's deliberate engine-crash tests leave SIGABRT core dumps of the debug binary, and the desktop shows a "Process crashed: mouser-app" notice.</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/HANDOVER.md">docs/HANDOVER.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>

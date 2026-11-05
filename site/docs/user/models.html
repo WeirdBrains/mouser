@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model providers — Mouser docs</title>
+<link rel="icon" href="../../assets/icon.png"><link rel="stylesheet" href="../../style.css">
+</head><body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav light">
+  <a class="brand" href="../../"><img class="logo" src="../../assets/logo.svg" alt="" width="36" height="36"> mouser</a>
+  <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
+  <nav id="links" aria-label="Main"><a href="../../docs/user/" aria-current=page>User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
+</header>
+<main id="main"><section class="light doc"><h1 id="model-providers">Model providers</h1>
+<p>P4 of docs/plans/mcp-agent.md. Mouser talks to language models through one
+interface, <code>mouser_core::models::ModelProvider</code>, which streams text and tool
+calls. Every model is a plugin of kind <code>model-provider</code> (decision 5):</p>
+<table>
+<thead>
+<tr>
+<th>Provider</th>
+<th>Kind of plugin</th>
+<th>Wire API</th>
+<th>Default URL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openai</code></td>
+<td>built in</td>
+<td>OpenAI Chat Completions</td>
+<td><code>https://api.openai.com/v1</code></td>
+</tr>
+<tr>
+<td><code>grok</code></td>
+<td>built in</td>
+<td>by key: xAI (OpenAI-compatible), Cursor agents API, or the Grok Bot desktop login</td>
+<td>see §grok</td>
+</tr>
+<tr>
+<td><code>xai</code></td>
+<td>built in</td>
+<td>OpenAI-compatible</td>
+<td><code>https://api.x.ai/v1</code></td>
+</tr>
+<tr>
+<td><code>openrouter</code></td>
+<td>built in</td>
+<td>OpenAI-compatible</td>
+<td><code>https://openrouter.ai/api/v1</code></td>
+</tr>
+<tr>
+<td><code>moonshot</code> (Kimi)</td>
+<td>built in</td>
+<td>OpenAI-compatible</td>
+<td><code>https://api.moonshot.ai/v1</code></td>
+</tr>
+<tr>
+<td><code>anthropic</code></td>
+<td>built in</td>
+<td>Anthropic Messages</td>
+<td><code>https://api.anthropic.com</code></td>
+</tr>
+<tr>
+<td><code>google</code></td>
+<td>built in</td>
+<td>Gemini <code>streamGenerateContent</code></td>
+<td><code>https://generativelanguage.googleapis.com</code></td>
+</tr>
+<tr>
+<td><code>gemma-local</code></td>
+<td>built in (every build)</td>
+<td>llama.cpp, or a compatible URL</td>
+<td>—</td>
+</tr>
+<tr>
+<td>any name</td>
+<td><code>[[models.providers]]</code></td>
+<td>openai / anthropic / google</td>
+<td>yours</td>
+</tr>
+<tr>
+<td>any name</td>
+<td>installed plugin with <code>[model]</code></td>
+<td>openai / anthropic / google</td>
+<td>the plugin's</td>
+</tr>
+</tbody>
+</table>
+<h2 id="first-run">First run</h2>
+<p>With no usable model, the chat (<code>esc :a</code>) shows a picker that sets one up: local Gemma
+(consent, download, SHA256) or a hosted provider (key into the keychain, connection
+test). See docs/chat.md §Picking a model. Code: <code>mouser_core::models::setup</code>.</p>
+<h2 id="commands">Commands</h2>
+<p><code>mouser model default</code> and <code>mouser model test</code> take <code>provider/model</code>, a provider, or
+just a model name when only one provider offers it (<code>mouser model default
+gemma-4-e4b</code> means <code>gemma-local/gemma-4-e4b</code>).</p>
+<pre><code class="language-sh">mouser model list                                  # providers, models, * = default
+printf %s &quot;$KEY&quot; | mouser model add anthropic --key-stdin   # a built-in: key only
+mouser model add openai --key-stdin --model gpt-5 --model gpt-5-mini   # first = its default
+
+# Any compatible URL (llama-server, Ollama, vLLM, LM Studio, a proxy, …)
+mouser model add local --api openai --url http://127.0.0.1:8080/v1 --model qwen3
+mouser model add proxy --api anthropic --url https://llm.example.com --key-stdin --model claude-x
+# Gemini's OpenAI-compatible endpoint instead of the native one:
+mouser model add gemini-compat --api openai --url https://generativelanguage.googleapis.com/v1beta/openai --key-stdin --model gemini-2.5-flash
+
+mouser model default anthropic/claude-sonnet-4-5   # or just a provider: its first model
+mouser model test                                  # stream one reply from the default
+mouser model test local/qwen3 --prompt &quot;hi&quot; --tool # --tool offers get_time and requires a call
+mouser model remove local                          # also deletes its key
+</code></pre>
+<p>Without <code>--model</code>, <code>mouser model add</code> asks the provider for its models (key in
+memory only) and shows a numbered list to pick from on the terminal; Enter takes the
+marked one. <code>--model</code> skips the question. With no terminal it uses the provider's
+default and says which models it offers.</p>
+<p>Keys are checked by shape: a key sent to the wrong provider (a <code>grok_…</code> key to
+<code>xai</code>, an <code>xai-…</code> key to <code>openai</code>, …) is refused with a hint naming the right one.
+Keys and bearer tokens are redacted from every error and log line.</p>
+<h2 id="grok">grok</h2>
+<p>One provider, three ways to sign in:</p>
+<pre><code class="language-sh"># (a) console.x.ai key (xai-…): https://api.x.ai/v1, OpenAI-compatible
+printf %s &quot;$XAI_KEY&quot; | mouser model add grok --key-stdin
+# (b) grok.com key (grok_…, grok.com/dashboard/api-keys): a Cursor API key, so
+#     https://api.cursor.com agents (GET /v1/me checks it, GET /v1/models lists models;
+#     each chat is an agent, follow-ups are runs, replies stream over SSE)
+printf %s &quot;$GROK_KEY&quot; | mouser model add grok --key-stdin
+# (c) the signed-in Grok Bot desktop app (opt-in): pick one of your agents;
+#     Mouser sends with sendPrompt and polls its transcript for the reply
+mouser model add grok --desktop
+mouser model test grok --prompt &quot;hi&quot;
+</code></pre>
+<p>The desktop login reads the Grok Bot app's saved session only when you run
+<code>--desktop</code> and on each chat, sends it only to Cursor hosts, and re-reads the app's
+files once after a 401/417 (sign in again in the app if it still fails). <code>xai</code> stays
+as before for xai- keys.</p>
+<h2 id="configuration">Configuration</h2>
+<pre><code class="language-toml">[models]
+default = &quot;anthropic/claude-sonnet-4-5&quot;
+
+[[models.providers]]
+name = &quot;anthropic&quot;
+api = &quot;anthropic&quot;                 # openai | anthropic | google
+url = &quot;https://api.anthropic.com&quot;
+key = &quot;keychain:model-anthropic&quot;  # a reference; the key is in the OS keychain
+models = [&quot;claude-sonnet-4-5&quot;]
+# ca = &quot;/path/ca.pem&quot;             # trust a self-signed https server
+</code></pre>
+<ul>
+<li>Keys go to the OS keychain (Keychain, Credential Manager, Secret Service) via
+  <code>--key-stdin</code>; with no keychain, a 0600 file in <code>$MOUSER_HOME/secrets/</code> with a
+  warning. They are never printed, logged or written to preferences.toml, and are
+  sent only to that provider's URL. Error messages show the server's message, never
+  the request.</li>
+<li>Plain <code>http://</code> is accepted only for this computer (local servers); remote
+  providers need <code>https://</code> (Mozilla roots, or <code>ca</code>).</li>
+<li>Auth: OpenAI-compatible <code>Authorization: Bearer</code>, Anthropic <code>x-api-key</code> +
+  <code>anthropic-version: 2023-06-01</code>, Google <code>x-goog-api-key</code>. No key, no header (local).</li>
+</ul>
+<h2 id="the-interface">The interface</h2>
+<pre><code class="language-rust">trait ModelProvider: Send + Sync {
+    fn id(&amp;self) -&gt; &amp;str;
+    fn models(&amp;self) -&gt; Vec&lt;ModelInfo&gt;;
+    fn chat(&amp;self, req: &amp;ChatRequest, sink: &amp;mut dyn ChatSink) -&gt; Result&lt;()&gt;;
+}
+// ChatRequest { model, system, messages, tools: Vec&lt;ToolSpec{name, description, schema}&gt;,
+//               tool_choice: Auto|None|Required|Tool(name), max_tokens, temperature }
+// Message { role: User|Assistant, parts: Text | ToolCall{id,name,args} | ToolResult{id,name,content,is_error} }
+// ChatSink::event(Text | ToolStart{index,id,name} | ToolArgs{index,delta} | Usage{input,output} | Done{stop})
+// ChatSink::cancelled() is polled between stream events; true stops the request.
+</code></pre>
+<p><code>stop</code> is normalised to <code>end</code>, <code>tool_use</code>, <code>max_tokens</code> (or the provider's own
+word). <code>models::Collect</code> assembles a reply into an assistant <code>Message</code>.</p>
+<p>Per-model quirks: Kimi K2 models (<code>kimi-k2*</code>) get no <code>temperature</code>, and
+<code>tool_choice = Required</code> is sent as <code>auto</code> (Moonshot rejects <code>required</code>). Anthropic
+requires <code>max_tokens</code> (default 4096).</p>
+<h2 id="model-provider-plugins">Model-provider plugins</h2>
+<p>A plugin can bring a model by declaring an HTTP endpoint (see
+<code>examples/plugins/ollama-model</code>):</p>
+<pre><code class="language-toml">name = &quot;ollama-model&quot;
+version = &quot;0.1.0&quot;
+[[provides]]
+kind = &quot;model-provider&quot;
+[run]
+transport = &quot;http&quot;
+[model]
+api = &quot;openai&quot;
+url = &quot;http://127.0.0.1:11434/v1&quot;
+default = &quot;llama3.2&quot;
+models = [&quot;llama3.2&quot;, &quot;qwen3&quot;]
+</code></pre>
+<h2 id="the-local-model-gemma-local">The local model (<code>gemma-local</code>)</h2>
+<p><code>gemma-local</code> is Mouser's own model: <strong>Gemma 4 E2B</strong> by default and <strong>E4B</strong> as the
+switch (<code>mouser model default gemma-local/gemma-4-e4b</code>). It runs on llama.cpp built
+into every Mouser build and package (Vulkan on Linux, Metal on macOS, the CPU on
+Windows) or, instead, on any OpenAI/Anthropic-compatible server you name. Nothing is
+downloaded until you agree to it.</p>
+<pre><code class="language-sh">mouser model local enable              # Gemma 4 E2B (or the one already downloaded): asks, downloads, makes it the default
+mouser model local enable gemma-4-e4b  # the larger model
+mouser model local disable             # stop offering it; downloads are kept
+</code></pre>
+<p>The chat picker's local rows (<code>esc :a</code>) do the same as <code>enable</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Weights</th>
+<th>File (ggml-org on Hugging Face)</th>
+<th>Size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gemma-4-e2b</code> (default)</td>
+<td><code>gemma-4-E2B-it-Q4_0.gguf</code></td>
+<td>2.84 GB</td>
+</tr>
+<tr>
+<td><code>gemma-4-e4b</code></td>
+<td><code>gemma-4-E4B-it-Q4_0.gguf</code></td>
+<td>4.59 GB</td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-sh">mouser model local                 # engine, server, models dir, what is downloaded
+mouser model local download        # shows the size and asks; --yes skips the question
+mouser model local download gemma-4-e4b
+mouser model local delete gemma-4-e2b
+mouser model local dir /mnt/big/models   # or MOUSER_MODELS_DIR=…; --clear for the default
+mouser model local move /mnt/big/models  # move what is downloaded (SHA256-checked), then use that dir
+mouser model local url http://127.0.0.1:8080/v1 [--api anthropic] [--model NAME] [--key-stdin]
+mouser model local url --clear     # back to the built-in engine
+mouser model test gemma-local --tool     # a tool call, a demo result and the reply
+</code></pre>
+<p>In the app, the <code>[mouser]</code> line <code>model download [gemma-4-e4b]</code> opens an approval popup
+with the size, source and destination. It offers only <strong>Allow once</strong> or <strong>Deny</strong>,
+asks every time and is never saved as a permission. The download then runs in the
+background with progress notices.</p>
+<ul>
+<li><strong>Nothing downloads without consent.</strong> <code>local::download</code> needs a <code>Consent</code> that only the prompt
+  or popup creates. The <code>.part</code> file resumes; size and SHA256 (pinned per file) are checked,
+  and a mismatch deletes it.</li>
+<li><strong>Models dir:</strong> <code>$MOUSER_MODELS_DIR</code>, else <code>[models.local] dir</code>, else <code>$MOUSER_HOME/models</code>.
+  To change it, run <code>mouser model local dir DIR</code>, or put this in <code>config.toml</code>:</li>
+</ul>
+<p><code>toml
+  [models.local]
+  dir = "/mnt/big/models"</code></p>
+<p><code>mouser model local move DIR</code> moves weights that are already downloaded. A rename
+  on the same drive is atomic. Across drives, each file is copied and its SHA256
+  checked before the old copy is removed.
+- <strong><code>[models.local]</code>:</strong> <code>dir</code>, <code>url</code>, <code>api</code>, <code>key</code> (a <code>keychain:</code> ref), <code>model</code>,
+  <code>gpu_layers</code> (default all) and <code>context</code> (default 8192).
+- <strong>Prompting:</strong> the GGUF's own chat template (Jinja, rendered with minijinja), with a
+  Gemma-format fallback. Tools are described in the system turn, and the model answers
+  with <code>&lt;tool_call&gt;{"name":…,"arguments":…}&lt;/tool_call&gt;</code>, which becomes the usual
+  ToolStart/ToolArgs events.
+- <strong>Timings:</strong> set <code>MOUSER_LLM_TIMINGS=1</code> to print load/prompt/generation speed to stderr.</p>
+<h3 id="building-it">Building it</h3>
+<p>llama.cpp is part of the default build (mouser-app's default <code>local-llm</code> feature):</p>
+<pre><code class="language-sh">cargo build --release -p mouser-app
+</code></pre>
+<ul>
+<li><strong>Build needs:</strong> cmake and clang everywhere. On Linux also Vulkan headers, shaderc
+  and spirv-headers (Arch: <code>cmake clang vulkan-headers shaderc spirv-headers</code>;
+  Debian/Ubuntu: <code>cmake clang libclang-dev libvulkan-dev glslc spirv-headers</code>).</li>
+<li><strong>Run needs:</strong> the Vulkan loader on Linux (<code>libvulkan.so.1</code>: Arch <code>vulkan-icd-loader</code>,
+  Debian/Ubuntu <code>libvulkan1</code>, Fedora <code>vulkan-loader</code>). The packages depend on it.
+  Without a Vulkan driver (ICD) llama.cpp runs on the CPU. macOS uses Metal (always
+  there). Windows builds llama.cpp for the CPU, so it needs no <code>vulkan-1.dll</code>.</li>
+<li><strong>Startup:</strong> llama.cpp only starts on the first local chat. Starting Mouser never
+  touches the GPU for the model.</li>
+<li><strong>Size:</strong> the binary grows by about 44 MB (Linux, Vulkan shaders included). The
+  Arch package goes from 11.4 MB to 21.8 MB.</li>
+<li><strong>Without it:</strong> <code>cargo build --no-default-features</code> leaves llama.cpp
+  out. <code>gemma-local</code> then says so and still works through <code>mouser model local url</code>.</li>
+</ul>
+<p>Measured on an RTX 3060 (Vulkan, E2B Q4_0, warm cache): about 0.9 s to load, about
+2,800-5,500 tokens/s on the prompt and about 90-110 tokens/s generating. The NVIDIA
+driver compiles shaders on first use, so the very first long prompt can take
+several seconds.</p>
+<h2 id="not-yet">Not yet</h2>
+<p>Responses API, images, retries/backoff, listing models from the server
+(<code>/models</code>), and the <code>network</code> grant for plugin-declared hosts. The chat mode (docs/chat.md)
+uses the default model.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/models.md">docs/models.md</a></p></section></main>
+<footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
+<script src="../../main.js"></script>
+</body></html>
