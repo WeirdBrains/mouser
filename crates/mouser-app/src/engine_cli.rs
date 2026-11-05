@@ -150,6 +150,7 @@ fn list(out: &mut dyn Write) -> Result<()> {
             writeln!(out, "  ({n} is in the priority list but not installed; skipped)")?;
         }
     }
+    writeln!(out, "  then the basic renderer (built-in CPU drawing; used only when no engine starts; can't be removed)")?;
     let src = if std::env::var("MOUSER_ENGINE").is_ok_and(|v| !v.trim().is_empty()) { "MOUSER_ENGINE" } else { "preferences" };
     writeln!(out, "order ({src}): {}; * = what new windows use (skipped ones are passed over)", order.join(" > "))?;
     Ok(())

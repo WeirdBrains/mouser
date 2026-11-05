@@ -30,6 +30,20 @@ something changed, at most every 8 ms). A damage rectangle is reserved in the AB
 (`dirty`, currently always the full surface) so engines can be told about partial
 updates later without an ABI bump.
 
+
+## The basic renderer
+
+Mouser always has a **basic renderer**: its built-in CPU drawing presented
+with softbuffer. It is not an engine, isn't listed as one, and can never be
+removed (`mouser engine uninstall basic` refuses, and no engine may be named
+`basic` or `cpu`). It draws the terminal whenever no engine starts — on first
+run before an engine is installed, when every engine is skipped or failed, and
+after the last engine crashes. While it draws, the status bar says
+"basic renderer — no GPU engine running yet". When an engine becomes usable
+(installed, unskipped or moved in the priority list), the window switches to
+it live, keeping its tabs. `MOUSER_RENDERER=cpu` forces the basic renderer and
+turns the label and the live switch off. `mouser engine list` ends with
+"then the basic renderer".
 ## 2. Interface
 
 In Rust (`mouser-render/src/engine.rs`):

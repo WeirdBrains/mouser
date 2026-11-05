@@ -224,8 +224,20 @@ type CpuSurface = Surface<Arc<winit::window::Window>, Arc<winit::window::Window>
 
 /// The active backend: a GPU engine (docs/engines.md) when available, else softbuffer.
 enum Painter {
-    Cpu(Box<CpuSurface>),
-    Gpu { engine: Option<Box<dyn engine::Engine>>, list: DisplayList, window: Arc<winit::window::Window>, order: Vec<String> },
+    /// The basic renderer (docs/engines.md): `forced` by `MOUSER_RENDERER=cpu`,
+    /// else used until an engine of `order` can start (then switched live).
+    Cpu {
+        surface: Box<CpuSurface>,
+        window: Arc<winit::window::Window>,
+        order: Vec<String>,
+        forced: bool,
+    },
+    Gpu {
+        engine: Option<Box<dyn engine::Engine>>,
+        list: DisplayList,
+        window: Arc<winit::window::Window>,
+        order: Vec<String>,
+    },
 }
 
 fn report(notes: &[String], using: &str) {
@@ -244,7 +256,7 @@ impl Painter {
     fn pick(window: Arc<winit::window::Window>, width: u32, height: u32) -> Result<Self> {
         let want_cpu = std::env::var("MOUSER_RENDERER").is_ok_and(|v| v.eq_ignore_ascii_case("cpu"));
         if want_cpu {
-            return Self::cpu(window, width, height, " [MOUSER_RENDERER=cpu]");
+            return Self::cpu(window, width, height, " [MOUSER_RENDERER=cpu]", Vec::new(), true);
         }
         Self::gpu(mouser_core::engines::priority(), window, width, height, Vec::new())
     }
@@ -260,19 +272,19 @@ impl Painter {
             }
             Err(e) => {
                 notes.push(format!("no GPU engine ({e:#}); using the CPU renderer"));
-                report(&notes, "cpu");
-                Self::cpu(window, width, height, "")
+                report(&notes, "the basic renderer");
+                Self::cpu(window, width, height, "", order, false)
             }
         }
     }
 
-    fn cpu(window: Arc<winit::window::Window>, width: u32, height: u32, why: &str) -> Result<Self> {
+    fn cpu(window: Arc<winit::window::Window>, width: u32, height: u32, why: &str, order: Vec<String>, forced: bool) -> Result<Self> {
         let context = Context::new(window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer ctx: {e}")))?;
-        let mut surface = Surface::new(&context, window).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
+        let mut surface = Surface::new(&context, window.clone()).map_err(|e| anyhow::anyhow!(format!("softbuffer surface: {e}")))?;
         let _ = surface.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
         log::info!("renderer: cpu (softbuffer)");
         eprintln!("mouser: renderer: cpu (softbuffer){why}");
-        Ok(Painter::Cpu(Box::new(surface)))
+        Ok(Painter::Cpu { surface: Box::new(surface), window, order, forced })
     }
 
     /// The engine this window uses (None on the CPU renderer).
@@ -285,10 +297,20 @@ impl Painter {
 
     /// Swap to a new priority order on the same window; sessions are untouched.
     fn switch(&mut self, order: Vec<String>, width: u32, height: u32) {
-        let Painter::Gpu { engine, window, .. } = self else { return };
-        let window = window.clone();
-        let old = engine.as_ref().map(|e| e.name().to_string()).unwrap_or_default();
-        *engine = None; // release the old surface before the new engine takes the window
+        let (window, old) = match self {
+            Painter::Gpu { engine, window, .. } => {
+                let old = engine.as_ref().map(|e| e.name().to_string()).unwrap_or_default();
+                *engine = None; // release the old surface before the new engine takes the window
+                (window.clone(), old)
+            }
+            Painter::Cpu { forced: true, .. } => return,
+            Painter::Cpu { window, .. } => (window.clone(), engines_basic_label().to_string()),
+        };
+        if matches!(self, Painter::Cpu { .. }) {
+            // Release the softbuffer surface first; a failed start comes back to it.
+            let w = window.clone();
+            *self = Painter::Gpu { engine: None, list: DisplayList::default(), window: w, order: Vec::new() };
+        }
         match Self::gpu(order, window, width, height, Vec::new()) {
             Ok(p) => {
                 if let Some(n) = p.engine_name()
@@ -310,8 +332,8 @@ impl Painter {
         let order = order.clone();
         *engine = None;
         let p = if next.is_empty() {
-            report(&[why], "cpu");
-            Self::cpu(window, width, height, " [mouser engine failed]")
+            report(&[why], "the basic renderer");
+            Self::cpu(window, width, height, " [mouser engine failed]", order.clone(), false)
         } else {
             Self::gpu(next, window, width, height, vec![why]).map(|mut p| {
                 if let Painter::Gpu { order: o, .. } = &mut p {
@@ -328,7 +350,7 @@ impl Painter {
 
     fn resize(&mut self, width: u32, height: u32) {
         match self {
-            Painter::Cpu(s) => {
+            Painter::Cpu { surface: s, .. } => {
                 let _ = s.resize(NonZeroU32::new(width.max(1)).unwrap(), NonZeroU32::new(height.max(1)).unwrap());
             }
             Painter::Gpu { engine: Some(engine), .. } => engine.resize(width, height),
@@ -340,7 +362,7 @@ impl Painter {
     fn paint(&mut self, fonts: &mut FontStack, frame: &Frame, width: u32, height: u32) -> bool {
         let (w, h) = (width as usize, height as usize);
         let failure = match self {
-            Painter::Cpu(surface) => {
+            Painter::Cpu { surface, .. } => {
                 let Ok(mut buf) = surface.buffer_mut() else { return true };
                 if buf.len() >= w * h {
                     let mut canvas = Canvas::new(&mut buf, w, h);
@@ -390,6 +412,43 @@ static NOTICE: std::sync::Mutex<Option<(String, Instant)>> = std::sync::Mutex::n
 
 pub(crate) fn set_notice(msg: String) {
     *NOTICE.lock().unwrap() = Some((msg, Instant::now()));
+}
+
+/// What the status bar says while the basic renderer draws (not when it was
+/// asked for with `MOUSER_RENDERER=cpu`).
+fn basic_status(p: &Painter) -> Option<String> {
+    match p {
+        Painter::Cpu { forced: false, .. } => Some(BASIC_STATUS.to_string()),
+        _ => None,
+    }
+}
+
+/// The status-bar label of the basic renderer.
+pub const BASIC_STATUS: &str = "basic renderer — no GPU engine running yet (`mouser engine list`)";
+
+fn engines_basic_label() -> &'static str {
+    mouser_core::engines::BASIC
+}
+
+/// Switch when the engine to use differs from the current one (`None` = the
+/// basic renderer) and there is one to switch to.
+pub fn should_switch(current: Option<&str>, want: Option<&str>) -> bool {
+    want.is_some() && want != current
+}
+
+#[cfg(test)]
+mod basic_renderer_tests {
+    use super::*;
+
+    #[test]
+    fn switches_from_the_basic_renderer_once_an_engine_can_start() {
+        assert!(should_switch(None, Some("mouser")), "basic -> first engine");
+        assert!(should_switch(Some("mouser"), Some("flat")), "engine -> engine");
+        assert!(!should_switch(Some("flat"), Some("flat")), "already on it");
+        assert!(!should_switch(None, None), "nothing can start: stay on basic");
+        assert!(!should_switch(Some("mouser"), None), "never down to basic by a priority change");
+        assert!(BASIC_STATUS.starts_with("basic renderer"));
+    }
 }
 
 /// The current engine fallback notice, if still fresh.
@@ -554,14 +613,16 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 echo_pending |= key_at.is_some();
             }
             Event::UserEvent(UserEvent::Engines) => {
-                // Switch when the engine this window would now pick differs.
-                if let Painter::Gpu { order, .. } = &painter {
+                // Switch when the engine this window would now pick differs
+                // (also from the basic renderer, once an engine can start).
+                if let Painter::Gpu { order, .. } | Painter::Cpu { order, forced: false, .. } = &painter {
                     let new = mouser_core::engines::priority();
                     let want = engine::first_usable(&new);
                     if new != *order || want.as_deref() != painter.engine_name() {
-                        if want.as_deref() != painter.engine_name() {
+                        if should_switch(painter.engine_name(), want.as_deref()) {
                             painter.switch(new, width, height);
-                        } else if let Painter::Gpu { order, .. } = &mut painter {
+                        } else {
+                            let (Painter::Gpu { order, .. } | Painter::Cpu { order, .. }) = &mut painter;
                             *order = new;
                         }
                         window.request_redraw();
@@ -1009,7 +1070,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 let cursor = if scrolled_back == 0 { hooks.get_cursor.as_ref().and_then(|f| f()) } else { None };
                 let colors = (hooks.get_colors)();
                 let (bg, fg) = (colors.bg, colors.fg);
-                let status = hooks.get_status.as_ref().and_then(|f| f()).or_else(notice);
+                let status = hooks.get_status.as_ref().and_then(|f| f()).or_else(notice).or_else(|| basic_status(&painter));
                 let cell = (fonts.cell_w as u32, fonts.cell_h as u32);
                 let images = hooks.get_images.as_ref().map(|f| f(scrolled_back, renderer.rows, cell)).unwrap_or_default();
                 let frame = Frame {
