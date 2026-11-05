@@ -2032,14 +2032,8 @@ fn spawn_mcp_call(id: &str, tool: &str, args: Option<serde_json::Value>, app_sta
 fn engine_rows() -> Vec<(String, ui::EngineState, Option<String>)> {
     use mouser_core::engines;
     let active = ACTIVE_ENGINE.lock().unwrap().clone();
-    // Enabled engines from the plugin registry (built-ins only if this build has them).
-    let built = mouser_render::engine::available_builtins();
-    let mut names: Vec<String> = mouser_core::plugins::Registry::load()
-        .engines()
-        .iter()
-        .filter(|e| e.dir.is_some() || built.iter().any(|(b, _)| *b == e.name))
-        .map(|e| e.name.clone())
-        .collect();
+    // Enabled engines from the plugin registry (installed or shipped).
+    let mut names: Vec<String> = mouser_core::plugins::Registry::load().engines().iter().map(|e| e.name.clone()).collect();
     let order = engines::priority();
     names.sort_by_key(|n| order.iter().position(|o| o == n).unwrap_or(usize::MAX));
     names

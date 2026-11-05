@@ -1,5 +1,7 @@
 //! `mouser plugin …` with the example plugins (examples/plugins), under a temporary MOUSER_HOME.
 
+mod common;
+
 use mouser_app::plugin_cli::{Action, run};
 use std::path::PathBuf;
 
@@ -110,6 +112,7 @@ fn engines_and_modes_through_the_plugin_cli() {
     let t = tempfile::tempdir().unwrap();
     unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
     unsafe { std::env::remove_var("MOUSER_ENGINE") };
+    unsafe { std::env::set_var("MOUSER_ENGINE_DIRS", common::official_engines(&t.path().join("shipped"))) };
     let engine_list = || {
         let mut v = Vec::new();
         mouser_app::engine_cli::run(&mouser_app::engine_cli::Action::List, &mut v).unwrap();
@@ -125,9 +128,7 @@ fn engines_and_modes_through_the_plugin_cli() {
     let o = kind(Action::Disable("skia".into()), Some("engine")).unwrap();
     assert!(o.contains("skia disabled; engines tried: mouser"), "{o}");
     assert!(kind(Action::Use("skia".into()), Some("engine")).unwrap_err().to_string().contains("disabled"));
-    if mouser_render::engine::available_builtins().iter().any(|(n, _)| *n == "skia") {
-        assert!(engine_list().contains("disabled"), "{}", engine_list());
-    }
+    assert!(engine_list().contains("disabled"), "{}", engine_list());
     // `mouser plugin enable skia` (no --kind) reaches the same engine.
     cli(Action::Enable("skia".into())).unwrap();
     assert!(mouser_core::plugins::is_enabled("skia"));

@@ -1,9 +1,10 @@
 //! Swappable GPU rendering engines (docs/engines.md).
 //!
 //! The core composes each frame into a [`DisplayList`]; an engine rasterises
-//! and presents it. Built in: `mouser` (wgpu) and, with the `skia` feature,
-//! `skia`. Custom engines are shared libraries speaking the C ABI in
-//! `mouser-engine-abi`. The softbuffer CPU renderer is not an engine.
+//! and presents it. Every engine is a shared library speaking the C ABI in
+//! `mouser-engine-abi`, Mouser's own `mouser` (wgpu) and `skia` included
+//! (shipped beside the executable). The softbuffer basic renderer is not an
+//! engine; it draws when none starts.
 
 use crate::text::{DisplayList, DrawOp, FontStack};
 use anyhow::{Result, anyhow, bail};
@@ -25,61 +26,20 @@ pub trait Engine {
     fn draw(&mut self, list: &DisplayList, fonts: &mut FontStack) -> Result<bool>;
 }
 
-/// The default engine: the wgpu renderer.
-pub struct MouserEngine(pub crate::gpu::GpuPainter);
-
-impl Engine for MouserEngine {
-    fn name(&self) -> &str {
-        "mouser"
-    }
-    fn description(&self) -> String {
-        format!("wgpu, {}", self.0.description)
-    }
-    fn resize(&mut self, width: u32, height: u32) {
-        self.0.resize(width, height)
-    }
-    fn draw(&mut self, list: &DisplayList, fonts: &mut FontStack) -> Result<bool> {
-        Ok(self.0.draw(list, fonts))
-    }
-}
-
-/// Built-in engines this build has.
-pub fn available_builtins() -> Vec<(&'static str, &'static str)> {
-    let mut v = vec![("mouser", "wgpu (Vulkan/GL/Metal/DX12), default")];
-    if cfg!(feature = "skia") {
-        v.push(("skia", "Skia over OpenGL"));
-    }
-    v
-}
-
 fn create_named(name: &str, window: &Arc<Window>, width: u32, height: u32) -> Result<Box<dyn Engine>> {
-    if name == "mouser" {
-        return Ok(Box::new(MouserEngine(crate::gpu::GpuPainter::new(window.clone(), width, height)?)));
-    }
     if let Err(why) = skip_check(name) {
         bail!("{why}");
     }
-    if !engines::is_builtin(name) && crate::engine_host::isolated() {
+    if crate::engine_host::isolated() {
         // Isolated: the library is only ever loaded in the host process, and a
         // crash there is caught as EngineCrashed (no crash marker needed).
         let inst = engines::find(name).ok_or_else(|| anyhow!("no engine named {name} (see `mouser engine list`)"))?;
         return Ok(Box::new(crate::engine_host::HostedEngine::create(&inst.library(), name, window, width, height)?));
     }
-    let lib = if engines::is_builtin(name) { None } else { Some(load_installed(name)?) };
-    #[cfg(not(feature = "skia"))]
-    if lib.is_none() {
-        bail!("this build has no Skia engine (built without the `skia` feature)");
-    }
+    let lib = load_installed(name)?;
     engines::set_sentinel(name);
-    let made: Result<Box<dyn Engine>> = match lib {
-        Some(lib) => CustomEngine::create(lib, window, width, height).map(|e| Box::new(e) as Box<dyn Engine>),
-        #[cfg(feature = "skia")]
-        None => crate::skia::SkiaEngine::new(window.clone(), width, height).map(|e| Box::new(e) as Box<dyn Engine>),
-        #[cfg(not(feature = "skia"))]
-        None => unreachable!(),
-    };
-    match made {
-        Ok(inner) => Ok(Box::new(Guarded { inner, frames: 0 })),
+    match CustomEngine::create(lib, window, width, height) {
+        Ok(inner) => Ok(Box::new(Guarded { inner: Box::new(inner), frames: 0 })),
         Err(e) => {
             engines::clear_sentinel(name);
             Err(e)
@@ -90,9 +50,7 @@ fn create_named(name: &str, window: &Arc<Window>, width: u32, height: u32) -> Re
 /// The first engine of `order` that is not skipped and exists in this build
 /// (what a window would try first).
 pub fn first_usable(order: &[String]) -> Option<String> {
-    engines::normalize(order.iter().cloned())
-        .into_iter()
-        .find(|n| skip_check(n).is_ok() && (n == "mouser" || available_builtins().iter().any(|(b, _)| b == n) || engines::find(n).is_some()))
+    engines::normalize(order.iter().cloned()).into_iter().find(|n| skip_check(n).is_ok() && engines::find(n).is_some())
 }
 
 /// The message of a caught panic.
@@ -131,35 +89,30 @@ pub fn load_installed(name: &str) -> Result<CustomLibrary> {
 
 /// Walk `order` (mouser is always in it) and start the first engine that
 /// works. Returns it and one message per engine passed over (skipped or
-/// failed), each with its restore command. Errors only if even mouser fails
-/// (the caller then uses the CPU renderer).
+/// failed), each with its restore command. Errors when none starts (the
+/// caller then uses the basic renderer); `mouser` missing is not a failure.
 pub fn create(order: &[String], window: &Arc<Window>, width: u32, height: u32) -> Result<(Box<dyn Engine>, Vec<String>)> {
     let mut notes = Vec::new();
-    let mut last = None;
     for name in engines::normalize(order.iter().cloned()) {
+        if name == engines::DEFAULT && engines::find(&name).is_none() {
+            continue;
+        }
         let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| create_named(&name, window, width, height)));
-        let made = match made {
-            Ok(r) => r,
-            Err(p) => {
-                let why = format!("engine {name} panicked while starting: {}", panic_text(&p));
-                engines::mark_skipped(&name, &why);
-                if name != "mouser" {
-                    notes.push(format!("{why}; skipped until `{}`", unskip_command(&name)));
-                    continue;
-                }
-                Err(anyhow!(why))
-            }
-        };
         match made {
-            Ok(e) => {
+            Ok(Ok(e)) => {
                 engines::clear_failure(&name);
                 return Ok((e, notes));
             }
-            Err(e) if name == "mouser" => last = Some(e),
-            Err(e) => notes.push(fallback_message(&name, &format!("{e:#}"), "failed to start")),
+            Ok(Err(e)) => notes.push(fallback_message(&name, &format!("{e:#}"), "failed to start")),
+            Err(p) => {
+                let why = format!("engine {name} panicked while starting: {}", panic_text(&p));
+                engines::mark_skipped(&name, &why);
+                notes.push(format!("{why}; skipped until `{}`", unskip_command(&name)));
+            }
         }
     }
-    Err(last.unwrap_or_else(|| anyhow!("no GPU engine")))
+    let why = if notes.is_empty() { "no GPU engine installed".to_string() } else { notes.join(" | ") };
+    Err(anyhow!(why))
 }
 
 /// The engines to try after `failed` broke at run time: the rest of the
@@ -216,11 +169,6 @@ impl Engine for Guarded {
         }
         r
     }
-}
-
-/// Fallback after a runtime failure.
-pub fn create_default(window: &Arc<Window>, width: u32, height: u32) -> Result<Box<dyn Engine>> {
-    create_named("mouser", window, width, height)
 }
 
 /// A loaded custom engine library with a checked table: v2 when the library

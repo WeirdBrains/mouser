@@ -15,13 +15,10 @@ pub mod clipboard;
 pub mod engine;
 pub mod engine_host;
 pub mod frame;
-pub mod gpu;
 pub mod keys;
 pub mod markdown;
 pub mod modes;
 pub mod scale;
-#[cfg(feature = "skia")]
-pub mod skia;
 #[cfg(unix)]
 pub mod split;
 pub mod text;

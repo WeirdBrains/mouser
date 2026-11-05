@@ -19,7 +19,7 @@ the same registry.
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 | `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
-| `builtin` | compiled into Mouser (commander, chat, the mouser and skia engines, the model adapters); reserved | always there | part of Mouser |
+| `builtin` | compiled into Mouser (commander, chat, preferences, the model adapters); reserved | always there | part of Mouser |
 
 Native libraries are only for engines (kind `engine`, transport `library`); their
 C ABI is unchanged (docs/engines.md).
@@ -117,11 +117,11 @@ reserved.
 |---|---|---|---|
 | `commander` | mode | `c` | yes |
 | `chat` | mode | `a` | yes |
-| `mouser` | engine (wgpu, CPU fallback) | | **no**: the permanent last fallback |
-| `skia` | engine (in builds with the `skia` feature) | | yes |
 | `openai`, `xai`, `openrouter`, `moonshot`, `anthropic`, `google`, `gemma-local` | model-provider | | yes |
 
-Their manifests are compiled in (`crates/mouser-core/src/builtin/*.toml`,
+The engines `mouser` (can't be disabled; the last engine tried) and `skia` are
+libraries shipped with Mouser, not built in ([Engines](./engines.md)).
+The built-ins' manifests are compiled in (`crates/mouser-core/src/builtin/*.toml`,
 `transport = "builtin"`; no dynamic loading of Mouser's own code). Disabling
 commander and chat leaves no mode: Mouser is then a plain terminal (the mode-less
 fallback), and `mouser plugin list` says so. A disabled engine is passed over when

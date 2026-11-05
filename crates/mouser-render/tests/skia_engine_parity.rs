@@ -1,8 +1,7 @@
 //! The skia engine library (`crates/mouser-engine-skia`, through the C ABI
-//! frame) draws what Mouser's built-in skia engine draws: both paint the same
-//! full frame on a Skia CPU raster surface and must match within a small
-//! tolerance. (The GL presentation around it is the same code in both.)
-#![cfg(feature = "skia")]
+//! frame) draws what Mouser's former built-in skia engine drew: its CPU raster
+//! frame must match `golden/skia-900x520.png` (rendered by the built-in
+//! before it was removed) within a small tolerance.
 
 use mouser_render::engine::FrameBuf;
 use mouser_render::frame::{CellPaint, CursorShape, Frame, ImageDraw, render_frame};
@@ -103,10 +102,14 @@ fn max_diff(a: &[u32], b: &[u32]) -> (u32, usize, usize) {
 }
 
 #[test]
-fn the_skia_engine_library_draws_like_the_built_in_engine() {
+fn the_skia_engine_library_draws_like_the_former_built_in_engine() {
     let mut fonts = FontStack::embedded(16.0);
     let list = scene(&mut fonts);
-    let builtin = mouser_render::skia::render_raster(&list, &mut fonts);
+    let builtin = {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/skia-900x520.png");
+        let img = image::open(&path).unwrap().to_rgb8();
+        img.pixels().map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32).collect::<Vec<u32>>()
+    };
     let mut lib = mouser_engine_skia::Renderer::raster(W, H).unwrap();
     let mut buf = FrameBuf::default();
     buf.keep_alpha = true;
@@ -117,10 +120,10 @@ fn the_skia_engine_library_draws_like_the_built_in_engine() {
         let b = lib.read_pixels().unwrap();
         let (worst, at, differing) = max_diff(&builtin, &b);
         eprintln!("round {round}: max channel diff {worst}, {differing} pixels differ");
-        assert!(builtin.iter().any(|&p| p != builtin[0]), "the built-in drew something");
+        assert!(builtin.iter().any(|&p| p != builtin[0]), "the golden image has a scene");
         assert!(
             worst <= TOLERANCE,
-            "round {round}: pixel ({}, {}) differs by {worst} (built-in {:06x}, library {:06x})",
+            "round {round}: pixel ({}, {}) differs by {worst} (golden {:06x}, library {:06x})",
             at as u32 % W,
             at as u32 / W,
             builtin[at],

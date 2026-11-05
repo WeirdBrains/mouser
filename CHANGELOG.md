@@ -20,6 +20,7 @@
 - Mouser's wgpu renderer is also an engine library on the C ABI (`crates/mouser-engine-wgpu`, engine `mouser`, ABI v2), pixel-identical to the built-in renderer in a new offscreen parity test that CI runs on a software adapter. ABI v2 frames keep translucent colours (top byte `255 - opacity`); v1 engines still get opaque ones.
 - Mouser's Skia renderer is also an engine library on the C ABI (`crates/mouser-engine-skia`, engine `skia`, ABI v2), pixel-identical to the built-in skia engine in a new raster parity test.
 - Engines can ship with Mouser: `engines/<name>/` beside the executable (or the official libraries loose next to a development build) are found after the user's installs, can't be uninstalled, and `MOUSER_ENGINE_DIRS` overrides where they are looked for.
+- The `mouser` (wgpu) and `skia` engines are no longer compiled into Mouser: they ship as engine libraries in `engines/` beside it (a newer one can be installed over them), Mouser no longer links wgpu or Skia, and the `skia` cargo feature is gone. When neither starts, the basic renderer draws; `mouser` can now be skipped after a crash like any engine. The parity tests hold the libraries to golden frames saved from the old built-ins.
 
 ### Fixed
 
