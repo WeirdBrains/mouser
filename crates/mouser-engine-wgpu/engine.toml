@@ -1,0 +1,5 @@
+name = "mouser"
+version = "0.1.0"
+abi = 2
+library = "libmouser_engine_wgpu.so"
+description = "Mouser's wgpu GPU renderer (Vulkan/GL/Metal/DX12)"

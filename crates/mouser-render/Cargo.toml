@@ -48,6 +48,7 @@ skia = ["dep:skia-safe", "dep:glutin"]
 [dev-dependencies]
 tempfile = "3.10.1"
 mouser-engine-example = { path = "../mouser-engine-example" }
+mouser-engine-wgpu = { path = "../mouser-engine-wgpu" }
 
 # A mode plugin process end to end: the test binary runs itself as the plugin.
 [[test]]
