@@ -161,8 +161,8 @@ configured provider works too. The header shows <code>provider/model</code>.</p>
 <li><code>mouser_core::agent</code>: <code>Chat</code> (send, cancel, answer, clear), <code>AgentHost</code> (context,
   tools, check, call, model), redaction and untrusted marking, transcripts. Tested
   with a scripted fake provider in <code>crates/mouser-core/tests/agent_tests.rs</code>.</li>
-<li><code>mouser_render::modes::chat::ChatMode</code>: the dock (header, transcript, card, input).
-  Tests are in <code>crates/mouser-render/tests/chat_render_tests.rs</code>.</li>
+<li><code>plugins/chat</code> (<code>mouser-chat</code>): the dock (header, transcript, card, input), a mode
+  plugin; <code>plugins/chat/tests/through_mouser.rs</code> drives it through Mouser.</li>
 <li><code>crates/mouser-app/src/chat_host.rs</code>: the app's host (tabs, AppTools with
   <code>preapproved</code>, MCP clients, broker checks).</li>
 <li><code>cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"</code>:
@@ -171,7 +171,8 @@ configured provider works too. The header shows <code>provider/model</code>.</p>
 <h2 id="as-a-plugin-program">As a plugin program</h2>
 <p><code>plugins/chat</code> (<code>mouser-chat</code>) is the chat mode as a separate program, built only on
 <code>mouser-mode-api</code> with its <code>markdown</code> feature. Installed as a <code>transport = "mode"</code>
-plugin named <code>chat</code>, it replaces the built-in mode (hotkey <code>a</code>). It needs the
+plugin named <code>chat</code>, it is the chat mode (hotkey <code>a</code>; Mouser has no built-in chat
+since 1.4.0). It needs the
 <code>agent.use</code> permission. The agent itself still runs inside Mouser: the plugin sends
 <code>agent.send</code> / <code>agent.cancel</code> / <code>agent.clear</code> and draws the transcript from
 <code>agent.state</code> events, so your keys and models never leave Mouser. Tool-call cards are
