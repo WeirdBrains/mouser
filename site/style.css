@@ -71,3 +71,10 @@ p,li,td{overflow-wrap:anywhere}
 nav a[aria-current]{color:var(--cyan);font-weight:700}
 .docfoot{padding:1rem clamp(1rem,4vw,3rem);font-size:.8rem;color:#3f5b6e;background:#e3eff5}
 @media (max-width:1100px){.menu{display:block}nav{display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg);border-bottom:1px solid var(--line);padding:.5rem 1rem}nav.open{display:flex;flex-direction:column}nav a{margin:.4rem 0}}
+/* Doc headers alternate the front page's section bands (dark / light). Applies to every .doc page. */
+.doc h1,.doc h2{padding:.55rem .9rem;border-radius:6px;border-left:4px solid;overflow-wrap:anywhere}
+.doc h1,.doc h2:nth-of-type(odd){background:linear-gradient(160deg,#04192A,#0a2a40);color:#d6e6f2;border-color:#3fd8e8}
+.doc h2:nth-of-type(even){background:linear-gradient(160deg,#ffffff,#e3eff5);color:#0b2233;border:1px solid #c9dbe6;border-left:4px solid #0a7f8c}
+.doc h1 a,.doc h2:nth-of-type(odd) a,.doc h2:nth-of-type(odd)::before{color:#3fd8e8}
+.doc h2:nth-of-type(even) a,.doc h2:nth-of-type(even)::before{color:#0a7f8c}
+.doc h3:nth-of-type(odd){color:#0a7f8c}.doc h3:nth-of-type(even){color:#0b4f63}
