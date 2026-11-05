@@ -109,3 +109,14 @@ Needs the maintainer's personal AUR account (registration is closed at the momen
    both PKGBUILDs install it.
 4. Per release, push the updated `mouser-bin` PKGBUILD/.SRCINFO to the AUR.
 
+
+## Linux build host
+
+The Linux release builds on Ubuntu 22.04 (glibc 2.35), not `ubuntu-latest`: a
+binary built against a newer glibc fails to start on older distributions
+(`GLIBC_2.43 not found`). 22.04 has no `glslc` package and its Vulkan headers are
+too old for llama.cpp, so the workflow unpacks the LunarG Vulkan SDK and puts its
+`bin/` first on PATH. The plugin and engine repos build on 22.04 for the same reason.
+
+Run the workflow by hand (Actions → Release → Run workflow) to build every artifact
+without publishing: the publish job only runs for `v*` tags.
