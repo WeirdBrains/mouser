@@ -226,13 +226,17 @@ impl StdioMode {
         match m {
             Out::View { dock, panel, images, fullscreen } => {
                 let mut out = Vec::new();
+                let mut presented = Vec::new();
                 for i in images {
                     let rgba = match i.pixels {
                         Pixels::Slot(s) => {
                             let n = (i.width as usize) * (i.height as usize) * 4;
                             let ring = self.sup.as_ref().and_then(|s| s.connection()).and_then(|c| c.ring.as_ref());
-                            match ring.and_then(|r| r.slot(s)).filter(|b| b.len() >= n) {
-                                Some(b) => Arc::new(b[..n].to_vec()),
+                            let copied = ring.and_then(|r| r.slot(s)).filter(|b| b.len() >= n).map(|b| Arc::new(b[..n].to_vec()));
+                            // Copied out: the plugin may write the slot again.
+                            presented.push(s);
+                            match copied {
+                                Some(b) => b,
                                 None => continue,
                             }
                         }
@@ -249,6 +253,9 @@ impl StdioMode {
                 let keys: Vec<u64> = out.iter().map(|i| i.key).collect();
                 self.images.retain(|k, _| keys.contains(k));
                 self.view = View { dock: dock.map(|p| p.map(UiAction::from)), panel: panel.map(|p| p.map(UiAction::from)), images: out, fullscreen };
+                for slot in presented {
+                    self.event("frame.presented", json!({"slot": slot}));
+                }
             }
             Out::Wants(w) => self.wants = Some(w),
             Out::Effect(e) => {

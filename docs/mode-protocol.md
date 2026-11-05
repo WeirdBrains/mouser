@@ -192,6 +192,12 @@ slot. Mouser copies the slot into the GPU texture cache under the image's key,
 so an image that hasn't changed is sent as `Cached` and never copied again.
 Where the ring can't be mapped, pixels go inline in the message.
 
+Mouser sends `frame.presented` (`{"slot": n}`) once it has copied a slot, and a
+plugin must not write that slot again before then. A plugin pushing frames on its
+own (a video player) therefore never overwrites a frame Mouser hasn't taken: when
+every slot is still waiting it skips a frame rather than queue it. The ring has two
+1080p slots.
+
 Measured with the test plugin (`mouser-mode-echo`), 1080p RGBA at 60 fps for
 10 s:
 

@@ -339,7 +339,10 @@ mode draws (list, grid, carousel, search, the file view, images) and asks for th
 same effects; `remote_through_mouser.rs` does the same for a remote folder over a
 fake ssh (list, grid tiles and snippets, the image and text views). A bound key the
 mode passes on (`alt+k` with no player) is typed into the shell as the built-in mode
-let it through. Not yet in the plugin: the player's frames through shared memory.
+let it through. The player runs in the plugin too: it starts ffmpeg itself, plays the
+audio, and hands each frame to Mouser through shared memory
+(`player_through_mouser.rs`: a 1280x720 60 fps clip arrives at 61.5 fps through the
+plugin and 61.5 fps in the built-in mode, debug build on Linux).
 
 ### Plugin API (`mouser_render::modes`)
 

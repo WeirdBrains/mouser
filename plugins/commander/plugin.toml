@@ -1,6 +1,7 @@
 # The commander mode as a plugin (docs/commander.md). It replaces the
 # built-in commander mode when installed. It lists and previews files
-# itself (thumbnails, Markdown, text) and starts ffmpeg/ffprobe for video.
+# itself (thumbnails, Markdown, text) and plays media with ffmpeg/ffprobe,
+# handing video frames to Mouser through shared memory.
 # With remote.read it shows the remote shell's folder and previews its files
 # over the session's own ssh connection, as the built-in mode does.
 name = "commander"

@@ -42,12 +42,19 @@ struct State {
     sent: HashSet<u64>,
     wants: Option<Wants>,
     active: bool,
+    /// Shared-memory slots Mouser hasn't copied yet (`frame.presented`
+    /// frees one); a slot is written only when free.
+    busy: Vec<bool>,
 }
+
+/// Images this big go through shared memory (player frames, large
+/// previews); smaller ones inline.
+const SHM_MIN: usize = 256 << 10;
 
 impl State {
     fn new() -> Self {
         let (keys, _) = modes::Keymap::load("commander", commander::BINDINGS);
-        Self { mode: view::CommanderMode::new(), keys, ctx: None, sent: HashSet::new(), wants: None, active: false }
+        Self { mode: view::CommanderMode::new(), keys, ctx: None, sent: HashSet::new(), wants: None, active: false, busy: Vec::new() }
     }
 
     /// Draw and send the view, then what the keyboard should bring.
@@ -57,15 +64,34 @@ impl State {
             return;
         }
         let v = self.mode.view(&ctx, &self.keys);
+        // Big new images take free shared-memory slots. When the slots are
+        // all still waiting for Mouser, wait for it (`frame.presented` draws
+        // again) rather than queue frames: the player drops, Mouser doesn't lag.
+        let big = v.images.iter().filter(|i| !self.sent.contains(&i.key) && i.rgba.len() >= SHM_MIN).count();
+        let slot_bytes = host.with_slot(0, |s| s.len()).unwrap_or(0);
+        let ring = slot_bytes > 0 && !self.busy.is_empty();
+        let free: Vec<u32> = (0..self.busy.len() as u32).filter(|&s| !self.busy[s as usize]).collect();
+        if ring && big > 0 && big <= self.busy.len() && free.len() < big {
+            return;
+        }
+        let mut free = free.into_iter();
         let mut sent = HashSet::new();
         let images = v
             .images
             .into_iter()
             .map(|i| {
+                let n = i.rgba.len();
                 let pixels = if self.sent.contains(&i.key) || sent.contains(&i.key) {
                     Pixels::Cached
                 } else {
-                    Pixels::Inline { format: ImageFormat::Rgba, bytes: i.rgba.to_vec() }
+                    let slot = if ring && n >= SHM_MIN && n <= slot_bytes { free.next() } else { None };
+                    match slot.and_then(|s| host.with_slot(s, |b| b[..n].copy_from_slice(&i.rgba)).map(|_| s)) {
+                        Some(s) => {
+                            self.busy[s as usize] = true;
+                            Pixels::Slot(s)
+                        }
+                        None => Pixels::Inline { format: ImageFormat::Rgba, bytes: i.rgba.to_vec() },
+                    }
                 };
                 sent.insert(i.key);
                 ImageRef { key: i.key, width: i.width, height: i.height, src: i.src, rect: i.rect, pixels }
@@ -170,18 +196,22 @@ impl mouser_mode_api::Mode for Plugin {
                 "shell.cwd_changed",
                 "shell.remote_ssh",
                 "shell.remote_changed",
+                "frame.presented",
             ]
             .iter()
             .map(|e| Listener::on(e))
             .collect(),
             emits: vec![],
             wants_mcp: false,
-            shm: false,
+            shm: true,
         }
     }
 
     fn welcome(&mut self, w: &Accepted, host: &Host) {
-        self.lock().ctx = Some(w.ctx);
+        let mut s = self.lock();
+        s.ctx = Some(w.ctx);
+        s.busy = vec![false; w.shm.as_ref().map_or(0, |r| r.slots as usize)];
+        drop(s);
         self.start_redraws(host);
     }
 
@@ -200,6 +230,12 @@ impl mouser_mode_api::Mode for Plugin {
             "shell.cwd_changed" => {
                 if let Some(d) = e.payload["dir"].as_str() {
                     s.mode.cwd_changed(Path::new(d));
+                }
+            }
+            "frame.presented" => {
+                let slot = e.payload["slot"].as_u64().unwrap_or(u64::MAX) as usize;
+                if let Some(b) = s.busy.get_mut(slot) {
+                    *b = false;
                 }
             }
             "shell.remote_ssh" => {
