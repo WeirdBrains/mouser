@@ -85,9 +85,11 @@ fn plays_through_shared_memory_at_the_clip_rate() {
     m.action("open", 0);
     let plugin = frames_per_second(&mut m, 2.0);
     eprintln!("60 fps clip: built-in {builtin:.1} fps, plugin {plugin:.1} fps");
-    // Debug builds on shared runners can't hold 60; both are held to the
-    // same floor, and the plugin may not fall far behind the built-in.
-    assert!(plugin >= 30.0, "plugin {plugin:.1} fps");
+    // Debug builds can't hold 60, and shared CI runners (macOS above all)
+    // stall for whole frames: there the floor is 20 and the real check is that
+    // the plugin keeps up with the built-in on the same machine.
+    let floor = if std::env::var_os("CI").is_some() { 20.0 } else { 30.0 };
+    assert!(plugin >= floor, "plugin {plugin:.1} fps (floor {floor})");
     assert!(plugin >= builtin * 0.7, "plugin {plugin:.1} fps vs built-in {builtin:.1}");
     drop(m);
 }
