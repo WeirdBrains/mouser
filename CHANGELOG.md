@@ -12,6 +12,10 @@
 - The preferences mode is also a separate plugin program now (`plugins/preferences`, `mouser-preferences`), built only on `mouser-mode-api`. Installed, it replaces the built-in mode. API keys are typed into Mouser's popup, never into the plugin. A mode plugin's open dropdown (a `Popup` item) now takes the arrows and Enter, like a focused field. See docs/preferences.md.
 - The chat mode is also a separate plugin program (`plugins/chat`, `mouser-chat`) on `mouser-mode-api`. The agent, your keys and tool approvals stay in Mouser; the plugin draws the Markdown transcript and has a model picker. The Markdown and highlighting code moved into `mouser-mode-api` (feature `markdown`) so plugins render it the same way. See docs/chat.md and docs/markdown.md.
 
+### Fixed
+
+- Tests: the headless test UI writes its status file through a per-process temp file and a rename, so a crashed UI and its replacement can't interleave their writes (a flaky engine-fallback test on macOS).
+
 ## [1.3.0] - 2026-11-04
 
 ### Added

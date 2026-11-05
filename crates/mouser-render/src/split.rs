@@ -567,7 +567,9 @@ fn headless(c: &Arc<Client>, first: bool) -> Result<()> {
             screen.join("\n"),
             back.join("\n"),
         );
-        let tmp = dump.with_extension("tmp");
+        // Atomic and per process: while a crashed UI is replaced, the old and
+        // new UI both write; a shared temp name let their bytes interleave.
+        let tmp = dump.with_extension(format!("{}.tmp", std::process::id()));
         std::fs::write(&tmp, text)?;
         std::fs::rename(&tmp, &dump)?;
         std::thread::sleep(Duration::from_millis(100));
