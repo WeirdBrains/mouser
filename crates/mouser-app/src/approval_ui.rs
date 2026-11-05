@@ -6,6 +6,7 @@
 use crate::tabs::Session;
 use mouser_core::permissions::{Answer, Scope};
 use mouser_core::plugins;
+use mouser_render::modes::prompt::{Prompt, PromptAnswer, PromptKind};
 use mouser_render::{UiViewport, ui};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -28,6 +29,22 @@ pub enum Origin {
     McpTool { id: String, tool: String, args: Option<serde_json::Value> },
     /// Download these local-model weights (asked every time, never saved).
     ModelDownload { id: String },
+    /// A mode plugin's question (`mouser_render::modes::prompt`).
+    ModePrompt { reply: std::sync::mpsc::Sender<PromptAnswer>, tag: PromptTag },
+}
+
+/// Which kind of mode-plugin question a [`Origin::ModePrompt`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptTag {
+    Approve,
+    /// Type a key: the popup has a masked field; Save / Cancel.
+    Secret,
+    /// A permission from the plugin's manifest: Allow always / Deny / Never.
+    Permission,
+    /// An agent tool card; "Allow for this chat" when offered.
+    AgentTool {
+        for_chat: bool,
+    },
 }
 
 pub struct Request {
@@ -39,17 +56,71 @@ pub struct Request {
     pub origin: Origin,
     /// Only "Allow once" / "Deny" (nothing is remembered).
     pub once_only: bool,
+    /// A secret being typed (masked; only for [`PromptTag::Secret`]).
+    pub secret: Option<String>,
     shown: Option<Instant>,
 }
 
 impl Request {
     pub fn new(plugin: &str, caps: Vec<String>, detail: Vec<String>, scope: Scope, origin: Origin) -> Self {
-        Request { plugin: plugin.into(), caps, detail, scope, origin, once_only: false, shown: None }
+        Request { plugin: plugin.into(), caps, detail, scope, origin, once_only: false, secret: None, shown: None }
+    }
+
+    /// A mode plugin's question, drawn and answered here (never by the plugin).
+    pub fn from_prompt(p: Prompt) -> Self {
+        let (tag, caps, detail, secret) = match p.kind {
+            PromptKind::Approve { title, detail } => {
+                let mut d = vec![format!("  {title}")];
+                d.extend(detail.into_iter().map(|l| format!("  {l}")));
+                (PromptTag::Approve, vec![], d, None)
+            }
+            PromptKind::Secret { key, label } => (
+                PromptTag::Secret,
+                vec![],
+                vec![format!("  {label} ({key})"), "  Saved in your keychain; the plugin never sees it.".into()],
+                Some(String::new()),
+            ),
+            PromptKind::Permission { cap, detail } => (PromptTag::Permission, vec![cap], detail.into_iter().skip(1).collect(), None),
+            PromptKind::AgentTool { display, lines, for_chat } => {
+                let mut d = vec![format!("  run {display}")];
+                d.extend(lines.into_iter().map(|l| format!("  {l}")));
+                (PromptTag::AgentTool { for_chat }, vec![], d, None)
+            }
+        };
+        let once_only = tag != PromptTag::Permission;
+        Request {
+            plugin: p.plugin,
+            caps,
+            detail,
+            scope: Scope::Installed,
+            origin: Origin::ModePrompt { reply: p.reply, tag },
+            once_only,
+            secret,
+            shown: None,
+        }
+    }
+
+    fn tag(&self) -> Option<PromptTag> {
+        match &self.origin {
+            Origin::ModePrompt { tag, .. } => Some(*tag),
+            _ => None,
+        }
     }
 
     /// A question that is never saved as a permission (e.g. a model download).
     pub fn once(who: &str, detail: Vec<String>, origin: Origin) -> Self {
         Request { once_only: true, ..Request::new(who, vec![], detail, Scope::Installed, origin) }
+    }
+}
+
+/// Buttons for a request: (label, answer index, primary).
+fn buttons_for(r: &Request) -> Vec<(&'static str, u8, bool)> {
+    match r.tag() {
+        Some(PromptTag::Secret) => vec![("Save [enter]", 0, true), ("Cancel [esc]", 2, false)],
+        Some(PromptTag::AgentTool { for_chat: true }) => {
+            vec![("Allow once [y]", 0, true), ("Allow for this chat [a]", 1, false), ("Deny [n]", 2, false)]
+        }
+        _ => ui::APPROVAL_BUTTONS.iter().filter(|b| offer_for(r).contains(&b.1)).copied().collect(),
     }
 }
 
@@ -75,9 +146,31 @@ impl Approvals {
 
     /// Key while the popup is open; `Some` once answered.
     pub fn key(&mut self, bytes: &[u8]) -> Option<(Request, Answer)> {
-        let offer = offer_for(self.queue.front()?);
+        let armed = self.armed();
+        let front = self.queue.front_mut()?;
+        if let Some(buf) = &mut front.secret {
+            match bytes {
+                b"\x1b" => return Some((self.queue.pop_front()?, Answer::Deny)),
+                b"\r" | b"\n" if armed && !buf.is_empty() => return Some((self.queue.pop_front()?, Answer::Once)),
+                b"\x7f" | b"\x08" => {
+                    buf.pop();
+                }
+                b"\x15" => buf.clear(),
+                // Typed or pasted text (no escape sequences, no control characters).
+                _ if bytes.first() != Some(&0x1b) => {
+                    if let Ok(t) = std::str::from_utf8(bytes) {
+                        // Up to an escape sequence (arrows etc. are ignored).
+                        buf.extend(t.split('\x1b').next().unwrap_or("").chars().filter(|c| !c.is_control()));
+                        buf.truncate(buf.char_indices().nth(4096).map_or(buf.len(), |(i, _)| i));
+                    }
+                }
+                _ => {}
+            }
+            return None;
+        }
+        let offer = offer_for(front);
         let a = match bytes {
-            b"y" | b"Y" | b"o" | b"\r" => Answer::Once,
+            b"y" | b"Y" | b"o" | b"\r" if offer.contains(&0) => Answer::Once,
             b"a" if offer.contains(&1) => Answer::Always,
             b"n" | b"\x1b" => Answer::Deny,
             b"N" if offer.contains(&3) => Answer::Never,
@@ -94,7 +187,11 @@ impl Approvals {
         if !self.armed() {
             return None;
         }
-        let offer = offer_for(self.queue.front()?);
+        let front = self.queue.front()?;
+        if front.secret.as_ref().is_some_and(|b| b.is_empty()) && i == 0 {
+            return None;
+        }
+        let offer = offer_for(front);
         let a = match i {
             0 => Answer::Once,
             1 if offer.contains(&1) => Answer::Always,
@@ -116,6 +213,9 @@ impl Approvals {
         }
         let armed = r.shown.is_some_and(|t| t.elapsed() >= ARM_DELAY);
         let who = match r.scope {
+            _ if r.tag() == Some(PromptTag::Secret) => format!("Plugin \"{}\" asks for a key:", r.plugin),
+            _ if r.tag() == Some(PromptTag::Permission) => format!("Plugin \"{}\" asks for a permission:", r.plugin),
+            _ if r.tag().is_some() => format!("Plugin \"{}\" asks:", r.plugin),
             _ if r.once_only => format!("{} (asked every time):", r.plugin),
             Scope::Installed if r.plugin.starts_with("mcp:") => format!("MCP client \"{}\" asks to:", &r.plugin[4..]),
             Scope::Installed => format!("Plugin \"{}\" asks to:", r.plugin),
@@ -135,16 +235,37 @@ impl Approvals {
             Scope::FuzzballRemote { host: None } => lines.push("Unknown remote host: Mouser asks every time.".into()),
             _ => {}
         }
+        if let Some(buf) = &r.secret {
+            let dots = "•".repeat(buf.chars().count().min(48));
+            lines.push(format!("  Key: {}", if dots.is_empty() { "(type or paste it)".to_string() } else { dots }));
+        }
         if more > 0 {
             lines.push(format!("({more} more waiting)"));
         }
-        Some(ui::approval_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, &offer_for(r), armed))
+        let b = buttons_for(r);
+        Some(ui::approval_panel_with(vp.width, vp.height, vp.cell_w, vp.cell_h, &format!("Mouser approval — {who}"), &lines, &b, armed))
     }
 }
 
 /// The answers offered: remote gets once / always (known host) / deny.
 fn offer_for(r: &Request) -> Vec<u8> {
-    if r.once_only { vec![0, 2] } else { offer(&r.scope) }
+    match r.tag() {
+        Some(PromptTag::Permission) => vec![1, 2, 3],
+        Some(PromptTag::AgentTool { for_chat: true }) => vec![0, 1, 2],
+        _ if r.once_only => vec![0, 2],
+        _ => offer(&r.scope),
+    }
+}
+
+/// What a mode plugin's question was answered with.
+pub fn prompt_answer(r: &mut Request, a: Answer) -> PromptAnswer {
+    match (a, r.secret.take()) {
+        (Answer::Once, Some(v)) => PromptAnswer::Secret(v),
+        (Answer::Once, None) => PromptAnswer::Once,
+        (Answer::Always, _) if matches!(r.tag(), Some(PromptTag::AgentTool { .. })) => PromptAnswer::ForChat,
+        (Answer::Always, _) => PromptAnswer::Once,
+        _ => PromptAnswer::Deny,
+    }
 }
 
 pub fn offer(scope: &Scope) -> Vec<u8> {
@@ -152,5 +273,65 @@ pub fn offer(scope: &Scope) -> Vec<u8> {
         Scope::FuzzballRemote { host: Some(_) } => vec![0, 1, 2],
         Scope::FuzzballRemote { host: None } => vec![0, 2],
         _ => vec![0, 1, 2, 3],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn vp() -> UiViewport {
+        UiViewport { width: 1200, height: 800, cell_w: 8, cell_h: 16 }
+    }
+
+    fn arm(a: &mut Approvals) {
+        a.panel_view(vp());
+        a.queue.front_mut().unwrap().shown = Some(Instant::now() - ARM_DELAY * 2);
+    }
+
+    #[test]
+    fn key_prompt_is_masked_and_goes_only_to_the_reply() {
+        let (p, rx) = Prompt::new("prefs", PromptKind::Secret { key: "models.local.key".into(), label: "Server key".into() });
+        let mut a = Approvals::default();
+        a.push(Request::from_prompt(p));
+        assert!(a.key(b"\r").is_none(), "Enter does nothing before it arms or while empty");
+        a.key(b"sk-");
+        a.key(b"12\x1b[A");
+        a.key(b"34");
+        a.key(b"\x7f");
+        arm(&mut a);
+        let panel = a.panel_view(vp()).unwrap();
+        let text: Vec<&str> = panel.items.iter().map(|i| i.text.as_str()).collect();
+        assert!(text.iter().any(|t| t.contains("Key: ••••••")), "{text:?}");
+        assert!(!text.iter().any(|t| t.contains("sk-")), "never drawn in clear");
+        let (mut req, ans) = a.key(b"\r").expect("answered");
+        let pa = prompt_answer(&mut req, ans);
+        assert_eq!(pa, PromptAnswer::Secret("sk-123".into()));
+        if let Origin::ModePrompt { reply, .. } = req.origin {
+            reply.send(pa).unwrap();
+        }
+        assert_eq!(rx.recv().unwrap(), PromptAnswer::Secret("sk-123".into()));
+    }
+
+    #[test]
+    fn plugin_questions_offer_the_right_answers() {
+        let mut a = Approvals::default();
+        let (p, _rx) = Prompt::new("x", PromptKind::Permission { cap: "net.fetch".into(), detail: vec!["• …".into(), "Why: weather".into()] });
+        a.push(Request::from_prompt(p));
+        arm(&mut a);
+        assert!(a.key(b"y").is_none(), "no Allow once for a permission");
+        let (mut r, ans) = a.key(b"a").unwrap();
+        assert_eq!((ans, r.once_only, r.caps.clone()), (Answer::Always, false, vec!["net.fetch".to_string()]));
+        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::Once);
+        let (p, _rx) = Prompt::new("chat", PromptKind::AgentTool { display: "mouser.shell_run".into(), lines: vec!["ls".into()], for_chat: true });
+        a.push(Request::from_prompt(p));
+        arm(&mut a);
+        let (mut r, ans) = a.key(b"a").unwrap();
+        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::ForChat);
+        let (p, _rx) = Prompt::new("x", PromptKind::Approve { title: "Go?".into(), detail: vec![] });
+        a.push(Request::from_prompt(p));
+        assert!(a.key(b"a").is_none(), "Approve is once or deny");
+        let (mut r, ans) = a.key(b"\x1b").unwrap();
+        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::Deny);
     }
 }

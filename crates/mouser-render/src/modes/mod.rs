@@ -13,6 +13,7 @@ pub mod commander;
 pub mod player;
 pub mod plugin;
 pub mod prefs;
+pub mod prompt;
 pub mod services;
 pub mod stdio;
 
@@ -97,7 +98,17 @@ pub trait Mode: Send {
     fn take_effects(&mut self) -> Vec<Effect> {
         Vec::new()
     }
+    /// Questions for Mouser's own popup ([`prompt`]). Default: none.
+    fn take_prompts(&mut self) -> Vec<prompt::Prompt> {
+        Vec::new()
+    }
+    /// How to start an agent session for a plugin with `agent.use` (the
+    /// app's tools and models; keys stay in Mouser). Default: ignored.
+    fn set_agent(&mut self, _f: AgentFactory) {}
 }
+
+/// Makes an agent session (`mouser_core::agent::Chat`) on the app's host.
+pub type AgentFactory = Arc<dyn Fn() -> mouser_core::agent::Chat + Send + Sync>;
 
 /// Host-owned windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -346,6 +357,18 @@ impl Host {
     /// Effects the modes produced off the event path, to apply now.
     pub fn take_effects(&mut self) -> Vec<Effect> {
         self.modes.iter_mut().flat_map(|(m, _)| m.take_effects()).collect()
+    }
+
+    /// Questions for Mouser's popup from every mode ([`prompt`]).
+    pub fn take_prompts(&mut self) -> Vec<prompt::Prompt> {
+        self.modes.iter_mut().flat_map(|(m, _)| m.take_prompts()).collect()
+    }
+
+    /// Give every mode the agent factory (mode plugins with `agent.use`).
+    pub fn set_agent(&mut self, f: AgentFactory) {
+        for (m, _) in &mut self.modes {
+            m.set_agent(f.clone());
+        }
     }
 
     /// Ctrl+Shift+K: the current mode's mappings plus the global keys.

@@ -11,6 +11,7 @@ use mouser_mode_api::events::{Event, EventDecl, Listener};
 use mouser_mode_api::protocol::{ApiRange, Handled, Hello, Provide};
 use mouser_mode_api::ui::{Action, Panel, PanelItem};
 use mouser_mode_api::{Effect, Host, PanelStyle, Rect};
+use mouser_render::modes::prompt::{Prompt, PromptAnswer, PromptKind};
 use mouser_render::modes::stdio::StdioMode;
 use mouser_render::modes::{Context, Effect as HostEffect, Mode};
 use mouser_render::ui::UiAction;
@@ -34,7 +35,10 @@ impl mouser_mode_api::Mode for Plugin {
             name: "echo-test".into(),
             version: "0".into(),
             provides: vec![Provide::Mode { hotkey: 'z', bindings: vec![], activate_on: vec![] }],
-            listeners: ["mode.*", "ui.action", "shell.cwd_changed", "echo-test.*"].iter().map(|e| Listener::on(e)).collect(),
+            listeners: ["mode.*", "ui.action", "shell.cwd_changed", "echo-test.*", "input.text", "agent.state"]
+                .iter()
+                .map(|e| Listener::on(e))
+                .collect(),
             emits: vec![EventDecl { name: "echo-test.tick".into(), schema: None }],
             wants_mcp: false,
             shm: true,
@@ -53,10 +57,38 @@ impl mouser_mode_api::Mode for Plugin {
                 Some("ask") => {
                     host.request(mouser_mode_api::host_api::Call::Service { method: "permissions.granted".into(), params: json!({}) }).map(|_| ())
                 }
+                Some("approve") => host
+                    .request(mouser_mode_api::host_api::Call::Approve { title: "Delete 3 files?".into(), detail: "a\nb".into(), options: vec![] })
+                    .map(|_| ()),
+                Some("key") => host
+                    .request(mouser_mode_api::host_api::Call::Service {
+                        method: "prefs.secret_prompt".into(),
+                        params: json!({"key": "models.local.key"}),
+                    })
+                    .map(|_| ()),
+                Some("fetch") => host
+                    .request(mouser_mode_api::host_api::Call::Service {
+                        method: "fetch".into(),
+                        params: json!({"url": format!("http://127.0.0.1:{}/x", e.payload["arg"])}),
+                    })
+                    .map(|_| ()),
+                Some("chat") => {
+                    host.request(mouser_mode_api::host_api::Call::Service { method: "agent.send".into(), params: json!({"text": "hi"}) }).map(|_| ())
+                }
+                Some("field") => {
+                    let r = Rect { x: 0, y: 0, w: 400, h: 40 };
+                    let it =
+                        PanelItem { rect: r, text: String::new(), style: PanelStyle::Field { focused: true, valid: true }, action: Action::None };
+                    host.view(Some(Panel { rect: r, items: vec![it] }), None, vec![], false)
+                }
                 Some("crash") => std::process::exit(9),
                 _ => Ok(()),
             },
             "echo-test.tick" => host.view(Some(dock("tick")), None, vec![], false),
+            "input.text" => host.effect(Effect::Say(format!("typed {}", e.payload["utf8"].as_str().unwrap_or("")))),
+            "agent.state" if e.payload["running"] == false => {
+                host.effect(Effect::Say(format!("agent {}", e.payload["entries"].as_array().map_or(0, |v| v.len()))))
+            }
             "shell.cwd_changed" => host.effect(Effect::Say(format!("cwd {}", e.payload["dir"].as_str().unwrap_or("")))),
             _ => Ok(()),
         };
@@ -87,6 +119,41 @@ fn until(m: &mut StdioMode, effects: &mut Vec<HostEffect>, what: &str, mut f: im
     panic!("timed out waiting for {what}; effects {effects:?}");
 }
 
+/// Draw until the adapter hands Mouser a popup question.
+fn wait_prompt(m: &mut StdioMode, effects: &mut Vec<HostEffect>) -> Prompt {
+    let keys = Keymap::new(&[]);
+    let end = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < end {
+        let _ = m.view(&ctx(), &keys);
+        effects.extend(m.take_effects());
+        if let Some(p) = m.take_prompts().pop() {
+            return p;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    panic!("no prompt; effects {effects:?}");
+}
+
+/// An agent host with no model: a turn ends in an error entry.
+struct NoModel;
+impl mouser_core::agent::AgentHost for NoModel {
+    fn context(&self) -> mouser_core::agent::ScreenContext {
+        Default::default()
+    }
+    fn tools(&self) -> Vec<mouser_core::agent::AgentTool> {
+        vec![]
+    }
+    fn check(&self, _: &mouser_core::agent::AgentTool, _: &serde_json::Value) -> mouser_core::agent::Check {
+        mouser_core::agent::Check::Allow
+    }
+    fn call(&self, _: &mouser_core::agent::AgentTool, _: &serde_json::Value) -> Result<String, String> {
+        Err("no".into())
+    }
+    fn model(&self) -> Option<(String, String)> {
+        None
+    }
+}
+
 fn dock_text(v: &mouser_render::modes::View) -> Option<&str> {
     v.dock.as_ref().and_then(|d| d.items.first()).map(|i| i.text.as_str())
 }
@@ -105,13 +172,16 @@ fn main() {
     std::fs::write(
         dir.join("plugin.toml"),
         format!(
-            "name = \"echo-test\"\nversion = \"0.1.0\"\npermissions = [\"files.read\", \"shell.type\"]\n[[provides]]\nkind = \"mode\"\n[run]\ntransport = \"mode\"\ncommand = [\"{exe}\", \"--as-plugin\"]\n[mode]\nhotkey = \"z\"\n"
+            "name = \"echo-test\"\nversion = \"0.1.0\"\npermissions = [\"files.read\", \"shell.type\", \"prefs.write\", \"net.fetch\", \"agent.use\"]\n[[provides]]\nkind = \"mode\"\n[run]\ntransport = \"mode\"\ncommand = [\"{exe}\", \"--as-plugin\"]\n[mode]\nhotkey = \"z\"\n"
         ),
     )
     .unwrap();
     let mut store = Store::load();
     store.set("echo-test", "run", Decision::Allow);
     store.set("echo-test", "files.read", Decision::Allow);
+    for c in ["prefs.write", "net.fetch", "agent.use"] {
+        store.set("echo-test", c, Decision::Allow);
+    }
     store.save().unwrap();
 
     let installed = mouser_core::plugins::find("echo-test").expect("plugin installed");
@@ -136,7 +206,52 @@ fn main() {
     until(&mut m, &mut fx, "cwd event", |_, fx| fx.iter().any(|e| matches!(e, HostEffect::Say(s) if s == "cwd /somewhere")));
 
     m.action("ask", 0);
-    until(&mut m, &mut fx, "a host call answered", |_, fx| fx.contains(&HostEffect::Say("granted [\"files.read\"]".into())));
+    until(&mut m, &mut fx, "a host call answered", |_, fx| {
+        fx.iter().any(|e| matches!(e, HostEffect::Say(s) if s.starts_with("granted [\"files.read\"")))
+    });
+
+    // Approve and the key prompt become questions for Mouser's popup.
+    m.action("approve", 0);
+    let p = wait_prompt(&mut m, &mut fx);
+    assert!(matches!(&p.kind, PromptKind::Approve { title, detail } if title == "Delete 3 files?" && detail.len() == 2), "{p:?}");
+    p.reply.send(PromptAnswer::Deny).unwrap();
+    until(&mut m, &mut fx, "approve answered", |_, fx| fx.contains(&HostEffect::Say("granted {\"decision\":\"deny\"}".into())));
+    m.action("key", 0);
+    let p = wait_prompt(&mut m, &mut fx);
+    assert!(matches!(&p.kind, PromptKind::Secret { key, .. } if key == "models.local.key"), "{p:?}");
+    p.reply.send(PromptAnswer::Deny).unwrap();
+    until(&mut m, &mut fx, "key prompt cancelled", |_, fx| fx.contains(&HostEffect::Say("granted cancelled".into())));
+
+    // fetch runs on a worker thread and answers when done.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port() as i32;
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        let (mut s, _) = l.accept().unwrap();
+        let mut b = [0u8; 1024];
+        let _ = s.read(&mut b);
+        let _ = s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+    });
+    m.action("fetch", port);
+    until(&mut m, &mut fx, "fetch answered", |_, fx| fx.iter().any(|e| matches!(e, HostEffect::Say(s) if s.contains("\"text\":\"ok\""))));
+
+    // Typing reaches the plugin only while its view has a focused field.
+    assert!(!m.wants_text());
+    assert_eq!(m.text(b"q"), None);
+    m.action("field", 0);
+    let end = Instant::now() + Duration::from_secs(5);
+    while !m.wants_text() && Instant::now() < end {
+        let _ = m.view(&ctx(), &keys);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(m.wants_text());
+    assert_eq!(m.text(b"q"), Some(HostEffect::None));
+    until(&mut m, &mut fx, "typed text", |_, fx| fx.contains(&HostEffect::Say("typed q".into())));
+
+    // An agent session runs in Mouser; the plugin hears agent.state.
+    m.set_agent(std::sync::Arc::new(|| mouser_core::agent::Chat::new(std::sync::Arc::new(NoModel))));
+    m.action("chat", 0);
+    until(&mut m, &mut fx, "agent state", |_, fx| fx.iter().any(|e| matches!(e, HostEffect::Say(s) if s.starts_with("agent ") && s != "agent 0")));
 
     fx.clear();
     m.action("crash", 0);

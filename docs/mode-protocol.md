@@ -41,19 +41,36 @@ joins the mode switcher (`esc :h`). Mouser starts it the first time it's drawn.
 A bound key or a click arrives as a `ui.action` event, typing as `input.text`,
 switching modes as `mode.activated`/`mode.deactivated`, and the shell's folder
 as `shell.cwd_changed` (with `files.read`). An effect it isn't allowed shows a
-status message instead. Its emits come back to its own listeners. Host calls
-(`Request`) available so far:
+status message instead. Its emits come back to its own listeners. Typing
+reaches the plugin as `input.text` only while its view has a focused `Field`
+item (then bound keys don't fire); otherwise keys go to its bindings or the
+shell.
 
-- `prefs.schema`, `prefs.get`, and `prefs.set` with `prefs.write`. Secrets
-  such as API keys never appear and can't be changed by a plugin.
-- `permissions.granted`.
-- Local files with `files.read`: `Read` (1 MiB per call, with offset and
-  length), `Stat` and `List`. Paths must be absolute, and the secrets
-  deny-list always applies.
+Host calls (`Request`) available so far. Each needs the permission shown,
+declared in `plugin.toml` and granted:
 
-Others (remote files, changing files, spawn, the agent, fetch, approvals)
-answer "not available yet" for now. A plugin may still start its own
-processes.
+| call | permission | answer |
+|---|---|---|
+| `prefs.schema` | none | every preference: `section`, `key`, `label`, `default`, `live`, `kind` (`{"type": "bool"}`, `int`/`float` with `min`/`max`, `choice` with `values`, `text`, `secret`, `readonly` with `hint`) |
+| `prefs.get {key}` | none | the value, or `null` for the default. A secret only says `"set (keychain)"` |
+| `prefs.set {key, value}`, `prefs.reset {key}` | `prefs.write` | written to preferences.toml with its comments kept. Secrets are refused |
+| `prefs.secret_prompt {key}` | `prefs.write` | Mouser's own popup asks you for the key (masked) and saves it to the keychain. The plugin gets `{"saved": true}` or `cancelled`, never the value |
+| `permissions.granted` | none | the granted permissions |
+| `permissions.request {permission, why}` | none | Mouser's popup asks you to grant a permission the manifest declares (Allow always / Deny / Never); `{"granted": bool}` |
+| `Approve {title, detail}` | none | Mouser's popup with your own question; `{"decision": "once"}` or `"deny"` |
+| `Fs` `Read`/`Stat`/`List` | `files.read` | local files, absolute paths, 1 MiB per read, never in the secrets deny-list |
+| `fetch {url, method, headers, body, max_bytes}` | `net.fetch` | one HTTP(S) request made by Mouser: `status`, `headers`, `text` (or `bytes`), `truncated`. 4 MiB by default, 16 MiB at most |
+| `remote.location`, `remote.list {path}`, `remote.read {path, offset, len}` | `remote.read` | the shell's ssh host, over its connection (1 MiB per read); `shell.remote_changed` events too |
+| `agent.models`, `agent.set_default {model}` | `agent.use` | providers, their models and the default. Never a key |
+| `agent.send {text}`, `agent.cancel`, `agent.clear`, `agent.state` | `agent.use` | an agent session that runs inside Mouser with your models, keys and tools. Replies stream to the plugin as `agent.state` events: `entries` (`user`, `assistant`, `tool`, `note`, `error`), `running`, `model`, `card_open`. Tool-call cards are drawn by Mouser, never by the plugin |
+
+Mouser's popups name the plugin that asks. They take every key and click while
+open, and their buttons do nothing for the first 400 ms, so a plugin (or the
+program in the tab) can neither draw nor answer them. Slow calls (`fetch`,
+`remote.*`) run on a worker thread and answer when done.
+
+Others (changing files, spawn, timers, the clipboard) answer "not available
+yet" for now. A plugin may still start its own processes.
 
 ## Writing a plugin in Rust
 

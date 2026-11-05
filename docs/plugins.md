@@ -171,6 +171,10 @@ left out with a notice.
 | `files.read` / `files.write` | read / change or delete files |
 | `network` | use the network |
 | `models.download` | download or start a model |
+| `remote.read` | list and read files on the shell's remote host (mode plugins) |
+| `agent.use` | talk to your AI models through Mouser; keys stay in Mouser (mode plugins) |
+| `prefs.write` | change your preferences (mode plugins; keys only through Mouser's popup) |
+| `net.fetch` | make web requests through Mouser (mode plugins) |
 
 Each plugin and capability is `allow`, `ask` (the default) or `never`. When a
 plugin needs a capability, the broker checks it:

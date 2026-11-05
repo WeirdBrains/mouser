@@ -982,10 +982,25 @@ pub const APPROVAL_BUTTONS: [(&str, u8, bool); 4] =
 /// `armed` false shows the buttons inert for the first moment (no click-through).
 #[allow(clippy::too_many_arguments)]
 pub fn approval_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, title: &str, lines: &[String], offer: &[u8], armed: bool) -> Panel {
+    let buttons: Vec<_> = APPROVAL_BUTTONS.iter().filter(|b| offer.contains(&b.1)).copied().collect();
+    approval_panel_with(vp_w, vp_h, cell_w, cell_h, title, lines, &buttons, armed)
+}
+
+/// [`approval_panel`] with its own buttons: (label, answer index, primary).
+#[allow(clippy::too_many_arguments)]
+pub fn approval_panel_with(
+    vp_w: i32,
+    vp_h: i32,
+    cell_w: i32,
+    cell_h: i32,
+    title: &str,
+    lines: &[String],
+    buttons: &[(&str, u8, bool)],
+    armed: bool,
+) -> Panel {
     let row_h = cell_h + 8;
     let pad = 16;
     let longest = lines.iter().map(|l| l.chars().count()).chain([title.chars().count()]).max().unwrap_or(30) as i32;
-    let buttons: Vec<_> = APPROVAL_BUTTONS.iter().filter(|b| offer.contains(&b.1)).collect();
     let bw_total: i32 = buttons.iter().map(|b| cell_w * b.0.chars().count() as i32 + 2 * BUTTON_PAD + 8).sum();
     let w = (2 * pad + cell_w * longest.clamp(36, 80)).max(2 * pad + bw_total);
     let h = 2 * pad + row_h * (lines.len() as i32 + 3);
