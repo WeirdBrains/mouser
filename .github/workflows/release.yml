@@ -140,6 +140,36 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 $artifactPath).Hash.ToLower()
           $hash | Out-File -FilePath "$artifactPath.sha256" -NoNewline -Encoding ASCII
 
+      # The -full offline bundle: the base archive plus every plugins.lock
+      # archive for this target (all engines and official plugins) in plugins/,
+      # checked against the lock's sha256 and size (docs/downloads.md).
+      - name: Full offline bundle
+        shell: bash
+        run: |
+          set -eux
+          OUTDIR=target/${{ matrix.target }}/release
+          rm -rf "$OUTDIR/plugins"
+          PY=$(command -v python3 || command -v python)
+          "$PY" scripts/full-bundle.py crates/mouser-core/src/plugins.lock ${{ matrix.target }} "$OUTDIR/plugins"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            FULL=mouser-${{ matrix.target }}-full.zip
+            (cd "$OUTDIR" && 7z a "$GITHUB_WORKSPACE/$FULL" mouser-app.exe engines plugins)
+            pwsh -NoProfile -Command "(Get-FileHash -Algorithm SHA256 '$FULL').Hash.ToLower() | Out-File -FilePath '$FULL.sha256' -NoNewline -Encoding ASCII"
+          else
+            FULL=mouser-${{ matrix.target }}-full.tar.gz
+            tar -C "$OUTDIR" -czf "$FULL" mouser-app engines plugins
+            shasum -a 256 "$FULL" > "$FULL.sha256"
+          fi
+          echo "FULL=$FULL" >> $GITHUB_ENV
+
+      - name: Upload full bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FULL }}
+          path: |
+            ${{ env.FULL }}
+            ${{ env.FULL }}.sha256
+
       - name: Linux packaging (icons + validate + nfpm deb/rpm + Arch)
         if: runner.os == 'Linux'
         shell: bash
