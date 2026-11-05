@@ -6,6 +6,7 @@
 
 ### Added
 
+- Releases carry `-full` offline bundles (`mouser-<target>-full.tar.gz` / `.zip`): Mouser plus every `plugins.lock` archive for the target in `plugins/`, so first run installs all engines and plugins without a network (`scripts/full-bundle.py` checks each against the lock).
 - `plugins.lock` pins commander 0.1.3 (audio host and device, the focus-model keys, silent sync).
 - `mouser shell-integration pwsh`: PowerShell reports its folder (OSC 7) and takes commander's sync at the next prompt through a per-session sync file (a builtin `Set-Location`; nothing typed or added to the history).
 - Preferences → Audio: `audio.host` (auto, jack, alsa on Linux; auto tries JACK first, PipeWire's JACK included, else ALSA), `audio.output_device` (a dropdown of that host's devices, default = the system default; a missing device falls back to the default with a notice) and the active host. JACK is the optional `jack` feature with libjack loaded at run time; the official Linux builds and CI include it. The player's status shows the host playing. See docs/preferences.md §Audio.
