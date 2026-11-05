@@ -13,6 +13,7 @@ pub mod commander;
 pub mod player;
 pub mod plugin;
 pub mod prefs;
+pub mod services;
 pub mod stdio;
 
 use crate::ui::{Panel, PanelItem, PanelStyle, Rect, UiAction};

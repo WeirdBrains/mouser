@@ -13,7 +13,8 @@
 //! - effects are checked against the granted permissions and handed to
 //!   Mouser through [`Mode::take_effects`];
 //! - emits come back to the plugin's own matching listeners (self-delivery),
-//!   with the emit rules and hop limit of `mouser_mode_api::events`.
+//!   with the emit rules and hop limit of `mouser_mode_api::events`;
+//! - host calls are answered by [`super::services`].
 //!
 //! The program only starts once `run` is allowed (`mouser plugin permissions
 //! NAME run=allow`), like command plugins. If it keeps crashing the dock
@@ -210,9 +211,10 @@ impl StdioMode {
                 }
             }
             Out::Emit { name, payload } => self.self_deliver(name, payload),
-            Out::Request { id, .. } => {
+            Out::Request { id, call } => {
+                let result = super::services::answer(&call, &self.granted());
                 if let Some(s) = &mut self.sup {
-                    s.send(&In::Response { id, result: Err("host services are not available yet".into()) }, Instant::now());
+                    s.send(&In::Response { id, result }, Instant::now());
                 }
             }
             Out::Log { level, text } => match level {

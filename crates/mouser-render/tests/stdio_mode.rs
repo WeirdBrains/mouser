@@ -50,6 +50,9 @@ impl mouser_mode_api::Mode for Plugin {
                     let _ = host.effect(Effect::Type("ls".into()));
                     host.emit("echo-test.tick", json!({}))
                 }
+                Some("ask") => {
+                    host.request(mouser_mode_api::host_api::Call::Service { method: "permissions.granted".into(), params: json!({}) }).map(|_| ())
+                }
                 Some("crash") => std::process::exit(9),
                 _ => Ok(()),
             },
@@ -58,6 +61,10 @@ impl mouser_mode_api::Mode for Plugin {
             _ => Ok(()),
         };
         Handled::Handled
+    }
+
+    fn response(&mut self, _id: u64, result: Result<serde_json::Value, String>, host: &Host) {
+        let _ = host.effect(Effect::Say(format!("granted {}", result.map(|v| v.to_string()).unwrap_or_else(|e| e))));
     }
 }
 
@@ -127,6 +134,9 @@ fn main() {
 
     m.cwd_changed(std::path::Path::new("/somewhere"));
     until(&mut m, &mut fx, "cwd event", |_, fx| fx.iter().any(|e| matches!(e, HostEffect::Say(s) if s == "cwd /somewhere")));
+
+    m.action("ask", 0);
+    until(&mut m, &mut fx, "a host call answered", |_, fx| fx.contains(&HostEffect::Say("granted [\"files.read\"]".into())));
 
     fx.clear();
     m.action("crash", 0);
