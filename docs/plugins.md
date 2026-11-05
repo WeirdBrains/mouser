@@ -85,6 +85,32 @@ in `$MOUSER_HOME/plugins/`: one directory per plugin, `state.toml` (priority,
 disabled; engines' disabled flags too) and `permissions.toml`. The engine order
 stays in the `engines` preference (`mouser engine priority`), not in `state.toml`.
 
+### Where Mouser finds plugins
+
+Mouser searches these folders in order. The first one with a given plugin name
+wins, and `mouser plugin list` marks where each one came from:
+
+1. `$MOUSER_HOME/plugins/` (yours; `install` and `uninstall` act only here).
+2. `plugins/` beside the Mouser executable (the `-full` offline bundle), and on
+   macOS also `Mouser.app/Contents/Resources/plugins/`. Marked `[bundle]`.
+3. `/usr/lib/mouser/plugins/` and `/usr/local/lib/mouser/plugins/`, for system
+   packagers (not on Windows). Marked `[system]`.
+
+`MOUSER_PLUGIN_DIRS` (a path list, like `PATH`) replaces folders 2 and 3; set it
+empty to search only `$MOUSER_HOME/plugins/`. Bundle and system plugins are
+read-only: `uninstall` refuses them, but `disable` works.
+
+A plugin folder holds `plugin.toml` directly, or one folder per version
+(`<name>/<version>/plugin.toml`) with `current` choosing the active one.
+`current` can be a folder or symlink, or a file containing the version (Windows
+symlinks need admin rights). Uninstalling a versioned plugin removes every
+version.
+
+A `transport = "mode"` plugin may use a built-in mode's name and hotkey
+(`commander`, `chat`, `preferences`). It then replaces the built-in, and `plugin
+list` marks it `[overrides built-in]` (decision 5). Other built-in names stay
+reserved.
+
 ### Built-in plugins
 
 | name | kind | hotkey | can be disabled |

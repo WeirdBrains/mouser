@@ -26,6 +26,10 @@ pub const ENVIRONMENT: &[(&str, &str)] = &[
     ("MOUSER_REMOTE_BACKEND", "rsync, scp or cat: force how remote files are fetched."),
     ("MOUSER_PLAYER_LOG", "Write the media player's log to this file."),
     ("MOUSER_LLM_TIMINGS", "Print llama.cpp timings for the built-in local model."),
+    (
+        "MOUSER_PLUGIN_DIRS",
+        "extra plugin folders (a path list), replacing the offline bundle and system folders; empty: only $MOUSER_HOME/plugins (docs/plugins.md).",
+    ),
     ("MOUSER_MODE_WIRE", "json: mode plugins (mouser-mode-api) speak JSON instead of MessagePack on stdio, for debugging (docs/mode-protocol.md)."),
     ("RUST_LOG", "Log filter (env_logger), e.g. debug or mouser=trace."),
 ];

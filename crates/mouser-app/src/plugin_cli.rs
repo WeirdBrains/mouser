@@ -230,12 +230,25 @@ fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
     for e in r.entries.iter().filter(|e| !e.kinds.contains(&Kind::Engine) && only.is_none_or(|k| e.kinds.contains(&k))) {
         i += 1;
         let state = if e.enabled { "" } else { " [disabled]" };
+        let from = match e.source {
+            Some(s @ (plugins::Source::Bundle | plugins::Source::System)) => format!(" [{}]", s.name()),
+            Some(plugins::Source::User) if plugins::builtin_manifest(&e.name).is_some() => " [overrides built-in]".to_string(),
+            _ => String::new(),
+        };
         let cmds = match &e.hotkey {
             Some(h) => format!("; switch: esc :{h}"),
             None if e.commands.is_empty() => String::new(),
             None => format!("; commands: {}", e.commands.join(", ")),
         };
-        writeln!(out, "  {i:<4} {:<14} {:<9} {:<9} {:<16} {}{cmds}{state}", e.name, e.version, e.transport.name(), kinds(&e.kinds), e.description)?;
+        writeln!(
+            out,
+            "  {i:<4} {:<14} {:<9} {:<9} {:<16} {}{cmds}{from}{state}",
+            e.name,
+            e.version,
+            e.transport.name(),
+            kinds(&e.kinds),
+            e.description
+        )?;
     }
     for (d, why) in &r.broken {
         writeln!(out, "  -    {d:<14} {:<9} {:<9} {:<16} broken: {why}", "?", "-", "-")?;
