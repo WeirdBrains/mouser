@@ -79,3 +79,6 @@ nav a[aria-current]{color:var(--cyan);font-weight:700}
 .doc h2:nth-of-type(odd) a,.doc h2:nth-of-type(odd)::before{color:#0a7f8c}
 .doc h3:nth-of-type(odd){color:#0a7f8c}.doc h3:nth-of-type(even){color:#0b4f63}
 .docfoot a{color:#0a7f8c}
+.doc figure.clip{margin:1.2rem 0 1.6rem;max-width:960px}
+.doc figure.clip video{display:block;width:100%;height:auto;background:#04192A;border:1px solid #c9dbe6;border-left:4px solid #3fd8e8;border-radius:6px}
+.doc figure.clip figcaption{font-size:.85rem;color:#3f5b6e;margin-top:.45rem}

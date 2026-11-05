@@ -10,16 +10,15 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/">Developer Guides</a><a href="../../docs/mcp/" aria-current=page>MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status draft">Draft: this walkthrough is a draft. Screenshots and clips are still TODOs.</p><h1 id="demo-app-a-flutter-client-for-mousers-mcp-server">Demo app: a Flutter client for Mouser's MCP server</h1>
+<main id="main"><section class="light doc"><h1 id="demo-app-a-flutter-client-for-mousers-mcp-server">Demo app: a Flutter client for Mouser's MCP server</h1>
 <p><a href="https://github.com/WeirdBrains/mouser_mcp_demo">mouser_mcp_demo</a> is a Flutter
 desktop app that talks to <a href="mcp.html">Mouser's MCP server</a>: connect, list the
 tools, call any tool from a form generated from its input schema, and follow a
 curated Demo page. Its MCP client (<code>lib/mcp/mcp_client.dart</code>) is plain Dart
 with no extra packages, so it's a good template for your own integration.</p>
-<blockquote>
-<p><strong>TODO:</strong> screenshots of the Connect, Protocol, Tools and Demo pages, and a
-short clip of the Demo page.</p>
-</blockquote>
+<p>Each clip below is about 30 seconds long, with Mouser on the left and the demo
+app on the right. Clips of sending files to Mouser, HTTPS and stdio are coming
+later.</p>
 <h2 id="what-it-covers">What it covers</h2>
 <ul>
 <li><strong>Tools only.</strong> <code>initialize</code>, <code>ping</code>, <code>tools/list</code> and <code>tools/call</code>. Mouser
@@ -56,23 +55,20 @@ flutter run -d linux
 <p>The protocol version offered is selectable. Mouser serves 2025-11-25,
 2025-06-18 and 2025-03-26, and answers with its newest for anything else. The
 Connect page then shows the status and server info.</p>
-<blockquote>
-<p><strong>TODO:</strong> screenshot of the Connect page.</p>
-</blockquote>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/01-connect-and-tools.jpg" width="1280" height="720"><source src="../../assets/demo/01-connect-and-tools.mp4" type="video/mp4"></video><figcaption>Connecting over HTTP, listing the tools and calling <code>tabs_list</code>.</figcaption></figure>
+
 <h2 id="4-protocol">4. Protocol</h2>
 <p>Shows the session (server info, capabilities, session id, certificate SHA-256),
 <code>ping</code> with its round trip, a JSON-RPC batch, the capability probes, a raw
 JSON-RPC console, and "End HTTP session" (<code>DELETE /mcp</code>).</p>
-<blockquote>
-<p><strong>TODO:</strong> screenshot of the Protocol page.</p>
-</blockquote>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/08-protocol-ping-batch-probes.jpg" width="1280" height="720"><source src="../../assets/demo/08-protocol-ping-batch-probes.mp4" type="video/mp4"></video><figcaption>The Protocol page: <code>ping</code>, a JSON-RPC batch, and the probes Mouser answers with <code>-32601</code>.</figcaption></figure>
+
 <h2 id="5-tools">5. Tools</h2>
 <p>Lists every tool from <code>tools/list</code>, builds a form from each tool's input schema,
 and shows the result of <code>tools/call</code>. Write tools (<code>shell_*</code>,
 <code>files_mkdir</code>/<code>copy</code>/<code>move</code>/<code>trash</code>) show Mouser's approval popup first.</p>
-<blockquote>
-<p><strong>TODO:</strong> screenshot of the Tools page.</p>
-</blockquote>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/06-run-with-approval.jpg" width="1280" height="720"><source src="../../assets/demo/06-run-with-approval.mp4" type="video/mp4"></video><figcaption><code>shell_run</code> waits for the approval popup in Mouser; Allow once runs it.</figcaption></figure>
+
 <h2 id="6-demo">6. Demo</h2>
 <p>A guided run: <code>tabs_list</code> then <code>screen_read</code>; a <code>files_list</code>/<code>files_read</code> file
 browser; <code>shell_run</code> then <code>screen_read</code>; plus <code>scrollback_read</code>, <code>shell_type</code>,
@@ -81,9 +77,16 @@ and "send files to Mouser", a local file chooser feeding <code>files_copy</code>
 upload API.</p>
 <p>Tapping a file, or a path chip in any tool result, opens a viewer for text,
 images, .docx, PDF, video and audio (Linux needs <code>mpv</code> for media).</p>
-<blockquote>
-<p><strong>TODO:</strong> clip of the Demo page.</p>
-</blockquote>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/02-read-the-terminal.jpg" width="1280" height="720"><source src="../../assets/demo/02-read-the-terminal.mp4" type="video/mp4"></video><figcaption>Typing in Mouser, then List tabs and Read screen in the app.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/03-files-image-pdf-docx.jpg" width="1280" height="720"><source src="../../assets/demo/03-files-image-pdf-docx.mp4" type="video/mp4"></video><figcaption><code>files_list</code>, then the image, PDF, .docx and text viewers.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/04-video-player.jpg" width="1280" height="720"><source src="../../assets/demo/04-video-player.mp4" type="video/mp4"></video><figcaption>Playing a video from the file list (with sound).</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/05-music-player.jpg" width="1280" height="720"><source src="../../assets/demo/05-music-player.mp4" type="video/mp4"></video><figcaption>Playing music from the file list (with sound).</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/07-type-and-scrollback.jpg" width="1280" height="720"><source src="../../assets/demo/07-type-and-scrollback.mp4" type="video/mp4"></video><figcaption><code>shell_type</code> sends keystrokes; <code>scrollback_read</code> reads them back.</figcaption></figure>
+
 <h2 id="7-check-your-own-client">7. Check your own client</h2>
 <p>The repo's smoke test is a compact reference for a full round trip:</p>
 <pre><code class="language-sh">MOUSER_MCP_TOKEN=$(mouser mcp token --show) dart run bin/smoke.dart http
