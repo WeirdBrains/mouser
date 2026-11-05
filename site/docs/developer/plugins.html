@@ -202,9 +202,10 @@ a <code>[mode]</code> table (example: <code>examples/plugins/hello-mode</code>):
 hotkey = &quot;h&quot;                    # one letter/digit; not c, a (built-ins) or p
 keys = [{ id = &quot;time&quot;, key = &quot;t&quot;, describe = &quot;show the time&quot; }]
 </code></pre>
-<p>A key is a letter, digit or punctuation key (not <code>:</code>), or <code>up</code>, <code>down</code>, <code>left</code>,
-<code>right</code>, <code>enter</code>, <code>pageup</code>, <code>pagedown</code>, <code>home</code>, <code>end</code>, <code>tab</code>, <code>space</code> or <code>backspace</code>;
-each is pressed with the mode's modifier (alt).</p>
+<p>A key is a letter, digit or punctuation key (not <code>:</code>), <code>ctrl+</code> and a letter
+(ctrl+alt+letter), or <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>enter</code>, <code>pageup</code>, <code>pagedown</code>,
+<code>home</code>, <code>end</code>, <code>tab</code>, <code>space</code> or <code>backspace</code>; each is pressed with the mode's
+modifier (alt).</p>
 <p>It joins the mode switcher (<code>esc :h</code>; listed in <code>ctrl+shift+m</code>) after the built-in modes and
 docks above the prompt like them. Mouser runs its program once per event, off the
 UI thread, with the command-plugin contract (10 s limit, scrubbed environment):

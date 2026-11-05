@@ -74,7 +74,7 @@ Installed mode plugins (<code>kind = "mode"</code> over the command transport, w
 <li>A lone Esc waits 500 ms for the <code>:</code>; without it the Esc goes to the shell
   unchanged (so <code>esc</code> keeps working in readline/vi-mode shells, just 500 ms later).
   <code>alt+:</code> opens the command line at once. A line whose first word is not a Mouser
-  command runs in the tab's shell (typed like commander's cd: what you had typed is
+  command runs in the tab's shell (typed like commander's pipe: what you had typed is
   kept and comes back), so <code>echo "hello, world!"</code> just works; in an SSH tab it runs
   remotely. Mouser commands win on a name clash; a leading <code>!</code> forces the shell
   (<code>!theme</code> runs a program called theme). If another program owns the terminal the
@@ -97,8 +97,10 @@ switch_view = &quot;v&quot;       # a character, or up / down / left / right / e
 <p>An unknown action or key is reported in the status bar and the defaults are kept.</p>
 <h3 id="commander">Commander</h3>
 <p>A view docked above the prompt (the terminal grid moves down; about half the
-window) that follows the shell's working directory (<code>/proc/&lt;pid&gt;/cwd</code> on Linux,
-OSC 7 elsewhere) and re-lists when the directory changes. Header: the directory,
+window) that starts in the shell's working directory (<code>/proc/&lt;pid&gt;/cwd</code> on Linux,
+OSC 7 elsewhere) and keeps its own folder after that: browsing in commander never
+types into the shell or changes its folder (ctrl+alt+s syncs, below). A <code>cd</code> you type in
+the shell still moves commander there. Header: the directory,
 item count and the equivalent <code>ls</code> flags, then the view, <code>options</code>, <code>man</code> and <code>help</code>
 buttons; a search field filters the folder as you type.</p>
 <table>
@@ -143,7 +145,7 @@ buttons; a search field filters the folder as you type.</p>
 </tr>
 <tr>
 <td>Enter</td>
-<td>open: a folder is <code>cd</code>'d into, video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files)</td>
+<td>open: a folder is browsed (the shell stays where it is), video/audio open the player (below), anything else opens the full-width file view (image or text; ↑/↓/PgUp/PgDn scroll it, ←/→ step through files)</td>
 </tr>
 <tr>
 <td>q (or Esc)</td>
@@ -177,6 +179,10 @@ buttons; a search field filters the folder as you type.</p>
 <td>o / m</td>
 <td>options window / manual</td>
 </tr>
+<tr>
+<td>ctrl+alt+s</td>
+<td>sync: move the shell to commander's folder (silently; see below)</td>
+</tr>
 </tbody>
 </table>
 <p>Back works like <code>popd</code>, inside commander (it never runs <code>pushd</code>/<code>popd</code>). Entering a
@@ -185,7 +191,35 @@ you saw it (a symlink stays a symlink), the selection and the scroll. Back pops 
 and puts you exactly there again. With nothing on the stack (after a <code>cd</code> you typed,
 a breadcrumb jump, or at startup) back goes to the parent of the path you see, not
 of the resolved one, so leaving a symlinked folder never lands in its target's real
-parent. Remote (SSH) folders work the same way.</p>
+parent. Remote (SSH) folders work the same way (listed over the ssh side channel,
+never by typing into the remote shell).</p>
+<p><strong>Sync (ctrl+alt+s).</strong> The shell's prompt stays as it is while you browse. ctrl+alt+s moves the
+shell to commander's folder, from anywhere in commander (the file view and player
+included), without leaving it. It never types: no <code>cd</code> on the line, nothing in the
+history, the half-typed line kept. How it gets there:</p>
+<table>
+<thead>
+<tr>
+<th>shell</th>
+<th>how</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>bash 4.4+, zsh, fish with <code>mouser shell-integration</code></td>
+<td>idle at the prompt: at once, through the integration's silent cd (Fuzzball <code>s c</code>, docs/protocol/shell.md), prompt redrawn in place; running a command: at its next prompt</td>
+</tr>
+<tr>
+<td>PowerShell with <code>mouser shell-integration pwsh</code></td>
+<td>at the next prompt: the prompt function reads the folder from its sync file and runs <code>Set-Location</code> (PowerShell only redraws its prompt after a command; Enter on an empty line takes it at once)</td>
+</tr>
+<tr>
+<td>no integration (bash older than 4.4, other shells, a remote shell without it)</td>
+<td>nothing happens; the status bar says so</td>
+</tr>
+</tbody>
+</table>
+<p>Both keys are rebindable in <code>modes.toml</code> (<code>sync</code>, <code>search</code>).</p>
 <p><strong>Player.</strong> Video and audio open in commander's own player (MODES.md: "a player will
 appear"). Video frames are decoded by <code>ffmpeg</code> to RGBA, fitted to the view's width and
 drawn through Mouser's image path; Mouser plays the sound itself (cpal: ALSA/PipeWire on
@@ -243,7 +277,7 @@ audio clock mean -0.2 ms, p95 9.5 ms, max 24.7 ms, 0 frames dropped, no drift
 <p>Nothing is started until a file is opened; playback stops (the readers are killed) when
 the viewer closes, another file is shown or the mode is left. Without <code>ffmpeg</code> and
 <code>ffprobe</code> on PATH, media falls back to the desktop opener (<code>xdg-open</code>, <code>open</code> on macOS).</p>
-<p><strong>What you have typed is kept.</strong> <code>cd</code> (open a folder, alt+p) and pipe run without
+<p><strong>What you have typed is kept.</strong> Pipe runs without
 losing a half-typed command: Mouser sends Ctrl+E, a space and Ctrl+U (the line goes to
 the shell's kill ring), the command and Enter, then, once the shell is the terminal's
 foreground process again (the command finished), Ctrl+Y and Backspace to put the line
@@ -414,7 +448,7 @@ built-in commander (<code>mouser plugin list</code> marks it <code>[overrides bu
 you, like any program you start: it lists the folder and decodes thumbnails and
 previews itself, and its view goes to Mouser with the images inline (sent once,
 then reused by key). It needs <code>files.read</code> (to be told the shell's folder) and
-<code>shell.type</code> (cd, pipe, and keys it passes on), and <code>remote.read</code> for remote
+<code>shell.type</code> (sync, pipe, and keys it passes on), and <code>remote.read</code> for remote
 shells (Mouser tells it the ssh session and the folder's listing; it fetches
 previews and files over that session's ssh like the built-in mode, below):</p>
 <pre><code>cargo build --release -p mouser-commander
