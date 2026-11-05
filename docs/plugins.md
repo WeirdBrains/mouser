@@ -146,6 +146,10 @@ hotkey = "h"                    # one letter/digit; not c, a (built-ins) or p
 keys = [{ id = "time", key = "t", describe = "show the time" }]
 ```
 
+A key is a letter, digit or punctuation key (not `:`), or `up`, `down`, `left`,
+`right`, `enter`, `pageup`, `pagedown`, `home`, `end`, `tab`, `space` or `backspace`;
+each is pressed with the mode's modifier (alt).
+
 It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the built-in modes and
 docks above the prompt like them. Mouser runs its program once per event, off the
 UI thread, with the command-plugin contract (10 s limit, scrubbed environment):

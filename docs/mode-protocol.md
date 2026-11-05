@@ -145,6 +145,17 @@ memory), `Emit` and `EmitRequest`, `Respond`, `Request` (a host call),
 `Reply` (for sync listeners), `StateSave` (handed back after a restart),
 `Subscribe`, `Unsubscribe`, `Log` and `Wake`.
 
+`Wants` says what the mode takes from the keyboard right now (the latest wins):
+`text` (plain typing comes as `input.text`; alt keys still go to the mode's
+bindings and the rest to the shell), `keys` (escape sequences taken as text too,
+such as the arrows in a fullscreen view) and `escape` (something is open that
+Escape closes, so Escape goes to the mode as `input.escape` instead of to Mouser).
+Until a mode sends one, Mouser guesses from its view: a focused `Field` or an open
+`Popup` takes every key. After a restart it's cleared until the plugin sends it again.
+
+Mouser tells a plugin with `files.read` the shell's folder (`shell.cwd_changed`)
+as soon as it has started, and again after every restart.
+
 ## Host calls
 
 `Request` carries a call, answered by exactly one `Response`:

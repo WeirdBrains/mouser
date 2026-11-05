@@ -189,6 +189,20 @@ pub enum Handled {
     Pass,
 }
 
+/// What the mode takes from the keyboard ([`Out::Wants`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Wants {
+    /// Plain typing comes as `input.text`. Alt keys still go to the bindings
+    /// (unless listed in `keys`) and the rest to the shell.
+    pub text: bool,
+    /// Escape sequences taken as `input.text` while `text` is on (arrows for
+    /// a list, say).
+    pub keys: Vec<String>,
+    /// Something is open that Escape closes: Escape goes to the mode
+    /// (`input.escape`) instead of to Mouser.
+    pub escape: bool,
+}
+
 /// Plugin to host.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Out {
@@ -201,6 +215,10 @@ pub enum Out {
         fullscreen: bool,
     },
     Effect(Effect),
+    /// Which keys the mode takes now (latest wins). Without one, Mouser
+    /// guesses from the view: a focused `Field` or an open `Popup` takes
+    /// every key. Once sent, only this decides.
+    Wants(Wants),
     /// A video frame already in shm `slot`; the host answers `frame.presented`.
     Frame {
         slot: u32,

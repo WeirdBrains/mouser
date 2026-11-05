@@ -1,0 +1,52 @@
+# The commander mode as a plugin (docs/commander.md). It replaces the
+# built-in commander mode when installed. It lists and previews files
+# itself (thumbnails, Markdown, text) and starts ffmpeg/ffprobe for video.
+name = "commander"
+version = "0.1.0"
+description = "commander mode: the shell's folder as a list, grid or carousel above the prompt, with previews"
+permissions = ["files.read", "shell.type"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "mode"
+command = ["./mouser-commander"]
+
+[mode]
+hotkey = "c"
+keys = [
+  { id = "switch_view", key = "t", describe = "switch view (list / grid / carousel)" },
+  { id = "search", key = "s", describe = "search this folder" },
+  { id = "up", key = "up", describe = "previous row" },
+  { id = "down", key = "down", describe = "next row" },
+  { id = "left", key = "left", describe = "previous item" },
+  { id = "right", key = "right", describe = "next item" },
+  { id = "open", key = "enter", describe = "open (folder: cd into it; file: full-width view)" },
+  { id = "bigger", key = "z", describe = "larger grid tiles" },
+  { id = "smaller", key = "x", describe = "smaller grid tiles" },
+  { id = "hidden", key = "a", describe = "show / hide dotfiles (ls -a)" },
+  { id = "options", key = "o", describe = "options window" },
+  { id = "man", key = "m", describe = "manual for commander mode" },
+  { id = "page_up", key = "pageup", describe = "page up" },
+  { id = "page_down", key = "pagedown", describe = "page down" },
+  { id = "first", key = "home", describe = "first item" },
+  { id = "last", key = "end", describe = "last item" },
+  { id = "parent", key = "p", describe = "back: parent folder (cd ..)" },
+  { id = "back", key = "backspace", describe = "back: parent folder (cd ..)" },
+  { id = "close", key = "q", describe = "close the file view / window" },
+  { id = "mark", key = "space", describe = "mark / unmark the item (for pipe)" },
+  { id = "mark_all", key = "*", describe = "mark all / clear marks" },
+  { id = "pipe", key = "|", describe = "pipe the marked (or selected) paths into a command" },
+  { id = "play_pause", key = "k", describe = "player: play / pause" },
+  { id = "seek_back", key = "j", describe = "player: back 10 s" },
+  { id = "seek_forward", key = "l", describe = "player: forward 10 s" },
+  { id = "volume_down", key = "-", describe = "player: volume down" },
+  { id = "volume_up", key = "=", describe = "player: volume up" },
+  { id = "zoom_in", key = "=", describe = "image view: zoom in (same key as volume up in the player)" },
+  { id = "zoom_out", key = "-", describe = "image view: zoom out (same key as volume down in the player)" },
+  { id = "zoom_fit", key = "0", describe = "image view: fit" },
+  { id = "zoom_actual", key = "1", describe = "image view: 100% (actual pixels)" },
+  { id = "fullscreen", key = "e", describe = "image / player: fullscreen, the whole window (Esc or the same key leaves)" },
+  { id = "menu", key = "i", describe = "header overflow menu (\u2022\u2022\u2022) when the window is narrow" },
+]

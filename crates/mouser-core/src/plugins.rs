@@ -314,8 +314,9 @@ fn builtin_hotkeys() -> Vec<String> {
 
 fn valid_key(k: &str) -> bool {
     let mut c = k.chars();
-    matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit())
-        || matches!(k, "up" | "down" | "left" | "right" | "enter" | "pageup" | "pagedown" | "home" | "end" | "tab")
+    // A letter, digit or punctuation key (not `:`, which starts `esc :`).
+    matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit() || (ch.is_ascii_punctuation() && ch != ':'))
+        || matches!(k, "up" | "down" | "left" | "right" | "enter" | "pageup" | "pagedown" | "home" | "end" | "tab" | "space" | "backspace")
 }
 
 fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
@@ -335,7 +336,11 @@ fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
             bail!("[[mode.keys]] id {:?} is not a valid name", k.id);
         }
         if !valid_key(&k.key) || k.key == "esc" {
-            bail!("[[mode.keys]] key {:?} for {} is not a single letter/digit or arrow/enter/page key", k.key, k.id);
+            bail!(
+                "[[mode.keys]] key {:?} for {} is not a single letter, digit or punctuation key, nor arrow/enter/page/home/end/tab/space/backspace",
+                k.key,
+                k.id
+            );
         }
         if !ids.insert(&k.id) {
             bail!("[[mode.keys]] id {:?} appears twice in {name}", k.id);

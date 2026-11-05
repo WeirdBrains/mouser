@@ -57,6 +57,11 @@ impl Host {
         self.send(&Out::View { dock, panel, images, fullscreen })
     }
 
+    /// What the mode takes from the keyboard now ([`crate::protocol::Wants`]).
+    pub fn wants(&self, w: crate::protocol::Wants) -> io::Result<()> {
+        self.send(&Out::Wants(w))
+    }
+
     pub fn effect(&self, e: Effect) -> io::Result<()> {
         self.send(&Out::Effect(e))
     }
