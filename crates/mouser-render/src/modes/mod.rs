@@ -5,16 +5,12 @@
 //! working directory and draws a view above the prompt. Exactly one mode is
 //! active at a time (or none); Mouser starts in the default one, commander.
 //!
-//! Modes are compiled in for now ([`Host::builtin`]) while they move to
-//! plugin executables on `mouser-mode-api` (docs/protocol.md); the shared
-//! types ([`Context`], [`Effect`], `Rect`, `PanelStyle`, `UiViewport`)
-//! already come from that crate.
+//! Every mode is a plugin program (commander, chat and preferences too, from
+//! their own crates, installed through `plugins.lock`), spoken to over
+//! `mouser-mode-api` (docs/protocol.md) by [`stdio::StdioMode`] or, for
+//! command-transport plugins, [`plugin::PluginMode`]. None is compiled in.
 
-pub mod chat;
-pub mod commander;
-pub mod player;
 pub mod plugin;
-pub mod prefs;
 pub mod prompt;
 pub mod services;
 pub mod stdio;
@@ -37,6 +33,11 @@ pub struct ModeImage {
     /// Part of the image shown, in image pixels (x, y, w, h).
     pub src: (u32, u32, u32, u32),
     pub rect: Rect,
+}
+
+/// A pointer position as one action argument (x, y up to 32767).
+pub fn pack_xy(x: i32, y: i32) -> i32 {
+    x.clamp(0, 0x7fff) | (y.clamp(0, 0x7fff) << 15)
 }
 
 /// A mode's contribution to the frame.
@@ -220,35 +221,27 @@ impl Host {
         h
     }
 
-    /// The modes built into Mouser: commander (default).
-    pub fn builtin() -> Self {
-        Self::new(vec![Box::new(commander::CommanderMode::new())])
-    }
-
-    /// The mode switcher from the plugin registry (P6): enabled modes in
-    /// priority order, the first one active. Commander and command-transport
-    /// mode plugins are made here; `make` builds the rest (the app's chat mode)
-    /// or returns `None` for modes this build lacks. A plugin whose hotkey is
-    /// already taken is left out with a note. No enabled mode: an empty host,
-    /// and Mouser is a plain terminal.
-    pub fn from_registry(r: &mouser_core::plugins::Registry, mut make: impl FnMut(&mouser_core::plugins::Entry) -> Option<Box<dyn Mode>>) -> Self {
+    /// The mode switcher from the plugin registry (P6): enabled, installed
+    /// mode plugins in priority order, the first one active. A plugin whose
+    /// hotkey is already taken is left out with a note. No mode installed
+    /// (first run before the downloads land): an empty host, and Mouser is a
+    /// plain terminal.
+    pub fn from_registry(r: &mouser_core::plugins::Registry) -> Self {
         use mouser_core::plugins::Transport;
         let mut modes: Vec<Box<dyn Mode>> = Vec::new();
         let mut notes = Vec::new();
         for e in r.modes() {
             let m: Option<Box<dyn Mode>> = match (e.transport, e.name.as_str()) {
-                (Transport::Builtin, "commander") => Some(Box::new(commander::CommanderMode::new())),
-                (Transport::Builtin, "preferences") => Some(Box::new(prefs::PrefsMode::new())),
                 (Transport::Mode, _) => mouser_core::plugins::find(&e.name)
                     .and_then(|p| stdio::StdioMode::new(p, mouser_core::storage::max_restarts(&mouser_core::storage::load_preferences())))
                     .map(|m| Box::new(m) as Box<dyn Mode>),
                 (Transport::Command, _) => {
                     mouser_core::plugins::find(&e.name).and_then(plugin::PluginMode::new).map(|m| Box::new(m) as Box<dyn Mode>)
                 }
-                _ => make(e),
+                _ => None,
             };
             let Some(m) = m else {
-                notes.push(format!("mode {} is not available in this build", e.name));
+                notes.push(format!("mode {} is not installed or could not start", e.name));
                 continue;
             };
             if let Some(o) = modes.iter().find(|o| o.hotkey() == m.hotkey()) {
@@ -1034,7 +1027,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap().got, vec!["copy:7"], "Enter picks the selected entry");
         // Right-click at (30, 40): the mode is asked there; the entry's key picks it.
         h.focus(false);
-        h.action(MENU_AT, commander::pack_xy(30, 40));
+        h.action(MENU_AT, pack_xy(30, 40));
         assert!(h.focused());
         h.view(&ctx);
         assert_eq!(seen.lock().unwrap().asked[1], Some((30, 40)));
@@ -1055,9 +1048,49 @@ mod tests {
         assert_eq!(seen.lock().unwrap().got.last().unwrap(), "open:7");
     }
 
+    /// A second mode with commander's name, hotkey and default keys (from
+    /// the official plugin's manifest).
+    struct Cmdr(&'static [Binding]);
+
+    impl Mode for Cmdr {
+        fn name(&self) -> &'static str {
+            "commander"
+        }
+        fn hotkey(&self) -> char {
+            'c'
+        }
+        fn bindings(&self) -> &'static [Binding] {
+            self.0
+        }
+        fn action(&mut self, id: &str, _: i32) -> Effect {
+            Effect::Say(id.into())
+        }
+        fn view(&mut self, _: &Context, _: &Keymap) -> View {
+            View::default()
+        }
+    }
+
+    /// An official plugin's `[mode] keys` (the in-tree manifests).
+    fn manifest_keys(toml: &str) -> &'static [Binding] {
+        let m = mouser_core::plugins::Manifest::parse(toml).unwrap();
+        let v: Vec<Binding> =
+            m.mode.unwrap().keys.into_iter().map(|k| Binding { id: k.id.leak(), key: k.key.leak(), describe: k.describe.leak() }).collect();
+        v.leak()
+    }
+
+    const OFFICIAL: [&str; 3] = [
+        include_str!("../../../../plugins/commander/plugin.toml"),
+        include_str!("../../../../plugins/chat/plugin.toml"),
+        include_str!("../../../../plugins/preferences/plugin.toml"),
+    ];
+
+    fn cmdr() -> Box<dyn Mode> {
+        Box::new(Cmdr(manifest_keys(OFFICIAL[0])))
+    }
+
     #[test]
     fn one_mode_routes_only_its_keys() {
-        let mut h = Host::new(vec![Box::new(Fake { on: false, got: vec![] }), Box::new(commander::CommanderMode::new())]);
+        let mut h = Host::new(vec![Box::new(Fake { on: false, got: vec![] }), cmdr()]);
         assert_eq!(h.current(), Some("fake"), "the first mode is the default and starts active");
         assert_eq!(h.key(b"g"), None, "no focus: the key is the shell's");
         assert_eq!(h.key(b"\x1b\x0b"), Some(Effect::None), "ctrl+alt+k gives the mode the keyboard");
@@ -1070,7 +1103,7 @@ mod tests {
         assert_eq!(h.switch("c").unwrap(), "commander mode");
         assert_eq!(h.current(), Some("commander"), "switching replaces the mode");
         assert!(h.focused(), "switched to on purpose: it has the keyboard");
-        assert!(h.key(b"v").is_some());
+        assert_eq!(h.key(b"v"), Some(Effect::Say("switch_view".into())));
         h.focus(false);
         assert_eq!(h.key(b"v"), None);
         assert_eq!(h.switch(":c").unwrap(), "commander mode off");
@@ -1093,15 +1126,15 @@ mod tests {
     #[test]
     fn unfocused_the_only_mode_key_is_the_toggle() {
         let mut keys: Vec<Vec<u8>> = Vec::new();
-        for k in cmdr_all_keys() {
-            keys.extend(mouser_core::modes::key_bytes(&k).unwrap());
-            keys.extend(mouser_core::modes::key_bytes(&format!("alt+{k}")).unwrap());
+        for b in manifest_keys(OFFICIAL[0]) {
+            keys.extend(mouser_core::modes::key_bytes(b.key).unwrap());
+            keys.extend(mouser_core::modes::key_bytes(&format!("alt+{}", b.key)).unwrap());
         }
         for c in (0x20u8..0x7f).chain(1..0x20) {
             keys.push(vec![c]);
             keys.push(vec![0x1b, c]);
         }
-        let mut h = Host::builtin();
+        let mut h = Host::new(vec![cmdr()]);
         for b in &keys {
             let toggle = mouser_core::modes::key_bytes(mouser_core::modes::DEFAULT_FOCUS_KEY).unwrap().contains(b);
             assert_eq!(h.takes(b), toggle, "{b:?}");
@@ -1109,22 +1142,18 @@ mod tests {
                 assert_eq!(h.key(b), None, "{b:?} goes to the shell");
             }
         }
-        // Every mode built in: its defaults are plain keys, never the toggle.
-        for m in [&commander::CommanderMode::new() as &dyn Mode, &prefs::PrefsMode::new()] {
-            for b in m.bindings() {
-                assert!(!b.key.starts_with("alt+") && !b.key.starts_with("ctrl+"), "{}: {} is not plain", m.name(), b.id);
+        // The official modes' defaults are plain keys, never the toggle.
+        for t in OFFICIAL {
+            for b in manifest_keys(t) {
+                assert!(!b.key.starts_with("alt+") && !b.key.starts_with("ctrl+"), "{}: {} is not plain", b.id, b.key);
             }
         }
-    }
-
-    fn cmdr_all_keys() -> Vec<String> {
-        mouser_core::commander::BINDINGS.iter().map(|b| b.key.to_string()).collect()
     }
 
     #[test]
     fn host_windows_list_keys_and_modes() {
         let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
-        let mut h = Host::builtin();
+        let mut h = Host::new(vec![cmdr()]);
         h.show_keys();
         let v = h.view(&Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } });
         let p = v.panel.unwrap();

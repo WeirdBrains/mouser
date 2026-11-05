@@ -1509,17 +1509,11 @@ fn main() -> Result<()> {
     };
     let notes = mcp_tools::start(tabs.clone(), app_state.clone());
     {
-        // The mode switcher comes from the plugin registry (P6): enabled modes
-        // in priority order (commander first by default), built-in or plugin.
-        // The chat mode (P5)'s agent sees the tabs and runs tools through ChatHost.
+        // The mode switcher comes from the plugin registry (P6): the enabled,
+        // installed mode plugins in priority order (commander first by default).
+        // Chat and other plugins with agent.use get sessions through ChatHost.
         let reg = mouser_core::plugins::Registry::load();
-        let modes = mouser_render::modes::Host::from_registry(&reg, |e| match e.name.as_str() {
-            "chat" if e.transport == mouser_core::plugins::Transport::Builtin => {
-                let host = Arc::new(chat_host::ChatHost::new(tabs.clone(), app_state.clone()));
-                Some(Box::new(mouser_render::modes::chat::ChatMode::new(mouser_core::agent::Chat::new(host))) as Box<dyn mouser_render::modes::Mode>)
-            }
-            _ => None,
-        });
+        let modes = mouser_render::modes::Host::from_registry(&reg);
         let mut modes = modes;
         {
             // Mode plugins with agent.use get sessions on the same host as chat (keys stay here).

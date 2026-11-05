@@ -236,7 +236,6 @@ fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
         let state = if e.enabled { "" } else { " [disabled]" };
         let from = match e.source {
             Some(s @ (plugins::Source::Bundle | plugins::Source::System)) => format!(" [{}]", s.name()),
-            Some(plugins::Source::User) if plugins::builtin_manifest(&e.name).is_some() => " [overrides built-in]".to_string(),
             _ => String::new(),
         };
         let cmds = match &e.hotkey {

@@ -1,20 +1,19 @@
-//! The commander plugin end to end, against the built-in mode it replaces:
-//! Mouser's adapter (`modes::stdio`) starts the real `mouser-commander`, and
-//! for the same folder and window the plugin must draw what the built-in
-//! commander draws (list, grid, carousel, search, the file view, images),
-//! take the same keys, and ask Mouser for the same effects.
+//! The commander plugin end to end: Mouser's adapter (`modes::stdio`)
+//! starts the real `mouser-commander`, and for a folder and window it must
+//! draw the list, grid, carousel, search, the file view and images, take its
+//! keys, and ask Mouser for the right effects (Mouser has no built-in
+//! commander since 1.4.0; the plugin is the mode).
 
 mod common;
 
 use common::*;
 use mouser_core::commander::BINDINGS;
 use mouser_core::permissions::{Decision, Store};
-use mouser_render::modes::commander::CommanderMode;
 use mouser_render::modes::stdio::StdioMode;
 use mouser_render::modes::{Effect, Mode};
 
 #[test]
-fn draws_and_acts_like_the_built_in_commander() {
+fn draws_and_acts_through_mouser() {
     let home = tempfile::tempdir().unwrap();
     // SAFETY: the only test in this binary; set before anything reads it.
     unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
@@ -30,11 +29,11 @@ fn draws_and_acts_like_the_built_in_commander() {
     }
     store.save().unwrap();
 
-    // The manifest's keys are the built-in's bindings.
+    // The manifest's keys are Mouser's commander bindings (`modes.toml`).
     let reg = mouser_core::plugins::Registry::load();
     assert!(reg.broken.is_empty(), "{:?}", reg.broken);
     let e = reg.entries.iter().find(|e| e.name == "commander").unwrap();
-    assert_eq!(e.transport, mouser_core::plugins::Transport::Mode, "the plugin replaces the built-in");
+    assert_eq!(e.transport, mouser_core::plugins::Transport::Mode, "the plugin is the commander mode");
     let man = mouser_core::plugins::Manifest::parse(include_str!("../plugin.toml")).unwrap();
     let decl: Vec<(String, String)> = man.mode.as_ref().unwrap().keys.iter().map(|k| (k.id.clone(), k.key.clone())).collect();
     let builtin: Vec<(String, String)> = BINDINGS.iter().map(|b| (b.id.to_string(), b.key.to_string())).collect();
@@ -48,90 +47,80 @@ fn draws_and_acts_like_the_built_in_commander() {
     png(&w.join("a.png"), 64, 48);
     png(&w.join("b.png"), 40, 80);
 
-    let mut b = CommanderMode::new();
     let p = mouser_core::plugins::find("commander").unwrap();
     let mut m = StdioMode::new(p, 3).unwrap();
-    for x in [&mut b as &mut dyn Mode, &mut m] {
-        x.activate();
-        x.cwd_changed(w);
-    }
-    let v = same(&mut b, &mut m, "list");
-    assert!(v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains("notes.md")));
+    m.activate();
+    m.cwd_changed(w);
+    let v = settle(&mut m, "list");
+    assert!(shows(&v, "notes.md") && shows(&v, "sub") && shows(&v, "a.png"));
 
     // Views: grid (thumbnails), carousel (big images), back to list.
     for (step, what) in [("switch_view", "grid"), ("bigger", "bigger grid tiles"), ("switch_view", "carousel"), ("right", "carousel next")] {
-        b.action(step, 0);
         m.action(step, 0);
-        // Thumbnails load in the background on both sides: wait for them.
-        let v = same_when(&mut b, &mut m, what, |v| !v.images.is_empty());
+        // Thumbnails load in the background: wait for them.
+        let v = settle_when(&mut m, what, |v| !v.images.is_empty());
         assert!(!v.images.is_empty(), "{what}: images shown");
     }
-    b.action("switch_view", 0);
     m.action("switch_view", 0);
-    same(&mut b, &mut m, "list again");
+    let v = settle(&mut m, "list again");
+    assert!(v.images.is_empty() || shows(&v, "notes.md"), "the list");
 
     // Search: plain typing goes to the plugin, alt keys stay bindings.
-    b.action("search", 0);
     m.action("search", 0);
-    same(&mut b, &mut m, "search open");
-    assert!(b.wants_text() && m.wants_text(), "searching takes typing");
+    settle(&mut m, "search open");
+    assert!(m.wants_text(), "searching takes typing");
     assert!(!m.wants_key(b"\x1bt"), "alt+t is still a binding while searching");
     for k in [b"n".as_slice(), b"o"] {
-        assert!(b.text(k).is_some());
         assert!(m.text(k).is_some());
     }
     assert_eq!(m.text(b"\x1bt"), None, "alt keys fall through to the bindings");
-    let v = same(&mut b, &mut m, "search typed");
-    assert!(v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains("notes.md")));
+    let v = settle(&mut m, "search typed");
+    assert!(shows(&v, "notes.md"), "notes.md matches \"no\"");
+    assert!(!shows(&v, "plain.txt"), "plain.txt does not");
     for _ in 0..2 {
-        b.text(b"\x7f");
         m.text(b"\x7f");
     }
-    same(&mut b, &mut m, "search erased");
-    assert!(b.escape() && m.escape(), "Escape closes the search in both");
-    same(&mut b, &mut m, "search closed");
+    let v = settle(&mut m, "search erased");
+    assert!(shows(&v, "plain.txt"));
+    assert!(m.escape(), "Escape closes the search");
+    settle(&mut m, "search closed");
     assert!(!m.wants_text());
 
     // The file view: Markdown rendered, then closed with Escape.
-    select(&mut b, &mut m, "notes.md");
-    assert_eq!(b.action("open", 0), Effect::None);
+    select(&mut m, "notes.md");
     m.action("open", 0);
-    same(&mut b, &mut m, "Markdown file view");
-    assert!(b.escape() && m.escape());
-    same(&mut b, &mut m, "file view closed");
+    let v = settle_when(&mut m, "Markdown file view", |v| shows(v, "Title"));
+    assert!(!shows(&v, "# Title"), "the heading is rendered, not shown raw");
+    assert!(m.escape());
+    settle(&mut m, "file view closed");
     assert!(!m.escape(), "nothing open: Escape is Mouser's");
 
-    // A folder: open browses it in both (the shell stays); sync asks for the cd.
-    select(&mut b, &mut m, "sub");
-    assert_eq!(b.action("open", 0), Effect::None);
+    // A folder: open browses it (the shell stays); sync asks for the cd.
+    select(&mut m, "sub");
     m.action("open", 0);
-    same(&mut b, &mut m, "browsed into sub");
-    let want = b.action("sync", 0);
-    assert!(matches!(&want, Effect::Cd(d) if d.ends_with("sub")), "{want:?}");
+    settle_when(&mut m, "browsed into sub", |v| !shows(v, "notes.md"));
     m.action("sync", 0);
-    assert_eq!(effects(&mut m, 1), vec![want]);
+    let got = effects(&mut m, 1);
+    assert!(matches!(got.as_slice(), [Effect::Cd(d)] if d.ends_with("sub")), "{got:?}");
 
-    // A key the built-in passes on (no player: k) types nothing into the
-    // shell: commander has the keyboard.
-    assert_eq!(b.action("play_pause", 0), Effect::Pass);
+    // A key with nothing to do (no player: play_pause) types nothing into
+    // the shell: commander has the keyboard.
     m.action("play_pause", 0);
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(!effects(&mut m, 1).iter().any(|e| matches!(e, Effect::Type(_))));
 
     // Mark and pipe: the command line is run in the shell.
-    for x in [&mut b as &mut dyn Mode, &mut m] {
-        x.action("last", 0);
-        x.action("mark", 0);
-        x.action("pipe", 0);
-    }
-    same(&mut b, &mut m, "pipe prompt");
+    m.action("parent", 0);
+    settle_when(&mut m, "back in the folder", |v| shows(v, "notes.md"));
+    m.action("last", 0);
+    m.action("mark", 0);
+    m.action("pipe", 0);
+    settle(&mut m, "pipe prompt");
     for k in [b"w".as_slice(), b"c"] {
-        b.text(k);
         m.text(k);
     }
-    let want = b.text(b"\r").unwrap();
-    assert!(matches!(&want, Effect::Run(l) if l.ends_with("| wc")), "{want:?}");
     m.text(b"\r");
-    assert_eq!(effects(&mut m, 1), vec![want]);
+    let got = effects(&mut m, 1);
+    assert!(matches!(got.as_slice(), [Effect::Run(l)] if l.ends_with("| wc")), "{got:?}");
     drop(m);
 }

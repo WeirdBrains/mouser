@@ -1,7 +1,6 @@
 //! The player in the commander plugin: it decodes with ffmpeg in its own
 //! process and hands each frame to Mouser through shared memory. A 60 fps
-//! clip must reach Mouser at (nearly) its frame rate, like the built-in
-//! player. Skipped without ffmpeg.
+//! clip must reach Mouser at (nearly) its frame rate. Skipped without ffmpeg.
 
 mod common;
 
@@ -9,7 +8,6 @@ use common::*;
 use mouser_core::commander::BINDINGS;
 use mouser_core::modes::Keymap;
 use mouser_core::permissions::{Decision, Store};
-use mouser_render::modes::commander::CommanderMode;
 use mouser_render::modes::stdio::StdioMode;
 use mouser_render::modes::{Mode, View};
 use std::collections::HashSet;
@@ -43,7 +41,7 @@ fn plays_through_shared_memory_at_the_clip_rate() {
         std::env::set_var("MOUSER_HOME", home.path());
         std::env::set_var("MOUSER_PLUGIN_DIRS", "");
     }
-    if !mouser_render::modes::player::available() {
+    if !ffmpeg() {
         // CI sets MOUSER_REQUIRE_FFMPEG so the 60 fps path can't be skipped silently.
         assert!(std::env::var_os("MOUSER_REQUIRE_FFMPEG").is_none(), "MOUSER_REQUIRE_FFMPEG is set but ffmpeg is not installed");
         eprintln!("ffmpeg not installed, skipped");
@@ -69,27 +67,17 @@ fn plays_through_shared_memory_at_the_clip_rate() {
     }
     store.save().unwrap();
 
-    let mut b = CommanderMode::new();
     let p = mouser_core::plugins::find("commander").unwrap();
     let mut m = StdioMode::new(p, 3).unwrap();
-    for x in [&mut b as &mut dyn Mode, &mut m] {
-        x.activate();
-        x.cwd_changed(work.path());
-    }
-    select(&mut b, &mut m, "clip.mp4");
-    // One at a time, so they don't share the CPU.
-    b.action("open", 0);
-    let builtin = frames_per_second(&mut b, 2.0);
-    b.deactivate();
-    drop(b);
+    m.activate();
+    m.cwd_changed(work.path());
+    select(&mut m, "clip.mp4");
     m.action("open", 0);
     let plugin = frames_per_second(&mut m, 2.0);
-    eprintln!("60 fps clip: built-in {builtin:.1} fps, plugin {plugin:.1} fps");
+    eprintln!("60 fps clip: plugin {plugin:.1} fps");
     // Debug builds can't hold 60, and shared CI runners (macOS above all)
-    // stall for whole frames: there the floor is 20 and the real check is that
-    // the plugin keeps up with the built-in on the same machine.
+    // stall for whole frames: there the floor is 20.
     let floor = if std::env::var_os("CI").is_some() { 20.0 } else { 30.0 };
     assert!(plugin >= floor, "plugin {plugin:.1} fps (floor {floor})");
-    assert!(plugin >= builtin * 0.7, "plugin {plugin:.1} fps vs built-in {builtin:.1}");
     drop(m);
 }

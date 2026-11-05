@@ -1,14 +1,11 @@
-//! P6: the mode switcher comes from the plugin registry (built-in commander and
-//! chat, plus mode plugins over the command transport), built-ins can be
+//! P6 and 1.4.0: the mode switcher comes from the plugin registry (only
+//! installed mode plugins; Mouser has no built-in modes), modes can be
 //! disabled, and with no mode Mouser is a plain terminal. One test: it moves
 //! MOUSER_HOME.
 
-use mouser_core::agent::{AgentHost, AgentTool, Chat, Check, ScreenContext};
 use mouser_core::plugins::{self, Registry};
-use mouser_render::modes::{Host, Mode, chat::ChatMode};
-use serde_json::Value;
+use mouser_render::modes::{Host, Mode};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 #[cfg(unix)]
 use {
     mouser_core::modes::Keymap,
@@ -19,27 +16,8 @@ use {
     std::time::{Duration, Instant},
 };
 
-struct NoModel;
-impl AgentHost for NoModel {
-    fn context(&self) -> ScreenContext {
-        ScreenContext::default()
-    }
-    fn tools(&self) -> Vec<AgentTool> {
-        vec![]
-    }
-    fn check(&self, _: &AgentTool, _: &Value) -> Check {
-        Check::Allow
-    }
-    fn call(&self, _: &AgentTool, _: &Value) -> Result<String, String> {
-        Ok(String::new())
-    }
-    fn model(&self) -> Option<(String, String)> {
-        None
-    }
-}
-
 fn host() -> Host {
-    Host::from_registry(&Registry::load(), |e| (e.name == "chat").then(|| Box::new(ChatMode::new(Chat::new(Arc::new(NoModel)))) as Box<dyn Mode>))
+    Host::from_registry(&Registry::load())
 }
 
 fn example(n: &str) -> PathBuf {
@@ -74,48 +52,37 @@ fn wait_for(m: &mut dyn Mode, want: &str) -> String {
 fn modes_come_from_the_registry() {
     let home = tempfile::tempdir().unwrap();
     unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
-    // Defaults: commander (the default, active), chat, preferences.
+    unsafe { std::env::set_var("MOUSER_PLUGIN_DIRS", "") };
+    // Nothing installed: no mode at all (a plain terminal), nothing built in.
     let h = host();
-    assert_eq!(h.names(), ["commander", "chat", "preferences"]);
-    assert_eq!(h.current(), Some("commander"));
-    // A build without the chat mode leaves it out with a note.
-    let h = Host::from_registry(&Registry::load(), |_| None);
-    assert_eq!(h.names(), ["commander", "preferences"]);
-    assert!(h.notes.iter().any(|n| n.contains("chat")), "{:?}", h.notes);
-    // Priority order decides the switcher order and the default.
-    plugins::move_to("chat", 0).unwrap();
-    assert_eq!(host().names(), ["chat", "commander", "preferences"]);
-    plugins::move_to("commander", 0).unwrap();
-    // Built-ins can be turned off; with none on, an empty host (plain terminal).
-    plugins::set_enabled("commander", false).unwrap();
-    let mut h = host();
-    assert_eq!(h.names(), ["chat", "preferences"]);
-    assert!(h.switch("c").is_err(), "commander is off");
-    plugins::set_enabled("chat", false).unwrap();
-    plugins::set_enabled("preferences", false).unwrap();
-    let h = host();
-    assert!(h.names().is_empty());
+    assert!(h.names().is_empty(), "{:?}", h.names());
     assert_eq!(h.current(), None);
-    plugins::set_enabled("commander", true).unwrap();
-    plugins::set_enabled("chat", true).unwrap();
-    plugins::set_enabled("preferences", true).unwrap();
 
-    // A mode plugin over the command transport joins after the built-in modes.
+    // A mode plugin over the command transport is the mode.
     plugins::install(&example("hello-mode")).unwrap();
     let mut h = host();
-    assert_eq!(h.names(), ["commander", "chat", "preferences", "hello-mode"]);
-    assert_eq!(h.current(), Some("commander"), "installing a mode keeps the default");
-    assert_eq!(h.switch("h").unwrap(), "hello-mode mode");
+    assert_eq!(h.names(), ["hello-mode"]);
+    assert_eq!(h.current(), Some("hello-mode"), "the only mode is the default");
+    assert!(h.switch("h").is_ok());
+    // Disabled: gone again.
+    plugins::set_enabled("hello-mode", false).unwrap();
+    assert!(host().names().is_empty());
+    plugins::set_enabled("hello-mode", true).unwrap();
+
     // A second plugin with the same hotkey is left out with a note.
     let dup = home.path().join("dup");
     std::fs::create_dir_all(&dup).unwrap();
     let toml = std::fs::read_to_string(example("hello-mode").join("plugin.toml")).unwrap().replace("name = \"hello-mode\"", "name = \"dup-mode\"");
-    std::fs::write(dup.join("plugin.toml"), toml).unwrap();
+    std::fs::write(dup.join("plugin.toml"), &toml).unwrap();
     plugins::install(&dup).unwrap();
     let h = host();
     assert!(!h.names().contains(&"dup-mode"));
     assert!(h.notes.iter().any(|n| n.contains("dup-mode") && n.contains("hotkey h")), "{:?}", h.notes);
     plugins::uninstall("dup-mode").unwrap();
+
+    // The official modes' hotkeys stay theirs: another plugin can't take `c`.
+    let taker = toml.replace("name = \"dup-mode\"", "name = \"taker\"").replace("hotkey = \"h\"", "hotkey = \"c\"");
+    assert!(plugins::Manifest::parse(&taker).is_err(), "c is commander's");
     plugin_mode_runs_with_permission(home.path());
     unsafe { std::env::remove_var("MOUSER_HOME") };
 }
