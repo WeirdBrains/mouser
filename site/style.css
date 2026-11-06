@@ -19,18 +19,27 @@ section{padding:3.5rem max(clamp(1rem,4vw,3rem),calc((100% - 1180px)/2 + 3rem));
 @media (min-width:1024px){
   .hero{
     display:grid;
-    /* Copy narrow; video takes most of the hero width. */
-    grid-template-columns:minmax(200px,.45fr) minmax(0,2.55fr);
+    /* Text keeps a readable column; video ~60%. */
+    grid-template-columns:minmax(360px,1fr) minmax(0,1.6fr);
     grid-template-areas:"intro shot" "meta shot";
-    gap:1rem 1.5rem;
+    gap:1.25rem 2rem;
     align-items:start;
     max-width:none;
     width:100%;
   }
-  .hero-intro{grid-area:intro}
+  .hero-intro{grid-area:intro;min-width:0}
   .hero .shot.beautiful{grid-area:shot;margin:0;align-self:start;width:100%}
-  .hero-meta{grid-area:meta}
-  .hero h1{margin:.4rem 0 0;font-size:clamp(1.5rem,2.6vw,2.2rem)}
+  .hero-meta{grid-area:meta;min-width:0}
+  .hero h1{margin:.4rem 0 0;font-size:clamp(1.55rem,2.4vw,2.15rem);line-height:1.25}
+  .hero .cta{display:flex;flex-wrap:wrap;gap:.55rem .6rem}
+  .hero .cta .btn{margin-right:0}
+}
+@media (min-width:1024px) and (max-width:1180px){
+  /* Mid desktop: stack video under copy so neither column starves. */
+  .hero{
+    grid-template-columns:1fr;
+    grid-template-areas:"intro" "shot" "meta";
+  }
 }
 
 .prompt{color:var(--cyan);margin:0}
@@ -59,19 +68,18 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   .shot.beautiful video{display:none}
   .shot.beautiful .beautiful-poster{display:block}
 }
-/* Hero clip: max size; container bg matches video edge (#282c2e) so corners are seamless. */
+/* Hero clip: full window + CSS pad in edge color so radius never eats glyphs. */
 .shot .media-frame.hero-fill{
-  /* Video is the boundary. Bg = sampled edge (#282c2e); 1px ring seals radius AA fringe. */
-  padding:0;border:0;background:#282c2e;
+  padding:12px;border:0;background:#282c2e;
   border-radius:var(--radius);overflow:hidden;line-height:0;
-  width:100%;aspect-ratio:1112 / 938;
-  box-sizing:border-box;
+  width:100%;box-sizing:border-box;
   box-shadow:0 0 0 1px #282c2e;
 }
 .light .shot .media-frame.hero-fill{box-shadow:0 0 0 1px #282c2e,0 8px 32px rgba(4,25,42,.18)}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
-  display:block;width:100%;height:100%;
-  object-fit:cover; /* exact aspect → cover==contain; cover avoids subpixel letterbox */
+  display:block;width:100%;height:auto;
+  aspect-ratio:1164 / 990;
+  object-fit:cover;
   background:#282c2e;border:0;border-radius:0;box-shadow:none;
 }
 .hero .shot.beautiful{width:100%}
