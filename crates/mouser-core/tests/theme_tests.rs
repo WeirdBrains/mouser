@@ -136,3 +136,30 @@ fn match_omarchy_reads_colors_toml() {
     assert_eq!(def.palette[1], "#8e92bd");
     assert_eq!(def.palette[2], "#86d0e3");
 }
+
+
+#[test]
+#[serial]
+fn duplicate_export_import_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        env::set_var("MOUSER_HOME", tmp.path());
+        env::set_var("MOUSER_OMARCHY", "0");
+    }
+    write_builtins_if_absent().unwrap();
+
+    mouser_core::themes::create_theme("Mine").unwrap();
+    assert!(mouser_core::themes::list_themes().iter().any(|t| t == "Mine"));
+    assert!(mouser_core::themes::create_theme("Mine").is_err());
+
+    mouser_core::themes::duplicate_theme("Mine", "Mine Two").unwrap();
+    let export = tmp.path().join("export-mine");
+    mouser_core::themes::export_theme("Mine Two", &export).unwrap();
+    assert!(export.join("dark.toml").is_file());
+    assert!(export.join("light.toml").is_file());
+
+    let imported = mouser_core::themes::import_theme(&export, Some("From Export")).unwrap();
+    assert_eq!(imported, "From Export");
+    let dark = mouser_core::themes::load_theme("From Export", "dark");
+    assert_eq!(dark.name, "From Export");
+}

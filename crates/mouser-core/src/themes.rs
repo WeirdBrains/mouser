@@ -210,6 +210,100 @@ pub fn save_theme(def: &ThemeDef) -> std::io::Result<()> {
     fs::write(dir.join(format!("{variant}.toml")), toml::to_string_pretty(def).unwrap())
 }
 
+/// Valid user theme name: non-empty, no `/` or `\0`, not only whitespace.
+pub fn valid_theme_name(name: &str) -> bool {
+    let t = name.trim();
+    !t.is_empty() && t.len() <= 64 && !t.contains('/') && !t.contains('\0') && !t.starts_with('.')
+}
+
+/// Whether `name` already exists (built-in or on disk).
+pub fn theme_exists(name: &str) -> bool {
+    list_themes().iter().any(|n| n.eq_ignore_ascii_case(name))
+}
+
+/// Copy both variants of `src` into a new theme named `dest` (trimmed).
+/// Fails if the name is invalid or already taken.
+pub fn duplicate_theme(src: &str, dest: &str) -> Result<(), String> {
+    let dest = dest.trim();
+    if !valid_theme_name(dest) {
+        return Err("name must be 1–64 characters without '/'".into());
+    }
+    if theme_exists(dest) {
+        return Err(format!("a theme named '{dest}' already exists"));
+    }
+    let mut dark = load_theme(src, "dark");
+    let mut light = load_theme(src, "light");
+    dark.name = dest.to_string();
+    light.name = dest.to_string();
+    dark.variant = "dark".into();
+    light.variant = "light".into();
+    save_theme(&dark).map_err(|e| e.to_string())?;
+    save_theme(&light).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Create a new theme from Red Star (both variants) under `name`.
+pub fn create_theme(name: &str) -> Result<(), String> {
+    duplicate_theme("Red Star", name)
+}
+
+/// Export both variants of `name` into `dir` as `dark.toml` / `light.toml`.
+pub fn export_theme(name: &str, dir: &std::path::Path) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    for variant in ["dark", "light"] {
+        let mut def = load_theme(name, variant);
+        def.name = name.to_string();
+        def.variant = variant.into();
+        let path = dir.join(format!("{variant}.toml"));
+        let body = toml::to_string_pretty(&def).map_err(|e| e.to_string())?;
+        fs::write(&path, body).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Import a theme from `dir` containing `dark.toml` and/or `light.toml`.
+/// `as_name` overrides the name stored in the files / directory name.
+pub fn import_theme(dir: &std::path::Path, as_name: Option<&str>) -> Result<String, String> {
+    let dark_path = dir.join("dark.toml");
+    let light_path = dir.join("light.toml");
+    let dark = read_variant_file(&dark_path)?;
+    let light = read_variant_file(&light_path)?;
+    if dark.is_none() && light.is_none() {
+        return Err("no dark.toml or light.toml in that folder".into());
+    }
+    let mut dark = dark.or_else(|| light.clone()).expect("checked");
+    let mut light = light.unwrap_or_else(|| dark.clone());
+    let fallback = dir.file_name().and_then(|s| s.to_str()).unwrap_or("Imported").to_string();
+    let from_file = dark.name.trim().to_string();
+    let candidate = as_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .filter(|s| valid_theme_name(s))
+        .or_else(|| valid_theme_name(&from_file).then_some(from_file))
+        .or_else(|| valid_theme_name(&fallback).then_some(fallback.clone()));
+    let name = candidate.ok_or_else(|| "could not derive a valid theme name".to_string())?;
+    if theme_exists(&name) {
+        return Err(format!("a theme named '{name}' already exists"));
+    }
+    dark.name = name.clone();
+    dark.variant = "dark".into();
+    light.name = name.clone();
+    light.variant = "light".into();
+    save_theme(&dark).map_err(|e| e.to_string())?;
+    save_theme(&light).map_err(|e| e.to_string())?;
+    Ok(name)
+}
+
+fn read_variant_file(path: &std::path::Path) -> Result<Option<ThemeDef>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let s = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let def: ThemeDef = toml::from_str(&s).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(def))
+}
+
 /// The active theme variant for `prefs`.
 pub fn resolve_active_theme(prefs: &Preferences) -> ThemeDef {
     load_theme(prefs.theme.as_deref().unwrap_or(default_theme_name()), active_variant(prefs))

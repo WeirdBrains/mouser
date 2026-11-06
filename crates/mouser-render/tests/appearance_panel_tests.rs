@@ -21,6 +21,9 @@ fn picker_lists_themes_modes_and_actions() {
     assert_eq!(ui::hit_test(&layout, light.rect.x + 1, light.rect.y + 1), UiAction::SetMode("light".into()));
     assert_eq!(ui::hit_test(&layout, 1, 1), UiAction::ClosePanel);
     assert!(p.items.iter().any(|i| i.action == UiAction::EditTheme));
+    assert!(p.items.iter().any(|i| i.action == UiAction::NewTheme));
+    assert!(p.items.iter().any(|i| i.action == UiAction::DuplicateTheme));
+    assert!(p.items.iter().any(|i| i.action == UiAction::ExportTheme));
 }
 
 #[test]

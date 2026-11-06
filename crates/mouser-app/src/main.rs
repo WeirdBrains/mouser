@@ -1459,6 +1459,9 @@ fn main() -> Result<()> {
             | ui::UiAction::SetMode(_)
             | ui::UiAction::EditTheme
             | ui::UiAction::MatchOmarchy
+            | ui::UiAction::NewTheme
+            | ui::UiAction::DuplicateTheme
+            | ui::UiAction::ExportTheme
             | ui::UiAction::FocusField(_)
             | ui::UiAction::PickFont(_)
             | ui::UiAction::ScrollPanel(_)
@@ -2291,11 +2294,14 @@ pub(crate) fn wake_after(delay: std::time::Duration) {
     });
 }
 
-/// `theme [name]`, `mode m`, `edit-theme`, `font-size n`, `font [family]` (leading ':' optional).
+/// `theme [name]`, `mode m`, `edit-theme`, `import-theme <dir>`, `export-theme [name]`,
+/// `font-size n`, `font [family]` (leading ':' optional).
 fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
     let cmd = cmd.trim_start_matches(':');
     let (head, arg) = cmd.split_once(' ').unwrap_or((cmd, ""));
-    let name = ["theme", "mode", "edit-theme", "font-size", "font"].into_iter().find(|n| *n == head)?;
+    let name = ["theme", "mode", "edit-theme", "font-size", "font", "import-theme", "export-theme"]
+        .into_iter()
+        .find(|n| *n == head)?;
     Some((name, arg))
 }
 
@@ -2378,12 +2384,21 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
                 st.look.open_picker();
                 st.look.open_editor();
             }
+            ("import-theme", arg) => {
+                if arg.trim().is_empty() {
+                    st.look.say("Usage: :import-theme /path/to/theme-dir");
+                } else {
+                    st.look.import_theme_cmd(arg);
+                }
+            }
+            ("export-theme", arg) => st.look.export_theme_cmd(arg),
             ("font-size", arg) => match mouser_core::appearance::parse_size(arg) {
                 Some(v) => st.look.set_font_size(v),
                 None => st.look.say("Usage: :font-size 6-48"),
             },
-            (_, arg) if arg.trim().is_empty() => st.look.open_font_picker(),
-            (_, arg) => st.look.set_font_family((!arg.trim().is_empty()).then(|| arg.trim().to_string())),
+            ("font", arg) if arg.trim().is_empty() => st.look.open_font_picker(),
+            ("font", arg) => st.look.set_font_family((!arg.trim().is_empty()).then(|| arg.trim().to_string())),
+            _ => {}
         }
     } else if trimmed == "close-sidebar" || trimmed == ":close-sidebar" {
         let mut st = app_state.lock().unwrap();

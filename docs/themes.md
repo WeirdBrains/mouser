@@ -37,6 +37,10 @@ Switching
 - **Match Omarchy** (on the switcher) copies the current Omarchy desktop theme's `colors.toml` into
   Mouser's built-in Omarchy theme and selects it. On Omarchy hosts with no `theme` preference yet,
   Mouser defaults to Omarchy automatically (`MOUSER_OMARCHY=1|0` overrides detection).
+- **New** / **Duplicate** create a user theme under `~/.mouser/themes/` (Duplicate copies both
+  variants of the selection). **Export** writes `dark.toml`/`light.toml` to
+  `~/Downloads/mouser-theme-<name>/`. Import with `:import-theme /path/to/dir`; export also via
+  `:export-theme [name]`.
 
 Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
