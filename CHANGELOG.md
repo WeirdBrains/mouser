@@ -1,9 +1,19 @@
 ## [Unreleased]
 
+
+## [1.4.4] - 2026-11-06
+
 ### Added
 
+- Theme editor **Dropper**: sample a screen colour into the focused field (`hyprpicker`, else `grim`+`slurp`, else ImageMagick `import`).
+- Appearance switcher **Auto**: match the Omarchy desktop theme when present (same source as Match Omarchy; more desktops later).
+- Font picker rows render in each family’s own face.
+- Colour editor side **Preview** pane for pending fg/bg/cursor/accent.
 - Appearance switcher: **New**, **Duplicate**, and **Export** for user themes; `:import-theme <dir>` and `:export-theme [name]`.
 
+### Changed
+
+- Site hero: borderless video edge (10px radius, 6px chrome inset); no CSS pad/ring or painted frame.
 
 ## [1.4.3] - 2026-11-05
 
