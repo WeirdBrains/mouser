@@ -22,12 +22,14 @@ mouser.weirdbrains.com is a static site in `site/` on the **`site`** branch.
 - Code blocks get a Copy button from `site/main.js` and scroll sideways when a
   line is longer than the card (never clipped); install cards are one per row.
 - **Docs pages** under `site/docs/` are generated, never edited by hand. Every
-  `docs/*.md` on main is mapped to a section (`user`, `developer`, `mcp`, `api`)
-  in `docs/sections.toml`; `docs/historical/` goes to the archive. The Docs site
-  workflow (`.github/workflows/docs-site.yml`) fails if a doc is unmapped, and on
-  every push to main that touches `docs/` it runs `scripts/build_docs.py` from the
-  `site` branch, commits `site/docs/` to `site` and deploys Pages. Pages that don't
-  come from `docs/` (the API crate table, drafts, "coming soon" stubs) live in
-  `site-src/<section>/*.md` on the `site` branch, with `title`/`status` front matter.
-  Manual rebuild: `pip install markdown`, then on a `site` checkout
+  `docs/*.md` on main is mapped in `docs/sections.toml` to a public section
+  (`user`, `developer`, `mcp`, `api`) or to `internal`. Public docs become pages;
+  `internal` docs (this page, the release process, HANDOVER) stay in the repo only
+  and never appear on the site. `docs/historical/` goes to the archive. The Docs
+  site workflow (`.github/workflows/docs-site.yml`) fails if a doc is unmapped, and
+  on every push to main that touches `docs/` it runs `scripts/build_docs.py` from
+  the `site` branch, commits `site/docs/` to `site` and deploys Pages. Pages that
+  don't come from `docs/` (the API crate table, drafts, "coming soon" stubs) live
+  in `site-src/<section>/*.md` on the `site` branch, with `title`/`status` front
+  matter. Manual rebuild: `pip install markdown`, then on a `site` checkout
   `python3 scripts/build_docs.py --docs ../mouser/docs --out site/docs`.

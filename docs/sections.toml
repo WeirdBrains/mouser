@@ -1,6 +1,10 @@
 # Which website section each docs/*.md page belongs to.
-# Sections: user, developer, mcp, api. "index" = docs/README.md (not a page).
-# docs/historical/ is published under the archive. Checked by scripts/check-doc-sections.py.
+# Sections: user, developer, mcp, api, internal, index.
+# - user / developer / mcp / api: public pages on mouser.weirdbrains.com
+# - internal: maintainer/agent docs kept in the repo only (not on the site)
+# - index: docs/README.md (not a page)
+# docs/historical/ is published under the archive.
+# Checked by scripts/check-doc-sections.py; the Docs site workflow skips internal.
 [docs]
 "README.md" = "index"
 "cli.md" = "user"
@@ -20,10 +24,14 @@
 "kitty-compliance.md" = "user"
 "plugins.md" = "developer"
 "mode-protocol.md" = "developer"
+"building-modes.md" = "developer"
+"custom-engines.md" = "developer"
+"fuzzball-integration.md" = "developer"
+"mcp-from-plugins.md" = "developer"
 "engines.md" = "developer"
 "protocol/README.md" = "developer"
-"deploy-site.md" = "developer"
-"release.md" = "developer"
-"HANDOVER.md" = "developer"
 "mcp.md" = "mcp"
 "deploy-mcp.md" = "mcp"
+"deploy-site.md" = "internal"
+"release.md" = "internal"
+"HANDOVER.md" = "internal"

@@ -79,7 +79,7 @@ mod tests {
             assert!(!title(md).is_empty(), "{id}");
         }
         assert!(topic("docs/models.md").is_some() && topic("MODELS").is_some());
-        assert!(!TOPICS.iter().any(|(id, _)| id.contains("historical") || id.contains("HANDOVER")));
+        assert!(!TOPICS.iter().any(|(id, _)| { id.contains("historical") || *id == "HANDOVER" || *id == "deploy-site" || *id == "release" }));
     }
 
     #[test]

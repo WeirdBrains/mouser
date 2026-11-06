@@ -28,6 +28,10 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 - [Plugins](./plugins.md): modes, engines, model and tool providers, commands
 - [Downloads](./downloads.md): installing, updating and rolling back plugins and engines; signatures and checks
 - [Mode plugin protocol](./mode-protocol.md): how mode plugins talk to Mouser (stdio, MessagePack, shared-memory images, restarts)
+- [Building a mode plugin](./building-modes.md): first mode on `mouser-mode-api`, install and checklist
+- [Building a custom rendering engine](./custom-engines.md): C ABI engine, the `flat` example, crash fallback
+- [Integrating an app with Fuzzball](./fuzzball-integration.md): graphics, keyboard, in-tab plugins
+- [Using Mouser's MCP server from a plugin](./mcp-from-plugins.md): `wants_mcp` grants and MCP plugins
 - [Models](./models.md): providers, grok (`xai-`, `grok_`, `--desktop`), the picker, local Gemma
 - [MCP](./mcp.md): Mouser's MCP server (HTTPS, Let's Encrypt) and MCP clients
 
@@ -35,8 +39,15 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 
 - [Windows](./windows.md): default terminal handoff
 
-## Deploying and releasing
+## Deploying
 
 - [Deploying the MCP server](./deploy-mcp.md)
+
+## Maintainer notes (repo only)
+
+These stay in the repository and are **not** published on mouser.weirdbrains.com
+(`internal` in [`sections.toml`](./sections.toml)):
+
 - [Deploying the website](./deploy-site.md)
 - [Release process](./release.md)
+- [Handover notes](./HANDOVER.md)
