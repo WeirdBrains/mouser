@@ -2,13 +2,26 @@
 
 use mouser_core::appearance::{self, EditKey, Outcome, ThemeEditor, ThemePicker};
 use mouser_core::storage::{Preferences, ThemeMode, load_preferences, update_preferences};
-use mouser_core::themes::{ThemeColors, active_variant, default_theme_name, list_themes, load_theme, match_omarchy, resolve_active_theme, save_theme};
+use mouser_core::themes::{
+    ThemeColors, active_variant, create_theme, default_theme_name, duplicate_theme, export_theme, import_theme, list_themes, load_theme,
+    match_omarchy, resolve_active_theme, save_theme, valid_theme_name,
+};
 use mouser_render::{Colors, ui};
 use std::time::{Duration, Instant};
 
 pub enum Panel {
     Picker(ThemePicker),
     Editor(ThemeEditor),
+    /// Name prompt for New / Duplicate.
+    NameForm {
+        title: String,
+        /// "new" or "duplicate"
+        kind: &'static str,
+        /// Theme being duplicated (ignored for new).
+        source: String,
+        name: String,
+        error: Option<String>,
+    },
 }
 
 /// Live appearance state: fonts, colours (with preview) and the open panel.
@@ -97,12 +110,37 @@ impl Appearance {
     pub fn key(&mut self, bytes: &[u8]) {
         let Some(key) = appearance::parse_key(bytes) else { return };
         self.sync_families();
-        let outcome = match &mut self.panel {
-            Some(Panel::Picker(p)) => p.handle(key),
-            Some(Panel::Editor(e)) => e.handle(key),
-            None => return,
-        };
-        self.apply(outcome);
+        match &mut self.panel {
+            Some(Panel::Picker(p)) => {
+                let outcome = p.handle(key);
+                self.apply(outcome);
+            }
+            Some(Panel::Editor(e)) => {
+                let outcome = e.handle(key);
+                self.apply(outcome);
+            }
+            Some(Panel::NameForm { name, error, .. }) => match key {
+                EditKey::Cancel => {
+                    self.open_picker();
+                }
+                EditKey::Enter | EditKey::Save => {
+                    let n = name.clone();
+                    self.commit_name_form(&n);
+                }
+                EditKey::Backspace => {
+                    name.pop();
+                    *error = None;
+                }
+                EditKey::Char(c) if !c.is_control() => {
+                    if name.len() < 64 {
+                        name.push(c);
+                        *error = None;
+                    }
+                }
+                _ => {}
+            },
+            None => {}
+        }
     }
 
     pub fn action(&mut self, act: &ui::UiAction) {
@@ -141,6 +179,51 @@ impl Appearance {
                     }
                     None => self.say("Match Omarchy: no current Omarchy theme found"),
                 }
+                return;
+            }
+            (Some(Panel::Picker(p)), ui::UiAction::NewTheme) => {
+                let source = p.theme().to_string();
+                self.panel = Some(Panel::NameForm {
+                    title: "New theme".into(),
+                    kind: "new",
+                    source,
+                    name: String::new(),
+                    error: None,
+                });
+                return;
+            }
+            (Some(Panel::Picker(p)), ui::UiAction::DuplicateTheme) => {
+                let source = p.theme().to_string();
+                self.panel = Some(Panel::NameForm {
+                    title: format!("Duplicate '{source}'"),
+                    kind: "duplicate",
+                    source: source.clone(),
+                    name: format!("{source} copy"),
+                    error: None,
+                });
+                return;
+            }
+            (Some(Panel::Picker(p)), ui::UiAction::ExportTheme) => {
+                let name = p.theme().to_string();
+                let dir = export_dir_for(&name);
+                match export_theme(&name, &dir) {
+                    Ok(()) => self.say(format!("Exported to {}", dir.display())),
+                    Err(e) => self.say(format!("Export failed: {e}")),
+                }
+                return;
+            }
+            (Some(Panel::NameForm { name, .. }), ui::UiAction::FocusField(_)) => {
+                // single field; already focused
+                let _ = name;
+                return;
+            }
+            (Some(Panel::NameForm { name, .. }), ui::UiAction::SavePanel) => {
+                let n = name.clone();
+                self.commit_name_form(&n);
+                return;
+            }
+            (Some(Panel::NameForm { .. }), ui::UiAction::ClosePanel) => {
+                self.open_picker();
                 return;
             }
             (Some(Panel::Editor(e)), ui::UiAction::FocusField(i)) => {
@@ -196,7 +279,7 @@ impl Appearance {
                         self.preview_font = Some((r.font_size, family));
                     }
                 }
-                None => {}
+                Some(Panel::NameForm { .. }) | None => {}
             },
             Outcome::Save => {
                 let msg = match self.panel.take() {
@@ -225,7 +308,7 @@ impl Appearance {
                         }
                         Err(err) => Ok(err),
                     },
-                    None => Ok(String::new()),
+                    Some(Panel::NameForm { .. }) | None => Ok(String::new()),
                 };
                 self.invalidate();
                 match msg {
@@ -328,6 +411,89 @@ impl Appearance {
                 });
                 Some(ui::editor_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &title, &fields, e.focus, e.error.as_deref(), dropdown.as_ref()))
             }
+            Panel::NameForm { title, name, error, .. } => {
+                let fields = [ui::EditorFieldView {
+                    label: "Name".into(),
+                    value: name.clone(),
+                    valid: error.is_none() && (name.is_empty() || valid_theme_name(name)),
+                    swatch: None,
+                }];
+                Some(ui::form_panel(
+                    vp.width,
+                    vp.height,
+                    vp.cell_w,
+                    vp.cell_h,
+                    title,
+                    &fields,
+                    0,
+                    Some("Letters, numbers, spaces. Saved under ~/.mouser/themes/."),
+                    error.as_deref(),
+                    true,
+                ))
+            }
         }
     }
+
+    fn commit_name_form(&mut self, name: &str) {
+        let Some(Panel::NameForm { kind, source, .. }) = &self.panel else { return };
+        let kind = *kind;
+        let source = source.clone();
+        let result = if kind == "new" { create_theme(name) } else { duplicate_theme(&source, name) };
+        match result {
+            Ok(()) => {
+                let _ = update_preferences(|pr| pr.theme = Some(name.trim().into()));
+                self.invalidate();
+                self.open_picker();
+                // Select the new theme
+                if let Some(Panel::Picker(p)) = &mut self.panel {
+                    if let Some(i) = p.themes.iter().position(|t| t == name.trim()) {
+                        p.selected = i;
+                    }
+                }
+                self.preview_colors = Some(load_theme(name.trim(), "dark").colors());
+                self.say(format!("Theme '{name}' ready — edit colours when you like"));
+            }
+            Err(e) => {
+                if let Some(Panel::NameForm { error, .. }) = &mut self.panel {
+                    *error = Some(e);
+                }
+            }
+        }
+    }
+
+    /// `:import-theme <dir>` — load dark.toml/light.toml from a folder.
+    pub fn import_theme_cmd(&mut self, arg: &str) {
+        let path = std::path::PathBuf::from(arg.trim());
+        match import_theme(&path, None) {
+            Ok(name) => {
+                let _ = update_preferences(|pr| pr.theme = Some(name.clone()));
+                self.invalidate();
+                self.say(format!("Imported theme '{name}'"));
+            }
+            Err(e) => self.say(format!("Import failed: {e}")),
+        }
+    }
+
+    /// `:export-theme [name]` — write dark/light toml under Downloads.
+    pub fn export_theme_cmd(&mut self, arg: &str) {
+        let prefs = load_preferences();
+        let name = arg.trim();
+        let name = if name.is_empty() {
+            prefs.theme.clone().unwrap_or_else(|| default_theme_name().into())
+        } else {
+            name.to_string()
+        };
+        let dir = export_dir_for(&name);
+        match export_theme(&name, &dir) {
+            Ok(()) => self.say(format!("Exported to {}", dir.display())),
+            Err(e) => self.say(format!("Export failed: {e}")),
+        }
+    }
+}
+
+fn export_dir_for(name: &str) -> std::path::PathBuf {
+    let slug: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let base = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from("."));
+    let downloads = base.join("Downloads");
+    if downloads.is_dir() { downloads.join(format!("mouser-theme-{slug}")) } else { base.join(format!("mouser-theme-{slug}")) }
 }

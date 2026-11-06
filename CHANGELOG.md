@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Added
+
+- Appearance switcher: **New**, **Duplicate**, and **Export** for user themes; `:import-theme <dir>` and `:export-theme [name]`.
+
+
 ## [1.4.3] - 2026-11-05
 
 ### Added
