@@ -296,8 +296,7 @@ pub fn bind_preferred(port: u16) -> Result<(TcpListener, u16)> {
     match TcpListener::bind(("127.0.0.1", port)) {
         Ok(l) => Ok((l, port)),
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            let l = TcpListener::bind(("127.0.0.1", 0))
-                .with_context(|| format!("binding ephemeral after 127.0.0.1:{port} was in use"))?;
+            let l = TcpListener::bind(("127.0.0.1", 0)).with_context(|| format!("binding ephemeral after 127.0.0.1:{port} was in use"))?;
             let actual = l.local_addr().with_context(|| "reading ephemeral MCP port")?.port();
             Ok((l, actual))
         }
@@ -312,13 +311,11 @@ pub fn bind_addr_preferred(addr: &str, port: u16, tls: bool, token: &str) -> Res
         Ok(l) => Ok((l, port)),
         Err(e) => {
             let io = e.downcast_ref::<std::io::Error>();
-            let in_use = io.is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse)
-                || format!("{e:#}").contains("Address already in use");
+            let in_use = io.is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse) || format!("{e:#}").contains("Address already in use");
             if !in_use {
                 return Err(e);
             }
-            let l = bind_addr(addr, 0, tls, token)
-                .with_context(|| format!("binding ephemeral after {addr}:{port} was in use"))?;
+            let l = bind_addr(addr, 0, tls, token).with_context(|| format!("binding ephemeral after {addr}:{port} was in use"))?;
             let actual = l.local_addr().with_context(|| "reading ephemeral MCP port")?.port();
             Ok((l, actual))
         }

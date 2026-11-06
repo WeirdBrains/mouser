@@ -2299,9 +2299,7 @@ pub(crate) fn wake_after(delay: std::time::Duration) {
 fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
     let cmd = cmd.trim_start_matches(':');
     let (head, arg) = cmd.split_once(' ').unwrap_or((cmd, ""));
-    let name = ["theme", "mode", "edit-theme", "font-size", "font", "import-theme", "export-theme"]
-        .into_iter()
-        .find(|n| *n == head)?;
+    let name = ["theme", "mode", "edit-theme", "font-size", "font", "import-theme", "export-theme"].into_iter().find(|n| *n == head)?;
     Some((name, arg))
 }
 
