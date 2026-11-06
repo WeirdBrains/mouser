@@ -220,9 +220,10 @@ Prebuilt install packages are attached to each GitHub Release:
 ```bash
 # Latest release (prebuilt). Trust the package key once (key ID
 # 6318D43051C4DBBC, fingerprint 3561BE80D8B3E767CF0B0B176318D43051C4DBBC;
-# see docs/release.md §Arch signatures):
-sudo pacman-key --recv-keys 6318D43051C4DBBC
-# or: curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+# see docs/release.md §Arch signatures). pacman prints the short id, but
+# --recv-keys needs the full fingerprint:
+curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+# or: sudo pacman-key --keyserver hkps://keyserver.ubuntu.com --recv-keys 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
 sudo pacman-key --lsign-key 6318D43051C4DBBC
 V=<ver>; B=https://github.com/WeirdBrains/mouser/releases/download/v$V
 sudo pacman -U $B/mouser-bin-$V-1-x86_64.pkg.tar.zst
