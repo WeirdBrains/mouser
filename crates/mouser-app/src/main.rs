@@ -5,6 +5,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod appearance_ui;
+mod color_dropper;
 mod approval_ui;
 mod chat_host;
 mod mcp_tools;
@@ -1462,6 +1463,8 @@ fn main() -> Result<()> {
             | ui::UiAction::NewTheme
             | ui::UiAction::DuplicateTheme
             | ui::UiAction::ExportTheme
+            | ui::UiAction::Dropper
+            | ui::UiAction::AutoTheme
             | ui::UiAction::FocusField(_)
             | ui::UiAction::PickFont(_)
             | ui::UiAction::ScrollPanel(_)
@@ -2011,6 +2014,22 @@ static FONT_FAMILIES: std::sync::OnceLock<Arc<Vec<String>>> = std::sync::OnceLoc
 /// Installed font families once the background scan is done.
 pub(crate) fn font_families() -> Option<Arc<Vec<String>>> {
     FONT_FAMILIES.get().cloned()
+}
+
+/// Latest screen-dropper result (Ok = `#RRGGBB` rgb, Err = message).
+static DROPPER_RESULT: Mutex<Option<Result<u32, String>>> = Mutex::new(None);
+
+pub(crate) fn take_dropper_result() -> Option<Result<u32, String>> {
+    DROPPER_RESULT.lock().unwrap().take()
+}
+
+/// Run the platform colour picker off the UI thread; wake when done.
+pub(crate) fn start_color_dropper() {
+    std::thread::spawn(|| {
+        let r = color_dropper::pick();
+        *DROPPER_RESULT.lock().unwrap() = Some(r);
+        wake();
+    });
 }
 
 /// Enumerate installed families on a worker thread, then wake the renderer.

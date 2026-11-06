@@ -222,6 +222,19 @@ impl Appearance {
                 e.focus_field(*i);
                 Outcome::Continue
             }
+            (Some(Panel::Editor(e)), ui::UiAction::Dropper) => {
+                if !e.focus_is_color() {
+                    self.say("Focus a colour field, then Dropper");
+                    return;
+                }
+                self.say("Click the screen to sample a colour…");
+                crate::start_color_dropper();
+                return;
+            }
+            (Some(Panel::Picker(_)), ui::UiAction::AutoTheme) => {
+                self.run_auto_theme();
+                return;
+            }
             (Some(Panel::Editor(e)), ui::UiAction::PickFont(i)) => e.pick_font(*i),
             (Some(Panel::Editor(e)), ui::UiAction::ScrollPanel(d)) => {
                 e.scroll_fonts(*d as isize);
@@ -318,6 +331,58 @@ impl Appearance {
             && !e.fonts.loaded
         {
             e.set_families(f);
+        }
+        self.poll_dropper();
+    }
+
+    fn poll_dropper(&mut self) {
+        let Some(result) = crate::take_dropper_result() else { return };
+        match result {
+            Ok(rgb) => {
+                let Some(Panel::Editor(e)) = &mut self.panel else {
+                    self.say(format!("Sampled #{rgb:06X}"));
+                    return;
+                };
+                if !e.focus_is_color() {
+                    // Prefer the first colour field if focus moved off a colour.
+                    e.focus_field(appearance::FG);
+                }
+                let out = e.apply_color(rgb);
+                self.say(format!("Dropper #{rgb:06X}"));
+                self.apply(out);
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    /// Auto: Omarchy desktop colours when present, else a note.
+    fn run_auto_theme(&mut self) {
+        match match_omarchy() {
+            Some(def) => {
+                if let Err(e) = save_theme(&def) {
+                    self.say(format!("Auto: {e}"));
+                    return;
+                }
+                let light = load_theme("Omarchy", "light");
+                let _ = save_theme(&light);
+                let _ = update_preferences(|pr| {
+                    pr.theme = Some("Omarchy".into());
+                });
+                self.invalidate();
+                self.preview_colors = Some(def.colors());
+                if let Some(Panel::Picker(p)) = &mut self.panel {
+                    if let Some(i) = p.themes.iter().position(|t| t == "Omarchy") {
+                        p.selected = i;
+                    }
+                } else {
+                    self.open_picker();
+                }
+                self.say("Auto: matched Omarchy desktop theme");
+            }
+            None => {
+                // Broader desktop probes can land here later (GTK/KDE/macOS/Windows).
+                self.say("Auto: no desktop theme detected (Omarchy colors.toml missing)");
+            }
         }
     }
 

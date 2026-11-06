@@ -418,7 +418,7 @@ pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[St
     let pad = 14;
     let w = cell_w * 56 + 2 * pad;
     // Fit as many rows as the window allows (at least 3).
-    let chrome = 9 * row_h + 2 * pad;
+    let chrome = 10 * row_h + 2 * pad;
     let max_rows = (((vp_h - 16 - chrome) / row_h).max(3)) as usize;
     let visible = themes.len().min(max_rows).min(14);
     let h = chrome + visible as i32 * row_h;
@@ -449,6 +449,7 @@ pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[St
         ("Apply", UiAction::SavePanel, true),
         ("Edit colours & font", UiAction::EditTheme, false),
         ("Match Omarchy", UiAction::MatchOmarchy, false),
+        ("Auto", UiAction::AutoTheme, false),
         ("New", UiAction::NewTheme, false),
         ("Duplicate", UiAction::DuplicateTheme, false),
         ("Export", UiAction::ExportTheme, false),
@@ -563,7 +564,11 @@ pub fn editor_panel(
     }
     let by = by + row_h;
     let mut bx = x0;
-    for (label, act, primary) in [("Save", UiAction::SavePanel, true), ("Cancel", UiAction::ClosePanel, false)] {
+    for (label, act, primary) in [
+        ("Save", UiAction::SavePanel, true),
+        ("Cancel", UiAction::ClosePanel, false),
+        ("Dropper", UiAction::Dropper, false),
+    ] {
         let bw = cell_w * label.len() as i32 + 2 * BUTTON_PAD;
         items.push(PanelItem {
             rect: Rect { x: bx, y: by, w: bw, h: row_h },
@@ -575,7 +580,7 @@ pub fn editor_panel(
     }
     items.push(PanelItem {
         rect: Rect { x: bx + 12, y: by, w: rect.x + rect.w - pad - bx - 12, h: row_h },
-        text: "Tab next  Ctrl+S save  Esc cancel".into(),
+        text: "Tab next  Ctrl+S save  Esc cancel  Dropper samples screen".into(),
         style: PanelStyle::Hint,
         action: UiAction::None,
     });
@@ -676,6 +681,10 @@ pub enum UiAction {
     DuplicateTheme,
     /// Export the selected theme to ~/Downloads/mouser-theme-<name>/.
     ExportTheme,
+    /// Sample a screen colour into the focused editor field (hyprpicker/grim).
+    Dropper,
+    /// Build a theme from the desktop (Omarchy / GTK / accent) and select it.
+    AutoTheme,
     FocusField(usize),
     /// Pick row `n` (index into the filtered list) of the font dropdown.
     PickFont(usize),

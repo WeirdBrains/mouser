@@ -46,6 +46,10 @@ Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
   background, cursor, accent and the 16-colour palette as hex (`#rrggbb` or `#rgb`) with swatches,
   plus font family and size. Valid edits preview live; invalid fields are outlined in red.
+- **Dropper** (in the editor) samples a screen colour into the focused colour field. On Hyprland /
+  Omarchy it uses `hyprpicker`; otherwise `grim`+`slurp`, then ImageMagick `import` on X11.
+- **Auto** (on the switcher) builds/selects a theme from the desktop when possible (currently
+  Omarchy `colors.toml`, same as Match Omarchy; more desktops later).
 - Save writes `~/.mouser/themes/<Theme>/<variant>.toml` and the font to `preferences.toml`.
 - Theme files may contain `cursor`, `accent` and `palette = [16 colours]`; all are optional.
 

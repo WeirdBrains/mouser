@@ -240,3 +240,17 @@ mod font_dropdown {
         assert_eq!(e.fields[FONT_FAMILY].value, "Font 12");
     }
 }
+
+
+#[test]
+#[serial]
+fn apply_color_sets_focused_field() {
+    let _h = temp_home();
+    let mut ed = ThemeEditor::new(&load_theme("Nord", "dark"), None, 14.0);
+    ed.focus_field(BG);
+    assert_eq!(ed.apply_color(0x102030), Outcome::Preview);
+    assert_eq!(ed.fields[BG].value, "#102030");
+    ed.focus_field(FONT_FAMILY);
+    assert_eq!(ed.apply_color(0xAABBCC), Outcome::Continue);
+    assert_ne!(ed.fields[FONT_FAMILY].value, "#AABBCC");
+}
