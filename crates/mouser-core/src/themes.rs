@@ -1,6 +1,7 @@
 use crate::storage::{Preferences, ThemeMode, ensure_dirs, resolve_home};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::PathBuf;
 // no path usage
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -91,6 +92,86 @@ pub fn active_variant(prefs: &Preferences) -> &'static str {
     if dark { "dark" } else { "light" }
 }
 
+/// Default theme when preferences have none: Omarchy on Omarchy, else Red Star.
+/// `MOUSER_OMARCHY=1|0` overrides detection (for tests).
+
+/// Read the current Omarchy theme's `colors.toml` (Trainyard etc.) into a
+/// dark [`ThemeDef`] named "Omarchy". Used by **Match Omarchy**.
+pub fn match_omarchy() -> Option<ThemeDef> {
+    let home = dirs::home_dir()?;
+    let name = fs::read_to_string(home.join(".local/state/omarchy/current/theme.name")).ok()?.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let dir = {
+        let user = home.join(".config/omarchy/themes").join(&name);
+        if user.join("colors.toml").is_file() {
+            user
+        } else {
+            // Bundled Omarchy themes live next to the install prefix when set.
+            let bundled = std::env::var_os("OMARCHY_PATH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/usr/share/omarchy"));
+            bundled.join("themes").join(&name)
+        }
+    };
+    let raw = fs::read_to_string(dir.join("colors.toml")).ok()?;
+    parse_omarchy_colors_for_test(&raw, "Omarchy")
+}
+
+pub fn parse_omarchy_colors_for_test(toml_src: &str, name: &str) -> Option<ThemeDef> {
+    let v: toml::Value = toml::from_str(toml_src).ok()?;
+    let get = |k: &str| v.get(k).and_then(|x| x.as_str()).map(|s| s.to_string());
+    let background = get("background")?;
+    let foreground = get("foreground")?;
+    let accent = get("accent");
+    let cursor = get("cyan").or_else(|| get("bright_cyan")).or_else(|| accent.clone());
+    let selection_background = get("selection");
+    let selection_foreground = get("selection_foreground").or_else(|| get("background"));
+    let keys = [
+        "dark_background", "red", "green", "yellow", "blue", "magenta", "cyan", "foreground", "lighter_background", "bright_red",
+        "bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan", "bright_foreground",
+    ];
+    // Prefer explicit dark_background for ANSI 0; fall back to background.
+    let mut palette = Vec::with_capacity(16);
+    for (i, k) in keys.iter().enumerate() {
+        let fallback = if i == 0 { background.as_str() } else { "#888888" };
+        palette.push(get(k).unwrap_or_else(|| fallback.to_string()));
+    }
+    // yellow key in Omarchy file is bright cyan-ish; map orange into yellow if present for ANSI 3? Keep as-is from colors.toml.
+    if let Some(y) = get("yellow") {
+        palette[3] = y;
+    }
+    Some(ThemeDef {
+        name: name.to_string(),
+        variant: "dark".to_string(),
+        foreground,
+        background,
+        cursor,
+        accent,
+        palette,
+        selection_foreground,
+        selection_background,
+    })
+}
+
+pub fn default_theme_name() -> &'static str {
+    if on_omarchy() { "Omarchy" } else { "Red Star" }
+}
+
+/// Whether this host looks like Omarchy (os-release `ID=omarchy`, or override).
+pub fn on_omarchy() -> bool {
+    match std::env::var("MOUSER_OMARCHY").ok().as_deref() {
+        Some("1") | Some("true") | Some("yes") => return true,
+        Some("0") | Some("false") | Some("no") => return false,
+        _ => {}
+    }
+    fs::read_to_string("/etc/os-release").ok().is_some_and(|s| {
+        s.lines().any(|l| {
+            let l = l.trim();
+            l == "ID=omarchy" || l.starts_with("ID=") && l.contains("omarchy")
+        })
+    })
+}
+
 /// Built-in theme names first, then user themes found under `themes/`.
 pub fn list_themes() -> Vec<String> {
     let mut names: Vec<String> = builtins().into_iter().map(|(n, _, _)| n).collect();
@@ -131,7 +212,7 @@ pub fn save_theme(def: &ThemeDef) -> std::io::Result<()> {
 
 /// The active theme variant for `prefs`.
 pub fn resolve_active_theme(prefs: &Preferences) -> ThemeDef {
-    load_theme(prefs.theme.as_deref().unwrap_or("Red Star"), active_variant(prefs))
+    load_theme(prefs.theme.as_deref().unwrap_or(default_theme_name()), active_variant(prefs))
 }
 
 pub fn write_builtins_if_absent() -> std::io::Result<()> {
@@ -207,7 +288,7 @@ fn detect_system_dark() -> bool {
 }
 
 pub fn resolve_active_colors(prefs: &Preferences) -> (u32, u32) {
-    let theme_name = prefs.theme.as_deref().unwrap_or("Red Star");
+    let theme_name = prefs.theme.as_deref().unwrap_or(default_theme_name());
     let use_dark = match prefs.mode.clone().unwrap_or_default() {
         ThemeMode::Dark => true,
         ThemeMode::Light => false,
@@ -250,6 +331,23 @@ pub fn builtins() -> Vec<(String, ThemeDef, ThemeDef)> {
     all[0].1.accent = Some("#2FD8E5".into());
     all[0].1.cursor = Some("#94F3F2".into());
     all[0].2.accent = Some("#0B7C88".into());
+    // Omarchy (Trainyard) palette from ~/.config/omarchy/themes/trainyard/colors.toml.
+    let omarchy_pal = [
+        "#050a11", "#8e92bd", "#86d0e3", "#a5ffff", "#5e84a9", "#91ace2", "#93e7ff", "#fff1c8", "#20252d", "#a1a7dc", "#87eaff", "#8dffff",
+        "#6b9ac7", "#9fc2ff", "#96ffff", "#fff5d6",
+    ];
+    if let Some((_, dark, light)) = all.iter_mut().find(|(n, _, _)| n == "Omarchy") {
+        dark.accent = Some("#5e84a9".into());
+        dark.cursor = Some("#93e7ff".into());
+        dark.selection_background = Some("#20252d".into());
+        dark.selection_foreground = Some("#070D16".into());
+        dark.palette = omarchy_pal.iter().map(|s| (*s).into()).collect();
+        light.accent = Some("#5e84a9".into());
+        light.cursor = Some("#5e84a9".into());
+        light.selection_background = Some("#d8e3ef".into());
+        light.selection_foreground = Some("#070D16".into());
+        light.palette = omarchy_pal.iter().map(|s| (*s).into()).collect();
+    }
     all
 }
 
@@ -257,6 +355,8 @@ fn builtin_pairs() -> Vec<(String, ThemeDef, ThemeDef)> {
     vec![
         // Red Star (Starlight variant) — extracted from owner's wallpaper palette
         theme_pair("Red Star", "#E6FBFA", "#04192A", "#0B2A3F", "#F2FAFB"),
+        // Omarchy (Trainyard) — from Omarchy theme colors; default on Omarchy hosts.
+        theme_pair("Omarchy", "#fff1c8", "#070D16", "#070D16", "#f5f0e6"),
         theme_pair("Tokyo Night", "#c0caf5", "#1a1b26", "#3760bf", "#e1e2e7"),
         theme_pair("Catppuccin", "#cdd6f4", "#1e1e2e", "#4c4f69", "#eff1f5"),
         theme_pair("Gruvbox", "#ebdbb2", "#282828", "#3c3836", "#fbf1c7"),

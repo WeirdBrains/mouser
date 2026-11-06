@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+## [1.4.3] - 2026-11-05
+
+### Added
+
+- Built-in **Omarchy** theme (Trainyard palette). On Omarchy hosts (`/etc/os-release` `ID=omarchy`, or `MOUSER_OMARCHY=1`) it is the default when no `theme` preference is set.
+- Appearance switcher: **Match Omarchy** copies the current Omarchy desktop theme's `colors.toml` into Mouser's Omarchy theme and selects it.
+
+### Changed
+
+- Front page hero video cropped to window chrome with matching edge color (seamless rounded corners, no dual border).
+
 ## [1.4.2] - 2026-11-05
 
 ### Fixed

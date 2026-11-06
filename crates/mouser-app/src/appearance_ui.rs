@@ -2,7 +2,7 @@
 
 use mouser_core::appearance::{self, EditKey, Outcome, ThemeEditor, ThemePicker};
 use mouser_core::storage::{Preferences, ThemeMode, load_preferences, update_preferences};
-use mouser_core::themes::{ThemeColors, active_variant, list_themes, load_theme, resolve_active_theme, save_theme};
+use mouser_core::themes::{ThemeColors, active_variant, default_theme_name, list_themes, load_theme, match_omarchy, resolve_active_theme, save_theme};
 use mouser_render::{Colors, ui};
 use std::time::{Duration, Instant};
 
@@ -80,7 +80,7 @@ impl Appearance {
 
     pub fn open_picker(&mut self) {
         let prefs = load_preferences();
-        let current = prefs.theme.clone().unwrap_or_else(|| "Red Star".into());
+        let current = prefs.theme.clone().unwrap_or_else(|| default_theme_name().into());
         self.invalidate();
         self.panel = Some(Panel::Picker(ThemePicker::new(list_themes(), &current, prefs.mode.unwrap_or_default())));
     }
@@ -114,6 +114,35 @@ impl Appearance {
             (Some(Panel::Picker(p)), ui::UiAction::PickTheme(i)) => p.select(*i),
             (Some(Panel::Picker(p)), ui::UiAction::SetMode(m)) => appearance::parse_mode(m).map(|m| p.set_mode(m)).unwrap_or(Outcome::Continue),
             (Some(Panel::Picker(_)), ui::UiAction::EditTheme) => Outcome::OpenEditor,
+            (Some(Panel::Picker(_)), ui::UiAction::MatchOmarchy) => {
+                match match_omarchy() {
+                    Some(def) => {
+                        if let Err(e) = save_theme(&def) {
+                            self.say(format!("Match Omarchy: {e}"));
+                            return;
+                        }
+                        // Also refresh the light sibling from the builtin so both variants exist.
+                        let light = load_theme("Omarchy", "light");
+                        let _ = save_theme(&light);
+                        let _ = update_preferences(|pr| {
+                            pr.theme = Some("Omarchy".into());
+                        });
+                        self.invalidate();
+                        self.preview_colors = Some(def.colors());
+                        // Keep picker open on Omarchy.
+                        if let Some(Panel::Picker(p)) = &mut self.panel {
+                            if let Some(i) = p.themes.iter().position(|t| t == "Omarchy") {
+                                p.selected = i;
+                            }
+                        } else {
+                            self.open_picker();
+                        }
+                        self.say("Matched Omarchy desktop colours");
+                    }
+                    None => self.say("Match Omarchy: no current Omarchy theme found"),
+                }
+                return;
+            }
             (Some(Panel::Editor(e)), ui::UiAction::FocusField(i)) => {
                 e.focus_field(*i);
                 Outcome::Continue

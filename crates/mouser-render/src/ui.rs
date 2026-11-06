@@ -422,9 +422,9 @@ pub fn mode_segment(x: i32, y: i32, inner_w: i32, cell_w: i32, row_h: i32, mode:
 pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[String], selected: usize, mode: &str) -> Panel {
     let row_h = cell_h + 6;
     let pad = 14;
-    let w = cell_w * 46 + 2 * pad;
+    let w = cell_w * 56 + 2 * pad;
     // Fit as many rows as the window allows (at least 3).
-    let chrome = 6 * row_h + 2 * pad;
+    let chrome = 7 * row_h + 2 * pad;
     let max_rows = (((vp_h - 16 - chrome) / row_h).max(3)) as usize;
     let visible = themes.len().min(max_rows).min(14);
     let h = chrome + visible as i32 * row_h;
@@ -449,14 +449,28 @@ pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[St
     items.extend(mode_segment(x, y, inner_w, cell_w, row_h, mode));
     y += row_h + 12;
     let mut bx = x;
-    for (label, act, primary) in
-        [("Apply", UiAction::SavePanel, true), ("Edit colours & font", UiAction::EditTheme, false), ("Cancel", UiAction::ClosePanel, false)]
-    {
-        let bw = cell_w * label.chars().count() as i32 + 2 * BUTTON_PAD;
-        items.push(PanelItem { rect: Rect { x: bx, y, w: bw, h: row_h }, text: label.into(), style: PanelStyle::Button { primary }, action: act });
+    let mut row_y = y;
+    let right = x + inner_w;
+    for (label, act, primary) in [
+        ("Apply", UiAction::SavePanel, true),
+        ("Edit colours & font", UiAction::EditTheme, false),
+        ("Match Omarchy", UiAction::MatchOmarchy, false),
+        ("Cancel", UiAction::ClosePanel, false),
+    ] {
+        let bw = label_button_w(label, cell_w, BUTTON_PAD);
+        if bx > x && bx + bw > right {
+            bx = x;
+            row_y += row_h + 6;
+        }
+        items.push(PanelItem {
+            rect: Rect { x: bx, y: row_y, w: bw, h: row_h },
+            text: label.into(),
+            style: PanelStyle::Button { primary },
+            action: act,
+        });
         bx += bw + 8;
     }
-    y += row_h + 6;
+    y = row_y + row_h + 6;
     items.push(PanelItem {
         rect: Rect { x, y, w: inner_w, h: row_h },
         text: "↑↓ theme  ←→ mode  e edit  Enter apply  Esc cancel".into(),
@@ -657,6 +671,8 @@ pub enum UiAction {
     /// "dark", "light" or "system".
     SetMode(String),
     EditTheme,
+    /// Pull colours from the current Omarchy desktop theme.
+    MatchOmarchy,
     FocusField(usize),
     /// Pick row `n` (index into the filtered list) of the font dropdown.
     PickFont(usize),
