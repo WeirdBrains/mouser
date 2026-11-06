@@ -3,6 +3,7 @@
 
 Usage: python3 scripts/build_docs.py --docs ../main/docs --out site/docs
 Everything under --out is generated; edit docs/ on main (or site-src/ here) instead.
+Docs mapped to section "internal" stay in the repo only and are skipped here.
 """
 import argparse, html, posixpath, pathlib, re, shutil, tomllib
 import markdown
@@ -65,14 +66,18 @@ def main():
                 and p.relative_to(docs).as_posix() not in mapping]
     if unmapped:
         raise SystemExit(f"unmapped docs: {unmapped}")
+    unknown = sorted({s for s in mapping.values() if s not in {"index", "internal", *SECTIONS}})
+    if unknown:
+        raise SystemExit(f"unknown sections in sections.toml: {unknown}")
     if out.exists():
         shutil.rmtree(out)
 
-    # rel doc path -> (section, slug)
+    # rel doc path -> (section, slug). "internal" stays in the repo only.
     where = {}
     for rel, sec in mapping.items():
-        if sec != "index":
-            where[rel] = (sec, rel.removesuffix(".md").replace("/README", "").replace("/", "-").lower())
+        if sec in ("index", "internal"):
+            continue
+        where[rel] = (sec, rel.removesuffix(".md").replace("/README", "").replace("/", "-").lower())
     for p in sorted((docs / "historical").glob("*.md")):
         where["historical/" + p.name] = ("archive", p.stem.lower())
 
