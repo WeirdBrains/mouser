@@ -235,8 +235,8 @@ class HomePage extends StatelessComponent {
       pre([
       code([
       .text('''# Trust the package key once (id 6318D43051C4DBBC)
-      sudo pacman-key --recv-keys 6318D43051C4DBBC
-      # or: curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+      curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+      # or: sudo pacman-key --keyserver hkps://keyserver.ubuntu.com --recv-keys 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
       sudo pacman-key --lsign-key 6318D43051C4DBBC
       sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/mouser-bin-1.4.4-1-x86_64.pkg.tar.zst
       # Or build main from source
