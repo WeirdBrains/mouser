@@ -319,6 +319,20 @@ impl ThemeEditor {
         }
     }
 
+    /// Whether the focused field is a colour (dropper target).
+    pub fn focus_is_color(&self) -> bool {
+        matches!(self.fields.get(self.focus).map(|f| f.kind), Some(FieldKind::Color { .. }))
+    }
+
+    /// Write `#RRGGBB` into the focused colour field and preview when valid.
+    pub fn apply_color(&mut self, rgb: u32) -> Outcome {
+        if !self.focus_is_color() {
+            return Outcome::Continue;
+        }
+        self.fields[self.focus].value = format!("#{rgb:06X}");
+        self.after_edit()
+    }
+
     /// Provide the discovered font families (from a background scan).
     pub fn set_families(&mut self, families: Arc<Vec<String>>) {
         let q = self.fields[FONT_FAMILY].value.clone();
