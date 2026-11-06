@@ -18,7 +18,12 @@ mouser mcp status            # endpoints, certificate fingerprint, where the tok
 mouser mcp disable
 ```
 
-Restart Mouser after changing it. The settings live in `preferences.toml`:
+Restart Mouser after changing it. The settings live in `preferences.toml`.
+
+If another Mouser window already holds `port` / `https_port`, the new window
+binds an ephemeral loopback port instead and writes a log line — it does not
+show an error toast. Clients that need a fixed URL should talk to the first
+window, or use `mouser mcp serve --stdio`.
 
 ```toml
 [mcp.server]

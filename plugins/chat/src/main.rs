@@ -9,7 +9,7 @@ use mouser_mode_api::events::{Event, Listener};
 use mouser_mode_api::host_api::Call;
 use mouser_mode_api::markdown as md;
 use mouser_mode_api::protocol::{Accepted, ApiRange, BindingDecl, Handled, Hello, Provide};
-use mouser_mode_api::{Action, Context, Effect, Host, Mode, Panel, PanelItem, PanelStyle, Rect, serve};
+use mouser_mode_api::{Action, Context, Effect, Host, Mode, Panel, PanelItem, PanelStyle, Rect, dock_chrome_height, serve};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -457,7 +457,9 @@ impl Chat {
             button("cancel (esc)", act("cancel", 0), true, &mut items);
         }
         y += row_h + 4;
-        let input_y = rect.y + rect.h - row_h - 8;
+        // Leave the host's bottom chrome free (⤢ fullscreen + focus hint).
+        let chrome = dock_chrome_height(ch);
+        let input_y = rect.y + rect.h - row_h - 8 - chrome;
         let mut bottom = input_y - 4;
         if let Some((s, err)) = &self.status {
             bottom -= row_h;

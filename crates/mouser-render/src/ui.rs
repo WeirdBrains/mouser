@@ -365,6 +365,59 @@ fn centered(vp_w: i32, vp_h: i32, w: i32, h: i32) -> Rect {
     Rect { x: (vp_w - w) / 2, y: (vp_h - h) / 2, w, h }
 }
 
+
+/// Mode segmented control (`dark` / `light` / `system`) for the appearance picker.
+/// Buttons size to their label (Unicode width). When the row is tight: shrink
+/// padding, then use short labels (`d` / `l` / `sys`) — never chop mid-word.
+pub fn mode_segment(x: i32, y: i32, inner_w: i32, cell_w: i32, row_h: i32, mode: &str) -> Vec<PanelItem> {
+    const FULL: [&str; 3] = ["dark", "light", "system"];
+    const SHORT: [&str; 3] = ["d", "l", "sys"];
+    let gap = 6i32;
+    let label_w = cell_w * text_cols("Mode");
+    let fit = |labels: [&str; 3], pad: i32| -> Option<Vec<PanelItem>> {
+        let widths: [i32; 3] = std::array::from_fn(|i| label_button_w(labels[i], cell_w, pad));
+        let need = label_w + widths.iter().sum::<i32>() + gap * 3;
+        if need > inner_w {
+            return None;
+        }
+        let mut out = vec![PanelItem {
+            rect: Rect { x, y, w: label_w.min(inner_w), h: row_h },
+            text: "Mode".into(),
+            style: PanelStyle::Label,
+            action: UiAction::None,
+        }];
+        let mut bx = x + label_w + gap;
+        for i in 0..3 {
+            out.push(PanelItem {
+                rect: Rect { x: bx, y, w: widths[i], h: row_h },
+                text: labels[i].into(),
+                style: PanelStyle::Row { selected: FULL[i] == mode },
+                action: UiAction::SetMode(FULL[i].to_string()),
+            });
+            bx += widths[i] + gap;
+        }
+        Some(out)
+    };
+    for pad in [BUTTON_PAD, 4, 2, 1] {
+        if let Some(items) = fit(FULL, pad) {
+            return items;
+        }
+    }
+    for pad in [BUTTON_PAD, 4, 2, 1] {
+        if let Some(items) = fit(SHORT, pad) {
+            return items;
+        }
+    }
+    fit(SHORT, 0).unwrap_or_else(|| {
+        vec![PanelItem {
+            rect: Rect { x, y, w: inner_w.max(0), h: row_h },
+            text: "Mode".into(),
+            style: PanelStyle::Label,
+            action: UiAction::None,
+        }]
+    })
+}
+
 /// Theme switcher: theme list, mode buttons, actions.
 pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[String], selected: usize, mode: &str) -> Panel {
     let row_h = cell_h + 6;
@@ -393,18 +446,7 @@ pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[St
         y += row_h;
     }
     y += 8;
-    items.push(PanelItem { rect: Rect { x, y, w: cell_w * 6, h: row_h }, text: "Mode".into(), style: PanelStyle::Label, action: UiAction::None });
-    let mut bx = x + cell_w * 6;
-    for m in ["dark", "light", "system"] {
-        let bw = cell_w * m.len() as i32 + 2 * BUTTON_PAD;
-        items.push(PanelItem {
-            rect: Rect { x: bx, y, w: bw, h: row_h },
-            text: m.into(),
-            style: PanelStyle::Row { selected: m == mode },
-            action: UiAction::SetMode(m.to_string()),
-        });
-        bx += bw + 6;
-    }
+    items.extend(mode_segment(x, y, inner_w, cell_w, row_h, mode));
     y += row_h + 12;
     let mut bx = x;
     for (label, act, primary) in
@@ -716,6 +758,18 @@ pub const EDIT_LABEL: &str = "edit";
 pub const DELETE_LABEL: &str = "del";
 /// Horizontal padding inside buttons, in pixels.
 pub const BUTTON_PAD: i32 = 6;
+
+/// Display columns for `s` (Unicode width; controls and CJK count as 2).
+pub fn text_cols(s: &str) -> i32 {
+    use unicode_width::UnicodeWidthChar;
+    s.chars().map(|c| UnicodeWidthChar::width(c).unwrap_or(0) as i32).sum::<i32>().max(0)
+}
+
+/// Pixel width of a labelled button: content columns × cell width + horizontal pad.
+pub fn label_button_w(label: &str, cell_w: i32, pad: i32) -> i32 {
+    cell_w * text_cols(label) + 2 * pad
+}
+
 /// Margin between the sidebar edge and its contents, in pixels.
 pub const SIDEBAR_MARGIN: i32 = 12;
 

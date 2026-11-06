@@ -19,13 +19,17 @@ mouser.weirdbrains.com is a static site in `site/` on the **`site`** branch.
   `sed -i 's/1\.3\.0/1.4.0/g' site/index.html`; check with
   `grep -n '1\.3\.0' site/index.html` first that only versions match, and open each
   link to confirm the asset exists in the release.
+- **Screenshots** gallery at `site/screenshots/`: Omarchy shots under
+  `site/assets/screenshots/` (commander, chat, sidebar, theme editor, tiled).
 - **Mouser is beautiful** replaces the old hero screenshot on the front page
   (`site/index.html`). The clip lives at `site/assets/mouser-is-beautiful.mp4`
-  and `.webm`, with `mouser-is-beautiful-poster.png` as the poster. The
-  `<video>` is `autoplay` `muted` `loop` `playsinline`; `prefers-reduced-motion:
-  reduce` hides the video and shows the poster (CSS plus a small guard in
-  `main.js`). Re-record on alien-blue (Hyprland, wf-recorder) after theme-editor
-  features ship; until then a placeholder poster is fine.
+  and `.webm`, with `mouser-is-beautiful-poster.png` as the poster, on a
+  Trainyard wallpaper panel (rail-car door; no black box). The `<video>` is
+  `autoplay` `muted` `loop` `playsinline`; `prefers-reduced-motion: reduce`
+  hides the video and shows the poster (CSS plus a small guard in `main.js`).
+  Re-record on alien-blue (Hyprland, wf-recorder) after theme-editor features
+  ship: use an empty workspace (e.g. 9), keep the right sidebar fully in frame,
+  and trim any MCP port-in-use toast from the start.
 - Code blocks get a Copy button from `site/main.js` and scroll sideways when a
   line is longer than the card (never clipped); install cards are one per row.
 - **Docs pages** under `site/docs/` are generated, never edited by hand. Every

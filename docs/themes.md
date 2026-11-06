@@ -31,6 +31,8 @@ Switching
 - Sidebar → **Appearance**, or `:theme`, opens the switcher: built-in themes first, then user themes
   found in `~/.mouser/themes/`, plus dark/light/system mode. Moving the selection previews live;
   Apply saves `theme`/`mode` to `preferences.toml`. `:theme <name>` and `:mode <m>` do the same directly.
+- Mode buttons size to their labels (Unicode width). In a narrow window they shrink padding, then
+  abbreviate to `d` / `l` / `sys` — they never chop mid-word (`dar`, `ligh`).
 
 Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
