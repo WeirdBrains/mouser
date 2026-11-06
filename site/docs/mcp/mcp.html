@@ -23,7 +23,11 @@ mouser mcp enable --https    # plus HTTPS on 127.0.0.1:7802 (self-signed, or you
 mouser mcp status            # endpoints, certificate fingerprint, where the token lives
 mouser mcp disable
 </code></pre>
-<p>Restart Mouser after changing it. The settings live in <code>preferences.toml</code>:</p>
+<p>Restart Mouser after changing it. The settings live in <code>preferences.toml</code>.</p>
+<p>If another Mouser window already holds <code>port</code> / <code>https_port</code>, the new window
+binds an ephemeral loopback port instead and writes a log line — it does not
+show an error toast. Clients that need a fixed URL should talk to the first
+window, or use <code>mouser mcp serve --stdio</code>.</p>
 <pre><code class="language-toml">[mcp.server]
 enabled = true
 port = 7801
