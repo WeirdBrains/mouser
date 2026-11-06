@@ -466,7 +466,28 @@ impl Appearance {
                     selected: e.fonts.selected,
                     counts: e.fonts.loaded.then(|| (e.fonts.matches.len(), e.fonts.families.len())),
                 });
-                Some(ui::editor_panel(vp.width, vp.height, vp.cell_w, vp.cell_h, &title, &fields, e.focus, e.error.as_deref(), dropdown.as_ref()))
+                Some({
+                    let preview = {
+                        let hex = |i: usize| fields.get(i).and_then(|f| f.swatch);
+                        let fg = hex(0).unwrap_or(0xE6FBFA);
+                        let bg = hex(1).unwrap_or(0x04192A);
+                        let cursor = hex(2).unwrap_or(fg);
+                        let accent = hex(3).unwrap_or(0x2FD8E5);
+                        Some((fg, bg, cursor, accent))
+                    };
+                    ui::editor_panel(
+                        vp.width,
+                        vp.height,
+                        vp.cell_w,
+                        vp.cell_h,
+                        &title,
+                        &fields,
+                        e.focus,
+                        e.error.as_deref(),
+                        dropdown.as_ref(),
+                        preview,
+                    )
+                })
             }
             Panel::NameForm { title, name, error, .. } => {
                 let fields = [ui::EditorFieldView {

@@ -442,6 +442,25 @@ fn draw_ui(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, bg: 
 }
 
 #[allow(clippy::too_many_arguments)]
+
+fn preview_font(family: &str, size: f32) -> Option<crate::text::FontStack> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, crate::text::FontStack>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = cache.lock().ok()?;
+    if let Some(existing) = g.get(family) {
+        return Some(existing.resized(size));
+    }
+    if g.len() > 64 {
+        g.clear();
+    }
+    let stack = crate::text::FontStack::system(Some(family), size);
+    let out = stack.resized(size);
+    g.insert(family.to_string(), stack);
+    Some(out)
+}
+
 fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let r = p.rect;
     // Soft drop shadow, then a rounded border and an opaque body.
@@ -524,19 +543,43 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 drop_shadow(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, bg);
                 round_box(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, 1, accent, mix(bg, panel, 0.35), panel);
             }
-            ui::PanelStyle::Option { selected, highlight } => {
+            ui::PanelStyle::Option { selected, highlight } | ui::PanelStyle::FontOption { selected, highlight } => {
                 if selected {
                     round_rect(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 3), mix(panel, accent, 0.22), panel);
                     canvas.fill_rect(b.x, b.y + 3, 3, b.h - 6, accent);
                 }
                 let base = if selected { fg } else { muted };
+                let step = fonts.cell_w;
+                let mut preview = matches!(it.style, ui::PanelStyle::FontOption { .. })
+                    .then(|| preview_font(&it.text, fonts.size))
+                    .flatten();
+                let draw_fonts = preview.as_mut().unwrap_or(fonts);
                 for (i, c) in it.text.chars().take(max.saturating_sub(1)).enumerate() {
                     let color = if i < 64 && highlight & (1 << i) != 0 { accent } else { base };
-                    canvas.draw_char(fonts, b.x + ui::BUTTON_PAD + i as i32 * fonts.cell_w, ty, c, color);
+                    canvas.draw_char(draw_fonts, b.x + ui::BUTTON_PAD + i as i32 * step, ty, c, color);
                 }
             }
             ui::PanelStyle::Swatch(c) => {
                 round_box(canvas, b.x, b.y, b.w, b.h, 4, 1, border, c, panel);
+            }
+            ui::PanelStyle::ThemePreview { fg, bg, cursor, accent } => {
+                round_box(canvas, b.x, b.y, b.w, b.h, RADIUS, 1, border, bg, panel);
+                let pad = 8;
+                let x = b.x + pad;
+                let mut y = b.y + pad;
+                let sample = [
+                    ("AaBbCc  0123456789", fg),
+                    ("~/mouser", accent),
+                    ("echo mouser is beautiful", fg),
+                ];
+                for (text, color) in sample {
+                    canvas.draw_text(fonts, x, y, text, color);
+                    y += fonts.cell_h + 4;
+                }
+                // prompt + cursor block on its own line
+                canvas.draw_text(fonts, x, y, ">", accent);
+                canvas.fill_rect(x + fonts.cell_w + 2, y + 2, fonts.cell_w, fonts.cell_h - 4, cursor);
+                let _ = (fg, bg, cursor, accent, b);
             }
             ui::PanelStyle::Tile { selected } => {
                 let (edge, t) = if selected { (accent, 2) } else { (border, 1) };

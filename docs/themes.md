@@ -45,7 +45,7 @@ Switching
 Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
   background, cursor, accent and the 16-colour palette as hex (`#rrggbb` or `#rgb`) with swatches,
-  plus font family and size. Valid edits preview live; invalid fields are outlined in red.
+  plus font family and size. Valid edits preview live (a side Preview pane shows sample text in the pending colours); invalid fields are outlined in red.
 - **Dropper** (in the editor) samples a screen colour into the focused colour field. On Hyprland /
   Omarchy it uses `hyprpicker`; otherwise `grim`+`slurp`, then ImageMagick `import` on X11.
 - **Auto** (on the switcher) builds/selects a theme from the desktop when possible (currently
@@ -72,4 +72,5 @@ in name order. Typing fuzzy-filters it (case-insensitive subsequence; matched
 letters are highlighted) while the list stays alphabetical. ↑/↓ or the mouse
 wheel move, Enter or a click picks (the font then loads in the background), and
 Esc or a click elsewhere closes the list. Families are discovered once, on a
-background thread, at startup; typing only filters.
+background thread, at startup; typing only filters. Each row is drawn in
+that family so you can preview the look before picking.
