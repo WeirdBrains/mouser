@@ -59,20 +59,20 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   .shot.beautiful video{display:none}
   .shot.beautiful .beautiful-poster{display:block}
 }
-/* Hero clip: max size; container bg matches video edge (#04080c) so corners are seamless. */
+/* Hero clip: max size; container bg matches video edge (#222628) so corners are seamless. */
 .shot .media-frame.hero-fill{
-  /* Video is the boundary. Bg = sampled edge (#04080c); 1px ring seals radius AA fringe. */
-  padding:0;border:0;background:#04080c;
+  /* Video is the boundary. Bg = sampled edge (#222628); 1px ring seals radius AA fringe. */
+  padding:0;border:0;background:#222628;
   border-radius:var(--radius);overflow:hidden;line-height:0;
-  width:100%;aspect-ratio:1268 / 1056;
+  width:100%;aspect-ratio:1120 / 946;
   box-sizing:border-box;
-  box-shadow:0 0 0 1px #04080c;
+  box-shadow:0 0 0 1px #222628;
 }
-.light .shot .media-frame.hero-fill{box-shadow:0 0 0 1px #04080c,0 8px 32px rgba(4,25,42,.18)}
+.light .shot .media-frame.hero-fill{box-shadow:0 0 0 1px #222628,0 8px 32px rgba(4,25,42,.18)}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
   display:block;width:100%;height:100%;
   object-fit:cover; /* exact aspect → cover==contain; cover avoids subpixel letterbox */
-  background:#04080c;border:0;border-radius:0;box-shadow:none;
+  background:#222628;border:0;border-radius:0;box-shadow:none;
 }
 .hero .shot.beautiful{width:100%}
 @media (max-width:1023px){
@@ -115,7 +115,7 @@ p,li,td{overflow-wrap:anywhere}
 .doc{min-height:70vh;max-width:none}
 .doc>*{max-width:860px}
 .doc h1{margin-top:0}.doc h2{margin:2rem 0 .8rem}.doc h3{margin-top:1.4rem}
-.doc pre{background:#0b2233;color:#d6e6f2;padding:1rem;overflow-x:auto;border-radius:6px;font-size:.88rem}
+.doc pre{background:#161820;color:#d6e6f2;padding:1rem;overflow-x:auto;border-radius:6px;font-size:.88rem}
 .doc code{color:var(--code)}.doc pre code{color:inherit}
 .doc table{border-collapse:collapse;display:block;overflow-x:auto;font-size:.9rem}
 .doc th,.doc td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left;vertical-align:top}
