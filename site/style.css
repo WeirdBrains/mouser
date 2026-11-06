@@ -59,10 +59,10 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   .shot.beautiful video{display:none}
   .shot.beautiful .beautiful-poster{display:block}
 }
-/* Hero clip: as large as possible; tiny inset so rounded corners never clip the prompt. */
+/* Hero clip: max size; container bg matches video edge (#04080c) so corners are seamless. */
 .shot .media-frame.hero-fill{
-  /* ~10px ≈ half of --radius:20px — enough for the corner curve, no letterbox. */
-  padding:10px;border:0;background:transparent;box-shadow:none;
+  /* No inset band — video is the boundary. Bg matches sampled edge pixels. */
+  padding:0;border:0;background:#04080c;box-shadow:none;
   border-radius:var(--radius);overflow:hidden;line-height:0;
   width:100%;aspect-ratio:1268 / 1056;
   box-sizing:border-box;
@@ -70,14 +70,12 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 .light .shot .media-frame.hero-fill{box-shadow:0 8px 32px rgba(4,25,42,.18)}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
   display:block;width:100%;height:100%;
-  object-fit:contain;background:transparent;border:0;border-radius:0;box-shadow:none;
+  object-fit:contain;background:#04080c;border:0;border-radius:0;box-shadow:none;
 }
 .hero .shot.beautiful{width:100%}
 @media (max-width:1023px){
-  /* Mobile: full content width, same tiny safe inset. */
   .hero{max-width:none;width:100%}
   .hero .shot.beautiful{margin:1rem 0 1.25rem}
-  .shot .media-frame.hero-fill{padding:8px}
 }
 @media (min-width:1024px){
   .hero .shot.beautiful .media-frame.hero-fill{width:100%;max-width:none}
