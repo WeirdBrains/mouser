@@ -464,7 +464,12 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                     round_rect(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 3), mix(panel, accent, 0.22), panel);
                     canvas.fill_rect(b.x, b.y + 3, 3, b.h - 6, accent);
                 }
-                canvas.draw_text(fonts, b.x + ui::BUTTON_PAD, ty, &clip(&it.text, max.saturating_sub(1)), if selected { fg } else { muted });
+                // Never chop mid-word: draw the whole label when it fits, else skip.
+                let cols = ui::text_cols(&it.text) as usize;
+                let budget = ((b.w - ui::BUTTON_PAD).max(0) / fonts.cell_w).max(0) as usize;
+                if cols > 0 && cols <= budget {
+                    canvas.draw_text(fonts, b.x + ui::BUTTON_PAD, ty, &it.text, if selected { fg } else { muted });
+                }
             }
             ui::PanelStyle::Button { primary } => {
                 let (fill, text) = if primary { (accent, bg) } else { (mix(panel, fg, 0.1), fg) };

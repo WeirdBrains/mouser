@@ -150,6 +150,13 @@ pub struct DockSize {
     pub full: bool,
 }
 
+/// Height of the host chrome at the bottom of a mode dock (the ⤢ fullscreen
+/// button and the focus hint). Keep footers and the input line above this
+/// strip so they are not covered.
+pub fn dock_chrome_height(cell_h: i32) -> i32 {
+    cell_h + 10
+}
+
 impl DockSize {
     /// The dock height for `area`: the whole area when full, else the chosen
     /// share, else `default_h`; at least four rows and leaving two for the shell.
@@ -200,5 +207,6 @@ mod dock_tests {
         let p = serde_json::json!({"dock": {"permille": 500, "full": false}});
         assert_eq!(DockSize::from_payload(&p).permille, Some(500));
         assert_eq!(DockSize::from_payload(&serde_json::json!({})), DockSize::default(), "an older host");
+        assert_eq!(dock_chrome_height(18), 28);
     }
 }

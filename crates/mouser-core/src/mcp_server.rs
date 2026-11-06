@@ -290,6 +290,41 @@ pub fn bind(port: u16) -> Result<TcpListener> {
     TcpListener::bind(("127.0.0.1", port)).with_context(|| format!("binding 127.0.0.1:{port}"))
 }
 
+/// Bind the preferred loopback `port`, or an ephemeral one when it is already
+/// in use (a second Mouser window). Returns `(listener, actual_port)`.
+pub fn bind_preferred(port: u16) -> Result<(TcpListener, u16)> {
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => Ok((l, port)),
+        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+            let l = TcpListener::bind(("127.0.0.1", 0))
+                .with_context(|| format!("binding ephemeral after 127.0.0.1:{port} was in use"))?;
+            let actual = l.local_addr().with_context(|| "reading ephemeral MCP port")?.port();
+            Ok((l, actual))
+        }
+        Err(e) => Err(e).with_context(|| format!("binding 127.0.0.1:{port}")),
+    }
+}
+
+/// Like [`bind_addr`], but when `port` is in use on that address bind an
+/// ephemeral port instead. Returns `(listener, actual_port)`.
+pub fn bind_addr_preferred(addr: &str, port: u16, tls: bool, token: &str) -> Result<(TcpListener, u16)> {
+    match bind_addr(addr, port, tls, token) {
+        Ok(l) => Ok((l, port)),
+        Err(e) => {
+            let io = e.downcast_ref::<std::io::Error>();
+            let in_use = io.is_some_and(|e| e.kind() == std::io::ErrorKind::AddrInUse)
+                || format!("{e:#}").contains("Address already in use");
+            if !in_use {
+                return Err(e);
+            }
+            let l = bind_addr(addr, 0, tls, token)
+                .with_context(|| format!("binding ephemeral after {addr}:{port} was in use"))?;
+            let actual = l.local_addr().with_context(|| "reading ephemeral MCP port")?.port();
+            Ok((l, actual))
+        }
+    }
+}
+
 /// Bind `addr:port`. Anything but loopback is refused unless the listener
 /// is HTTPS (`tls`) and a real token is set: the server never listens on the
 /// network in the clear or without auth.
@@ -552,6 +587,20 @@ mod tests {
         assert!(b.contains("\"isError\":true"));
         let (_, _, b) = post(port, TOK, Some(&sid), r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rm"}}"#, tls).unwrap();
         assert!(b.contains("-32602"));
+    }
+
+    #[test]
+    fn bind_preferred_falls_back_when_busy() {
+        let hold = TcpListener::bind(("127.0.0.1", 0)).expect("hold");
+        let preferred = hold.local_addr().unwrap().port();
+        let (l, actual) = bind_preferred(preferred).expect("fallback when held");
+        assert_ne!(actual, preferred, "second bind must not steal the held port");
+        assert_eq!(l.local_addr().unwrap().port(), actual);
+        drop(hold);
+        drop(l);
+        let (l2, actual2) = bind_preferred(preferred).expect("preferred free");
+        assert_eq!(actual2, preferred);
+        drop(l2);
     }
 
     #[test]

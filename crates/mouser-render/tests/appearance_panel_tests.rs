@@ -129,3 +129,53 @@ fn approval_popup_buttons_arm_and_remote_has_no_always() {
     let ps = ui::approval_panel(400, 300, 9, 18, "t", &lines, &[0, 1, 2, 3], true);
     assert!(ps.rect.x >= 0 && ps.rect.x + ps.rect.w <= 400);
 }
+
+#[test]
+fn mode_segment_never_chops_labels() {
+    let themes = vec!["Red Star".into(), "Nord".into()];
+    // Wide: full labels, whole words, all three fit inside the panel.
+    let wide = ui::picker_panel(1200, 800, 9, 18, &themes, 0, "dark");
+    let modes: Vec<_> = wide
+        .items
+        .iter()
+        .filter(|i| matches!(i.action, UiAction::SetMode(_)))
+        .collect();
+    assert_eq!(modes.len(), 3);
+    assert_eq!(modes[0].text, "dark");
+    assert_eq!(modes[1].text, "light");
+    assert_eq!(modes[2].text, "system");
+    for m in &modes {
+        assert!(inside(wide.rect, m.rect), "{m:?} outside {:?}", wide.rect);
+        assert!(!m.text.is_empty());
+        assert!(m.text == "dark" || m.text == "light" || m.text == "system" || m.text == "d" || m.text == "l" || m.text == "sys");
+    }
+    // Narrow (~phone-sidebar width): may abbreviate, but never "dar" / "ligh".
+    let narrow = ui::picker_panel(320, 600, 9, 18, &themes, 0, "system");
+    let modes: Vec<_> = narrow
+        .items
+        .iter()
+        .filter(|i| matches!(i.action, UiAction::SetMode(_)))
+        .collect();
+    assert_eq!(modes.len(), 3, "still three mode hits");
+    for m in &modes {
+        assert!(inside(narrow.rect, m.rect), "{m:?} outside {:?}", narrow.rect);
+        assert!(
+            matches!(m.text.as_str(), "dark" | "light" | "system" | "d" | "l" | "sys"),
+            "chopped label {:?}",
+            m.text
+        );
+        // Action keeps the full mode id even when the label is abbreviated.
+        match &m.action {
+            UiAction::SetMode(id) => assert!(matches!(id.as_str(), "dark" | "light" | "system")),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    assert!(modes.iter().any(|m| m.action == UiAction::SetMode("system".into()) && m.style == PanelStyle::Row { selected: true }));
+}
+
+#[test]
+fn text_cols_is_unicode_width() {
+    assert_eq!(ui::text_cols("dark"), 4);
+    assert_eq!(ui::text_cols("系统"), 4); // two CJK ideographs
+    assert_eq!(ui::label_button_w("dark", 9, ui::BUTTON_PAD), 9 * 4 + 2 * ui::BUTTON_PAD);
+}

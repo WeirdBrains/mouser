@@ -125,6 +125,12 @@ configured provider works too. The header shows `provider/model`.
 - `cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"`:
   a headless live run against the default model with a sandboxed `sh` tool.
 
+## Layout
+
+The input line and status sit above the host's dock chrome (the ⤢ fullscreen
+button and the focus hint at the bottom), so they are never covered. See
+`dock_chrome_height` in `mouser-mode-api`.
+
 ## As a plugin program
 
 `plugins/chat` (`mouser-chat`) is the chat mode as a separate program, built only on

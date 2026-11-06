@@ -760,6 +760,8 @@ fn focus_marks(d: &mut Panel, focused: bool, toggle: &str, name: &str, k: &Keyma
     d.items.push(PanelItem { rect, text, style: PanelStyle::FloatLabel, action });
 }
 
+pub use mouser_mode_api::dock_chrome_height;
+
 /// The dock's own controls: a fullscreen button at the bottom left and the
 /// draggable bottom edge (an invisible strip; dragging sends [`DOCK_DRAG`]).
 fn dock_controls(d: &mut Panel, full: bool, k: &Keymap, vp: UiViewport) {
@@ -988,6 +990,108 @@ mod tests {
         assert_eq!(h.key(b"F"), None, "unfocused: the shell's key");
         let v = h.view(&ctx);
         assert!(v.dock.unwrap().items.iter().any(|i| matches!(&i.action, UiAction::Mode { action, .. } if action == DOCK_FULL)));
+    }
+
+    /// A mode that puts its input on the dock's bottom edge (the old chat bug).
+    struct FooterField;
+    impl Mode for FooterField {
+        fn name(&self) -> &'static str {
+            "foot"
+        }
+        fn hotkey(&self) -> char {
+            'z'
+        }
+        fn bindings(&self) -> &'static [Binding] {
+            &[]
+        }
+        fn action(&mut self, _: &str, _: i32) -> Effect {
+            Effect::None
+        }
+        fn view(&mut self, _: &Context, _: &Keymap) -> View {
+            let rect = Rect { x: 0, y: 0, w: 900, h: 300 };
+            let ch = 18;
+            // Intentionally wrong: field in the chrome strip (pre-fix chat).
+            let field = Rect { x: 10, y: rect.h - ch - 8, w: rect.w - 20, h: ch + 4 };
+            View {
+                dock: Some(Panel {
+                    rect,
+                    items: vec![PanelItem {
+                        rect: field,
+                        text: "ask…".into(),
+                        style: PanelStyle::Field { focused: true, valid: true },
+                        action: UiAction::None,
+                    }],
+                }),
+                ..View::default()
+            }
+        }
+    }
+
+    #[test]
+    fn dock_fullscreen_button_stays_clear_of_a_raised_footer() {
+        let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
+        let mut h = Host::new(vec![Box::new(FooterField)]);
+        h.focus(true);
+        let ctx = Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } };
+        // Correct layout: field above the chrome strip.
+        let chrome = dock_chrome_height(vp.cell_h);
+        assert_eq!(chrome, 28);
+        let mut h2 = Host::new(vec![Box::new(RaisedFooter { chrome })]);
+        h2.focus(true);
+        let v = h2.view(&ctx);
+        let dock = v.dock.unwrap();
+        let btn = dock.items.iter().find(|i| matches!(&i.action, UiAction::Mode { action, .. } if action == DOCK_FULL)).unwrap();
+        let fields: Vec<_> = dock.items.iter().filter(|i| matches!(i.style, PanelStyle::Field { .. })).collect();
+        assert!(!fields.is_empty());
+        for f in fields {
+            let overlap = btn.rect.x < f.rect.x + f.rect.w
+                && btn.rect.x + btn.rect.w > f.rect.x
+                && btn.rect.y < f.rect.y + f.rect.h
+                && btn.rect.y + btn.rect.h > f.rect.y;
+            assert!(!overlap, "⤢ overlaps the input field\nbtn={:?}\nfield={:?}", btn.rect, f.rect);
+        }
+        // The naive footer still intersects (documents the bug we fixed in chat).
+        let v_bad = h.view(&ctx);
+        let dock = v_bad.dock.unwrap();
+        let btn = dock.items.iter().find(|i| matches!(&i.action, UiAction::Mode { action, .. } if action == DOCK_FULL)).unwrap();
+        let field = dock.items.iter().find(|i| matches!(i.style, PanelStyle::Field { .. })).unwrap();
+        let overlap = btn.rect.y < field.rect.y + field.rect.h && btn.rect.y + btn.rect.h > field.rect.y;
+        assert!(overlap, "sanity: an un-raised footer would still collide");
+    }
+
+    struct RaisedFooter {
+        chrome: i32,
+    }
+    impl Mode for RaisedFooter {
+        fn name(&self) -> &'static str {
+            "raised"
+        }
+        fn hotkey(&self) -> char {
+            'r'
+        }
+        fn bindings(&self) -> &'static [Binding] {
+            &[]
+        }
+        fn action(&mut self, _: &str, _: i32) -> Effect {
+            Effect::None
+        }
+        fn view(&mut self, _: &Context, _: &Keymap) -> View {
+            let rect = Rect { x: 0, y: 0, w: 900, h: 300 };
+            let ch = 18;
+            let field = Rect { x: 10, y: rect.h - ch - 8 - self.chrome, w: rect.w - 20, h: ch + 4 };
+            View {
+                dock: Some(Panel {
+                    rect,
+                    items: vec![PanelItem {
+                        rect: field,
+                        text: "ask…".into(),
+                        style: PanelStyle::Field { focused: true, valid: true },
+                        action: UiAction::None,
+                    }],
+                }),
+                ..View::default()
+            }
+        }
     }
 
     /// The host's keys are none of the official modes' keys.

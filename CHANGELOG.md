@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+## [1.4.2] - 2026-11-05
+
+### Fixed
+
+- MCP: a second Mouser window no longer shows a scary "Address already in use" toast when 7801/7802 are held. It binds an ephemeral loopback port instead and logs a line; clients that need a fixed URL should use the first window or `mouser mcp serve --stdio`. See docs/mcp.md.
+- Appearance switcher: dark/light/system mode labels never truncate mid-word in a narrow window. Buttons size to Unicode width; when tight they shrink padding, then abbreviate to `d` / `l` / `sys`.
+- Chat: the input line and status sit above the host dock chrome (⤢ fullscreen and the focus hint), so the F-button no longer overlaps the footer.
+
+### Changed
+
+- Front page: "Mouser is beautiful" clip uses a Trainyard wallpaper panel (no black box); hero is H1 → video → Version/CTA → lede.
+
 ## [1.4.1] - 2026-11-05
 
 ### Changed

@@ -373,11 +373,15 @@ pub fn start(tabs: Arc<Mutex<tabs::Tabs>>, app_state: Arc<Mutex<AppState>>) -> V
     }
     let server =
         mouser_core::mcp_server::Server::new(Arc::new(AppTools { tabs, app_state, preapproved: false }), token.clone(), env!("CARGO_PKG_VERSION"));
-    match mouser_core::mcp_server::bind(cfg.port) {
-        Ok(l) => {
+    match mouser_core::mcp_server::bind_preferred(cfg.port) {
+        Ok((l, port)) => {
+            if port != cfg.port {
+                // Another Mouser already holds the preferred port — do not toast.
+                eprintln!("[mouser] MCP HTTP: port {} in use; using ephemeral {port}", cfg.port);
+            }
             let s = server.clone();
             std::thread::spawn(move || mouser_core::mcp_server::serve(l, None, s));
-            notes.push(format!("[mouser] MCP server on http://127.0.0.1:{}/mcp", cfg.port));
+            notes.push(format!("[mouser] MCP server on http://127.0.0.1:{port}/mcp"));
         }
         Err(e) => notes.push(format!("[mouser] MCP HTTP: {e:#}")),
     }
@@ -400,7 +404,10 @@ fn start_https(cfg: &mouser_core::storage::McpServerPrefs, token: &str, server: 
             let acme = mcp_acme::AcmeConfig::from_prefs(cfg.tls.as_ref().expect("acme source implies [mcp.server.tls]"))?;
             let store = Arc::new(mcp_acme::CertStore::default());
             server.allow_hosts(&acme.domains);
-            let l = mcp_server::bind_addr(addr, cfg.https_port, true, token)?;
+            let (l, https_port) = mcp_server::bind_addr_preferred(addr, cfg.https_port, true, token)?;
+            if https_port != cfg.https_port {
+                eprintln!("[mouser] MCP HTTPS: port {} in use; using ephemeral {https_port}", cfg.https_port);
+            }
             let tls = mcp_acme::server_config(store.clone())?;
             std::thread::spawn(move || mcp_server::serve(l, Some(tls), server));
             let mut extra = String::new();
@@ -415,15 +422,18 @@ fn start_https(cfg: &mouser_core::storage::McpServerPrefs, token: &str, server: 
             let name = acme.domains[0].clone();
             let ca = acme.ca_name().to_string();
             mcp_acme::spawn_renewer(acme, mcp_acme::default_dir(), store);
-            Ok(format!("[mouser] MCP server on https://{name}:{}/mcp ({ca} certificate, renewed automatically{extra})", cfg.https_port))
+            Ok(format!("[mouser] MCP server on https://{name}:{https_port}/mcp ({ca} certificate, renewed automatically{extra})"))
         }
         src => {
             let (cert, key) = if src == mcp_server::TlsSource::Files { (cfg.cert.as_deref(), cfg.key.as_deref()) } else { (None, None) };
             let (tls, _, _) = mcp_server::tls_config(cert, key)?;
             server.allow_hosts(&mcp_server::tls_domains(cfg));
-            let l = mcp_server::bind_addr(addr, cfg.https_port, true, token)?;
+            let (l, https_port) = mcp_server::bind_addr_preferred(addr, cfg.https_port, true, token)?;
+            if https_port != cfg.https_port {
+                eprintln!("[mouser] MCP HTTPS: port {} in use; using ephemeral {https_port}", cfg.https_port);
+            }
             std::thread::spawn(move || mcp_server::serve(l, Some(tls), server));
-            Ok(format!("[mouser] MCP server on https://{shown}:{}/mcp", cfg.https_port))
+            Ok(format!("[mouser] MCP server on https://{shown}:{https_port}/mcp"))
         }
     }
 }
