@@ -491,6 +491,7 @@ pub fn editor_panel(
     focus: usize,
     error: Option<&str>,
     fonts: Option<&FontDropdownView>,
+    preview: Option<(u32, u32, u32, u32)>,
 ) -> Panel {
     let row_h = cell_h + 8;
     let pad = 14;
@@ -502,7 +503,8 @@ pub fn editor_panel(
     let pal_field = cell_w * 8;
     let main_w = main_label + main_field + 6 + swatch;
     let pal_w = pal_label + pal_field + 6 + swatch;
-    let w = 2 * pad + main_w + gap + 2 * pal_w + gap;
+    let preview_w = cell_w * 28;
+    let w = 2 * pad + main_w + gap + 2 * pal_w + gap + preview_w + gap;
     let h = 2 * pad + row_h * 12;
     let rect = centered(vp_w, vp_h, w, h);
     let (x0, y0) = (rect.x + pad, rect.y + pad);
@@ -552,6 +554,21 @@ pub fn editor_panel(
     for k in 0..16usize {
         let (col, row) = (k / 8, k % 8);
         add_field(4 + k, px + col as i32 * (pal_w + gap / 2), top + row as i32 * row_h, pal_label, pal_field, &mut items);
+    }
+    if let Some((fg, bg, cursor, accent)) = preview {
+        let px = x0 + main_w + gap + 2 * pal_w + gap;
+        items.push(PanelItem {
+            rect: Rect { x: px, y: y0, w: preview_w, h: row_h },
+            text: "Preview".into(),
+            style: PanelStyle::Label,
+            action: UiAction::None,
+        });
+        items.push(PanelItem {
+            rect: Rect { x: px, y: top, w: preview_w, h: 8 * row_h },
+            text: String::new(),
+            style: PanelStyle::ThemePreview { fg, bg, cursor, accent },
+            action: UiAction::None,
+        });
     }
     let by = top + 8 * row_h + 10;
     if let Some(e) = error {
@@ -608,7 +625,7 @@ pub fn editor_panel(
             items.push(PanelItem {
                 rect: Rect { x: popup.x + 2, y, w: w - 4, h: opt_h },
                 text: name.clone(),
-                style: PanelStyle::Option { selected: *i == dd.selected, highlight: highlight_bits(pos) },
+                style: PanelStyle::FontOption { selected: *i == dd.selected, highlight: highlight_bits(pos) },
                 action: UiAction::PickFont(*i),
             });
             y += opt_h;

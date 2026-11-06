@@ -76,6 +76,18 @@ pub enum PanelStyle {
         selected: bool,
         highlight: u64,
     },
+    /// Font picker row: `text` is the family name and is drawn in that face.
+    FontOption {
+        selected: bool,
+        highlight: u64,
+    },
+    /// Mini terminal sample for live theme edits (side preview).
+    ThemePreview {
+        fg: u32,
+        bg: u32,
+        cursor: u32,
+        accent: u32,
+    },
     /// A markdown text run (`mouser_core::markdown` span flags; `heading`
     /// level, 0 for body text).
     Md {

@@ -31,7 +31,7 @@ fn editor_fields_fit_and_are_clickable() {
     let fields: Vec<EditorFieldView> = (0..22)
         .map(|i| EditorFieldView { label: format!("f{i}"), value: "#04192A".into(), valid: i != 5, swatch: (i < 20).then_some(0x04192A) })
         .collect();
-    let p = ui::editor_panel(1200, 800, 9, 18, "Edit Red Star (dark)", &fields, 21, Some("Palette 1: use #rrggbb"), None);
+    let p = ui::editor_panel(1200, 800, 9, 18, "Edit Red Star (dark)", &fields, 21, Some("Palette 1: use #rrggbb"), None, None);
     for it in &p.items {
         assert!(inside(p.rect, it.rect), "{it:?} outside {:?}", p.rect);
     }
@@ -169,4 +169,15 @@ fn text_cols_is_unicode_width() {
     assert_eq!(ui::text_cols("dark"), 4);
     assert_eq!(ui::text_cols("系统"), 4); // two CJK ideographs
     assert_eq!(ui::label_button_w("dark", 9, ui::BUTTON_PAD), 9 * 4 + 2 * ui::BUTTON_PAD);
+}
+
+
+#[test]
+fn editor_side_preview_is_present() {
+    let fields: Vec<EditorFieldView> = (0..22)
+        .map(|i| EditorFieldView { label: format!("f{i}"), value: "#04192A".into(), valid: true, swatch: (i < 20).then_some(0x04192A) })
+        .collect();
+    let p = ui::editor_panel(1400, 900, 9, 18, "Edit", &fields, 0, None, None, Some((0xE6FBFA, 0x04192A, 0xFFFFFF, 0x2FD8E5)));
+    assert!(p.items.iter().any(|it| matches!(it.style, PanelStyle::ThemePreview { .. })), "side preview missing");
+    assert!(p.items.iter().any(|it| it.text == "Preview"), "Preview label");
 }
