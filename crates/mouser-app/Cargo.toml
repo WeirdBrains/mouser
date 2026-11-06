@@ -25,6 +25,7 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 mouser-core = { path = "../mouser-core" }
 mouser-pty = { path = "../mouser-pty" }
 mouser-render = { path = "../mouser-render" }
+mouser-mode-api = { path = "../mouser-mode-api" }
 mouser-llm = { path = "../mouser-llm", optional = true }
 
 [dev-dependencies]

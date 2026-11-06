@@ -27,6 +27,7 @@ pub const ENVIRONMENT: &[(&str, &str)] = &[
     ("MOUSER_OPEN_SIDEBAR", "Open the sidebar for this run, whatever was saved."),
     ("MOUSER_OMARCHY", "1 or 0: treat this host as Omarchy (default Omarchy theme) or not, overriding /etc/os-release detection."),
     ("MOUSER_DROPPER_FAKE", "Theme Dropper returns this #RRGGBB after a short pause (recordings)."),
+    ("MOUSER_WINDOW_SIZE", "Initial window size WxH (e.g. 1268x1056) when the compositor allows."),
     ("MOUSER_MODELS_DIR", "Where local model weights live (before [models.local] dir and <home>/models)."),
     ("MOUSER_MODEL_URL_OVERRIDE", "Download URL for `mouser model download` instead of the pinned one."),
     ("MOUSER_GROKBOT_HOME", "Grok Bot desktop home used by `mouser model add grok --desktop` (default: the app's own)."),
@@ -51,7 +52,7 @@ const FILES: &str = r#".SH FILES
 Font, colours, scrollback, compression, engines, models, MCP and plugin settings (TOML).
 .TP
 .I ~/.mouser/preferences.toml
-Choices made in the app: theme, engine order, sidebar, last mode, mode panel size ([window] dock_height, dock_full).
+Choices made in the app: theme, engine order, sidebar, last mode, mode panel size ([window] dock_height, dock_full), reduced motion ([appearance] reduce_motion).
 .TP
 .I ~/.mouser/modes.toml
 Mode keys: the focus toggle ([focus] key, default ctrl+alt+k), each mode's keys ([<mode>.keys]) and the host's own keys while a mode has focus ([host.keys]: F fullscreen panel, ] taller, [ shorter, . context menu).
@@ -73,6 +74,8 @@ const REST: &str = r#".SH EXIT STATUS
 .SH SECURITY
 API keys and MCP tokens are kept in the OS keychain (or a 0600 file with MOUSER_SECRET_STORE=file) and are never printed or logged.
 Pass keys on stdin (\fB\-\-key\-stdin\fR), not as arguments. The MCP server listens on 127.0.0.1 unless \fBbind\fR is set, and then only over HTTPS with a token.
+.SH KEYS
+Tab completes the focused text field (commander move/copy/rename/new-folder/search/pipe, the \fB:\fR command line, the theme editor, chat, and SSH form fields). Repeated Tab cycles matches; Shift+Tab goes back. See \fBmouser help modes\fR.
 .SH EXAMPLES
 .nf
 mouser \-e btop

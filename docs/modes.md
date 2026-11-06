@@ -8,7 +8,7 @@ you work with the files under the shell, and the **input modes** of the command 
 Mouser supports vim-style input modes:
 
 - Shell (default): input goes to the PTY.
-- Command: `:` command line for actions (e.g., `:open-sidebar`, `:connect <name>`, `:theme <name>`).
+- Command: `:` command line for actions (e.g., `:open-sidebar`, `:connect <name>`, `:theme <name>`). Tab completes command names and arguments (paths, theme names, connections); repeated Tab cycles matches, Shift+Tab goes back.
 - Config: reserved for in-app editing of preferences/themes.
 
 Mode switching
@@ -28,8 +28,11 @@ Keybindings
 - Ctrl+= / Ctrl++ bigger font, Ctrl+- smaller, Ctrl+0 reset to `config.toml`'s size (saved to
   `preferences.toml`; the grid reflows and the shell is resized).
 - Theme switcher: ↑/↓ theme (live preview), ←/→ or d/l/s mode, e editor, Enter apply, Esc cancel.
-- Editor: Tab/Shift+Tab or ↑/↓ move between fields, type to edit (live preview when valid),
-  Ctrl+S save, Esc cancel. Fields are also clickable.
+- Editor: Tab completes the focused field (repeated Tab cycles matches, Shift+Tab goes back);
+  ↑/↓ still move between fields. Type to edit (live preview when valid), Ctrl+S save, Esc cancel.
+  Fields are also clickable. Long font family names in the dropdown end in an ellipsis and keep
+  padding so they never run into the edge. A validation message (for example an invalid font
+  size) has its own row above the Save/Cancel/Dropper buttons.
 
 Menus, keybindings and the command line dispatch the same named actions.
 
@@ -160,7 +163,10 @@ Commander's menus (keys are the defaults):
 | text, Markdown, PDF or document view, the manual | scroll (↑ / ↓), page up / down, previous / next file (← / →), copy text, copy path, close (`q`) |
 
 File changes never happen straight away: copy to, move to, rename and new folder
-first ask for the destination or name in commander's prompt line (Enter goes on,
+first ask for the destination or name in commander's prompt line. Tab completes
+paths (relative to the current folder, with `~` expansion; directories get a
+trailing slash) and names; repeated Tab cycles matches, Shift+Tab goes back.
+Enter goes on,
 Esc cancels), then every change (delete and paste too) waits for your yes on
 Mouser's approval card, which lists what will change. Nothing is ever
 overwritten: a target that exists stops the change. Delete is permanent (folders
@@ -299,7 +305,8 @@ came from. The header path is clickable: each segment goes to that folder (long 
 lose their leading segments to `…`).
 
 Search (`/` or a click on the field) takes the typed letters while it is open
-(bright field, "searching · type to filter" hint). It filters as you type and shows
+(bright field, "searching · type to filter" hint). Tab completes matching names
+in the folder. It filters as you type and shows
 `N matches for "q"` or `no matches for "q"`; Enter keeps the filter, Esc cancels.
 Without focus everything you type, viewer or player open or not, goes straight to the
 shell. An Esc right after an Esc that closed a viewer or window
@@ -331,7 +338,10 @@ Previews load lazily on a worker thread: only what is on screen is requested
 (grid: the visible tiles; carousel: the focused item and its two neighbours) and
 the queue is replaced as you move, so off-screen items are skipped. They load in
 order: grid tiles top-left first, the carousel's focused item before its
-neighbours. Until one is ready the tile shows its kind dimly (`image`, `▶ video`).
+neighbours. Until one is ready the tile shows its kind dimly (`image`, `▶ video`). If a
+thumbnail of another size is already decoded (the grid used a smaller tile, or
+the carousel is sliding a neighbour into view), that picture is shown instead of
+the kind label so the tile does not flash.
 Formats: PNG, JPEG, GIF, WebP, BMP. Video thumbnails: one `ffmpeg` frame at 10 % of
 the duration (at most 30 s in; 1 s if unknown; the first frame if that fails), scaled
 to the tile, cached in memory and on disk in `$MOUSER_HOME/cache/thumbs/` keyed by
@@ -379,7 +389,13 @@ plus the selection's neighbours, so the incoming item loads during the slide.
   double-click on the picture or video. Commander's image viewer or player then fills
   the whole window, local or remote. The shell, tab bar and sidebar are hidden, and the
   terminal keeps its size, so nothing is resized under the shell. Esc or `f` again
-  leaves.
+  leaves. Opening eases the picture from its thumbnail (or the docked preview) to
+  fullscreen over about 220 ms (cubic ease-in-out, timed from the wall clock so a late
+  frame does not jump); closing eases it back to that rect. A dim backdrop crossfades
+  with it. The same thumbnail cache that stops the carousel flashing a placeholder is
+  reused on close, so the landing tile is the decoded picture, not `image` / `▶ video`.
+  Set `appearance.reduce_motion` (Preferences → Appearance → Reduce motion) to skip
+  the transition and toggle instantly.
   - Images are fitted whole and letterboxed on a dark backdrop, and keep zoom and pan.
     Video is letterboxed the same way and keeps play/pause, seeking and the clickable
     seek and volume bars.

@@ -8,12 +8,16 @@ use mouser_core::agent::{AgentHost, AgentTool, Chat, Check, ScreenContext};
 use mouser_core::models::{ChatRequest, ChatSink, Event, ModelInfo, ModelProvider};
 use mouser_core::modes::Keymap;
 use mouser_core::permissions::{Decision, Store};
+use mouser_render::modes::prompt::PromptKind;
 use mouser_render::modes::stdio::StdioMode;
 use mouser_render::modes::{Context, Mode, View};
 use mouser_render::ui::PanelStyle;
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// MOUSER_HOME is process-global; serialize tests that set it.
+static HOME_LOCK: Mutex<()> = Mutex::new(());
 
 struct Echo;
 impl ModelProvider for Echo {
@@ -58,6 +62,7 @@ fn ctx() -> Context {
     Context {
         viewport: mouser_render::UiViewport { width: 1200, height: 900, cell_w: 8, cell_h: 16 },
         area: mouser_render::ui::Rect { x: 0, y: 0, w: 1200, h: 900 },
+        reduce_motion: false,
     }
 }
 
@@ -79,8 +84,9 @@ fn texts(v: &View) -> Vec<String> {
 
 #[test]
 fn chats_through_mouser_agent() {
+    let _guard = HOME_LOCK.lock().unwrap();
     let home = tempfile::tempdir().unwrap();
-    // SAFETY: the only test in this binary; set before anything reads it.
+    // SAFETY: held under HOME_LOCK; set before anything reads it.
     unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
     let dir = home.path().join("plugins/chat");
     std::fs::create_dir_all(&dir).unwrap();
@@ -109,5 +115,39 @@ fn chats_through_mouser_agent() {
     let v = m.view(&ctx(), &Keymap::new(&[]));
     let bold = v.dock.iter().flat_map(|d| &d.items).find(|i| i.text == "Hello").unwrap();
     assert!(matches!(bold.style, PanelStyle::Md { flags, .. } if flags & mouser_core::markdown::BOLD != 0), "{:?}", bold.style);
+    drop(m);
+}
+
+#[test]
+fn asks_for_agent_use_instead_of_hard_error() {
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    let dir = home.path().join("plugins/chat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_mouser-chat").replace('\\', "\\\\");
+    let manifest = include_str!("../plugin.toml").replace("command = [\"./mouser-chat\"]", &format!("command = [\"{exe}\"]"));
+    std::fs::write(dir.join("plugin.toml"), manifest).unwrap();
+    let mut store = Store::load();
+    store.set("chat", "run", Decision::Allow);
+    store.save().unwrap();
+
+    let plug = mouser_core::plugins::find("chat").expect("chat plugin");
+    let mut m = StdioMode::new(plug, 3).unwrap();
+    m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
+    m.activate();
+    let end = Instant::now() + Duration::from_secs(5);
+    let mut saw_prompt = false;
+    while Instant::now() < end {
+        let prompts = m.take_prompts();
+        if prompts.iter().any(|p| matches!(&p.kind, PromptKind::Permission { cap, .. } if cap == "agent.use")) {
+            saw_prompt = true;
+            break;
+        }
+        let v = m.view(&ctx(), &Keymap::new(&[]));
+        assert!(!texts(&v).iter().any(|t| t.contains("is not allowed")), "hard error while Ask pending: {:?}", texts(&v));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(saw_prompt, "expected agent.use permission prompt on chat welcome");
     drop(m);
 }

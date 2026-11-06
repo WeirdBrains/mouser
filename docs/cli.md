@@ -48,6 +48,7 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_OPEN_SIDEBAR` | Open the sidebar for this run. |
 | `MOUSER_OMARCHY` | `1` or `0`: treat this host as Omarchy (default Omarchy theme) or not, overriding `/etc/os-release` detection. |
 | `MOUSER_DROPPER_FAKE` | Theme Dropper returns this `#RRGGBB` after a short pause (recordings). |
+| `MOUSER_WINDOW_SIZE` | Initial window size `WxH` (e.g. `1268x1056`) when the compositor allows. |
 | `MOUSER_MODELS_DIR` | Where local model weights live (before `[models.local] dir` and `<home>/models`). |
 | `MOUSER_MODEL_URL_OVERRIDE` | Download URL for `mouser model download` instead of the pinned one. |
 | `MOUSER_GROKBOT_HOME` | Grok Bot desktop home for `mouser model add grok --desktop`. |

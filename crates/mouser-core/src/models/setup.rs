@@ -184,6 +184,58 @@ pub struct Setup {
     pub switch: bool,
 }
 
+fn complete_form_field(kind: &Kind, f: &mut Form, reverse: bool) -> bool {
+    let fs = fields(kind);
+    let Some(&field) = fs.get(f.field) else { return false };
+    let values: &[&str] = match field {
+        Field::Model => {
+            &["grok-3", "grok-4", "gpt-4o", "gpt-4.1", "o4-mini", "claude-sonnet-4", "claude-opus-4", "gemini-2.5-pro", "gemini-2.5-flash"]
+        }
+        Field::Url => &[
+            "https://api.openai.com/v1",
+            "https://api.x.ai/v1",
+            "https://openrouter.ai/api/v1",
+            "https://api.anthropic.com",
+            "https://generativelanguage.googleapis.com/v1beta",
+        ],
+        Field::Key | Field::Api => return false,
+    };
+    let Some(text) = text_of(f, field) else { return false };
+    let low = text.to_lowercase();
+    let mut matches: Vec<&str> = values.iter().copied().filter(|v| v.to_lowercase().starts_with(&low)).collect();
+    if reverse {
+        matches.reverse();
+    }
+    if matches.is_empty() {
+        return false;
+    }
+    if matches.len() == 1 {
+        if text == matches[0] {
+            return false;
+        }
+        *text = matches[0].to_string();
+        return true;
+    }
+    let mut pref = matches[0].to_string();
+    for m in &matches[1..] {
+        while !m.starts_with(&pref) {
+            pref.pop();
+            if pref.is_empty() {
+                break;
+            }
+        }
+    }
+    if pref.len() > text.len() {
+        *text = pref;
+        return true;
+    }
+    if text != matches[0] {
+        *text = matches[0].to_string();
+        return true;
+    }
+    false
+}
+
 impl Setup {
     pub fn new(local_built: bool) -> Self {
         Setup {
@@ -279,14 +331,24 @@ impl Setup {
         true
     }
 
-    /// Typing into the form: text, Backspace, Tab / Shift+Tab between fields;
-    /// Space toggles the API choice. False: not taken.
+    /// Typing into the form: text, Backspace, Tab completes (or moves between
+    /// fields when there is nothing to complete); Space toggles the API choice.
+    /// False: not taken.
     pub fn key(&mut self, bytes: &[u8]) -> bool {
         let Step::Form(kind, f) = &mut self.step else { return false };
         let fs = fields(kind);
+        if bytes == b"\t" || bytes == b"\x1b[Z" {
+            if complete_form_field(kind, f, bytes == b"\x1b[Z") {
+                return true;
+            }
+            if bytes == b"\t" {
+                f.field = (f.field + 1) % fs.len();
+            } else {
+                f.field = (f.field + fs.len() - 1) % fs.len();
+            }
+            return true;
+        }
         match bytes {
-            b"\t" => f.field = (f.field + 1) % fs.len(),
-            b"\x1b[Z" => f.field = (f.field + fs.len() - 1) % fs.len(),
             b"\x7f" | b"\x08" => {
                 if let Some(s) = text_of(f, fs[f.field]) {
                     s.pop();

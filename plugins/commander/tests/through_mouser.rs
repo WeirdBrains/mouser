@@ -42,6 +42,9 @@ fn draws_and_acts_through_mouser() {
     let work = tempfile::tempdir().unwrap();
     let w = work.path();
     std::fs::create_dir(w.join("sub")).unwrap();
+    std::fs::create_dir(w.join("dest_shared_x")).unwrap();
+    std::fs::create_dir(w.join("dest_shared_y")).unwrap();
+    std::fs::create_dir(w.join("dest_alpha")).unwrap();
     std::fs::write(w.join("notes.md"), "# Title\n\nSome *text* and `code`.\n\n```rust\nfn main() {}\n```\n").unwrap();
     std::fs::write(w.join("plain.txt"), "one\ntwo\n").unwrap();
     png(&w.join("a.png"), 64, 48);
@@ -122,5 +125,20 @@ fn draws_and_acts_through_mouser() {
     m.text(b"\r");
     let got = effects(&mut m, 1);
     assert!(matches!(got.as_slice(), [Effect::Run(l)] if l.ends_with("| wc")), "{got:?}");
+
+    // Move prompt: Tab completes the destination path (common prefix, then cycle).
+    select(&mut m, "notes.md");
+    m.action("menu:move_to", -1);
+    settle(&mut m, "move prompt");
+    assert!(m.wants_text(), "the move prompt takes typing");
+    for k in [b"d".as_slice(), b"e", b"s", b"t", b"_", b"s"] {
+        assert!(m.text(k).is_some());
+    }
+    assert!(m.text(b"\t").is_some());
+    let v = settle(&mut m, "move tab prefix");
+    assert!(shows(&v, "dest_shared_"), "Tab completes the shared prefix of dest_shared_*");
+    assert!(m.text(b"\t").is_some());
+    let v = settle(&mut m, "move tab cycle");
+    assert!(shows(&v, "dest_shared_x/") || shows(&v, "dest_shared_y/"), "repeated Tab cycles destination directories");
     drop(m);
 }

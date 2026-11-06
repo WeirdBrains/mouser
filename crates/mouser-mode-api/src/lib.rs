@@ -17,6 +17,7 @@
 //! third-party mode.
 
 pub mod codec;
+pub mod complete;
 pub mod events;
 #[cfg(feature = "markdown")]
 pub mod highlight;

@@ -57,6 +57,8 @@ struct Chat {
     hidden: BTreeSet<usize>,
     /// Rows drawn last: (rect, entry index), for a right-click.
     hits: Vec<(Rect, usize)>,
+    complete: mouser_mode_api::complete::Engine,
+    sent: Vec<String>,
 }
 
 /// Where the context menu was opened.
@@ -242,6 +244,8 @@ impl Chat {
         if t.trim().is_empty() {
             return;
         }
+        self.sent.push(t.clone());
+        self.complete.reset();
         self.scroll = 0;
         self.status = None;
         self.input = t.clone();
@@ -405,6 +409,10 @@ impl Chat {
             }
             return;
         }
+        if s == "\t" || s == "\x1b[Z" {
+            self.complete_input(s == "\x1b[Z");
+            return;
+        }
         if s.starts_with('\x1b') {
             return;
         }
@@ -412,10 +420,42 @@ impl Chat {
             "\r" | "\n" => self.send(host),
             "\x7f" | "\x08" => {
                 self.input.pop();
+                self.complete.reset();
             }
             "\x03" if self.running => self.call(host, "agent.cancel", json!({}), Asked::Other),
-            "\x03" | "\x15" => self.input.clear(),
-            _ => self.input.extend(s.chars().filter(|c| !c.is_control())),
+            "\x03" | "\x15" => {
+                self.input.clear();
+                self.complete.reset();
+            }
+            _ => {
+                self.input.extend(s.chars().filter(|c| !c.is_control()));
+                self.complete.reset();
+            }
+        }
+    }
+
+    fn complete_input(&mut self, reverse: bool) {
+        use mouser_mode_api::complete::{self, FsSource};
+        use std::path::PathBuf;
+        let input = self.input.clone();
+        let (stem_pre, token) = match input.rfind(char::is_whitespace) {
+            Some(i) => (input[..=i].to_string(), input[i + 1..].to_string()),
+            None => (String::new(), input.clone()),
+        };
+        let looks_path = token.starts_with('/') || token.starts_with('.') || token.starts_with('~');
+        let (stem, token, matches) = if looks_path {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let (pstem, ptoken, m) = complete::path_matches(&token, &cwd, &FsSource, false);
+            (format!("{stem_pre}{pstem}"), ptoken, m)
+        } else {
+            complete::value_matches(&input, &self.sent)
+        };
+        let out = self.complete.tab(&input, &stem, &token, &matches, reverse);
+        self.input = out.text.clone();
+        if let Some(msg) = out.message {
+            self.status = Some((msg, false));
+        } else if !out.candidates.is_empty() {
+            self.status = Some((out.list_hint(72), false));
         }
     }
 
@@ -592,7 +632,7 @@ impl Mode for Chat {
             }
             "view.resized" => {
                 self.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
-                if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
+                if let Ok(c) = serde_json::from_value::<Context>(e.payload.clone()) {
                     self.ctx = Some(c);
                 }
             }

@@ -20,7 +20,7 @@ fn spec(args: &[&str]) -> Spec {
 }
 
 fn ctx() -> Context {
-    Context { viewport: Viewport { width: 800, height: 600, cell_w: 8, cell_h: 16 }, area: Rect { x: 0, y: 0, w: 800, h: 600 } }
+    Context { viewport: Viewport { width: 800, height: 600, cell_w: 8, cell_h: 16 }, area: Rect { x: 0, y: 0, w: 800, h: 600 }, reduce_motion: false }
 }
 
 fn ev(name: &str, payload: Value) -> In {

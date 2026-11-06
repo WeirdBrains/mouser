@@ -30,7 +30,6 @@ use host::{Effect, Mode as _};
 use mouser_mode_api::events::{Event, Listener};
 use mouser_mode_api::protocol::{Accepted, ApiRange, BindingDecl, Handled, Hello, ImageFormat, ImageRef, Pixels, Provide, Wants};
 use mouser_mode_api::{Context, Host, serve};
-use serde_json::json;
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex};
@@ -357,7 +356,7 @@ impl mouser_mode_api::Mode for Plugin {
             }
             "view.resized" => {
                 s.mode.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
-                if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
+                if let Ok(c) = serde_json::from_value::<Context>(e.payload.clone()) {
                     s.ctx = Some(c);
                 }
             }

@@ -940,7 +940,7 @@ mod tests {
         let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Seen::default()));
         let h = Host::new(vec![Box::new(Menus { seen: seen.clone(), ready: None })]);
-        (h, Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } }, seen)
+        (h, Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 }, reduce_motion: false }, seen)
     }
 
     #[test]
@@ -1032,7 +1032,7 @@ mod tests {
         let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
         let mut h = Host::new(vec![Box::new(FooterField)]);
         h.focus(true);
-        let ctx = Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } };
+        let ctx = Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 }, reduce_motion: false };
         // Correct layout: field above the chrome strip.
         let chrome = dock_chrome_height(vp.cell_h);
         assert_eq!(chrome, 28);
@@ -1259,7 +1259,7 @@ mod tests {
         let vp = UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 };
         let mut h = Host::new(vec![cmdr()]);
         h.show_keys();
-        let v = h.view(&Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 } });
+        let v = h.view(&Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 800 }, reduce_motion: false });
         let p = v.panel.unwrap();
         assert!(p.items.iter().any(|i| i.text == "v"));
         assert!(p.items.iter().any(|i| i.text == "ctrl+alt+k"));

@@ -68,6 +68,21 @@ pub struct Preferences {
     /// `[audio]`: where the player's sound goes (docs/preferences.md §Audio).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioPrefs>,
+    /// `[appearance]`: extra visual settings (docs/preferences.md).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub appearance: Option<AppearancePrefs>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AppearancePrefs {
+    /// Skip motion such as the fullscreen viewer open/close transition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduce_motion: Option<bool>,
+}
+
+/// `appearance.reduce_motion` (default off).
+pub fn reduce_motion(p: &Preferences) -> bool {
+    p.appearance.as_ref().and_then(|a| a.reduce_motion).unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

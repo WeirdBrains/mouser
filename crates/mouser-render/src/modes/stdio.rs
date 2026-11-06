@@ -104,6 +104,11 @@ enum Waiting {
         secret: Option<String>,
         permission: bool,
     },
+    /// Ask for a declared capability, then re-dispatch `call` if granted.
+    ServiceAfterGrant {
+        rx: Receiver<PromptAnswer>,
+        call: mouser_mode_api::host_api::Call,
+    },
 }
 
 impl StdioMode {
@@ -316,34 +321,61 @@ impl StdioMode {
                 let r = if crate::clipboard::store(text, false) { Ok(json!({})) } else { Err("no clipboard".into()) };
                 return self.respond(id, r);
             }
-            Call::Service { method, params } if mouser_mode_api::services::allowed(method, &granted) => match method.as_str() {
-                "prefs.secret_prompt" => {
-                    return match services::secret_field(params) {
-                        Ok((key, label)) => self.ask(id, PromptKind::Secret { key: key.clone(), label }, Some(key), false),
-                        Err(e) => self.respond(id, Err(e)),
-                    };
-                }
-                "permissions.request" => {
-                    let cap = params["permission"].as_str().unwrap_or_default().to_string();
-                    if !self.plugin.manifest.permissions.contains(&cap) {
-                        return self.respond(id, Err(format!("{cap:?} is not declared in plugin.toml")));
+            Call::Service { method, params } => {
+                // Declared-but-Ask capabilities: prompt instead of a hard error so a
+                // fresh install of chat (agent.models on welcome) gets the approval
+                // popup rather than "agent.models is not allowed".
+                if let Some(cap) = mouser_mode_api::services::permission_for(method)
+                    && !granted.iter().any(|g| g == cap)
+                {
+                    let declared = self.plugin.manifest.permissions.iter().any(|p| p == cap);
+                    let decision = Store::load().get(self.name, cap);
+                    if declared && decision != Decision::Never {
+                        let detail = vec![format!("  • {}  ({cap})", mouser_core::plugins::capability_text(cap))];
+                        if self.waiting.iter().filter(|(_, w)| matches!(w, Waiting::Popup { .. } | Waiting::ServiceAfterGrant { .. })).count() >= 4 {
+                            return self.respond(id, Err("too many questions open".into()));
+                        }
+                        let (p, rx) = Prompt::new(self.name, PromptKind::Permission { cap: cap.to_string(), detail });
+                        self.prompts.push(p);
+                        self.waiting.push((id, Waiting::ServiceAfterGrant { rx, call: call.clone() }));
+                        if let Some(w) = &self.waker {
+                            w();
+                        }
+                        return;
                     }
-                    if granted.contains(&cap) {
-                        return self.respond(id, Ok(json!({"granted": true})));
-                    }
-                    let why = params["why"].as_str().unwrap_or_default();
-                    let mut detail = vec![format!("  • {}  ({cap})", mouser_core::plugins::capability_text(&cap))];
-                    if !why.is_empty() {
-                        detail.push(format!("Why (from the plugin): {why}"));
-                    }
-                    return self.ask(id, PromptKind::Permission { cap, detail }, None, true);
+                    return self.respond(id, Err(format!("{method} is not allowed (permission missing or unknown method)")));
                 }
-                m if m.starts_with("agent.") && !matches!(m, "agent.models" | "agent.set_default") => {
-                    let r = self.agent_call(m, params);
-                    return self.respond(id, r);
+                if mouser_mode_api::services::allowed(method, &granted) {
+                    match method.as_str() {
+                        "prefs.secret_prompt" => {
+                            return match services::secret_field(params) {
+                                Ok((key, label)) => self.ask(id, PromptKind::Secret { key: key.clone(), label }, Some(key), false),
+                                Err(e) => self.respond(id, Err(e)),
+                            };
+                        }
+                        "permissions.request" => {
+                            let cap = params["permission"].as_str().unwrap_or_default().to_string();
+                            if !self.plugin.manifest.permissions.contains(&cap) {
+                                return self.respond(id, Err(format!("{cap:?} is not declared in plugin.toml")));
+                            }
+                            if granted.contains(&cap) {
+                                return self.respond(id, Ok(json!({"granted": true})));
+                            }
+                            let why = params["why"].as_str().unwrap_or_default();
+                            let mut detail = vec![format!("  • {}  ({cap})", mouser_core::plugins::capability_text(&cap))];
+                            if !why.is_empty() {
+                                detail.push(format!("Why (from the plugin): {why}"));
+                            }
+                            return self.ask(id, PromptKind::Permission { cap, detail }, None, true);
+                        }
+                        m if m.starts_with("agent.") && !matches!(m, "agent.models" | "agent.set_default") => {
+                            let r = self.agent_call(m, params);
+                            return self.respond(id, r);
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
         let env = Env { granted, ssh: self.ssh.clone(), remote_dir: self.remote_dir.clone() };
@@ -369,6 +401,7 @@ impl StdioMode {
     /// Deliver finished calls.
     fn pump(&mut self) {
         let mut done = Vec::new();
+        let mut retry = Vec::new();
         let mut pending_worker = false;
         for (i, (id, w)) in self.waiting.iter().enumerate() {
             match w {
@@ -393,11 +426,40 @@ impl StdioMode {
                     };
                     done.push((i, *id, r));
                 }
+                Waiting::ServiceAfterGrant { rx, call } => match rx.try_recv() {
+                    Err(TryRecvError::Empty) => {}
+                    Err(TryRecvError::Disconnected) | Ok(PromptAnswer::Deny) => {
+                        done.push((i, *id, Err("permission denied".into())));
+                    }
+                    Ok(_) => {
+                        // Cap was persisted by the app (Allow always); re-dispatch after removal.
+                        retry.push((i, *id, call.clone()));
+                    }
+                },
             }
         }
-        for (i, id, r) in done.into_iter().rev() {
+        // Highest index first so removals don't shift earlier indices.
+        type Pending = (usize, Option<(u64, Answer)>, Option<(u64, mouser_mode_api::host_api::Call)>);
+        let mut remove: Vec<Pending> = Vec::new();
+        for (i, id, r) in done {
+            remove.push((i, Some((id, r)), None));
+        }
+        for (i, id, call) in retry {
+            remove.push((i, None, Some((id, call))));
+        }
+        remove.sort_by_key(|a| std::cmp::Reverse(a.0));
+        let mut retries = Vec::new();
+        for (i, resp, ret) in remove {
             self.waiting.remove(i);
-            self.respond(id, r);
+            if let Some((id, r)) = resp {
+                self.respond(id, r);
+            }
+            if let Some((id, call)) = ret {
+                retries.push((id, call));
+            }
+        }
+        for (id, call) in retries {
+            self.request(id, call);
         }
         if pending_worker {
             self.poll_later();
@@ -650,7 +712,10 @@ impl Mode for StdioMode {
             if first {
                 self.ensure();
             } else {
-                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area, "dock": self.dock}));
+                self.event(
+                    "view.resized",
+                    json!({"viewport": ctx.viewport, "area": ctx.area, "dock": self.dock, "reduce_motion": ctx.reduce_motion}),
+                );
             }
         }
         let now = Instant::now();
@@ -712,7 +777,7 @@ impl Mode for StdioMode {
         if d != self.dock {
             self.dock = d;
             if let (true, Some(ctx)) = (self.was_running, self.ctx) {
-                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area, "dock": d}));
+                self.event("view.resized", json!({"viewport": ctx.viewport, "area": ctx.area, "dock": d, "reduce_motion": ctx.reduce_motion}));
             }
         }
     }

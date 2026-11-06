@@ -6,6 +6,7 @@ use mouser_core::themes::{
     ThemeColors, active_variant, create_theme, default_theme_name, duplicate_theme, export_theme, import_theme, list_themes, load_theme,
     match_omarchy, resolve_active_theme, save_theme, valid_theme_name,
 };
+use mouser_mode_api::complete::{self, Engine};
 use mouser_render::{Colors, ui};
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,7 @@ pub struct Appearance {
     preview_font: Option<(f32, Option<String>)>,
     cache: Option<(Instant, ThemeColors)>,
     pub message: Option<(String, Instant)>,
+    complete: Engine,
 }
 
 fn to_colors(c: ThemeColors) -> Colors {
@@ -50,7 +52,17 @@ fn variant_for(mode: &ThemeMode) -> &'static str {
 
 impl Appearance {
     pub fn new(font_size: f32, font_family: Option<String>, default_font_size: f32) -> Self {
-        Self { panel: None, font_size, font_family, default_font_size, preview_colors: None, preview_font: None, cache: None, message: None }
+        Self {
+            panel: None,
+            font_size,
+            font_family,
+            default_font_size,
+            preview_colors: None,
+            preview_font: None,
+            cache: None,
+            message: None,
+            complete: Engine::new(),
+        }
     }
 
     pub fn colors(&mut self) -> Colors {
@@ -108,8 +120,44 @@ impl Appearance {
     }
 
     pub fn key(&mut self, bytes: &[u8]) {
+        if bytes == b"\t" || bytes == b"\x1b[Z" {
+            if self.try_complete(bytes == b"\x1b[Z") {
+                return;
+            }
+        } else {
+            self.complete.reset();
+        }
         let Some(key) = appearance::parse_key(bytes) else { return };
         self.sync_families();
+        // Keyboard peers of the switcher buttons (for demos / no mouse).
+        if matches!(self.panel, Some(Panel::Picker(_))) {
+            match key {
+                EditKey::Char('a') => {
+                    self.run_auto_theme();
+                    return;
+                }
+                EditKey::Char('u') => {
+                    self.action(&ui::UiAction::DuplicateTheme);
+                    return;
+                }
+                EditKey::Char('n') => {
+                    self.action(&ui::UiAction::NewTheme);
+                    return;
+                }
+                _ => {}
+            }
+        }
+        // F2: Dropper (same as the Dropper button) when a colour is focused.
+        if matches!(self.panel, Some(Panel::Editor(_))) && (bytes == b"OQ" || bytes == b"[12~") {
+            let ok = matches!(&self.panel, Some(Panel::Editor(e)) if e.focus_is_color());
+            if ok {
+                self.say("Click the screen to sample a colour…");
+                crate::start_color_dropper();
+            } else {
+                self.say("Focus a colour field, then Dropper");
+            }
+            return;
+        }
         match &mut self.panel {
             Some(Panel::Picker(p)) => {
                 let outcome = p.handle(key);
@@ -448,6 +496,88 @@ impl Appearance {
     }
 
     /// Panel layout for the renderer.
+    /// Tab-complete the focused text field. False: let Tab/Shift+Tab move fields.
+    fn try_complete(&mut self, reverse: bool) -> bool {
+        if matches!(&self.panel, Some(Panel::NameForm { .. })) {
+            let name = match &self.panel {
+                Some(Panel::NameForm { name, .. }) => name.clone(),
+                _ => return false,
+            };
+            let themes = list_themes();
+            let (stem, token, matches) = complete::value_matches(&name, &themes);
+            let out = self.complete.tab(&name, &stem, &token, &matches, reverse);
+            if let Some(Panel::NameForm { name, error, .. }) = &mut self.panel {
+                *name = out.text.clone();
+                *error = None;
+            }
+            if let Some(msg) = out.message {
+                self.say(msg);
+            } else if !out.candidates.is_empty() {
+                self.say(out.list_hint(80));
+            }
+            return true;
+        }
+        if !matches!(&self.panel, Some(Panel::Editor(_))) {
+            return false;
+        }
+        let (i, current, stem, token, matches) = {
+            let Some(Panel::Editor(e)) = &self.panel else { return false };
+            let i = e.focus;
+            let current = e.fields.get(i).map(|f| f.value.clone()).unwrap_or_default();
+            let triple = if i == appearance::FONT_FAMILY {
+                let names: Vec<String> = e.fonts.families.iter().cloned().collect();
+                complete::value_matches(&current, &names)
+            } else if i == appearance::FONT_SIZE {
+                let sizes: Vec<String> =
+                    ["6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22", "24", "28", "32", "36", "42", "48"]
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect();
+                complete::value_matches(&current, &sizes)
+            } else {
+                let values: Vec<String> = e.fields.iter().map(|f| f.value.clone()).filter(|v| !v.is_empty()).collect();
+                complete::value_matches(&current, &values)
+            };
+            (i, current, triple.0, triple.1, triple.2)
+        };
+        if matches.is_empty() {
+            return false;
+        }
+        let out = self.complete.tab(&current, &stem, &token, &matches, reverse);
+        if out.candidates.len() == 1 && out.text == current && out.message.is_none() {
+            return false;
+        }
+        let outcome = if let Some(Panel::Editor(e)) = &mut self.panel {
+            e.fields[i].value = out.text.clone();
+            if i == appearance::FONT_FAMILY {
+                let q = e.fields[i].value.clone();
+                e.fonts.refilter(&q);
+                e.fonts.open = true;
+            }
+            match e.validate() {
+                Ok(_) => {
+                    e.error = None;
+                    Some(Outcome::Preview)
+                }
+                Err(err) => {
+                    e.error = Some(err);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(o) = outcome {
+            self.apply(o);
+        }
+        if let Some(msg) = out.message {
+            self.say(msg);
+        } else if out.candidates.len() > 1 {
+            self.say(out.list_hint(80));
+        }
+        true
+    }
+
     pub fn panel_view(&mut self, vp: mouser_render::UiViewport) -> Option<ui::Panel> {
         self.sync_families();
         match self.panel.as_ref()? {

@@ -139,7 +139,8 @@ another language; MessagePack stays the default.
 **In (events):** `mode.activated` / `mode.deactivated`, `ui.action` (a bound
 key or a click), `input.text` / `input.key` / `input.escape` while you asked
 for the keyboard, `shell.cwd_changed`, `shell.remote_*` with `remote.read`,
-`menu.open` for context menus, `view.resized` (including dock size),
+`menu.open` for context menus, `view.resized` (including dock size and
+`reduce_motion`),
 `frame.tick` when you draw video, `agent.state` when you run an agent session.
 
 **Out:** `View` (dock / panel / images), `Effect` (type into the shell, `cd`,

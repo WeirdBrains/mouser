@@ -31,7 +31,11 @@ fn spawn(args: &[&str]) -> (Plugin, ApiRange) {
 }
 
 fn ctx() -> Context {
-    Context { viewport: Viewport { width: 1920, height: 1080, cell_w: 10, cell_h: 20 }, area: Rect { x: 0, y: 0, w: 1920, h: 1080 } }
+    Context {
+        viewport: Viewport { width: 1920, height: 1080, cell_w: 10, cell_h: 20 },
+        area: Rect { x: 0, y: 0, w: 1920, h: 1080 },
+        reduce_motion: false,
+    }
 }
 
 fn accept(p: &mut Plugin, api: ApiRange, ring: Option<&Ring>) {

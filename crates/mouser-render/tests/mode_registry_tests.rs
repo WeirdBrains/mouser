@@ -28,7 +28,11 @@ fn example(n: &str) -> PathBuf {
 
 #[cfg(unix)]
 fn ctx() -> Context {
-    Context { viewport: UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 30, w: 1000, h: 770 } }
+    Context {
+        viewport: UiViewport { width: 1200, height: 800, cell_w: 9, cell_h: 18 },
+        area: Rect { x: 0, y: 30, w: 1000, h: 770 },
+        reduce_motion: false,
+    }
 }
 
 #[cfg(unix)]

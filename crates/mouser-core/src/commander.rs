@@ -364,7 +364,11 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
     b("zoom_out", "-", "image view: zoom out (same key as volume down in the player)"),
     b("zoom_fit", "0", "image view: fit"),
     b("zoom_actual", "1", "image view: 100% (actual pixels)"),
-    b("fullscreen", "f", "image / player: fullscreen, the whole window (Esc or the same key leaves)"),
+    b(
+        "fullscreen",
+        "f",
+        "image / player: fullscreen, the whole window; eases from the thumbnail (Esc or the same key leaves; appearance.reduce_motion skips the motion)",
+    ),
     b("menu", "i", "header overflow menu (\u{2022}\u{2022}\u{2022}) when the window is narrow"),
 ];
 
