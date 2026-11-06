@@ -424,7 +424,9 @@ jobs:
           mkdir -p upload
           find dist -type f -exec cp -n {} upload/ \;
           # The OpenPGP key pacman needs for the .pkg.tar.zst.sig (docs/release.md §Arch signatures).
-          if ls upload/*.pkg.tar.zst.sig >/dev/null 2>&1; then cp packaging/arch/weirdbrains-mouser.asc upload/; fi
+          # Ship it under both names: the historical release asset and the site URL filename.
+          cp packaging/arch/weirdbrains-mouser.asc upload/
+          cp packaging/arch/weirdbrains-mouser.asc upload/mouser-release-key.asc
           gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file notes.md upload/*
 
       - name: Generate Homebrew formula and cask and push to repo
