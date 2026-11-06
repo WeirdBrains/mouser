@@ -1,5 +1,13 @@
 ## [Unreleased]
 
+## [1.4.1] - 2026-11-05
+
+### Changed
+
+- Website docs: maintainer pages (deploy-site, release process, HANDOVER) are `internal` and no longer published on mouser.weirdbrains.com. Every public guide still has a site page; see AGENTS.md and docs/sections.toml.
+- Developer Guides: how-tos for building a mode plugin, a custom rendering engine, integrating an app with Fuzzball, and using Mouser's MCP server from a plugin (docs/building-modes.md, custom-engines.md, fuzzball-integration.md, mcp-from-plugins.md).
+- Front page: "Mouser is beautiful" hero clip (autoplay muted loop, WebM+MP4, poster; prefers-reduced-motion shows the poster). Re-record after the theme editor ships.
+
 ## [1.4.0] - 2026-11-05
 
 ### Fixed
