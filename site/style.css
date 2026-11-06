@@ -61,16 +61,18 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 }
 /* Hero clip: max size; container bg matches video edge (#04080c) so corners are seamless. */
 .shot .media-frame.hero-fill{
-  /* No inset band — video is the boundary. Bg matches sampled edge pixels. */
-  padding:0;border:0;background:#04080c;box-shadow:none;
+  /* Video is the boundary. Bg = sampled edge (#04080c); 1px ring seals radius AA fringe. */
+  padding:0;border:0;background:#04080c;
   border-radius:var(--radius);overflow:hidden;line-height:0;
   width:100%;aspect-ratio:1268 / 1056;
   box-sizing:border-box;
+  box-shadow:0 0 0 1px #04080c;
 }
-.light .shot .media-frame.hero-fill{box-shadow:0 8px 32px rgba(4,25,42,.18)}
+.light .shot .media-frame.hero-fill{box-shadow:0 0 0 1px #04080c,0 8px 32px rgba(4,25,42,.18)}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
   display:block;width:100%;height:100%;
-  object-fit:contain;background:#04080c;border:0;border-radius:0;box-shadow:none;
+  object-fit:cover; /* exact aspect → cover==contain; cover avoids subpixel letterbox */
+  background:#04080c;border:0;border-radius:0;box-shadow:none;
 }
 .hero .shot.beautiful{width:100%}
 @media (max-width:1023px){
