@@ -127,8 +127,22 @@ pub fn parse_omarchy_colors_for_test(toml_src: &str, name: &str) -> Option<Theme
     let selection_background = get("selection");
     let selection_foreground = get("selection_foreground").or_else(|| get("background"));
     let keys = [
-        "dark_background", "red", "green", "yellow", "blue", "magenta", "cyan", "foreground", "lighter_background", "bright_red",
-        "bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan", "bright_foreground",
+        "dark_background",
+        "red",
+        "green",
+        "yellow",
+        "blue",
+        "magenta",
+        "cyan",
+        "foreground",
+        "lighter_background",
+        "bright_red",
+        "bright_green",
+        "bright_yellow",
+        "bright_blue",
+        "bright_magenta",
+        "bright_cyan",
+        "bright_foreground",
     ];
     // Prefer explicit dark_background for ANSI 0; fall back to background.
     let mut palette = Vec::with_capacity(16);

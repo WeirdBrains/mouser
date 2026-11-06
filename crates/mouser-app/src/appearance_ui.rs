@@ -183,13 +183,7 @@ impl Appearance {
             }
             (Some(Panel::Picker(p)), ui::UiAction::NewTheme) => {
                 let source = p.theme().to_string();
-                self.panel = Some(Panel::NameForm {
-                    title: "New theme".into(),
-                    kind: "new",
-                    source,
-                    name: String::new(),
-                    error: None,
-                });
+                self.panel = Some(Panel::NameForm { title: "New theme".into(), kind: "new", source, name: String::new(), error: None });
                 return;
             }
             (Some(Panel::Picker(p)), ui::UiAction::DuplicateTheme) => {
@@ -478,11 +472,7 @@ impl Appearance {
     pub fn export_theme_cmd(&mut self, arg: &str) {
         let prefs = load_preferences();
         let name = arg.trim();
-        let name = if name.is_empty() {
-            prefs.theme.clone().unwrap_or_else(|| default_theme_name().into())
-        } else {
-            name.to_string()
-        };
+        let name = if name.is_empty() { prefs.theme.clone().unwrap_or_else(|| default_theme_name().into()) } else { name.to_string() };
         let dir = export_dir_for(&name);
         match export_theme(&name, &dir) {
             Ok(()) => self.say(format!("Exported to {}", dir.display())),

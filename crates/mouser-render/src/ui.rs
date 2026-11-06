@@ -365,7 +365,6 @@ fn centered(vp_w: i32, vp_h: i32, w: i32, h: i32) -> Rect {
     Rect { x: (vp_w - w) / 2, y: (vp_h - h) / 2, w, h }
 }
 
-
 /// Mode segmented control (`dark` / `light` / `system`) for the appearance picker.
 /// Buttons size to their label (Unicode width). When the row is tight: shrink
 /// padding, then use short labels (`d` / `l` / `sys`) — never chop mid-word.
@@ -409,12 +408,7 @@ pub fn mode_segment(x: i32, y: i32, inner_w: i32, cell_w: i32, row_h: i32, mode:
         }
     }
     fit(SHORT, 0).unwrap_or_else(|| {
-        vec![PanelItem {
-            rect: Rect { x, y, w: inner_w.max(0), h: row_h },
-            text: "Mode".into(),
-            style: PanelStyle::Label,
-            action: UiAction::None,
-        }]
+        vec![PanelItem { rect: Rect { x, y, w: inner_w.max(0), h: row_h }, text: "Mode".into(), style: PanelStyle::Label, action: UiAction::None }]
     })
 }
 

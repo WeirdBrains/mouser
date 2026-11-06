@@ -43,7 +43,9 @@ fn system_mode_defaults_to_red_star_dark() {
         env::set_var("MOUSER_SYSTEM_DARK", "1");
     }
     // No preferences at all: Red Star, system mode (force off Omarchy auto-default).
-    unsafe { env::set_var("MOUSER_OMARCHY", "0"); }
+    unsafe {
+        env::set_var("MOUSER_OMARCHY", "0");
+    }
     let (bg, fg) = resolve_active_colors(&Preferences::default());
     assert_eq!(bg, 0x04192a);
     assert_eq!(fg, 0xe6fbfa);
@@ -95,12 +97,16 @@ fn omarchy_builtin_and_auto_default() {
     assert_eq!(def.background.to_lowercase(), "#070d16");
     assert_eq!(def.accent.as_deref(), Some("#5e84a9"));
     assert_eq!(def.palette.len(), 16);
-    unsafe { std::env::set_var("MOUSER_OMARCHY", "1"); }
+    unsafe {
+        std::env::set_var("MOUSER_OMARCHY", "1");
+    }
     assert_eq!(mouser_core::themes::default_theme_name(), "Omarchy");
     let (bg, fg) = mouser_core::themes::resolve_active_colors(&mouser_core::storage::Preferences::default());
     assert_eq!(bg, 0x070d16);
     assert_eq!(fg, 0xfff1c8);
-    unsafe { std::env::set_var("MOUSER_OMARCHY", "0"); }
+    unsafe {
+        std::env::set_var("MOUSER_OMARCHY", "0");
+    }
 }
 
 #[test]
@@ -136,7 +142,6 @@ fn match_omarchy_reads_colors_toml() {
     assert_eq!(def.palette[1], "#8e92bd");
     assert_eq!(def.palette[2], "#86d0e3");
 }
-
 
 #[test]
 #[serial]

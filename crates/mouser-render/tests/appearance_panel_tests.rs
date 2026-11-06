@@ -138,11 +138,7 @@ fn mode_segment_never_chops_labels() {
     let themes = vec!["Red Star".into(), "Nord".into()];
     // Wide: full labels, whole words, all three fit inside the panel.
     let wide = ui::picker_panel(1200, 800, 9, 18, &themes, 0, "dark");
-    let modes: Vec<_> = wide
-        .items
-        .iter()
-        .filter(|i| matches!(i.action, UiAction::SetMode(_)))
-        .collect();
+    let modes: Vec<_> = wide.items.iter().filter(|i| matches!(i.action, UiAction::SetMode(_))).collect();
     assert_eq!(modes.len(), 3);
     assert_eq!(modes[0].text, "dark");
     assert_eq!(modes[1].text, "light");
@@ -154,19 +150,11 @@ fn mode_segment_never_chops_labels() {
     }
     // Narrow (~phone-sidebar width): may abbreviate, but never "dar" / "ligh".
     let narrow = ui::picker_panel(320, 600, 9, 18, &themes, 0, "system");
-    let modes: Vec<_> = narrow
-        .items
-        .iter()
-        .filter(|i| matches!(i.action, UiAction::SetMode(_)))
-        .collect();
+    let modes: Vec<_> = narrow.items.iter().filter(|i| matches!(i.action, UiAction::SetMode(_))).collect();
     assert_eq!(modes.len(), 3, "still three mode hits");
     for m in &modes {
         assert!(inside(narrow.rect, m.rect), "{m:?} outside {:?}", narrow.rect);
-        assert!(
-            matches!(m.text.as_str(), "dark" | "light" | "system" | "d" | "l" | "sys"),
-            "chopped label {:?}",
-            m.text
-        );
+        assert!(matches!(m.text.as_str(), "dark" | "light" | "system" | "d" | "l" | "sys"), "chopped label {:?}", m.text);
         // Action keeps the full mode id even when the label is abbreviated.
         match &m.action {
             UiAction::SetMode(id) => assert!(matches!(id.as_str(), "dark" | "light" | "system")),
