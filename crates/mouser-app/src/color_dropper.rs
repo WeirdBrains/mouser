@@ -7,7 +7,18 @@
 use std::process::{Command, Stdio};
 
 /// Pick one screen pixel as `0xRRGGBB`. Blocks until the user clicks or cancels.
+///
+/// `MOUSER_DROPPER_FAKE=#RRGGBB` (or bare hex) returns that colour after a short
+/// pause — for automated recordings that cannot drive the pointer.
 pub fn pick() -> Result<u32, String> {
+    if let Ok(fake) = std::env::var("MOUSER_DROPPER_FAKE") {
+        let raw = fake.trim().trim_start_matches('#');
+        if raw.len() == 6 && raw.chars().all(|c| c.is_ascii_hexdigit()) {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            return u32::from_str_radix(raw, 16).map_err(|e| e.to_string());
+        }
+        return Err(format!("MOUSER_DROPPER_FAKE={fake:?} is not #RRGGBB"));
+    }
     if which("hyprpicker") {
         return hyprpicker();
     }

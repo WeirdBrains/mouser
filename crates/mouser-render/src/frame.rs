@@ -538,6 +538,9 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 let k = (b.h - 4).clamp(6, 14);
                 round_rect(canvas, b.x + dw - k / 2, b.y + (b.h - k) / 2, k, k, k / 2, fg, panel);
             }
+            ui::PanelStyle::Dim(a) => {
+                canvas.fill_rect(b.x, b.y, b.w, b.h, mix(bg, 0x000000, a as f32 / 255.0));
+            }
             ui::PanelStyle::Popup => {
                 drop_shadow(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, bg);
                 round_box(canvas, b.x - 1, b.y - 1, b.w + 2, b.h + 2, RADIUS, 1, accent, mix(bg, panel, 0.35), panel);
@@ -551,9 +554,20 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 let step = fonts.cell_w;
                 let mut preview = matches!(it.style, ui::PanelStyle::FontOption { .. }).then(|| preview_font(&it.text, fonts.size)).flatten();
                 let draw_fonts = preview.as_mut().unwrap_or(fonts);
-                for (i, c) in it.text.chars().take(max.saturating_sub(1)).enumerate() {
+                let pad = ui::BUTTON_PAD;
+                let budget = ((b.w - 2 * pad).max(0) / step).max(0) as usize;
+                let chars: Vec<char> = it.text.chars().collect();
+                let (shown, ellipsis) = if chars.len() > budget && budget > 0 {
+                    (chars.into_iter().take(budget.saturating_sub(1)).collect::<Vec<_>>(), true)
+                } else {
+                    (chars, false)
+                };
+                for (i, c) in shown.iter().enumerate() {
                     let color = if i < 64 && highlight & (1 << i) != 0 { accent } else { base };
-                    canvas.draw_char(draw_fonts, b.x + ui::BUTTON_PAD + i as i32 * step, ty, c, color);
+                    canvas.draw_char(draw_fonts, b.x + pad + i as i32 * step, ty, *c, color);
+                }
+                if ellipsis {
+                    canvas.draw_char(draw_fonts, b.x + pad + shown.len() as i32 * step, ty, '…', base);
                 }
             }
             ui::PanelStyle::Swatch(c) => {

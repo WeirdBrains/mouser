@@ -37,8 +37,9 @@ Switching
 - **Match Omarchy** (on the switcher) copies the current Omarchy desktop theme's `colors.toml` into
   Mouser's built-in Omarchy theme and selects it. On Omarchy hosts with no `theme` preference yet,
   Mouser defaults to Omarchy automatically (`MOUSER_OMARCHY=1|0` overrides detection).
-- **New** / **Duplicate** create a user theme under `~/.mouser/themes/` (Duplicate copies both
-  variants of the selection). **Export** writes `dark.toml`/`light.toml` to
+- **New** (`n`) / **Duplicate** (`u`) create a user theme under `~/.mouser/themes/` (Duplicate copies both
+  variants of the selection). Blank cursor, accent and palette fields on the source are filled so Edit colours never opens empty.
+  **Export** writes `dark.toml`/`light.toml` to
   `~/Downloads/mouser-theme-<name>/`. Import with `:import-theme /path/to/dir`; export also via
   `:export-theme [name]`.
 
@@ -46,10 +47,16 @@ Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,
   background, cursor, accent and the 16-colour palette as hex (`#rrggbb` or `#rgb`) with swatches,
   plus font family and size. Valid edits preview live (a side Preview pane shows sample text in the pending colours); invalid fields are outlined in red.
-- **Dropper** (in the editor) samples a screen colour into the focused colour field. On Hyprland /
+- **Dropper** (in the editor, or **F2** when a colour field is focused) samples a screen colour into the focused colour field. On Hyprland /
   Omarchy it uses `hyprpicker`; otherwise `grim`+`slurp`, then ImageMagick `import` on X11.
-- **Auto** (on the switcher) builds/selects a theme from the desktop when possible (currently
+- **Auto** (button or `a` on the switcher) builds/selects a theme from the desktop when possible (currently
   Omarchy `colors.toml`, same as Match Omarchy; more desktops later).
+- Tab completes the focused field (colour values from the theme, font family names,
+  font sizes, or the new/duplicate theme name). ↑/↓ move between fields. The
+  helper row under Save/Cancel/Dropper lists the keys (`Tab complete`, `F2 samples
+  a screen colour`); F2 is the key for Dropper so the wording is not repeated.
+- A validation message such as `Font size must be 6-48` has its own row above the
+  buttons and never covers them.
 - Save writes `~/.mouser/themes/<Theme>/<variant>.toml` and the font to `preferences.toml`.
 - Theme files may contain `cursor`, `accent` and `palette = [16 colours]`; all are optional.
 
@@ -73,4 +80,5 @@ letters are highlighted) while the list stays alphabetical. ↑/↓ or the mouse
 wheel move, Enter or a click picks (the font then loads in the background), and
 Esc or a click elsewhere closes the list. Families are discovered once, on a
 background thread, at startup; typing only filters. Each row is drawn in
-that family so you can preview the look before picking.
+that family so you can preview the look before picking. Long names are padded
+and end in an ellipsis so they never run into the right edge.

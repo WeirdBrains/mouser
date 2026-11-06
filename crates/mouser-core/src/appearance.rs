@@ -236,6 +236,13 @@ pub struct ThemeEditor {
 /// Rows shown at once in the font dropdown.
 pub const FONT_ROWS: usize = 8;
 
+/// The placeholder shown when no family is set is not a filter query: opening
+/// the dropdown lists every family instead of matching the word "default".
+fn font_query(value: &str) -> &str {
+    let q = value.trim();
+    if q.is_empty() || q.eq_ignore_ascii_case("(default)") { "" } else { q }
+}
+
 /// Installed font families, filtered by the font field's text. Keystrokes only
 /// re-filter this list; nothing here loads fonts.
 #[derive(Debug, Clone, Default)]
@@ -290,16 +297,20 @@ impl FontList {
 
 impl ThemeEditor {
     pub fn new(def: &ThemeDef, font_family: Option<&str>, font_size: f32) -> Self {
+        let mut filled = def.clone();
+        filled.ensure_complete();
         let mut fields = vec![
-            Field::new("Foreground", def.foreground.clone(), FieldKind::Color { optional: false }),
-            Field::new("Background", def.background.clone(), FieldKind::Color { optional: false }),
-            Field::new("Cursor", def.cursor.clone().unwrap_or_default(), FieldKind::Color { optional: true }),
-            Field::new("Accent", def.accent.clone().unwrap_or_default(), FieldKind::Color { optional: true }),
+            Field::new("Foreground", filled.foreground.clone(), FieldKind::Color { optional: false }),
+            Field::new("Background", filled.background.clone(), FieldKind::Color { optional: false }),
+            Field::new("Cursor", filled.cursor.clone().unwrap_or_else(|| filled.foreground.clone()), FieldKind::Color { optional: true }),
+            Field::new("Accent", filled.accent.clone().unwrap_or_else(|| filled.palette[4].clone()), FieldKind::Color { optional: true }),
         ];
-        for (i, c) in def.full_palette().into_iter().enumerate() {
+        for (i, c) in filled.full_palette().into_iter().enumerate() {
             fields.push(Field::new(&format!("{i}"), c, FieldKind::Color { optional: false }));
         }
-        fields.push(Field::new("Font family", font_family.unwrap_or(""), FieldKind::Text));
+        // Prefer an explicit family; otherwise a short placeholder so the field is not blank.
+        let face = font_family.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("(default)");
+        fields.push(Field::new("Font family", face.to_string(), FieldKind::Text));
         fields.push(Field::new("Font size", format_size(font_size), FieldKind::Size));
         Self {
             theme: def.name.clone(),
@@ -336,7 +347,7 @@ impl ThemeEditor {
     /// Provide the discovered font families (from a background scan).
     pub fn set_families(&mut self, families: Arc<Vec<String>>) {
         let q = self.fields[FONT_FAMILY].value.clone();
-        self.fonts.set_families(families, &q);
+        self.fonts.set_families(families, font_query(&q));
     }
 
     /// The dropdown is open exactly while the font family field has focus
@@ -345,7 +356,7 @@ impl ThemeEditor {
         let on = self.focus == FONT_FAMILY;
         if on && !self.fonts.open {
             let q = self.fields[FONT_FAMILY].value.clone();
-            self.fonts.refilter(&q);
+            self.fonts.refilter(font_query(&q));
         }
         self.fonts.open = on;
     }
@@ -426,12 +437,19 @@ impl ThemeEditor {
                 }
             },
             EditKey::Backspace => {
-                self.fields[self.focus].value.pop();
+                if self.focus == FONT_FAMILY && self.fields[self.focus].value == "(default)" {
+                    self.fields[self.focus].value.clear();
+                } else {
+                    self.fields[self.focus].value.pop();
+                }
                 self.after_edit()
             }
             EditKey::Char(c) => {
                 if !self.fields[self.focus].accepts(c) {
                     return Outcome::Continue;
+                }
+                if self.focus == FONT_FAMILY && self.fields[self.focus].value == "(default)" {
+                    self.fields[self.focus].value.clear();
                 }
                 self.fields[self.focus].value.push(c);
                 self.after_edit()
@@ -477,7 +495,8 @@ impl ThemeEditor {
             selection_background: self.selection.1.clone(),
         };
         let family = v(FONT_FAMILY);
-        Ok(EditorResult { theme, font_family: (!family.is_empty()).then_some(family), font_size: parse_size(&v(FONT_SIZE)).unwrap() })
+        let font_family = (!family.is_empty() && family != "(default)").then_some(family);
+        Ok(EditorResult { theme, font_family, font_size: parse_size(&v(FONT_SIZE)).unwrap() })
     }
 }
 

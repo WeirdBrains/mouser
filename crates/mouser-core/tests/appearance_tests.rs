@@ -75,9 +75,16 @@ fn editor_validates_and_previews() {
 #[serial]
 fn editor_optional_colors_font_and_navigation() {
     let _h = temp_home();
-    let mut ed = ThemeEditor::new(&load_theme("Nord", "dark"), Some("Fira Code"), 14.0);
-    // Optional cursor may be empty.
+    let nord = load_theme("Nord", "dark");
+    let mut ed = ThemeEditor::new(&nord, Some("Fira Code"), 14.0);
+    // Missing cursor / accent are filled so the editor never opens blank.
+    let filled = ed.validate().unwrap().theme;
+    assert_eq!(filled.cursor.as_deref().map(str::to_ascii_lowercase), Some(nord.foreground.to_ascii_lowercase()));
+    // The user can still clear the optional cursor field.
     ed.focus_field(CURSOR);
+    for _ in 0..ed.fields[CURSOR].value.len() {
+        ed.handle(EditKey::Backspace);
+    }
     assert!(ed.validate().unwrap().theme.cursor.is_none());
     // Tab / Shift+Tab wrap around.
     ed.focus_field(0);
