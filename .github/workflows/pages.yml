@@ -18,9 +18,34 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch docs from main so published guides stay in sync
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: .main
+      - uses: dart-lang/setup-dart@v1
+      - name: Sync static assets into the Jaspr web folder
+        run: bash site_jaspr/tool/sync_web.sh
+      - name: Install Jaspr CLI
+        run: dart pub global activate jaspr_cli
+      - name: Get dependencies
+        working-directory: site_jaspr
+        run: dart pub get
+      - name: Build static site
+        working-directory: site_jaspr
+        env:
+          MOUSER_DOCS_DIR: ${{ github.workspace }}/.main/docs
+          MOUSER_SITE_SRC: ${{ github.workspace }}/site-src
+        run: jaspr build --sitemap-domain https://mouser.weirdbrains.com
+      - name: Strip build extras from the Pages artifact
+        run: bash site_jaspr/tool/clean_artifact.sh
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: site_jaspr/build/jaspr
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Clear Jaspr build outputs
+        if: always()
+        working-directory: site_jaspr
+        run: rm -rf build .dart_tool
