@@ -171,7 +171,6 @@ fn text_cols_is_unicode_width() {
     assert_eq!(ui::label_button_w("dark", 9, ui::BUTTON_PAD), 9 * 4 + 2 * ui::BUTTON_PAD);
 }
 
-
 #[test]
 fn editor_side_preview_is_present() {
     let fields: Vec<EditorFieldView> = (0..22)

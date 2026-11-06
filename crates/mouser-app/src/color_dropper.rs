@@ -38,12 +38,7 @@ fn hyprpicker() -> Result<u32, String> {
 }
 
 fn grim_slurp() -> Result<u32, String> {
-    let geom = Command::new("slurp")
-        .args(["-p"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("slurp: {e}"))?;
+    let geom = Command::new("slurp").args(["-p"]).stdout(Stdio::piped()).stderr(Stdio::null()).output().map_err(|e| format!("slurp: {e}"))?;
     if !geom.status.success() {
         return Err("Dropper cancelled".into());
     }

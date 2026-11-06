@@ -5,9 +5,9 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod appearance_ui;
-mod color_dropper;
 mod approval_ui;
 mod chat_host;
+mod color_dropper;
 mod mcp_tools;
 mod remote_list;
 mod select;
