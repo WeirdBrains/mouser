@@ -35,7 +35,7 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   object-fit:contain;background:transparent;border:0;border-radius:0;
   box-shadow:none;
 }
-.hero .shot.beautiful{margin:1.25rem 0 1.5rem}
+.hero .shot.beautiful{margin:1.25rem 0 1.5rem;border-radius:0;overflow:visible}
 .shot.beautiful .beautiful-poster{display:none}
 @media (prefers-reduced-motion:reduce){
   .shot.beautiful video{display:none}
