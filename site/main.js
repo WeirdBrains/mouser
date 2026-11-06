@@ -13,3 +13,17 @@ document.querySelectorAll('pre').forEach(pre=>{
       done(document.execCommand('copy')?'Copied':'Press Ctrl+C')}});
   w.appendChild(c);
 });
+
+// Hero "Mouser is beautiful" clip: respect prefers-reduced-motion.
+(() => {
+  const v = document.getElementById('beautiful-video');
+  if (!v) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const apply = () => {
+    if (reduce.matches) { v.pause(); v.removeAttribute('autoplay'); }
+    else if (v.paused) { v.play().catch(() => {}); }
+  };
+  apply();
+  if (reduce.addEventListener) reduce.addEventListener('change', apply);
+  else if (reduce.addListener) reduce.addListener(apply);
+})();
