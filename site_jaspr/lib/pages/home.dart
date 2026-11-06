@@ -234,8 +234,11 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''# Prebuilt release
-      sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/mouser-bin-1.4.2-1-x86_64.pkg.tar.zst
+      .text('''# Trust the package key once (id 6318D43051C4DBBC)
+      sudo pacman-key --recv-keys 6318D43051C4DBBC
+      # or: curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+      sudo pacman-key --lsign-key 6318D43051C4DBBC
+      sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/mouser-bin-1.4.4-1-x86_64.pkg.tar.zst
       # Or build main from source
       git clone https://github.com/WeirdBrains/mouser
       cd mouser/packaging/arch/mouser-git && makepkg -si'''),
@@ -248,8 +251,8 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/mouser_1.4.2_amd64.deb
-      sudo apt install ./mouser_1.4.2_amd64.deb'''),
+      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/mouser_1.4.4_amd64.deb
+      sudo apt install ./mouser_1.4.4_amd64.deb'''),
       ]),
       ]),
       ]),
@@ -259,8 +262,8 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/mouser-1.4.2-1.x86_64.rpm
-      sudo dnf install ./mouser-1.4.2-1.x86_64.rpm'''),
+      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/mouser-1.4.4-1.x86_64.rpm
+      sudo dnf install ./mouser-1.4.4-1.x86_64.rpm'''),
       ]),
       ]),
       ]),
@@ -270,19 +273,19 @@ class HomePage extends StatelessComponent {
       ]),
       p([
       .text('Download and run the '),
-      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/MouserSetup-1.4.2.exe', [
-      .text('installer (MouserSetup-1.4.2.exe)'),
+      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/MouserSetup-1.4.4.exe', [
+      .text('installer (MouserSetup-1.4.4.exe)'),
       ]),
       .text(', or use the '),
-      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/mouser-x86_64-pc-windows-msvc.zip', [
+      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/mouser-x86_64-pc-windows-msvc.zip', [
       .text('portable zip'),
       ]),
       .text('. From PowerShell:'),
       ]),
       pre([
       code([
-      .text('''curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.2/MouserSetup-1.4.2.exe
-      .\\MouserSetup-1.4.2.exe'''),
+      .text('''curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.4/MouserSetup-1.4.4.exe
+      .\\MouserSetup-1.4.4.exe'''),
       ]),
       ]),
       ]),
