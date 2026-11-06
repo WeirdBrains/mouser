@@ -10,8 +10,147 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status coming-soon">Coming soon: this guide is being written for Mouser 1.4.0, which hasn&#x27;t shipped yet.</p><h1 id="integrating-an-app-with-fuzzball-in-mouser">Integrating an app with Fuzzball in Mouser</h1>
-<p>This guide is coming soon. Until then, see the <a href="protocol.html">Fuzzball protocol</a> and the <a href="https://docs.rs/fuzzball">fuzzball crate</a>.</p></section></main>
+<main id="main"><section class="light doc"><h1 id="integrating-an-app-with-fuzzball-in-mouser">Integrating an app with Fuzzball in Mouser</h1>
+<p>Fuzzball is the terminal protocol Mouser prefers for graphics, structured
+keyboard events, plugins and silent shell actions. Mouser speaks it through
+the <a href="https://crates.io/crates/fuzzball"><code>fuzzball</code></a> crate; Kitty graphics and
+Kitty keyboard remain fallbacks when a program does not speak Fuzzball.</p>
+<p>This guide is for <strong>application authors</strong> who want their TUI or CLI to look
+and feel right inside Mouser (and other Fuzzball hosts). The normative spec
+lives with the crate; Mouser's terminal-side behaviour is summarised in
+<a href="../developer/protocol.html">Fuzzball protocol</a>.</p>
+<h2 id="where-the-spec-lives">Where the spec lives</h2>
+<table>
+<thead>
+<tr>
+<th>resource</th>
+<th>URL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Crate</td>
+<td>https://crates.io/crates/fuzzball</td>
+</tr>
+<tr>
+<td>Spec site</td>
+<td>https://weirdbrains.github.io/fuzzball/</td>
+</tr>
+<tr>
+<td>Repo docs</td>
+<td>https://github.com/WeirdBrains/fuzzball/tree/main/docs</td>
+</tr>
+</tbody>
+</table>
+<p>Start with the crate's <code>docs/README.md</code> (framing, capabilities, versioning,
+errors), then:</p>
+<ul>
+<li><code>graphics.md</code> — upload, place, delete, query images</li>
+<li><code>keyboard.md</code> — structured key events</li>
+<li><code>plugins.md</code> — in-terminal plugin handshake (<code>p h</code> / <code>p r</code>)</li>
+<li><code>shell.md</code> — silent shell actions</li>
+<li><code>wire-format.md</code> — exact bytes on the wire</li>
+</ul>
+<p>Mouser code comments that say <code>fuzzball docs/&lt;file&gt;.md §N</code> point at those
+files. The terminal implementation is <code>crates/mouser-core/src/fuzzball.rs</code>.</p>
+<h2 id="pick-a-client-library">Pick a client library</h2>
+<p>In Rust, depend on <code>fuzzball</code> and let it encode and parse every APC. In
+other languages, follow <code>wire-format.md</code> and speak the same APC framing
+(<code>ESC P = F z … ESC \</code>). Do not invent a parallel dialect: Mouser rejects
+what it does not recognise and falls back only for Kitty.</p>
+<h2 id="graphics-inside-mouser">Graphics inside Mouser</h2>
+<ol>
+<li><strong>Upload</strong> image data (or a reference) with the graphics commands in the
+   spec.</li>
+<li><strong>Place</strong> it against a cell anchor. Placements follow text through scroll
+   regions, IL/DL, scrollback and resize; they disappear when their anchor
+   leaves the scrollback.</li>
+<li><strong>Query</strong> what the host still holds; abandoned uploads expire on a timer.</li>
+</ol>
+<p>Mouser-specific behaviour worth designing for:</p>
+<ul>
+<li>Resize scales placements to the screen width (<code>Placement::fit</code>); prefer
+  giving a logical size and letting the host scale, rather than re-uploading
+  every resize.</li>
+<li><code>mouser show</code> displays an image file with Fuzzball first, Kitty as
+  fallback, and Kitty Unicode placeholders inside tmux
+  (<a href="../user/terminal.html">Terminal emulation</a>).</li>
+<li>Layers honour z-order relative to cell backgrounds the same way Kitty
+  graphics do in Mouser.</li>
+</ul>
+<p>Test with a known PNG via <code>mouser show file.png</code> in a Mouser tab, then with
+your own upload/place sequence. Over SSH, prefer Fuzzball's binary-safe
+framing; if you must tunnel through tmux, read the crate's guidance on
+placeholders.</p>
+<h2 id="keyboard-mode">Keyboard mode</h2>
+<p>Request Fuzzball keyboard mode when you need distinct modifiers, release
+events or layout-independent key ids. Mouser delivers structured events to
+the focused program; when Fuzzball keyboard is off, Kitty keyboard (and
+legacy) apply as documented in <a href="../user/kitty-compliance.html">Kitty keyboard compliance</a>.</p>
+<p>Verify with the crate's examples or by printing events inside Mouser. Physical
+key codes need a real keyboard — virtual key injectors (wtype and friends)
+often report <code>Escape</code> for everything.</p>
+<h2 id="in-terminal-plugins-over-fuzzball">In-terminal plugins over Fuzzball</h2>
+<p>A program running <strong>in the tab</strong> can ask Mouser to treat it as a plugin for
+the life of that tab. The handshake is <code>p h</code> (host answers <code>p r</code> after its
+own approval popup). Grants end when the tab closes. A <code>plugin.toml</code> with
+<code>transport = "fuzzball"</code> is optional and only lists the plugin.</p>
+<pre><code class="language-sh"># From examples/plugins/hello-fuzzball — run inside a Mouser tab:
+sh examples/plugins/hello-fuzzball/hello-fuzzball.sh
+</code></pre>
+<p>That script asks for <code>notify</code> and <code>screen.read</code>. Capabilities and the exact
+APC shapes are in the fuzzball crate's <code>plugins.md</code>. This path is separate
+from installed mode/MCP plugins under <code>$MOUSER_HOME/plugins</code>
+(<a href="../developer/plugins.html">Plugins</a>).</p>
+<h2 id="silent-shell-actions">Silent shell actions</h2>
+<p>Fuzzball's shell actions let a host run a small, user-visible class of
+operations without typing into the shell's readline. Prefer them over
+injecting keystrokes when the crate documents an action that fits. See
+<code>shell.md</code> in the fuzzball docs.</p>
+<h2 id="fallback-strategy">Fallback strategy</h2>
+<table>
+<thead>
+<tr>
+<th>feature</th>
+<th>prefer</th>
+<th>fallback in Mouser</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Images</td>
+<td>Fuzzball graphics</td>
+<td>Kitty graphics (APC), then Unicode placeholders in tmux</td>
+</tr>
+<tr>
+<td>Keys</td>
+<td>Fuzzball keyboard</td>
+<td>Kitty keyboard, then legacy</td>
+</tr>
+<tr>
+<td>Plugins</td>
+<td>Fuzzball <code>p h</code></td>
+<td>installed plugins via <code>mouser plugin install</code></td>
+</tr>
+</tbody>
+</table>
+<p>Detect the host: if Fuzzball capability negotiation succeeds, use it; otherwise
+degrade. Never send both Fuzzball and Kitty for the same image.</p>
+<h2 id="checklist">Checklist</h2>
+<ol>
+<li>Encode through the <code>fuzzball</code> crate (or a careful port of <code>wire-format.md</code>).</li>
+<li>Graphics placements survive scroll and resize without re-upload storms.</li>
+<li>Keyboard mode turns off cleanly when your TUI exits.</li>
+<li>Plugin handshake shows Mouser's popup and handles deny / timeout.</li>
+<li>Over SSH and inside tmux, images still appear (placeholders if needed).</li>
+</ol>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../developer/protocol.html">Fuzzball protocol</a> — Mouser's index into the crate docs</li>
+<li><a href="../user/terminal.html">Terminal emulation</a> — <code>mouser show</code>, scrolling, sequences</li>
+<li><a href="../developer/plugins.html">Plugins</a> — installed plugins vs in-tab Fuzzball grants</li>
+<li><a href="../user/kitty-compliance.html">Kitty keyboard compliance</a></li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/fuzzball-integration.md">docs/fuzzball-integration.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
