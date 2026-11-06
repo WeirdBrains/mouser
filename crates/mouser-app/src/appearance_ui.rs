@@ -131,11 +131,9 @@ impl Appearance {
                     name.pop();
                     *error = None;
                 }
-                EditKey::Char(c) if !c.is_control() => {
-                    if name.len() < 64 {
-                        name.push(c);
-                        *error = None;
-                    }
+                EditKey::Char(c) if !c.is_control() && name.len() < 64 => {
+                    name.push(c);
+                    *error = None;
                 }
                 _ => {}
             },
@@ -439,10 +437,10 @@ impl Appearance {
                 self.invalidate();
                 self.open_picker();
                 // Select the new theme
-                if let Some(Panel::Picker(p)) = &mut self.panel {
-                    if let Some(i) = p.themes.iter().position(|t| t == name.trim()) {
-                        p.selected = i;
-                    }
+                if let Some(Panel::Picker(p)) = &mut self.panel
+                    && let Some(i) = p.themes.iter().position(|t| t == name.trim())
+                {
+                    p.selected = i;
                 }
                 self.preview_colors = Some(load_theme(name.trim(), "dark").colors());
                 self.say(format!("Theme '{name}' ready — edit colours when you like"));
