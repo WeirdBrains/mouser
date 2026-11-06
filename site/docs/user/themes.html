@@ -53,6 +53,10 @@ light, the dark variant is used. <code>MOUSER_SYSTEM_DARK=1|0</code> overrides d
 <li><strong>Match Omarchy</strong> (on the switcher) copies the current Omarchy desktop theme's <code>colors.toml</code> into
   Mouser's built-in Omarchy theme and selects it. On Omarchy hosts with no <code>theme</code> preference yet,
   Mouser defaults to Omarchy automatically (<code>MOUSER_OMARCHY=1|0</code> overrides detection).</li>
+<li><strong>New</strong> / <strong>Duplicate</strong> create a user theme under <code>~/.mouser/themes/</code> (Duplicate copies both
+  variants of the selection). <strong>Export</strong> writes <code>dark.toml</code>/<code>light.toml</code> to
+  <code>~/Downloads/mouser-theme-&lt;name&gt;/</code>. Import with <code>:import-theme /path/to/dir</code>; export also via
+  <code>:export-theme [name]</code>.</li>
 </ul>
 <p>Editing</p>
 <ul>
