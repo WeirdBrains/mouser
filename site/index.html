@@ -29,32 +29,32 @@
   <div class="hero-text">
     <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
-    <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. A file commander, a media player and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
+    <figure class="shot beautiful" aria-labelledby="beautiful-h">
+      <h2 id="beautiful-h">Mouser is beautiful</h2>
+      <p class="beautiful-lede">Themes, colours and the editor — a short look at how Mouser can look.</p>
+      <div class="media-frame">
+        <video id="beautiful-video" autoplay muted loop playsinline preload="metadata"
+          poster="assets/mouser-is-beautiful-poster.png?v=2"
+          width="1268" height="1056">
+          <source src="assets/mouser-is-beautiful.webm?v=2" type="video/webm">
+          <source src="assets/mouser-is-beautiful.mp4?v=2" type="video/mp4">
+        </video>
+        <img class="beautiful-poster" src="assets/mouser-is-beautiful-poster.png?v=2"
+          alt="Mouser theme editor: browsing themes and matching the system palette"
+          width="1268" height="1056">
+      </div>
+    </figure>
     <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.4.1">Version 1.4.1</a> · BSD-3-Clause</p>
     <p class="cta">
       <a class="btn" href="#install">Install</a>
       <a class="btn ghost" href="https://github.com/WeirdBrains/mouser">View on GitHub</a>
     </p>
   </div>
-  <figure class="shot beautiful" aria-labelledby="beautiful-h">
-    <h2 id="beautiful-h">Mouser is beautiful</h2>
-    <p class="beautiful-lede">Themes, colours and the editor — a short look at how Mouser can look.</p>
-    <div class="media-frame">
-      <video id="beautiful-video" autoplay muted loop playsinline preload="metadata"
-        poster="assets/mouser-is-beautiful-poster.png?v=2"
-        width="1268" height="1056">
-        <source src="assets/mouser-is-beautiful.webm?v=2" type="video/webm">
-        <source src="assets/mouser-is-beautiful.mp4?v=2" type="video/mp4">
-      </video>
-      <img class="beautiful-poster" src="assets/mouser-is-beautiful-poster.png?v=2"
-        alt="Mouser theme editor: browsing themes and matching the system palette"
-        width="1268" height="1056">
-    </div>
-  </figure>
 </section>
 
 <section id="features" aria-labelledby="f-h">
   <h2 id="f-h">Features</h2>
+  <p class="lede features-lede">A login shell in a PTY, VT/xterm on the GPU, a file commander and media player, and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
   <ul class="grid">
     <li><h3>GPU engines</h3><p>Render engines are plugins: <code>mouser</code> (wgpu), Skia, the CPU renderer, or your own via a C ABI. Switch live with <code>mouser engine use</code>.</p></li>
     <li><h3>Crash-proof windows</h3><p>On Linux and macOS the shells live in a session process; a GPU driver or engine crash restarts only the window, with your shells, scrollback and tabs intact.</p></li>
