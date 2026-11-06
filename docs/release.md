@@ -153,15 +153,29 @@ From 1.4.0 every Arch package has a `.pkg.tar.zst.sig`, made with the WeirdBrain
 Mouser packages key:
 
 - fingerprint `3561BE80D8B3E767CF0B0B176318D43051C4DBBC` (ed25519, expires 2029-11-04)
-- public key: `packaging/arch/weirdbrains-mouser.asc` in this repo, and
-  `weirdbrains-mouser.asc` on each release
+- key ID `6318D43051C4DBBC` (what `pacman -U` prints when it asks to import the key)
+- public key: `packaging/arch/weirdbrains-mouser.asc` in this repo,
+  `weirdbrains-mouser.asc` and `mouser-release-key.asc` on each release, and
+  https://mouser.weirdbrains.com/mouser-release-key.asc
+- also on `hkps://keyserver.ubuntu.com` (Arch's default keyserver) and
+  `keys.openpgp.org` (the UID stays hidden there until the address is verified)
 
 Trust it once, then install from the URL:
 
 ```bash
-curl -LO https://raw.githubusercontent.com/WeirdBrains/mouser/main/packaging/arch/weirdbrains-mouser.asc
-gpg --show-keys weirdbrains-mouser.asc   # check the fingerprint above
-sudo pacman-key --add weirdbrains-mouser.asc
+sudo pacman-key --recv-keys 6318D43051C4DBBC
+# or: curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key 6318D43051C4DBBC
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
+```
+
+To inspect the fingerprint before trusting it:
+
+```bash
+curl -LO https://mouser.weirdbrains.com/mouser-release-key.asc
+# or: curl -LO https://raw.githubusercontent.com/WeirdBrains/mouser/main/packaging/arch/weirdbrains-mouser.asc
+gpg --show-keys mouser-release-key.asc   # check the fingerprint above
+sudo pacman-key --add mouser-release-key.asc
 sudo pacman-key --lsign-key 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
 sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v<ver>/mouser-bin-<ver>-1-x86_64.pkg.tar.zst
 ```

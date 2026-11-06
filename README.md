@@ -218,11 +218,12 @@ Prebuilt install packages are attached to each GitHub Release:
 ### Arch Linux
 
 ```bash
-# Latest release (prebuilt). Trust the package key once (fingerprint
-# 3561BE80D8B3E767CF0B0B176318D43051C4DBBC, see docs/release.md §Arch signatures):
-curl -LO https://raw.githubusercontent.com/WeirdBrains/mouser/main/packaging/arch/weirdbrains-mouser.asc
-sudo pacman-key --add weirdbrains-mouser.asc
-sudo pacman-key --lsign-key 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
+# Latest release (prebuilt). Trust the package key once (key ID
+# 6318D43051C4DBBC, fingerprint 3561BE80D8B3E767CF0B0B176318D43051C4DBBC;
+# see docs/release.md §Arch signatures):
+sudo pacman-key --recv-keys 6318D43051C4DBBC
+# or: curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
+sudo pacman-key --lsign-key 6318D43051C4DBBC
 V=<ver>; B=https://github.com/WeirdBrains/mouser/releases/download/v$V
 sudo pacman -U $B/mouser-bin-$V-1-x86_64.pkg.tar.zst
 # Or without the key (and for 1.3.x, which has no .sig): download, check, install the file:
