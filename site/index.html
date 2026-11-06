@@ -29,10 +29,8 @@
   <div class="hero-text">
     <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
-    <figure class="shot beautiful" aria-labelledby="beautiful-h">
-      <h2 id="beautiful-h">Mouser is beautiful</h2>
-      <p class="beautiful-lede">Themes, colours and the editor — a short look at how Mouser can look.</p>
-      <div class="media-frame">
+    <figure class="shot beautiful" aria-label="Mouser is beautiful">
+      <div class="media-frame door-frame">
         <video id="beautiful-video" autoplay muted loop playsinline preload="metadata"
           poster="assets/mouser-is-beautiful-poster.png?v=3"
           width="1268" height="1056">
@@ -49,12 +47,12 @@
       <a class="btn" href="#install">Install</a>
       <a class="btn ghost" href="https://github.com/WeirdBrains/mouser">View on GitHub</a>
     </p>
+    <p class="lede hero-lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. A file commander, a media player and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
   </div>
 </section>
 
 <section id="features" aria-labelledby="f-h">
   <h2 id="f-h">Features</h2>
-  <p class="lede features-lede">A login shell in a PTY, VT/xterm on the GPU, a file commander and media player, and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
   <ul class="grid">
     <li><h3>GPU engines</h3><p>Render engines are plugins: <code>mouser</code> (wgpu), Skia, the CPU renderer, or your own via a C ABI. Switch live with <code>mouser engine use</code>.</p></li>
     <li><h3>Crash-proof windows</h3><p>On Linux and macOS the shells live in a session process; a GPU driver or engine crash restarts only the window, with your shells, scrollback and tabs intact.</p></li>
