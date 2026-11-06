@@ -79,7 +79,7 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 .light .shot .media-frame.hero-fill{box-shadow:none}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
   display:block;width:100%;height:auto;
-  aspect-ratio:3352 / 1380;
+  aspect-ratio:1140 / 970;
   object-fit:cover;
   background:transparent;border:0;border-radius:0;box-shadow:none;
 }
