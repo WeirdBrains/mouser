@@ -47,6 +47,8 @@ light, the dark variant is used. <code>MOUSER_SYSTEM_DARK=1|0</code> overrides d
 <li>Sidebar → <strong>Appearance</strong>, or <code>:theme</code>, opens the switcher: built-in themes first, then user themes
   found in <code>~/.mouser/themes/</code>, plus dark/light/system mode. Moving the selection previews live;
   Apply saves <code>theme</code>/<code>mode</code> to <code>preferences.toml</code>. <code>:theme &lt;name&gt;</code> and <code>:mode &lt;m&gt;</code> do the same directly.</li>
+<li>Mode buttons size to their labels (Unicode width). In a narrow window they shrink padding, then
+  abbreviate to <code>d</code> / <code>l</code> / <code>sys</code> — they never chop mid-word (<code>dar</code>, <code>ligh</code>).</li>
 </ul>
 <p>Editing</p>
 <ul>

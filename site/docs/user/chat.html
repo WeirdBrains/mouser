@@ -168,6 +168,10 @@ configured provider works too. The header shows <code>provider/model</code>.</p>
 <li><code>cargo run --release -p mouser-app --features local-llm --example chat_live -- "PROMPT"</code>:
   a headless live run against the default model with a sandboxed <code>sh</code> tool.</li>
 </ul>
+<h2 id="layout">Layout</h2>
+<p>The input line and status sit above the host's dock chrome (the ⤢ fullscreen
+button and the focus hint at the bottom), so they are never covered. See
+<code>dock_chrome_height</code> in <code>mouser-mode-api</code>.</p>
 <h2 id="as-a-plugin-program">As a plugin program</h2>
 <p><code>plugins/chat</code> (<code>mouser-chat</code>) is the chat mode as a separate program, built only on
 <code>mouser-mode-api</code> with its <code>markdown</code> feature. Installed as a <code>transport = "mode"</code>
