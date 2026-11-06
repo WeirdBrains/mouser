@@ -94,6 +94,9 @@ pub fn active_variant(prefs: &Preferences) -> &'static str {
 
 /// Default theme when preferences have none: Omarchy on Omarchy, else Red Star.
 /// `MOUSER_OMARCHY=1|0` overrides detection (for tests).
+pub fn default_theme_name() -> &'static str {
+    if on_omarchy() { "Omarchy" } else { "Red Star" }
+}
 
 /// Read the current Omarchy theme's `colors.toml` (Trainyard etc.) into a
 /// dark [`ThemeDef`] named "Omarchy". Used by **Match Omarchy**.
@@ -165,10 +168,6 @@ pub fn parse_omarchy_colors_for_test(toml_src: &str, name: &str) -> Option<Theme
         selection_foreground,
         selection_background,
     })
-}
-
-pub fn default_theme_name() -> &'static str {
-    if on_omarchy() { "Omarchy" } else { "Red Star" }
 }
 
 /// Whether this host looks like Omarchy (os-release `ID=omarchy`, or override).
