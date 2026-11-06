@@ -15,7 +15,7 @@ main{margin:0;padding:0}
 section{padding:3.5rem max(clamp(1rem,4vw,3rem),calc((100% - 1180px)/2 + 3rem));background:linear-gradient(160deg,var(--bg),var(--bg2));color:var(--fg);scroll-margin-top:4rem}
 .light{--bg:#f7fbfd;--bg2:#e3eff5;--panel:#ffffff;--line:#c9dbe6;--fg:#0b2233;--dim:#3f5b6e;--cyan:#0a7f8c;--code:#0b4f63}
 .hero{display:block;max-width:920px}
-/* Desktop: copy left, wide wallpaper/video panel filling the right. */
+/* Desktop: copy left, video fills the generous right media area. */
 @media (min-width:1024px){
   .hero{
     display:grid;
@@ -52,35 +52,26 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   object-fit:contain;background:transparent;border:0;border-radius:0;
   box-shadow:none;
 }
-.hero .shot.beautiful{margin:1.25rem 0 1.5rem;border-radius:0;overflow:visible}
+.hero .shot.beautiful{margin:1.25rem 0 1.5rem;border-radius:var(--radius);overflow:hidden}
 .shot.beautiful .beautiful-poster{display:none}
 @media (prefers-reduced-motion:reduce){
   .shot.beautiful video{display:none}
   .shot.beautiful .beautiful-poster{display:block}
 }
-/* Trainyard wallpaper panel: video sits in the middle (~65%), big door-frame margins. */
-.shot .media-frame.door-frame{
-  /* ~17% each side → video occupies ~66% of the panel */
-  padding:17% 17%;border:0;border-radius:0;overflow:hidden;line-height:0;
-  background-color:transparent;
-  background-image:url("assets/door-frame-bg.jpg?v=2");
-  background-size:cover;background-position:center;background-repeat:no-repeat;
-  box-shadow:none;
+/* Hero clip: fill the squared media area edge-to-edge (video already has the wallpaper). */
+.shot .media-frame.hero-fill{
+  padding:0;border:0;background:transparent;box-shadow:none;
+  border-radius:var(--radius);overflow:hidden;line-height:0;
+  width:100%;aspect-ratio:1268 / 1056;
 }
-@supports (background-image:image-set(url("assets/door-frame-bg.webp?v=2") type("image/webp"))){
-  .shot .media-frame.door-frame{
-    background-image:image-set(url("assets/door-frame-bg.webp?v=2") type("image/webp"),
-      url("assets/door-frame-bg.jpg?v=2") type("image/jpeg"));
-  }
+.light .shot .media-frame.hero-fill{box-shadow:0 8px 32px rgba(4,25,42,.18)}
+.shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
+  display:block;width:100%;height:100%;
+  object-fit:contain; /* container matches video aspect → fills, no crop */
+  background:transparent;border:0;border-radius:0;box-shadow:none;
 }
-.light .shot .media-frame.door-frame{box-shadow:none}
-/* No black/rounded chrome around the clip — wallpaper is the only frame. */
-.shot .media-frame.door-frame img,.shot .media-frame.door-frame video{
-  border:0;border-radius:0;background:transparent;box-shadow:none;
-}
-@media (max-width:520px){
-  /* Still clearly visible margins on phones (~14% → video ~72%). */
-  .shot .media-frame.door-frame{padding:14% 14%}
+@media (min-width:1024px){
+  .hero .shot.beautiful .media-frame.hero-fill{width:100%;max-width:none}
 }
 .grid{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr));gap:1rem}
 .grid li{background:var(--panel);border:1px solid var(--line);padding:1.1rem}.grid p{margin:0;color:var(--dim);font-size:.92rem}
