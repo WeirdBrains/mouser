@@ -3,6 +3,7 @@
 ### Fixed
 
 - Arch: the OpenPGP package key (`6318D43051C4DBBC`) is on keyserver.ubuntu.com and keys.openpgp.org, hosted at https://mouser.weirdbrains.com/mouser-release-key.asc, and attached to releases as `mouser-release-key.asc`. Trust it with `pacman-key --recv-keys` (or `curl` the site key) and `--lsign-key` before `pacman -U <url>`. See docs/release.md §Arch signatures.
+- Man page ENVIRONMENT lists `MOUSER_OMARCHY` (it is read to override Omarchy host detection; CI's `no_env_var_is_missing` test failed without it).
 
 ## [1.4.4] - 2026-11-06
 
