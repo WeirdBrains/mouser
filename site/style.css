@@ -62,27 +62,28 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
   object-fit:contain;background:transparent;border:0;border-radius:0;
   box-shadow:none;
 }
-.hero .shot.beautiful{margin:1.25rem 0 1.5rem;border-radius:var(--radius);overflow:hidden}
+.hero .shot.beautiful{--hero-radius:12px;margin:1.25rem 0 1.5rem;border-radius:var(--hero-radius);overflow:hidden}
 .shot.beautiful .beautiful-poster{display:none}
 @media (prefers-reduced-motion:reduce){
   .shot.beautiful video{display:none}
   .shot.beautiful .beautiful-poster{display:block}
 }
-/* Hero clip: full window + CSS pad in edge color so radius never eats glyphs. */
+/* Hero clip: video is the edge — no pad, ring, or painted frame. */
 .shot .media-frame.hero-fill{
-  padding:20px;border:0;background:#282c2e;
-  border-radius:var(--radius);overflow:hidden;line-height:0;
+  --hero-radius:12px;
+  padding:0;border:0;background:transparent;
+  border-radius:var(--hero-radius);overflow:hidden;line-height:0;
   width:100%;box-sizing:border-box;
-  box-shadow:0 0 0 1px #282c2e;
+  box-shadow:none;
 }
-.light .shot .media-frame.hero-fill{box-shadow:0 0 0 1px #282c2e,0 8px 32px rgba(4,25,42,.18)}
+.light .shot .media-frame.hero-fill{box-shadow:none}
 .shot .media-frame.hero-fill img,.shot .media-frame.hero-fill video{
   display:block;width:100%;height:auto;
   aspect-ratio:1164 / 990;
   object-fit:cover;
-  background:#282c2e;border:0;border-radius:0;box-shadow:none;
+  background:transparent;border:0;border-radius:0;box-shadow:none;
 }
-.hero .shot.beautiful{width:100%}
+.hero .shot.beautiful{width:100%;border-radius:var(--hero-radius)}
 @media (max-width:1023px){
   .hero{max-width:none;width:100%}
   .hero .shot.beautiful{margin:1rem 0 1.25rem}
