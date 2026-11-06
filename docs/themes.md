@@ -6,7 +6,8 @@ In system mode Mouser reads the desktop colour-scheme preference (GNOME/freedesk
 light, the dark variant is used. `MOUSER_SYSTEM_DARK=1|0` overrides detection.
 
 Built-in themes (dark/light variants):
-- Red Star (default)
+- Red Star (default off Omarchy)
+- Omarchy (Trainyard palette; default when `/etc/os-release` has `ID=omarchy`, or `MOUSER_OMARCHY=1`)
   - Dark: foreground `#E6FBFA`, background `#04192A`
   - Light: foreground `#0B2A3F`, background `#F2FAFB`
   - Unedited theme files from older releases are upgraded on start; edited files are kept.
@@ -33,6 +34,9 @@ Switching
   Apply saves `theme`/`mode` to `preferences.toml`. `:theme <name>` and `:mode <m>` do the same directly.
 - Mode buttons size to their labels (Unicode width). In a narrow window they shrink padding, then
   abbreviate to `d` / `l` / `sys` — they never chop mid-word (`dar`, `ligh`).
+- **Match Omarchy** (on the switcher) copies the current Omarchy desktop theme's `colors.toml` into
+  Mouser's built-in Omarchy theme and selects it. On Omarchy hosts with no `theme` preference yet,
+  Mouser defaults to Omarchy automatically (`MOUSER_OMARCHY=1|0` overrides detection).
 
 Editing
 - **Edit colours & font** in the switcher (or `:edit-theme`) edits the active variant: foreground,

@@ -1458,6 +1458,7 @@ fn main() -> Result<()> {
             | ui::UiAction::PickTheme(_)
             | ui::UiAction::SetMode(_)
             | ui::UiAction::EditTheme
+            | ui::UiAction::MatchOmarchy
             | ui::UiAction::FocusField(_)
             | ui::UiAction::PickFont(_)
             | ui::UiAction::ScrollPanel(_)
