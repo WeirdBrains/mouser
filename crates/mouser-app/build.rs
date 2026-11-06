@@ -1,8 +1,36 @@
-//! Windows resources, and every docs/**/*.md (except docs/historical/) embedded
-//! as an in-app help topic: one source for the docs and `mouser help`.
+//! Windows resources, and every public docs/**/*.md embedded as an in-app help
+//! topic: one source for the docs and `mouser help`. Internal maintainer docs
+//! (mapped `internal` in docs/sections.toml) and docs/historical/ are skipped.
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+fn internal_docs(docs: &Path) -> HashSet<String> {
+    let Ok(text) = std::fs::read_to_string(docs.join("sections.toml")) else {
+        return HashSet::new();
+    };
+    let mut out = HashSet::new();
+    let mut in_docs = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_docs = line == "[docs]";
+            continue;
+        }
+        if !in_docs || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        // "path.md" = "internal"
+        let Some((key, val)) = line.split_once('=') else { continue };
+        let key = key.trim().trim_matches('"');
+        let val = val.trim().trim_matches('"');
+        if val == "internal" {
+            out.insert(key.to_string());
+        }
+    }
+    out
+}
+
+fn walk(dir: &Path, docs_root: &Path, internal: &HashSet<String>, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd.flatten().map(|e| e.path()).collect();
     entries.sort();
@@ -11,8 +39,12 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
             continue; // archived and in-progress plans are not help topics
         }
         if p.is_dir() {
-            walk(&p, out);
-        } else if p.extension().is_some_and(|e| e == "md") && p.file_name().is_some_and(|n| n != "HANDOVER.md") {
+            walk(&p, docs_root, internal, out);
+        } else if p.extension().is_some_and(|e| e == "md") {
+            let rel = p.strip_prefix(docs_root).unwrap().to_string_lossy().replace('\\', "/");
+            if internal.contains(&rel) {
+                continue;
+            }
             out.push(p);
         }
     }
@@ -22,8 +54,10 @@ fn help_topics() {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let docs = root.join("../../docs");
     println!("cargo:rerun-if-changed={}", docs.display());
+    println!("cargo:rerun-if-changed={}", docs.join("sections.toml").display());
+    let internal = internal_docs(&docs);
     let mut files = vec![];
-    walk(&docs, &mut files);
+    walk(&docs, &docs, &internal, &mut files);
     let mut src = String::from("/// (topic id, markdown) generated from docs/ by build.rs\npub const TOPICS: &[(&str, &str)] = &[\n");
     for f in &files {
         println!("cargo:rerun-if-changed={}", f.display());
