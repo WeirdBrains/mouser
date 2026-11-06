@@ -14,6 +14,7 @@
   <a class="brand" href="#top"><img class="logo" src="assets/logo.svg" alt="" width="36" height="36"> mouser</a>
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main">
+    <a href="screenshots/">Screenshots</a>
     <a href="#install">Install</a>
     <a href="docs/user/">User Guides</a>
     <a href="docs/developer/">Developer Guides</a>
@@ -29,7 +30,7 @@
     <p class="prompt wordmark"><img class="logo" src="assets/logo.svg" alt="" width="48" height="48"><span>mouser</span></p>
     <h1>A fast GPU terminal emulator, <span>written in Rust.</span></h1>
     <p class="lede">Mouser runs your login shell in a PTY, parses VT/xterm escape sequences and renders the grid on the GPU. A file commander, a media player and an optional AI chat dock above your prompt. Linux first; macOS and Windows builds too.</p>
-    <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.3.1">Version 1.3.1</a> · BSD-3-Clause</p>
+    <p class="release"><a href="https://github.com/WeirdBrains/mouser/releases/tag/v1.4.1">Version 1.4.1</a> · BSD-3-Clause</p>
     <p class="cta">
       <a class="btn" href="#install">Install</a>
       <a class="btn ghost" href="https://github.com/WeirdBrains/mouser">View on GitHub</a>
@@ -40,13 +41,13 @@
     <p class="beautiful-lede">Themes, colours and the editor — a short look at how Mouser can look.</p>
     <video id="beautiful-video" autoplay muted loop playsinline preload="metadata"
       poster="assets/mouser-is-beautiful-poster.png"
-      width="1280" height="720">
+      width="1920" height="804">
       <source src="assets/mouser-is-beautiful.webm" type="video/webm">
       <source src="assets/mouser-is-beautiful.mp4" type="video/mp4">
     </video>
     <img class="beautiful-poster" src="assets/mouser-is-beautiful-poster.png"
       alt="Mouser theme editor: browsing themes and matching the system palette"
-      width="1280" height="720">
+      width="1920" height="804">
   </figure>
 </section>
 
@@ -79,26 +80,26 @@ brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Ca
     <div>
       <h3>Arch Linux</h3>
 <pre><code># Prebuilt release
-sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/mouser-bin-1.3.1-1-x86_64.pkg.tar.zst
+sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/mouser-bin-1.4.1-1-x86_64.pkg.tar.zst
 # Or build main from source
 git clone https://github.com/WeirdBrains/mouser
 cd mouser/packaging/arch/mouser-git &amp;&amp; makepkg -si</code></pre>
     </div>
     <div>
       <h3>Debian / Ubuntu</h3>
-<pre><code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/mouser_1.3.1_amd64.deb
-sudo apt install ./mouser_1.3.1_amd64.deb</code></pre>
+<pre><code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/mouser_1.4.1_amd64.deb
+sudo apt install ./mouser_1.4.1_amd64.deb</code></pre>
     </div>
     <div>
       <h3>Fedora / RHEL</h3>
-<pre><code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/mouser-1.3.1-1.x86_64.rpm
-sudo dnf install ./mouser-1.3.1-1.x86_64.rpm</code></pre>
+<pre><code>curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/mouser-1.4.1-1.x86_64.rpm
+sudo dnf install ./mouser-1.4.1-1.x86_64.rpm</code></pre>
     </div>
     <div>
       <h3>Windows</h3>
-      <p>Download and run the <a href="https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/MouserSetup-1.3.1.exe">installer (MouserSetup-1.3.1.exe)</a>, or use the <a href="https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/mouser-x86_64-pc-windows-msvc.zip">portable zip</a>. From PowerShell:</p>
-<pre><code>curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.3.1/MouserSetup-1.3.1.exe
-.\MouserSetup-1.3.1.exe</code></pre>
+      <p>Download and run the <a href="https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/MouserSetup-1.4.1.exe">installer (MouserSetup-1.4.1.exe)</a>, or use the <a href="https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/mouser-x86_64-pc-windows-msvc.zip">portable zip</a>. From PowerShell:</p>
+<pre><code>curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.1/MouserSetup-1.4.1.exe
+.\MouserSetup-1.4.1.exe</code></pre>
     </div>
     <div>
       <h3>From source with cargo</h3>
