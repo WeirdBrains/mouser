@@ -441,8 +441,6 @@ fn draw_ui(canvas: &mut dyn Draw, fonts: &mut FontStack, layout: &UiLayout, bg: 
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-
 fn preview_font(family: &str, size: f32) -> Option<crate::text::FontStack> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -461,6 +459,7 @@ fn preview_font(family: &str, size: f32) -> Option<crate::text::FontStack> {
     Some(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u32, fg: u32, panel: u32, border: u32, muted: u32, accent: u32) {
     let r = p.rect;
     // Soft drop shadow, then a rounded border and an opaque body.
@@ -550,9 +549,7 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 }
                 let base = if selected { fg } else { muted };
                 let step = fonts.cell_w;
-                let mut preview = matches!(it.style, ui::PanelStyle::FontOption { .. })
-                    .then(|| preview_font(&it.text, fonts.size))
-                    .flatten();
+                let mut preview = matches!(it.style, ui::PanelStyle::FontOption { .. }).then(|| preview_font(&it.text, fonts.size)).flatten();
                 let draw_fonts = preview.as_mut().unwrap_or(fonts);
                 for (i, c) in it.text.chars().take(max.saturating_sub(1)).enumerate() {
                     let color = if i < 64 && highlight & (1 << i) != 0 { accent } else { base };
@@ -567,11 +564,7 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
                 let pad = 8;
                 let x = b.x + pad;
                 let mut y = b.y + pad;
-                let sample = [
-                    ("AaBbCc  0123456789", fg),
-                    ("~/mouser", accent),
-                    ("echo mouser is beautiful", fg),
-                ];
+                let sample = [("AaBbCc  0123456789", fg), ("~/mouser", accent), ("echo mouser is beautiful", fg)];
                 for (text, color) in sample {
                     canvas.draw_text(fonts, x, y, text, color);
                     y += fonts.cell_h + 4;

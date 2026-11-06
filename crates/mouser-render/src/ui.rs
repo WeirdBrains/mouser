@@ -581,11 +581,8 @@ pub fn editor_panel(
     }
     let by = by + row_h;
     let mut bx = x0;
-    for (label, act, primary) in [
-        ("Save", UiAction::SavePanel, true),
-        ("Cancel", UiAction::ClosePanel, false),
-        ("Dropper", UiAction::Dropper, false),
-    ] {
+    for (label, act, primary) in [("Save", UiAction::SavePanel, true), ("Cancel", UiAction::ClosePanel, false), ("Dropper", UiAction::Dropper, false)]
+    {
         let bw = cell_w * label.len() as i32 + 2 * BUTTON_PAD;
         items.push(PanelItem {
             rect: Rect { x: bx, y: by, w: bw, h: row_h },

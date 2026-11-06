@@ -241,7 +241,6 @@ mod font_dropdown {
     }
 }
 
-
 #[test]
 #[serial]
 fn apply_color_sets_focused_field() {
