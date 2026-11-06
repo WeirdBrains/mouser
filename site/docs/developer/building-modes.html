@@ -10,8 +10,231 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status coming-soon">Coming soon: this guide is being written for Mouser 1.4.0, which hasn&#x27;t shipped yet.</p><h1 id="building-a-mode-plugin">Building a mode plugin</h1>
-<p>This guide is coming soon. Until then, see <a href="mode-protocol.html">Mode plugin protocol</a> and <a href="plugins.html">Plugins</a>.</p></section></main>
+<main id="main"><section class="light doc"><h1 id="building-a-mode-plugin">Building a mode plugin</h1>
+<p>This guide walks through writing a mode that docks above the shell the same
+way commander, chat and preferences do. The wire format, host calls and
+crash behaviour are specified in <a href="../developer/mode-protocol.html">Mode plugin protocol</a>;
+<a href="../developer/plugins.html">Plugins</a> covers manifests, installs and permissions. Read this
+page to get a first plugin running, then keep the protocol open as the
+reference.</p>
+<p>Mouser 1.4.0 freezes <strong>api 1</strong>. The bundled commander, chat and preferences
+plugins run on it, and so can yours.</p>
+<h2 id="what-you-are-building">What you are building</h2>
+<p>A mode is its own executable. Mouser starts it the first time the mode is
+used and keeps it running. stdin/stdout carry framed MessagePack (or JSON);
+stderr goes to Mouser's plugin log. The plugin runs as you, with your rights
+— it is not a sandbox. Every request and effect is checked against the
+permissions you granted.</p>
+<p>Two paths exist:</p>
+<table>
+<thead>
+<tr>
+<th>path</th>
+<th>when to use</th>
+<th>transport</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Mode protocol</strong> (<code>mouser-mode-api</code>)</td>
+<td>a real dock with views, images, host calls, context menus</td>
+<td><code>transport = "mode"</code></td>
+</tr>
+<tr>
+<td><strong>Command mode</strong> (one-shot JSON)</td>
+<td>a tiny demo or shell script that returns title/lines</td>
+<td><code>transport = "command"</code></td>
+</tr>
+</tbody>
+</table>
+<p>The rest of this guide is the mode-protocol path. The tree also ships
+<code>examples/plugins/hello-mode</code> for the one-shot command path.</p>
+<h2 id="minimal-plugintoml">Minimal <code>plugin.toml</code></h2>
+<pre><code class="language-toml">name = &quot;hello&quot;
+version = &quot;0.1.0&quot;
+permissions = [&quot;files.read&quot;]
+
+[[provides]]
+kind = &quot;mode&quot;
+
+[run]
+transport = &quot;mode&quot;
+command = [&quot;./hello-mode&quot;]   # path relative to the plugin directory
+
+[mode]
+hotkey = &quot;h&quot;
+keys = [{ id = &quot;refresh&quot;, key = &quot;r&quot;, describe = &quot;refresh&quot; }]
+</code></pre>
+<p>Install and allow it:</p>
+<pre><code class="language-sh">mouser plugin install ./hello
+mouser plugin permissions hello run=allow files.read=allow
+</code></pre>
+<p>It joins the mode switcher (<code>esc :h</code>). Mouser starts it the first time the
+mode is drawn. A bound key or a click arrives as <code>ui.action</code>, typing as
+<code>input.text</code> while a field has focus, and the shell's folder as
+<code>shell.cwd_changed</code> (with <code>files.read</code>).</p>
+<h2 id="writing-it-in-rust">Writing it in Rust</h2>
+<p>Depend on the public crate and implement <code>Mode</code>, then call <code>serve</code> from
+<code>main</code>. Only <code>hello</code> is required; the other methods have defaults.</p>
+<pre><code class="language-toml"># Cargo.toml
+[dependencies]
+mouser-mode-api = &quot;0.2&quot;
+serde_json = &quot;1&quot;
+</code></pre>
+<pre><code class="language-rust">use mouser_mode_api::events::{Event, Listener};
+use mouser_mode_api::protocol::{ApiRange, Handled, Hello, Provide};
+use mouser_mode_api::{Host, Mode, serve};
+use serde_json::json;
+
+struct Hello;
+
+impl Mode for Hello {
+    fn hello(&amp;self) -&gt; Hello {
+        Hello {
+            api: ApiRange::CURRENT,
+            name: &quot;hello&quot;.into(),
+            version: env!(&quot;CARGO_PKG_VERSION&quot;).into(),
+            provides: vec![Provide::Mode {
+                hotkey: 'h',
+                bindings: vec![],
+                activate_on: vec![],
+            }],
+            listeners: [&quot;ui.action&quot;, &quot;shell.cwd_changed&quot;, &quot;mode.activated&quot;]
+                .iter()
+                .map(|e| Listener::on(e))
+                .collect(),
+            emits: vec![],
+            wants_mcp: false,
+            shm: false,
+        }
+    }
+
+    fn event(&amp;mut self, e: &amp;Event, host: &amp;Host) -&gt; Handled {
+        match e.name.as_str() {
+            &quot;mode.activated&quot; | &quot;shell.cwd_changed&quot; | &quot;ui.action&quot; =&gt; {
+                let cwd = e.payload.get(&quot;cwd&quot;).and_then(|v| v.as_str()).unwrap_or(&quot;?&quot;);
+                let _ = host.view(
+                    Some(format!(&quot;hello — {cwd}&quot;)),
+                    Some(vec![format!(&quot;event: {}&quot;, e.name), &quot;press r to refresh&quot;.into()]),
+                    vec![],
+                    true,
+                );
+            }
+            _ =&gt; {}
+        }
+        Handled::Handled
+    }
+}
+
+fn main() {
+    let _ = serve(Hello);
+}
+</code></pre>
+<p><code>crates/mouser-mode-api/src/bin/echo.rs</code> is a complete small example used by
+the crate's tests: it answers <code>frame.tick</code> with a 1080p frame, echoes custom
+events and restores state after a crash.</p>
+<p>Build the binary, put it next to <code>plugin.toml</code> as <code>./hello-mode</code> (or change
+<code>command</code>), then install as above.</p>
+<h3 id="json-instead-of-messagepack">JSON instead of MessagePack</h3>
+<p>Set <code>MOUSER_MODE_WIRE=json</code> to speak JSON frames. Useful while debugging from
+another language; MessagePack stays the default.</p>
+<h2 id="what-arrives-and-what-you-send">What arrives and what you send</h2>
+<p><strong>In (events):</strong> <code>mode.activated</code> / <code>mode.deactivated</code>, <code>ui.action</code> (a bound
+key or a click), <code>input.text</code> / <code>input.key</code> / <code>input.escape</code> while you asked
+for the keyboard, <code>shell.cwd_changed</code>, <code>shell.remote_*</code> with <code>remote.read</code>,
+<code>menu.open</code> for context menus, <code>view.resized</code> (including dock size),
+<code>frame.tick</code> when you draw video, <code>agent.state</code> when you run an agent session.</p>
+<p><strong>Out:</strong> <code>View</code> (dock / panel / images), <code>Effect</code> (type into the shell, <code>cd</code>,
+open a URL, a status line), <code>Request</code> (host calls), <code>Emit</code>, <code>Menu</code>,
+<code>StateSave</code>, <code>Wants</code> (what the keyboard should give you right now).</p>
+<p>The full tables live in <a href="../developer/mode-protocol.html">Mode plugin protocol</a> §§Events,
+Messages from the plugin, Host calls, Images, Host services.</p>
+<h2 id="host-calls-you-will-use-first">Host calls you will use first</h2>
+<p>Declare every permission in <code>plugin.toml</code> and grant it before the call works:</p>
+<table>
+<thead>
+<tr>
+<th>call</th>
+<th>permission</th>
+<th>use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>prefs.schema</code> / <code>prefs.get</code></td>
+<td>none</td>
+<td>read preferences (secrets only say they are set)</td>
+</tr>
+<tr>
+<td><code>prefs.set</code> / <code>prefs.reset</code></td>
+<td><code>prefs.write</code></td>
+<td>write non-secret prefs</td>
+</tr>
+<tr>
+<td><code>prefs.secret_prompt</code></td>
+<td><code>prefs.write</code></td>
+<td>Mouser's popup saves a key to the keychain; you never see it</td>
+</tr>
+<tr>
+<td><code>Fs</code> read / list / stat</td>
+<td><code>files.read</code></td>
+<td>local files, never the secrets deny-list</td>
+</tr>
+<tr>
+<td><code>fetch</code></td>
+<td><code>net.fetch</code></td>
+<td>one HTTP(S) request made by Mouser</td>
+</tr>
+<tr>
+<td><code>remote.*</code></td>
+<td><code>remote.read</code></td>
+<td>files on the shell's ssh host</td>
+</tr>
+<tr>
+<td><code>agent.*</code></td>
+<td><code>agent.use</code></td>
+<td>chat with the user's models and keys inside Mouser</td>
+</tr>
+<tr>
+<td><code>Approve</code> / <code>permissions.request</code></td>
+<td>none</td>
+<td>Mouser's own popup</td>
+</tr>
+</tbody>
+</table>
+<p>Mouser's popups name your plugin, take every key while open, and ignore
+clicks for the first 400 ms so nothing in the tab can answer them for you.</p>
+<h2 id="context-menus-and-mcp">Context menus and MCP</h2>
+<p>Answer <code>menu.open</code> with the actions that apply to the item under the pointer
+(or the selection, when the menu key <code>.</code> was used). Build the list from the
+same registry as your key bindings. Mouser draws the menu and turns a pick
+into <code>ui.action</code>.</p>
+<p>The same answer also feeds Mouser's MCP tools <code>mode_actions</code> /
+<code>mode_action</code>, so anything on your menu is scriptable once you answer
+<code>menu.open</code>. Keep destructive work behind your own confirmation; Mouser asks
+the user once (<code>modes.control</code>) as well. See the protocol §Over MCP and
+<a href="../mcp/mcp.html#mode-actions">MCP §Mode actions</a>.</p>
+<h2 id="crashes-and-restarts">Crashes and restarts</h2>
+<p>Mouser restarts a crashed mode plugin with backoff (1 s, 2 s, 4 s) up to
+<code>plugins.max_restarts</code> (default 3), then shows a Restart action. Whatever you
+last sent with <code>StateSave</code> comes back in <code>Welcome.restore</code>. The terminal is
+never taken down by a plugin crash.</p>
+<h2 id="checklist-before-you-ship">Checklist before you ship</h2>
+<ol>
+<li><code>plugin.toml</code> name matches <code>Hello.name</code>, and <code>command</code> finds the binary.</li>
+<li>Every host call's permission is listed and granted.</li>
+<li>Destructive menu entries confirm in the plugin <strong>and</strong> survive an MCP
+   client picking them.</li>
+<li><code>Wants</code> is cleared when a field closes, so keys return to the shell.</li>
+<li>You tested a crash: kill the process and confirm it restores cleanly.</li>
+</ol>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../developer/mode-protocol.html">Mode plugin protocol</a> — the normative reference</li>
+<li><a href="../developer/plugins.html">Plugins</a> — installs, permissions, other transports</li>
+<li><a href="../user/modes.html">Modes</a> — how the dock, focus toggle and menus feel to a user</li>
+<li><a href="../developer/mcp-from-plugins.html">Using Mouser's MCP server from a plugin</a></li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/building-modes.md">docs/building-modes.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>

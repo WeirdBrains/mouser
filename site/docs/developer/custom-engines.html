@@ -10,8 +10,141 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status coming-soon">Coming soon: this guide is being written for Mouser 1.4.0, which hasn&#x27;t shipped yet.</p><h1 id="building-a-custom-rendering-engine">Building a custom rendering engine</h1>
-<p>This guide is coming soon. Until then, see <a href="engines.html">Rendering engines</a>.</p></section></main>
+<main id="main"><section class="light doc"><h1 id="building-a-custom-rendering-engine">Building a custom rendering engine</h1>
+<p>Mouser draws through a <strong>shared library with a versioned C ABI</strong>. Your engine
+runs in the UI process, presents to the window surface (or an offscreen pixel
+buffer) and must keep up with the frame rate. This guide gets a first engine
+installed and selected; <a href="../developer/engines.html">Rendering engines</a> is the full design
+and ABI reference.</p>
+<p>Official engines ship beside Mouser (<code>mouser</code> on wgpu, <code>skia</code> on Skia). A
+custom engine is the same kind of plugin: a library plus a manifest under
+<code>$MOUSER_HOME/engines/&lt;name&gt;/</code>.</p>
+<h2 id="what-an-engine-does">What an engine does</h2>
+<p>Mouser builds a <code>MouserFrame</code> each redraw: a clear colour, a dirty rect, and
+an ordered list of ops (rectangles, glyph coverage blits, RGBA images). Your
+<code>draw</code> walks that list and presents. You do <strong>not</strong> parse terminal bytes or
+own the scrollback — that stays in Mouser's session process.</p>
+<p>Why in-process C ABI (not an out-of-process renderer, not a Rust crate ABI):</p>
+<ul>
+<li>Presenting to the window at 40+ fps without a frame of IPC latency.</li>
+<li>Rust has no stable ABI; C lets engines be written in Rust, C, C++ or Zig.</li>
+<li>A Mouser update does not force an engine rebuild unless the ABI version
+  changes.</li>
+</ul>
+<p>A library runs with Mouser's privileges. Only install engines you trust. A
+crash can still take the window down; Mouser mitigates with a start sentinel
+and falls back to the built-in <code>mouser</code> engine (see below).</p>
+<h2 id="the-entry-points">The entry points</h2>
+<p>Export one or both symbols. Mouser tries v2 first and falls back to v1:</p>
+<pre><code class="language-c">const MouserEngineV1 *mouser_engine_v1(void);   /* ABI 1 */
+const MouserEngineV2 *mouser_engine_v2(void);   /* ABI 2 (Mouser 1.4.0+) */
+</code></pre>
+<p><code>MouserEngineV1</code> is <code>create</code>, <code>resize</code>, <code>draw</code>, <code>destroy</code>, plus <code>abi</code>, <code>size</code>
+and <code>name</code>. <code>MouserEngineV2</code> starts with a complete v1 table (<code>base.abi = 2</code>)
+and adds optional <code>caps</code>, <code>set_scale</code>, <code>evict</code> and <code>set_vsync</code>. Frame types
+are unchanged. Export both entry points if you want to load in Mouser builds
+older than 1.4.0.</p>
+<p>Headers and the Rust definitions live in <code>crates/mouser-engine-abi</code>
+(<code>mouser_engine.h</code> and the <code>mouser-engine-abi</code> crate). Depend on that crate
+from a Rust <code>cdylib</code> rather than re-declaring the structs.</p>
+<p>Surfaces you may see: Wayland, Xlib, Xcb, AppKit, Win32, and
+<code>SURFACE_PIXELS</code> (Mouser's engine host / tests fill an offscreen buffer).</p>
+<h2 id="the-flat-example">The <code>flat</code> example</h2>
+<p><code>crates/mouser-engine-example</code> is a complete CPU engine named <code>flat</code>. It
+rasterises rects, glyph coverage and images into a buffer and presents with
+softbuffer (or writes <code>SURFACE_PIXELS</code>). It also understands test hooks
+(<code>MOUSER_FLAT_FAIL</code>, <code>MOUSER_FLAT_CRASH_AT</code>, <code>MOUSER_FLAT_ABI</code>) used by
+Mouser's crash-isolation tests.</p>
+<pre><code class="language-sh">cargo build -p mouser-engine-example --release
+# Copy the library next to engine.toml, then:
+mouser engine install crates/mouser-engine-example
+mouser engine use flat
+mouser engine list
+</code></pre>
+<p>Manifest (<code>engine.toml</code> or a <code>plugin.toml</code> with <code>kind = "engine"</code>):</p>
+<pre><code class="language-toml">name = &quot;flat&quot;
+version = &quot;0.1.0&quot;
+abi = 1
+library = &quot;libmouser_engine_flat.so&quot;   # .dylib / .dll on other OSes
+description = &quot;Example engine: CPU raster presented with softbuffer&quot;
+</code></pre>
+<p><code>install</code> probes the library in a <strong>separate process</strong> before it replaces
+anything on disk. The reported <code>name</code> must match the manifest.</p>
+<h2 id="lifecycle-and-return-codes">Lifecycle and return codes</h2>
+<ol>
+<li><code>create(surface, w, h, err, err_len)</code> — return an opaque pointer, or NULL
+   with a message in <code>err</code>. Mouser writes <code>engines/.starting-&lt;name&gt;</code> before
+   the call and clears it after the first frames present.</li>
+<li><code>resize</code> — window size changed; next <code>draw</code> uses the new size.</li>
+<li><code>draw(frame)</code> — <code>0</code> ok, <code>1</code> ask for another redraw, <code>&lt;0</code> error (Mouser
+   switches to the <code>mouser</code> engine and records <code>.failed-&lt;name&gt;</code>).</li>
+<li><code>destroy</code> — free everything; pointers inside a frame are only valid during
+   that <code>draw</code>.</li>
+</ol>
+<p>Colours are <code>0xRRGGBB</code>. In ABI v2 the top byte is <code>255 - opacity</code> (0 =
+opaque), so plain <code>0xRRGGBB</code> stays opaque and translucent fills blend.</p>
+<h2 id="crash-protection-and-fallback">Crash protection and fallback</h2>
+<table>
+<thead>
+<tr>
+<th>state</th>
+<th>meaning</th>
+<th>recovery</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ok</code></td>
+<td>nothing recorded</td>
+<td>used when selected</td>
+</tr>
+<tr>
+<td><code>skipped</code></td>
+<td>crashed while starting (sentinel left behind)</td>
+<td><code>mouser engine unskip &lt;name&gt;</code> or <code>use</code></td>
+</tr>
+<tr>
+<td><code>failed</code></td>
+<td>last load/start/draw failed</td>
+<td>still tried next start; <code>use</code> / reinstall clears</td>
+</tr>
+</tbody>
+</table>
+<p>The built-in <code>mouser</code> engine is never skipped — it is the fallback. <code>skia</code>
+and every custom engine share the sentinel / failed records. Status text in
+the window names the reason and the restore command for 15 s.</p>
+<p>Live switching (sidebar Engines list, or <code>mouser engine use</code>) tears down the
+old engine and creates the new one without restarting the session. Details:
+<a href="../developer/engines.html">Rendering engines §7</a>.</p>
+<h2 id="shipping-your-engine">Shipping your engine</h2>
+<ul>
+<li>Put the library and manifest in a versioned folder
+  (<code>engines/&lt;name&gt;/&lt;version&gt;/</code> with <code>current</code>), or publish a signed archive
+  and list it for <a href="../user/downloads.html">Downloads</a> (<code>gh:Owner/Repo</code>, HTTPS, minisign).</li>
+<li>Prefer ABI 2 and export v1 as well if you care about older Mouser builds.</li>
+<li>Handle <code>SURFACE_PIXELS</code> so CI and <code>mouser engine install</code>'s probe can run
+  without a window.</li>
+<li>Never assume you are the only engine: survive <code>destroy</code> + a later <code>create</code>
+  in the same process after a live switch.</li>
+</ul>
+<h2 id="checklist">Checklist</h2>
+<ol>
+<li><code>name</code> in the library matches the manifest.</li>
+<li><code>create</code> fails cleanly (NULL + message) on an unsupported surface.</li>
+<li>A deliberate crash during <code>create</code> leaves the sentinel and the next start
+   uses <code>mouser</code> until <code>unskip</code>.</li>
+<li><code>mouser engine install</code> from a clean <code>MOUSER_HOME</code> succeeds on your target
+   OS.</li>
+<li>Switching away and back (<code>use mouser</code>, then <code>use &lt;you&gt;</code>) presents without a
+   restart.</li>
+</ol>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../developer/engines.html">Rendering engines</a> — ABI tables, process split, sidebar</li>
+<li><a href="../developer/plugins.html">Plugins</a> — engines are plugins of kind <code>engine</code></li>
+<li><a href="../user/downloads.html">Downloads</a> — signed installs and rollbacks</li>
+<li><a href="../user/rendering.html">Rendering and fonts</a> — what the frame represents</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/custom-engines.md">docs/custom-engines.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>

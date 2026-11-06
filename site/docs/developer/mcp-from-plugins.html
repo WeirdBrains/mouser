@@ -10,8 +10,142 @@
   <button class="menu" aria-expanded="false" aria-controls="links">Menu</button>
   <nav id="links" aria-label="Main"><a href="../../docs/user/">User Guides</a><a href="../../docs/developer/" aria-current=page>Developer Guides</a><a href="../../docs/mcp/">MCP Guides</a><a href="../../docs/api/">API Guides</a><a href="https://github.com/WeirdBrains/mouser">GitHub</a></nav>
 </header>
-<main id="main"><section class="light doc"><p class="status coming-soon">Coming soon: this guide is being written for Mouser 1.4.0, which hasn&#x27;t shipped yet.</p><h1 id="using-mousers-mcp-server-from-a-plugin">Using Mouser's MCP server from a plugin</h1>
-<p>This guide is coming soon. Until then, see <a href="plugins.html">Plugins</a> and <a href="../mcp/mcp.html">Mouser and MCP</a>.</p></section></main>
+<main id="main"><section class="light doc"><h1 id="using-mousers-mcp-server-from-a-plugin">Using Mouser's MCP server from a plugin</h1>
+<p>Mouser is both an MCP <strong>server</strong> (agents and editors drive the terminal) and
+an MCP <strong>client</strong> (Mouser calls out to servers you configure, and to MCP
+plugins you install). This guide covers the two plugin-facing sides:</p>
+<ol>
+<li>A <strong>mode plugin</strong> that asks for its own connection to Mouser's server
+   (<code>wants_mcp</code>).</li>
+<li>An <strong>MCP plugin</strong> Mouser starts as a stdio server and shows in the sidebar.</li>
+</ol>
+<p>The user-facing server and client reference is <a href="../mcp/mcp.html">Mouser and MCP</a>.
+Mode wire details are in <a href="../developer/mode-protocol.html">Mode plugin protocol</a>; manifests
+and permissions are in <a href="../developer/plugins.html">Plugins</a>.</p>
+<h2 id="mode-plugin-wants_mcp">Mode plugin: <code>wants_mcp</code></h2>
+<p>In your <code>Hello</code>, set <code>wants_mcp: true</code>. When Mouser accepts the handshake it
+may include an <code>mcp</code> grant on <code>Welcome::Accepted</code>:</p>
+<pre><code class="language-rust">// crates/mouser-mode-api — shape of the grant
+pub struct McpGrant {
+    pub endpoint: String, // Unix socket, or \\.\pipe\mouser-mcp-&lt;session&gt; on Windows
+    pub token: String,    // scoped; revoked when the plugin stops
+    pub client: String,   // &quot;plugin:&lt;name&gt;&quot;; approvals are keyed by it
+    pub tools: Vec&lt;String&gt;,
+}
+</code></pre>
+<p>Connect as an MCP client to that endpoint with the token. Approvals for tool
+calls show Mouser's popup under <code>mcp:plugin:&lt;name&gt;</code>, the same broker every
+other MCP client uses (<a href="../mcp/mcp.html#permissions">MCP §Permissions</a>). When your
+process exits, the grant is revoked — do not cache the token across runs.</p>
+<p>Typical uses:</p>
+<ul>
+<li>Drive <code>modes_list</code> / <code>modes_switch</code> / <code>mode_actions</code> / <code>mode_action</code> against
+  <strong>other</strong> modes (your own menu is already available as events; see below).</li>
+<li>Read terminal and tab tools Mouser's server exposes, under the permissions
+  the user grants your plugin client.</li>
+</ul>
+<p>If the grant is <code>None</code>, Mouser's MCP server is off or refused the plugin;
+continue without it. Turning the server on is a user action
+(<code>mouser mcp enable</code>, or Preferences → MCP server).</p>
+<h3 id="your-own-mode-over-mcp-no-grant-needed">Your own mode over MCP (no grant needed)</h3>
+<p>You do <strong>not</strong> need <code>wants_mcp</code> for clients outside Mouser to drive <strong>your</strong>
+mode. Answer <code>menu.open</code> with the actions that apply; Mouser's
+<code>mode_actions</code> / <code>mode_action</code> tools use that answer
+(<a href="../developer/mode-protocol.html">Mode plugin protocol §Over MCP</a>). Checklist:</p>
+<ul>
+<li>Every entry matches the selection and view state.</li>
+<li>Destructive work confirms inside the plugin; Mouser also asks once
+  (<code>modes.control</code>).</li>
+<li>Answer within 3 s.</li>
+<li>Entry ids containing <code>delete</code>, <code>trash</code>, <code>move</code>, <code>rename</code>, <code>paste</code> or <code>cut</code>
+  are flagged <code>destructive</code> to the client.</li>
+</ul>
+<h2 id="mcp-plugin-mouser-as-the-client">MCP plugin: Mouser as the client</h2>
+<p>Ship a stdio MCP server (newline-delimited JSON-RPC 2.0) and a manifest:</p>
+<pre><code class="language-toml">name = &quot;hello-mcp&quot;
+version = &quot;0.1.0&quot;
+description = &quot;MCP server with a greet tool&quot;
+permissions = [&quot;run&quot;]
+
+[[provides]]
+kind = &quot;tool-provider&quot;
+
+[run]
+transport = &quot;mcp&quot;
+command = [&quot;python3&quot;, &quot;./server.py&quot;]
+</code></pre>
+<pre><code class="language-sh">mouser plugin install examples/plugins/hello-mcp
+mouser plugin permissions hello-mcp run=allow
+mouser plugin probe hello-mcp          # initialize + tools/list
+</code></pre>
+<p>Mouser runs <code>initialize</code>, <code>notifications/initialized</code>, <code>tools/list</code> and
+<code>tools/call</code>. Once <code>run</code> is granted, the plugin appears in the sidebar's MCP
+section as <code>plugin:&lt;name&gt;</code>. Each tool call goes through the broker with
+capability <code>tool.&lt;name&gt;</code>.</p>
+<p><code>examples/plugins/hello-mcp/server.py</code> is a stdlib-only reference: one
+<code>greet</code> tool, no dependencies. Match its framing if you write a server in
+another language.</p>
+<p>Environment for command and MCP plugins is scrubbed (PATH, HOME, LANG, plus
+values you pass with <code>--env</code>). Do not rely on the user's interactive shell
+profile.</p>
+<h2 id="security-model-both-paths">Security model (both paths)</h2>
+<ul>
+<li><strong>Tokens and keys never appear in plugin-drawn UI.</strong> Mode plugins ask for
+  secrets through <code>prefs.secret_prompt</code>; MCP clients get a scoped token from
+  Mouser, not the user's global MCP token.</li>
+<li><strong>Popups cannot be spoofed.</strong> Mouser draws them, names the plugin or client,
+  and ignores early input (<a href="../developer/plugins.html">Plugins §The approval popup</a>).</li>
+<li><strong>Off-loopback MCP</strong> requires HTTPS and the token
+  (<a href="../mcp/deploy-mcp.html">Deploying the MCP server</a>).</li>
+<li>A mode plugin with <code>wants_mcp</code> still needs its manifest permissions for
+  host calls; the MCP grant does not widen file or agent access.</li>
+</ul>
+<h2 id="which-path-should-i-use">Which path should I use?</h2>
+<table>
+<thead>
+<tr>
+<th>goal</th>
+<th>path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dock UI with views, keys, host calls</td>
+<td>mode plugin (<code>transport = "mode"</code>)</td>
+</tr>
+<tr>
+<td>Let Cursor / agents run your mode's actions</td>
+<td>answer <code>menu.open</code> (server tools)</td>
+</tr>
+<tr>
+<td>Call Mouser's MCP tools from inside your mode</td>
+<td><code>wants_mcp: true</code> and the grant</td>
+</tr>
+<tr>
+<td>Expose your own tools to Mouser's agent and sidebar</td>
+<td>MCP plugin (<code>transport = "mcp"</code>)</td>
+</tr>
+<tr>
+<td>Short-lived grant from a program in the tab</td>
+<td>Fuzzball <code>p h</code> (<a href="../developer/fuzzball-integration.html">Fuzzball integration</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="checklist">Checklist</h2>
+<ol>
+<li>Mode + <code>wants_mcp</code>: handle a missing grant; drop the client on <code>stopping</code>.</li>
+<li>Mode menus: MCP-safe actions, 3 s budget, destructive confirmations.</li>
+<li>MCP plugin: <code>probe</code> succeeds; sidebar row starts only after <code>run=allow</code>.</li>
+<li>No secret or token is logged, printed in <code>-v</code>, or drawn by the plugin.</li>
+<li>Document the permissions you need in your README and <code>plugin.toml</code>.</li>
+</ol>
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="../mcp/mcp.html">Mouser and MCP</a> — server, client, Let's Encrypt, permissions</li>
+<li><a href="../mcp/deploy-mcp.html">Deploying the MCP server</a> — bind, HTTPS, ACME</li>
+<li><a href="../developer/building-modes.html">Building a mode plugin</a></li>
+<li><a href="../developer/plugins.html">Plugins</a> — transports and the broker</li>
+</ul><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/mcp-from-plugins.md">docs/mcp-from-plugins.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
