@@ -15,6 +15,23 @@ main{margin:0;padding:0}
 section{padding:3.5rem max(clamp(1rem,4vw,3rem),calc((100% - 1180px)/2 + 3rem));background:linear-gradient(160deg,var(--bg),var(--bg2));color:var(--fg);scroll-margin-top:4rem}
 .light{--bg:#f7fbfd;--bg2:#e3eff5;--panel:#ffffff;--line:#c9dbe6;--fg:#0b2233;--dim:#3f5b6e;--cyan:#0a7f8c;--code:#0b4f63}
 .hero{display:block;max-width:920px}
+/* Desktop: copy left, wide wallpaper/video panel filling the right. */
+@media (min-width:1024px){
+  .hero{
+    display:grid;
+    grid-template-columns:minmax(260px,.85fr) minmax(520px,1.45fr);
+    grid-template-areas:"intro shot" "meta shot";
+    gap:1.25rem 2.5rem;
+    align-items:start;
+    max-width:none; /* use the section's ~1180px content width */
+    width:100%;
+  }
+  .hero-intro{grid-area:intro}
+  .hero .shot.beautiful{grid-area:shot;margin:0;align-self:stretch}
+  .hero-meta{grid-area:meta}
+  .hero h1{margin:.4rem 0 0}
+}
+
 .prompt{color:var(--cyan);margin:0}
 h1{font-size:clamp(1.8rem,4vw,2.8rem);line-height:1.2;margin:.4rem 0 1rem}h1 span{color:var(--cyan)}
 h2{font-size:1.6rem;margin:0 0 1.5rem}h2::before{content:"# ";color:var(--cyan)}
