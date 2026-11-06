@@ -52,6 +52,9 @@ pub enum PanelStyle {
     },
     /// Background of a dropdown drawn over the panel.
     Popup,
+    /// A veil over the rect (`0` clear … `255` opaque black) for motion such as
+    /// the fullscreen viewer backdrop.
+    Dim(u8),
     /// Name tag drawn on top of everything, previews included (commander
     /// carousel): a slightly transparent rounded box with a soft shadow.
     FloatLabel,

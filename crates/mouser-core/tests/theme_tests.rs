@@ -168,3 +168,27 @@ fn duplicate_export_import_roundtrip() {
     let dark = mouser_core::themes::load_theme("From Export", "dark");
     assert_eq!(dark.name, "From Export");
 }
+
+#[test]
+#[serial]
+fn duplicate_fills_cursor_accent_and_palette() {
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        env::set_var("MOUSER_HOME", tmp.path());
+        env::set_var("MOUSER_OMARCHY", "0");
+    }
+    // Rose Pine ships without cursor/accent in the pair table — duplicate must fill them.
+    mouser_core::themes::duplicate_theme("Rose Pine", "Beauty Demo").unwrap();
+    let dark = mouser_core::themes::load_theme("Beauty Demo", "dark");
+    assert_eq!(dark.name, "Beauty Demo");
+    assert!(!dark.cursor.as_deref().unwrap_or("").is_empty(), "cursor filled: {:?}", dark.cursor);
+    assert!(!dark.accent.as_deref().unwrap_or("").is_empty(), "accent filled: {:?}", dark.accent);
+    assert_eq!(dark.palette.len(), 16, "palette materialized");
+    assert_eq!(dark.foreground, "#e0def4");
+    assert_eq!(dark.background, "#191724");
+    // Editor view also shows non-empty colour fields.
+    let ed = mouser_core::appearance::ThemeEditor::new(&dark, Some("Cascadia Code"), 15.0);
+    assert!(!ed.fields[mouser_core::appearance::CURSOR].value.is_empty());
+    assert!(!ed.fields[mouser_core::appearance::ACCENT].value.is_empty());
+    assert_eq!(ed.fields[mouser_core::appearance::FONT_FAMILY].value, "Cascadia Code");
+}

@@ -42,6 +42,18 @@ fn editor_fields_fit_and_are_clickable() {
     assert!(p.items.iter().any(|it| it.style == PanelStyle::Field { focused: false, valid: false }));
     assert_eq!(p.items.iter().filter(|it| matches!(it.style, PanelStyle::Swatch(_))).count(), 20);
     assert!(p.items.iter().any(|it| it.style == PanelStyle::Error));
+    let err = p.items.iter().find(|it| it.style == PanelStyle::Error).unwrap().rect;
+    let buttons: Vec<_> = p.items.iter().filter(|it| matches!(it.style, PanelStyle::Button { .. })).collect();
+    assert!(!buttons.is_empty(), "Save/Cancel/Dropper");
+    for b in &buttons {
+        let overlap = err.x < b.rect.x + b.rect.w && b.rect.x < err.x + err.w && err.y < b.rect.y + b.rect.h && b.rect.y < err.y + err.h;
+        assert!(!overlap, "error {:?} overlaps button {} {:?}", err, b.text, b.rect);
+        assert!(err.y + err.h <= b.rect.y, "error row sits above {}", b.text);
+    }
+    let hint = p.items.iter().find(|it| it.style == PanelStyle::Hint).expect("key hint row");
+    assert!(hint.text.contains("Tab complete"), "{}", hint.text);
+    assert!(!hint.text.to_lowercase().contains("dropper"), "hint should not repeat the Dropper button: {}", hint.text);
+    assert!(hint.rect.y >= buttons.iter().map(|b| b.rect.y + b.rect.h).max().unwrap(), "hints sit below the buttons");
     // Field rects never overlap.
     let f: Vec<_> = p.items.iter().filter(|i| matches!(i.style, PanelStyle::Field { .. })).map(|i| i.rect).collect();
     for (a, ra) in f.iter().enumerate() {

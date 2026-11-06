@@ -63,6 +63,19 @@ impl ThemeDef {
     pub fn full_palette(&self) -> Vec<String> {
         (0..16).map(|i| self.palette.get(i).cloned().unwrap_or_else(|| DEFAULT_PALETTE[i].to_string())).collect()
     }
+
+    /// Fill missing cursor / accent / palette so the editor and duplicates never
+    /// show blank colour fields. Cursor defaults to foreground; accent to ANSI 4
+    /// (blue) from the resolved palette.
+    pub fn ensure_complete(&mut self) {
+        self.palette = self.full_palette();
+        if self.cursor.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            self.cursor = Some(self.foreground.clone());
+        }
+        if self.accent.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            self.accent = Some(self.palette.get(4).cloned().unwrap_or_else(|| DEFAULT_PALETTE[4].to_string()));
+        }
+    }
 }
 
 /// `#rrggbb` / `rrggbb` / `#rgb` to 0xRRGGBB.
@@ -250,6 +263,8 @@ pub fn duplicate_theme(src: &str, dest: &str) -> Result<(), String> {
     light.name = dest.to_string();
     dark.variant = "dark".into();
     light.variant = "light".into();
+    dark.ensure_complete();
+    light.ensure_complete();
     save_theme(&dark).map_err(|e| e.to_string())?;
     save_theme(&light).map_err(|e| e.to_string())?;
     Ok(())

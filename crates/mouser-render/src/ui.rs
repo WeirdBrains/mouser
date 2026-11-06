@@ -471,7 +471,7 @@ pub fn picker_panel(vp_w: i32, vp_h: i32, cell_w: i32, cell_h: i32, themes: &[St
     y = row_y + row_h + 6;
     items.push(PanelItem {
         rect: Rect { x, y, w: inner_w, h: row_h },
-        text: "↑↓ theme  ←→ mode  e edit  Enter apply  Esc cancel".into(),
+        text: "↑↓ theme  ←→ mode  e edit  a Auto  u Duplicate  n New  Enter apply  Esc".into(),
         style: PanelStyle::Hint,
         action: UiAction::None,
     });
@@ -505,7 +505,7 @@ pub fn editor_panel(
     let pal_w = pal_label + pal_field + 6 + swatch;
     let preview_w = cell_w * 28;
     let w = 2 * pad + main_w + gap + 2 * pal_w + gap + preview_w + gap;
-    let h = 2 * pad + row_h * 12;
+    let h = 2 * pad + row_h * 14;
     let rect = centered(vp_w, vp_h, w, h);
     let (x0, y0) = (rect.x + pad, rect.y + pad);
     let mut items = vec![PanelItem {
@@ -570,7 +570,8 @@ pub fn editor_panel(
             action: UiAction::None,
         });
     }
-    let by = top + 8 * row_h + 10;
+    let mut by = top + 8 * row_h + 10;
+    // Dedicated error row so a validation message never covers the buttons.
     if let Some(e) = error {
         items.push(PanelItem {
             rect: Rect { x: x0, y: by, w: rect.w - 2 * pad, h: row_h },
@@ -579,7 +580,7 @@ pub fn editor_panel(
             action: UiAction::None,
         });
     }
-    let by = by + row_h;
+    by += row_h + 6;
     let mut bx = x0;
     for (label, act, primary) in [("Save", UiAction::SavePanel, true), ("Cancel", UiAction::ClosePanel, false), ("Dropper", UiAction::Dropper, false)]
     {
@@ -592,9 +593,10 @@ pub fn editor_panel(
         });
         bx += bw + 8;
     }
+    by += row_h + 6;
     items.push(PanelItem {
-        rect: Rect { x: bx + 12, y: by, w: rect.x + rect.w - pad - bx - 12, h: row_h },
-        text: "Tab next  Ctrl+S save  Esc cancel  Dropper samples screen".into(),
+        rect: Rect { x: x0, y: by, w: rect.w - 2 * pad, h: row_h },
+        text: "Tab complete  ↑↓ fields  Ctrl+S save  Esc cancel  F2 samples a screen colour".into(),
         style: PanelStyle::Hint,
         action: UiAction::None,
     });
@@ -620,7 +622,7 @@ pub fn editor_panel(
         }
         for (i, name, pos) in &dd.rows {
             items.push(PanelItem {
-                rect: Rect { x: popup.x + 2, y, w: w - 4, h: opt_h },
+                rect: Rect { x: popup.x + 8, y, w: w - 16, h: opt_h },
                 text: name.clone(),
                 style: PanelStyle::FontOption { selected: *i == dd.selected, highlight: highlight_bits(pos) },
                 action: UiAction::PickFont(*i),
