@@ -62,7 +62,11 @@ light, the dark variant is used. <code>MOUSER_SYSTEM_DARK=1|0</code> overrides d
 <ul>
 <li><strong>Edit colours &amp; font</strong> in the switcher (or <code>:edit-theme</code>) edits the active variant: foreground,
   background, cursor, accent and the 16-colour palette as hex (<code>#rrggbb</code> or <code>#rgb</code>) with swatches,
-  plus font family and size. Valid edits preview live; invalid fields are outlined in red.</li>
+  plus font family and size. Valid edits preview live (a side Preview pane shows sample text in the pending colours); invalid fields are outlined in red.</li>
+<li><strong>Dropper</strong> (in the editor) samples a screen colour into the focused colour field. On Hyprland /
+  Omarchy it uses <code>hyprpicker</code>; otherwise <code>grim</code>+<code>slurp</code>, then ImageMagick <code>import</code> on X11.</li>
+<li><strong>Auto</strong> (on the switcher) builds/selects a theme from the desktop when possible (currently
+  Omarchy <code>colors.toml</code>, same as Match Omarchy; more desktops later).</li>
 <li>Save writes <code>~/.mouser/themes/&lt;Theme&gt;/&lt;variant&gt;.toml</code> and the font to <code>preferences.toml</code>.</li>
 <li>Theme files may contain <code>cursor</code>, <code>accent</code> and <code>palette = [16 colours]</code>; all are optional.</li>
 </ul>
@@ -86,7 +90,8 @@ in name order. Typing fuzzy-filters it (case-insensitive subsequence; matched
 letters are highlighted) while the list stays alphabetical. ↑/↓ or the mouse
 wheel move, Enter or a click picks (the font then loads in the background), and
 Esc or a click elsewhere closes the list. Families are discovered once, on a
-background thread, at startup; typing only filters.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/themes.md">docs/themes.md</a></p></section></main>
+background thread, at startup; typing only filters. Each row is drawn in
+that family so you can preview the look before picking.</p><p class="docsrc">Source: <a href="https://github.com/WeirdBrains/mouser/blob/main/docs/themes.md">docs/themes.md</a></p></section></main>
 <footer class="docfoot">Generated from <a href="https://github.com/WeirdBrains/mouser/tree/main/docs">docs/</a> on main. Do not edit by hand.</footer>
 <script src="../../main.js"></script>
 </body></html>
