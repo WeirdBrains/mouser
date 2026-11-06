@@ -16,6 +16,7 @@ fn ctx() -> Context {
     Context {
         viewport: mouser_render::UiViewport { width: 1200, height: 900, cell_w: 8, cell_h: 16 },
         area: mouser_render::ui::Rect { x: 0, y: 0, w: 1200, h: 900 },
+        reduce_motion: false,
     }
 }
 

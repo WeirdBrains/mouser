@@ -92,8 +92,10 @@ OpenAI- or Anthropic-compatible URL. ↑/↓ and Enter or a click choose; Esc st
   (`MOUSER_MODELS_DIR`, else `[models.local] dir`, else `$MOUSER_HOME/models`). Nothing
   downloads until you say so. A progress bar follows; Esc cancels (downloading again
   resumes); the file is checked against its pinned SHA256.
-- **Hosted**: the API key field shows only dots. Tab moves to the optional model name
-  (and, for a custom URL, the URL and API). Enter sends one short test request with the
+- **Hosted**: the API key field shows only dots. Tab completes the model name or URL
+  from known values when it can; otherwise it moves to the next field (from the key
+  field, that is the optional model name, and for a custom URL the URL and API).
+  Enter sends one short test request with the
   key in memory; only if it works is the key stored in the OS keychain (or a 0600 file,
   with a warning) and the provider saved.
 - Then it becomes the default (`[models] default`) and the chat continues.
@@ -137,7 +139,9 @@ button and the focus hint at the bottom), so they are never covered. See
 `mouser-mode-api` with its `markdown` feature. Installed as a `transport = "mode"`
 plugin named `chat`, it is the chat mode (hotkey `a`; Mouser has no built-in chat
 since 1.4.0). It needs the
-`agent.use` permission. The agent itself still runs inside Mouser: the plugin sends
+`agent.use` permission. Opening chat the first time asks for that grant (via the
+approval popup) when the plugin calls `agent.models` / `agent.state` — it does not
+hard-fail with "is not allowed". The agent itself still runs inside Mouser: the plugin sends
 `agent.send` / `agent.cancel` / `agent.clear` and draws the transcript from
 `agent.state` events, so your keys and models never leave Mouser. Tool-call cards are
 drawn by Mouser's approval popup, not the plugin; the plugin only shows "waiting for

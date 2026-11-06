@@ -26,6 +26,17 @@ doesn't parse is never overwritten; the mode says so instead.
 Theme, light/dark, the Esc wait, chat and model settings apply at once; rows
 marked "new windows" (font, sidebar, MCP server) apply to windows opened later.
 
+## Appearance
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `appearance.reduce_motion` | on / off | off |
+
+On skips motion such as the commander's fullscreen image/player viewer easing from
+the thumbnail to the window (and back). The change applies at once: the next open
+or close is instant.
+
+
 Secrets (the local model server key) go only to the OS keychain; the file
 keeps a `keychain:NAME` reference and the mode shows "set (keychain)". With no
 keychain available the secret is not saved. The model folder is shown but

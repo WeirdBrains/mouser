@@ -62,6 +62,8 @@ declared in `plugin.toml` and granted:
 | `fetch {url, method, headers, body, max_bytes}` | `net.fetch` | one HTTP(S) request made by Mouser: `status`, `headers`, `text` (or `bytes`), `truncated`. 4 MiB by default, 16 MiB at most |
 | `remote.location`, `remote.list {path}`, `remote.read {path, offset, len}` | `remote.read` | the shell's ssh host, over its connection (1 MiB per read); `shell.remote_changed` events too |
 | `agent.models`, `agent.set_default {model}` | `agent.use` | providers, their models and the default. Never a key |
+
+When a service needs a capability the manifest declares and the store is still **Ask**, Mouser shows the approval popup and retries the call after Allow always — it does not return `… is not allowed` until the user picks Never (or Deny for that attempt).
 | `agent.send {text}`, `agent.cancel`, `agent.clear`, `agent.state` | `agent.use` | an agent session that runs inside Mouser with your models, keys and tools. Replies stream to the plugin as `agent.state` events: `entries` (`user`, `assistant`, `tool`, `note`, `error`), `running`, `model`, `card_open`. Tool-call cards are drawn by Mouser, never by the plugin |
 
 Mouser's popups name the plugin that asks. They take every key and click while
@@ -171,6 +173,10 @@ height the user chose for the mode's dock (dragging its bottom edge, the
 host's taller / shorter keys `]` / `[`, or its fullscreen toggle `F`); it comes
 again whenever that changes. Lay the dock out with `DockSize::height(area,
 cell_h, your_default)`. A mode that ignores it keeps its own height.
+It also carries `reduce_motion` (from `appearance.reduce_motion` in
+preferences.toml, default false) when the host supports it: skip motion such as
+an open/close transition. Older hosts omit the field; treat a missing value as
+false. The same flag is on handshake `Accepted.ctx` (`Context.reduce_motion`).
 
 A right-click in the view, or the host's menu key `.` while the mode has the
 keyboard, sends `menu.open` (`{"x", "y", "keyboard": bool}`; for the keyboard,

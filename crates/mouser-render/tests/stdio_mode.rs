@@ -101,7 +101,11 @@ impl mouser_mode_api::Mode for Plugin {
 }
 
 fn ctx() -> Context {
-    Context { viewport: mouser_render::UiViewport { width: 800, height: 600, cell_w: 8, cell_h: 16 }, area: Rect { x: 0, y: 0, w: 800, h: 600 } }
+    Context {
+        viewport: mouser_render::UiViewport { width: 800, height: 600, cell_w: 8, cell_h: 16 },
+        area: Rect { x: 0, y: 0, w: 800, h: 600 },
+        reduce_motion: false,
+    }
 }
 
 /// Draw until `f` holds (5 s at most), collecting effects.

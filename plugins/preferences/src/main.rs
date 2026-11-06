@@ -480,7 +480,7 @@ impl Mode for Prefs {
             }
             "view.resized" => {
                 self.dock = mouser_mode_api::DockSize::from_payload(&e.payload);
-                if let Ok(c) = serde_json::from_value::<Context>(json!({"viewport": e.payload["viewport"], "area": e.payload["area"]})) {
+                if let Ok(c) = serde_json::from_value::<Context>(e.payload.clone()) {
                     self.ctx = Some(c);
                 }
             }

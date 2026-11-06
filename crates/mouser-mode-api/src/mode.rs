@@ -10,6 +10,10 @@ pub struct Context {
     /// The terminal area (left of the sidebar, below the tab strip); the view
     /// takes its top part and the terminal grid moves down.
     pub area: Rect,
+    /// Skip motion such as the fullscreen viewer open/close transition
+    /// (`appearance.reduce_motion` in preferences.toml).
+    #[serde(default)]
+    pub reduce_motion: bool,
 }
 
 /// What the mode asks Mouser to do. The host checks each one against the

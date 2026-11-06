@@ -35,6 +35,8 @@ enum Mode {
 struct AppState {
     mode: Mode,
     command_buf: String,
+    command_complete: mouser_mode_api::complete::Engine,
+    command_hint: String,
     sidebar_open: bool,
     sidebar_collapsed: bool,
     sidebar_width: Option<i32>,
@@ -1122,6 +1124,8 @@ fn main() -> Result<()> {
     let app_state = Arc::new(Mutex::new(AppState {
         mode: Mode::Shell,
         command_buf: String::new(),
+        command_complete: mouser_mode_api::complete::Engine::new(),
+        command_hint: String::new(),
         sidebar_open: prefs0.sidebar_open.unwrap_or(false),
         sidebar_collapsed: prefs0.sidebar_collapsed.unwrap_or(false),
         sidebar_width: prefs0.sidebar_width,
@@ -1251,17 +1255,27 @@ fn main() -> Result<()> {
                     if bytes == b"\x1b" {
                         state.mode = Mode::Shell;
                         state.command_buf.clear();
+                        state.command_complete.reset();
+                        state.command_hint.clear();
                     } else if bytes == b"\r" {
                         let cmd = std::mem::take(&mut state.command_buf);
+                        state.command_complete.reset();
+                        state.command_hint.clear();
                         state.mode = Mode::Shell;
                         drop(state);
                         handle_command(&cmd, &writer, &app_state);
+                    } else if bytes == b"\t" || bytes == b"\x1b[Z" {
+                        complete_command_line(&mut state, bytes == b"\x1b[Z");
                     } else if bytes == b"\x7f" || bytes == b"\x08" {
                         state.command_buf.pop();
+                        state.command_complete.reset();
+                        state.command_hint.clear();
                     } else if let Ok(s) = std::str::from_utf8(&bytes)
                         && !s.starts_with('\x1b')
                     {
                         state.command_buf.push_str(s);
+                        state.command_complete.reset();
+                        state.command_hint.clear();
                     }
                 }
                 Mode::Config => {
@@ -1713,7 +1727,15 @@ fn main() -> Result<()> {
             let app_state = app_state.clone();
             Arc::new(move || {
                 let st = app_state.lock().unwrap();
-                if st.mode == Mode::Command { Some(format!(":{}", st.command_buf)) } else { st.look.status().or_else(engine_note) }
+                if st.mode == Mode::Command {
+                    if st.command_hint.is_empty() {
+                        Some(format!(":{}", st.command_buf))
+                    } else {
+                        Some(format!(":{}  {}", st.command_buf, st.command_hint))
+                    }
+                } else {
+                    st.look.status().or_else(engine_note)
+                }
             })
         }),
     };
@@ -1724,6 +1746,11 @@ fn main() -> Result<()> {
         emoji_family,
         title: cli.title.clone(),
         app_id: cli.class.clone(),
+        // Recording window size (~approved hero take). Prefer MOUSER_WINDOW_SIZE=WxH.
+        size: std::env::var("MOUSER_WINDOW_SIZE").ok().and_then(|s| {
+            let (w, h) = s.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        }),
         ..Renderer::default()
     };
     {
@@ -1784,6 +1811,8 @@ fn paste_text(text: &str, parser: &ActiveParser, writer: &tabs::ActiveWriter, ap
     }
     if st.mode == Mode::Command {
         st.command_buf.push_str(text.lines().next().unwrap_or(""));
+        st.command_complete.reset();
+        st.command_hint.clear();
         return;
     }
     if st.ssh.panel.is_some() || st.look.panel.is_some() {
@@ -2315,6 +2344,46 @@ pub(crate) fn wake_after(delay: std::time::Duration) {
 
 /// `theme [name]`, `mode m`, `edit-theme`, `import-theme <dir>`, `export-theme [name]`,
 /// `font-size n`, `font [family]` (leading ':' optional).
+fn complete_command_line(state: &mut AppState, reverse: bool) {
+    use mouser_mode_api::complete::{self, Arg, Cmd};
+    let themes = mouser_core::themes::list_themes();
+    let conns: Vec<String> = list_connections().unwrap_or_default().into_iter().map(|c| c.name).collect();
+    let sizes: Vec<String> = ["8", "9", "10", "11", "12", "13", "14", "16", "18", "20", "24", "28", "32"].into_iter().map(str::to_string).collect();
+    let cmds = vec![
+        Cmd { name: "theme".into(), arg: Arg::Values(themes.clone()) },
+        Cmd { name: "mode".into(), arg: Arg::Values(vec!["dark".into(), "light".into(), "system".into()]) },
+        Cmd { name: "edit-theme".into(), arg: Arg::None },
+        Cmd { name: "import-theme".into(), arg: Arg::Path { directories_only: true } },
+        Cmd { name: "export-theme".into(), arg: Arg::Values(themes) },
+        Cmd { name: "font-size".into(), arg: Arg::Values(sizes) },
+        Cmd { name: "font".into(), arg: Arg::None },
+        Cmd { name: "mcp".into(), arg: Arg::None },
+        Cmd { name: "open-sidebar".into(), arg: Arg::None },
+        Cmd { name: "close-sidebar".into(), arg: Arg::None },
+        Cmd { name: "del-conn".into(), arg: Arg::Values(conns.clone()) },
+        Cmd { name: "yes".into(), arg: Arg::None },
+        Cmd { name: "no".into(), arg: Arg::None },
+        Cmd { name: "edit-conn".into(), arg: Arg::Values(conns.clone()) },
+        Cmd { name: "set".into(), arg: Arg::None },
+        Cmd { name: "save-conn".into(), arg: Arg::None },
+        Cmd { name: "connect".into(), arg: Arg::Values(conns) },
+        Cmd { name: "model".into(), arg: Arg::Values(vec!["download".into(), "add".into(), "default".into()]) },
+        Cmd { name: "plugin".into(), arg: Arg::None },
+        Cmd { name: "engine".into(), arg: Arg::None },
+        Cmd { name: "commander".into(), arg: Arg::None },
+        Cmd { name: "chat".into(), arg: Arg::None },
+        Cmd { name: "preferences".into(), arg: Arg::None },
+        Cmd { name: "c".into(), arg: Arg::None },
+        Cmd { name: "a".into(), arg: Arg::None },
+        Cmd { name: "p".into(), arg: Arg::None },
+    ];
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (stem, token, matches) = complete::command_matches(&state.command_buf, &cmds, &cwd, &complete::FsSource);
+    let out = state.command_complete.tab(&state.command_buf, &stem, &token, &matches, reverse);
+    state.command_buf = out.text.clone();
+    state.command_hint = out.list_hint(80);
+}
+
 fn appearance_command(cmd: &str) -> Option<(&'static str, &str)> {
     let cmd = cmd.trim_start_matches(':');
     let (head, arg) = cmd.split_once(' ').unwrap_or((cmd, ""));
@@ -3102,7 +3171,8 @@ fn attach_mode_view(
     }
     let text_w = layout.as_ref().map_or(vp.width, |l| l.sidebar_rect.x);
     let area = ui::Rect { x: 0, y: PADDING + tab_h, w: text_w, h: vp.height - PADDING - tab_h };
-    let view = st.modes.view(&mouser_render::modes::Context { viewport: vp, area });
+    let reduce_motion = mouser_core::storage::reduce_motion(&mouser_core::storage::load_preferences());
+    let view = st.modes.view(&mouser_render::modes::Context { viewport: vp, area, reduce_motion });
     if view.dock.is_none() && view.panel.is_none() {
         st.mode_images.0.clear();
         return layout;

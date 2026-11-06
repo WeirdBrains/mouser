@@ -4,17 +4,20 @@
 
 - Arch: the OpenPGP package key (`6318D43051C4DBBC`) is on keyserver.ubuntu.com and keys.openpgp.org, hosted at https://mouser.weirdbrains.com/mouser-release-key.asc, and attached to releases as `mouser-release-key.asc`. Trust it with `pacman-key --recv-keys` (or `curl` the site key) and `--lsign-key` before `pacman -U <url>`. See docs/release.md §Arch signatures.
 - Man page ENVIRONMENT lists `MOUSER_OMARCHY` (it is read to override Omarchy host detection; CI's `no_env_var_is_missing` test failed without it).
-
 - Theme **Duplicate** / editor: blank Cursor, Accent, and palette fields are filled from the source theme (cursor←foreground, accent←ANSI 4, full 16-colour palette) so Edit colours never opens with empty colour fields.
+- Chat: opening the mode without `agent.use` already allowed now shows Mouser's approval popup instead of a red `agent.models is not allowed` status. Declared Ask capabilities are prompted on the first service call; Never still hard-denies.
 - Theme editor: long font family names in the dropdown keep padding and end in an ellipsis instead of running into the right edge.
 - Theme editor: validation messages such as `Font size must be 6-48` have their own row and no longer overlap Save/Cancel/Dropper.
 - Theme editor helper row sits below the buttons and no longer repeats the Dropper label (`F2 samples a screen colour`).
+- Commander carousel: switching view or sliding to a neighbour no longer flashes the kind-label placeholder when a thumbnail of another size is already decoded.
 
 ### Added
 
+- Tab completion in every text field: commander move/copy/rename/new-folder/search/pipe, the `:` command line, theme name and path fields, chat input, and SSH form fields. Tab completes the common prefix; repeated Tab cycles matches, Shift+Tab goes back; directories get a trailing `/`; `~` expands; no match reports `no matches` instead of inserting a tab.
 - Theme switcher keys: `a` Auto, `u` Duplicate, `n` New (same as the buttons).
 - Theme editor: **F2** runs Dropper on the focused colour field.
 - `MOUSER_DROPPER_FAKE=#RRGGBB` returns that colour from Dropper after a short pause (automated recordings).
+- Commander fullscreen image/player viewer: opening eases the picture from its thumbnail to the window (~220 ms, cubic ease-in-out, timed from the clock) and closing eases it back, with a crossfading dim backdrop. `appearance.reduce_motion` (Preferences → Appearance → Reduce motion) skips the transition. Closing reuses the decoded thumbnail so the tile does not flash a kind-label placeholder.
 
 ## [1.4.4] - 2026-11-06
 

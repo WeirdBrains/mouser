@@ -51,6 +51,6 @@ keys = [
   { id = "zoom_out", key = "-", describe = "image view: zoom out (same key as volume down in the player)" },
   { id = "zoom_fit", key = "0", describe = "image view: fit" },
   { id = "zoom_actual", key = "1", describe = "image view: 100% (actual pixels)" },
-  { id = "fullscreen", key = "f", describe = "image / player: fullscreen, the whole window (Esc or the same key leaves)" },
+  { id = "fullscreen", key = "f", describe = "image / player: fullscreen, the whole window; eases from the thumbnail (Esc or the same key leaves; appearance.reduce_motion skips the motion)" },
   { id = "menu", key = "i", describe = "header overflow menu (\u2022\u2022\u2022) when the window is narrow" },
 ]

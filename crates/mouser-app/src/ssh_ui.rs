@@ -4,6 +4,7 @@
 use mouser_core::appearance::{self, EditKey, Outcome};
 use mouser_core::connections::SshConnection;
 use mouser_core::ssh_config::{self, SshForm, SshHostEntry};
+use mouser_mode_api::complete::{self, Engine};
 use mouser_render::{UiViewport, ui};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -21,6 +22,7 @@ pub struct SshUi {
     pub panel: Option<SshPanel>,
     /// SSH entries still in ~/.mouser/connections (offered for migration).
     pub legacy: usize,
+    complete: Engine,
 }
 
 impl SshUi {
@@ -44,7 +46,7 @@ impl SshUi {
             });
         }
         let legacy = ssh_config::mouser_ssh_connections().len();
-        Self { root, hosts, panel: None, legacy }
+        Self { root, hosts, panel: None, legacy, complete: Engine::new() }
     }
 
     fn reload(&self) {
@@ -106,6 +108,13 @@ impl SshUi {
 
     /// Returns a status message, if any.
     pub fn key(&mut self, bytes: &[u8]) -> Option<String> {
+        if bytes == b"\t" || bytes == b"\x1b[Z" {
+            if self.try_complete(bytes == b"\x1b[Z") {
+                return None;
+            }
+        } else {
+            self.complete.reset();
+        }
         let key = appearance::parse_key(bytes)?;
         let outcome = match &mut self.panel {
             Some(SshPanel::Form(f)) => f.handle(key),
@@ -117,6 +126,53 @@ impl SshUi {
             None => return None,
         };
         self.apply(outcome)
+    }
+
+    fn try_complete(&mut self, reverse: bool) -> bool {
+        let (i, current, label) = match &self.panel {
+            Some(SshPanel::Form(f)) => {
+                let i = f.focus;
+                let Some(field) = f.fields.get(i) else { return false };
+                (i, field.value.clone(), field.label.clone())
+            }
+            _ => return false,
+        };
+        let (stem, token, matches) = match label.as_str() {
+            "IdentityFile" => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                complete::path_matches(&current, &cwd, &complete::FsSource, false)
+            }
+            "HostName" | "Alias" | "ProxyJump" => {
+                let hosts = self.hosts.lock().unwrap();
+                let mut values: Vec<String> = hosts.iter().flat_map(|h| [h.alias.clone(), h.conn.host.clone()]).filter(|s| !s.is_empty()).collect();
+                drop(hosts);
+                values.sort();
+                values.dedup();
+                complete::value_matches(&current, &values)
+            }
+            "User" => {
+                let hosts = self.hosts.lock().unwrap();
+                let mut values: Vec<String> = hosts.iter().filter_map(|h| h.conn.user.clone()).filter(|s| !s.is_empty()).collect();
+                drop(hosts);
+                values.sort();
+                values.dedup();
+                complete::value_matches(&current, &values)
+            }
+            _ => return false,
+        };
+        if matches.is_empty() {
+            return false;
+        }
+        let out = self.complete.tab(&current, &stem, &token, &matches, reverse);
+        if out.candidates.len() == 1 && out.text == current {
+            return false;
+        }
+        if let Some(SshPanel::Form(f)) = &mut self.panel
+            && let Some(field) = f.fields.get_mut(i)
+        {
+            field.value = out.text;
+        }
+        true
     }
 
     pub fn action(&mut self, act: &ui::UiAction) -> Option<String> {

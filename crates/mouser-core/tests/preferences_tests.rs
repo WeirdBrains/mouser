@@ -28,6 +28,7 @@ fn preferences_round_trip_including_sidebar() {
         keys: None,
         plugins: None,
         audio: Some(mouser_core::storage::AudioPrefs { host: Some("alsa".into()), output_device: Some("pipewire".into()) }),
+        appearance: Some(mouser_core::storage::AppearancePrefs { reduce_motion: Some(true) }),
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();
@@ -39,6 +40,17 @@ fn preferences_round_trip_including_sidebar() {
     assert_eq!(back.sidebar_collapsed, Some(true));
     assert_eq!(back.theme.as_deref(), Some("Nord"));
     assert_eq!(back.font_size, Some(14.5));
+    assert!(text.contains("[appearance]") && text.contains("reduce_motion = true"), "{text}");
+    assert!(mouser_core::storage::reduce_motion(&back));
+}
+
+#[test]
+fn reduce_motion_defaults_off_and_reads_the_appearance_table() {
+    assert!(!mouser_core::storage::reduce_motion(&Preferences::default()));
+    let p: Preferences = toml::from_str("[appearance]\nreduce_motion = true\n").unwrap();
+    assert!(mouser_core::storage::reduce_motion(&p));
+    let p: Preferences = toml::from_str("").unwrap();
+    assert!(!mouser_core::storage::reduce_motion(&p));
 }
 
 #[test]

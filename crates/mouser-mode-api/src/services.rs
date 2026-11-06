@@ -65,6 +65,11 @@ pub const METHODS: &[(&str, Option<&str>)] = &[
     ("fetch", Some("net.fetch")),
 ];
 
+/// Permission a method needs, if any. `None` means unrestricted or unknown.
+pub fn permission_for(method: &str) -> Option<&'static str> {
+    METHODS.iter().find(|(m, _)| *m == method).and_then(|(_, p)| *p)
+}
+
 /// Whether `granted` allows calling `method`; unknown methods are refused.
 pub fn allowed(method: &str, granted: &[String]) -> bool {
     match METHODS.iter().find(|(m, _)| *m == method) {

@@ -78,9 +78,12 @@ impl Previews {
         if s.want == list {
             return;
         }
-        // Keep a few recent ones so scrolling back is instant.
+        // Keep a few recent ones so scrolling back is instant. Also keep other
+        // sizes of a path still on screen: grid tiles and the carousel use
+        // different longest-sides, and the smaller thumb covers the kind-label
+        // placeholder while the larger one decodes.
         if s.done.len() > 48 {
-            s.done.retain(|k, _| list.contains(k));
+            s.done.retain(|k, _| list.contains(k) || list.iter().any(|w| w.0 == k.0));
         }
         s.want = list;
         drop(s);
@@ -104,7 +107,13 @@ impl Previews {
     }
 
     fn get(&self, w: &Want) -> Option<Option<Thumb>> {
-        self.s.0.lock().unwrap().done.get(w).cloned()
+        let s = self.s.0.lock().unwrap();
+        if let Some(t) = s.done.get(w) {
+            return Some(t.clone());
+        }
+        // Same file, another size: show it instead of the "image" / "▶ video"
+        // placeholder while this size decodes (grid → carousel, slide-in).
+        s.done.iter().find(|(k, v)| k.0 == w.0 && v.is_some()).map(|(_, t)| t.clone())
     }
 
     pub fn set_waker(&self, w: Waker) {
@@ -433,6 +442,52 @@ impl Slide {
     }
 }
 
+/// Open/close of the fullscreen image or player: the picture moves from the
+/// thumbnail (or file-view) rect to the window, and a dim backdrop crossfades.
+/// Time is wall-clock so the ease stays even if a frame is late.
+#[derive(Debug, Clone, Copy)]
+struct FsAnim {
+    opening: bool,
+    from: Rect,
+    to: Rect,
+    start: std::time::Instant,
+    ticking: bool,
+}
+
+impl FsAnim {
+    pub const DUR: std::time::Duration = std::time::Duration::from_millis(220);
+
+    fn progress(&self, now: std::time::Instant) -> f64 {
+        let t = now.saturating_duration_since(self.start).as_secs_f64() / Self::DUR.as_secs_f64();
+        Slide::ease(t)
+    }
+
+    fn finished(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.start) >= Self::DUR
+    }
+
+    fn rect(&self, now: std::time::Instant) -> Rect {
+        lerp_rect(self.from, self.to, self.progress(now))
+    }
+
+    fn veil(&self, now: std::time::Instant) -> u8 {
+        let p = if self.opening { self.progress(now) } else { 1.0 - self.progress(now) };
+        (p * 200.0).round().clamp(0.0, 200.0) as u8
+    }
+
+    fn end(&self) -> std::time::Instant {
+        self.start + Self::DUR
+    }
+}
+
+fn lerp_i(a: i32, b: i32, t: f64) -> i32 {
+    (a as f64 + (b - a) as f64 * t).round() as i32
+}
+
+fn lerp_rect(a: Rect, b: Rect, t: f64) -> Rect {
+    Rect { x: lerp_i(a.x, b.x, t), y: lerp_i(a.y, b.y, t), w: lerp_i(a.w, b.w, t), h: lerp_i(a.h, b.h, t) }
+}
+
 pub struct CommanderMode {
     pub c: Commander,
     per_row: usize,
@@ -466,6 +521,14 @@ pub struct CommanderMode {
     /// The image or player fills the window (alt+e, the header button or a
     /// double-click; Esc leaves).
     pub fullscreen: bool,
+    /// Open/close transition; `None` when settled (or `reduce_motion`).
+    fs_anim: Option<FsAnim>,
+    /// Last fitted dest of the preview image (docked or fullscreen).
+    last_preview: Option<Rect>,
+    /// Docked dest captured when opening, so close can land on the thumbnail.
+    fs_thumb: Option<Rect>,
+    /// `appearance.reduce_motion` from the last [`Context`].
+    reduce_motion: bool,
     /// Last pointer move or key in fullscreen: the controls show for
     /// [`FS_CONTROLS`] after it.
     fs_active: std::time::Instant,
@@ -499,6 +562,9 @@ pub struct CommanderMode {
     pub clip: Vec<String>,
     /// Paths `copy` remembered for `paste`.
     yank: Vec<PathBuf>,
+    /// Tab-completion cycle for the focused prompt (ask / search / pipe).
+    complete: mouser_mode_api::complete::Engine,
+    complete_hint: String,
 }
 
 /// What the typed text is for.
@@ -763,6 +829,10 @@ impl CommanderMode {
             menu_open: false,
             range: None,
             fullscreen: false,
+            fs_anim: None,
+            last_preview: None,
+            fs_thumb: None,
+            reduce_motion: false,
             fs_active: std::time::Instant::now(),
             fs_click: None,
             fs_gen: Arc::new(AtomicU64::new(0)),
@@ -779,6 +849,8 @@ impl CommanderMode {
             ops: Vec::new(),
             clip: Vec::new(),
             yank: Vec::new(),
+            complete: mouser_mode_api::complete::Engine::new(),
+            complete_hint: String::new(),
         }
     }
 
@@ -916,22 +988,29 @@ impl CommanderMode {
     }
 
     /// Typed text while a name or destination is asked: Enter goes on to
-    /// the approval card, Esc cancels.
+    /// the approval card, Esc cancels. Tab completes paths or names.
     fn ask_key(&mut self, bytes: &[u8]) -> Effect {
-        let Some((ask, text)) = self.ask.as_mut() else { return Effect::None };
+        if bytes == b"\t" || bytes == b"\x1b[Z" {
+            self.complete_ask(bytes == b"\x1b[Z");
+            return Effect::None;
+        }
+        if bytes == b"\r" {
+            let (ask, text) = self.ask.take().unwrap_or((Ask::NewFolder(PathBuf::new()), String::new()));
+            self.complete.reset();
+            self.complete_hint.clear();
+            let t = text.trim();
+            let op = match ask {
+                Ask::CopyTo(from) if !t.is_empty() => crate::ops::Op::CopyTo { from, to: PathBuf::from(t) },
+                Ask::MoveTo(from) if !t.is_empty() => crate::ops::Op::MoveTo { from, to: PathBuf::from(t) },
+                Ask::Rename(p) if crate::ops::valid_name(t) => crate::ops::Op::Rename { to: p.with_file_name(t), from: p },
+                Ask::NewFolder(d) if crate::ops::valid_name(t) => crate::ops::Op::NewFolder(d.join(t)),
+                _ => return Effect::Say("not a valid name".into()),
+            };
+            self.ops.push(op);
+            return Effect::None;
+        }
+        let Some((_, text)) = self.ask.as_mut() else { return Effect::None };
         match bytes {
-            b"\r" => {
-                let (ask, text) = self.ask.take().unwrap_or((Ask::NewFolder(PathBuf::new()), String::new()));
-                let t = text.trim();
-                let op = match ask {
-                    Ask::CopyTo(from) if !t.is_empty() => crate::ops::Op::CopyTo { from, to: PathBuf::from(t) },
-                    Ask::MoveTo(from) if !t.is_empty() => crate::ops::Op::MoveTo { from, to: PathBuf::from(t) },
-                    Ask::Rename(p) if crate::ops::valid_name(t) => crate::ops::Op::Rename { to: p.with_file_name(t), from: p },
-                    Ask::NewFolder(d) if crate::ops::valid_name(t) => crate::ops::Op::NewFolder(d.join(t)),
-                    _ => return Effect::Say("not a valid name".into()),
-                };
-                self.ops.push(op);
-            }
             b"\x7f" | b"\x08" => {
                 text.pop();
             }
@@ -941,10 +1020,60 @@ impl CommanderMode {
                 {
                     text.push_str(t);
                 }
-                let _ = ask;
             }
         }
+        self.complete.reset();
+        self.complete_hint.clear();
         Effect::None
+    }
+
+    fn path_source(&self) -> CommanderSource<'_> {
+        CommanderSource { entries: &self.c.entries, cwd: self.c.cwd.as_deref(), remote: self.ssh.as_ref(), is_remote: self.c.remote.is_some() }
+    }
+
+    fn complete_ask(&mut self, reverse: bool) {
+        let Some((ask, text)) = self.ask.as_ref() else { return };
+        let text = text.clone();
+        let names_only = matches!(ask, Ask::Rename(_) | Ask::NewFolder(_));
+        let (stem, token, matches) = if names_only {
+            let names: Vec<String> = self.c.entries.iter().map(|e| e.name.clone()).collect();
+            mouser_mode_api::complete::value_matches(&text, &names)
+        } else {
+            let cwd = self.c.cwd.clone().unwrap_or_else(|| PathBuf::from("."));
+            mouser_mode_api::complete::path_matches(&text, &cwd, &self.path_source(), false)
+        };
+        let out = self.complete.tab(&text, &stem, &token, &matches, reverse);
+        if let Some((_, t)) = self.ask.as_mut() {
+            *t = out.text.clone();
+        }
+        self.complete_hint = out.list_hint(72);
+    }
+
+    fn complete_search(&mut self, reverse: bool) {
+        let names: Vec<String> = self.c.entries.iter().map(|e| e.name.clone()).collect();
+        let (stem, token, matches) = mouser_mode_api::complete::value_matches(&self.c.filter, &names);
+        let out = self.complete.tab(&self.c.filter, &stem, &token, &matches, reverse);
+        self.c.filter = out.text.clone();
+        self.c.selected = 0;
+        self.c.scroll = 0;
+        self.complete_hint = out.list_hint(72);
+    }
+
+    fn complete_pipe(&mut self, reverse: bool) {
+        let input = self.c.pipe_cmd.clone();
+        let cwd = self.c.cwd.clone().unwrap_or_else(|| PathBuf::from("."));
+        let (stem, token, matches) = match input.find(char::is_whitespace) {
+            None => (String::new(), input.clone(), mouser_mode_api::complete::executables(&input)),
+            Some(i) => {
+                let head = &input[..i];
+                let rest = input[i..].trim_start();
+                let (pstem, ptoken, matches) = mouser_mode_api::complete::path_matches(rest, &cwd, &self.path_source(), false);
+                (format!("{head} {pstem}"), ptoken, matches)
+            }
+        };
+        let out = self.complete.tab(&input, &stem, &token, &matches, reverse);
+        self.c.pipe_cmd = out.text.clone();
+        self.complete_hint = out.list_hint(72);
     }
 
     pub fn previews(&self) -> &Previews {
@@ -1488,7 +1617,7 @@ impl CommanderMode {
     /// progress and controls.
     fn player_view(&mut self, body: Rect, cw: i32, ch: i32, o: &mut Out) {
         let controls = self.player_keys.clone();
-        let (fullscreen, shown) = (self.fullscreen, self.fs_controls_shown());
+        let (fullscreen, shown) = (self.fullscreen, self.fs_anim.is_none() && self.fs_controls_shown());
         let Some(pl) = self.player.as_mut() else { return };
         pl.tick();
         let row_h = ch + 6;
@@ -1623,9 +1752,79 @@ impl CommanderMode {
     }
 
     fn toggle_fullscreen(&mut self) {
-        self.fullscreen = !self.fullscreen;
+        let now = std::time::Instant::now();
         self.zoom = None;
         self.fs_poke();
+        if self.reduce_motion {
+            self.fs_anim = None;
+            self.fullscreen = !self.fullscreen;
+            return;
+        }
+        if let Some(anim) = self.fs_anim.take() {
+            let cur = anim.rect(now);
+            self.fs_anim = Some(if anim.opening {
+                FsAnim { opening: false, from: cur, to: self.fs_thumb.unwrap_or(cur), start: now, ticking: false }
+            } else {
+                self.fullscreen = true;
+                FsAnim { opening: true, from: cur, to: cur, start: now, ticking: false }
+            });
+            return;
+        }
+        if !self.fullscreen {
+            self.fs_thumb = self.last_preview.filter(|r| r.w > 0 && r.h > 0);
+            let from = self.fs_thumb.unwrap_or(self.hits.image);
+            self.fullscreen = true;
+            if from.w > 0 && from.h > 0 {
+                self.fs_anim = Some(FsAnim { opening: true, from, to: from, start: now, ticking: false });
+            }
+        } else {
+            let from = self.last_preview.filter(|r| r.w > 0 && r.h > 0).unwrap_or(self.hits.image);
+            let to = self.fs_thumb.filter(|r| r.w > 0 && r.h > 0).unwrap_or(from);
+            if from.w > 0 && from.h > 0 {
+                self.fs_anim = Some(FsAnim { opening: false, from, to, start: now, ticking: false });
+            } else {
+                self.fullscreen = false;
+            }
+        }
+    }
+
+    /// Patch the flying picture, fade the veil, and keep redrawing until the
+    /// open/close transition ends.
+    fn apply_fs_anim(&mut self, images: &mut [(ModeImage, Rect)], frames: &mut [ModeImage], items: &mut Vec<PanelItem>, win: Rect) {
+        let Some(anim) = self.fs_anim.as_mut() else { return };
+        let now = std::time::Instant::now();
+        if anim.opening
+            && let Some(dest) = images.first().map(|(i, _)| i.rect).or_else(|| frames.first().map(|f| f.rect)).filter(|r| r.w > 0 && r.h > 0)
+        {
+            anim.to = dest;
+        }
+        let r = anim.rect(now);
+        let veil = anim.veil(now);
+        for (img, clip) in images.iter_mut() {
+            img.rect = r;
+            *clip = win;
+        }
+        for f in frames.iter_mut() {
+            f.rect = r;
+        }
+        items.insert(0, item(win, "", PanelStyle::Dim(veil), UiAction::None));
+        self.fs_keep_redrawing();
+    }
+
+    fn fs_keep_redrawing(&mut self) {
+        let Some(anim) = self.fs_anim.as_mut() else { return };
+        if anim.ticking {
+            return;
+        }
+        let Some(w) = self.waker.clone() else { return };
+        anim.ticking = true;
+        let until = anim.end();
+        let _ = std::thread::Builder::new().name("fs-anim".into()).spawn(move || {
+            while std::time::Instant::now() < until + std::time::Duration::from_millis(10) {
+                std::thread::sleep(std::time::Duration::from_millis(8));
+                w();
+            }
+        });
     }
 
     /// Pointer moved / key pressed in fullscreen: show the controls again.
@@ -1805,12 +2004,28 @@ impl Mode for CommanderMode {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Option<Effect> {
+        if bytes == b"\t" || bytes == b"\x1b[Z" {
+            let reverse = bytes == b"\x1b[Z";
+            if self.ask.is_some() {
+                return Some(self.ask_key(bytes));
+            }
+            if self.c.piping {
+                self.complete_pipe(reverse);
+                return Some(Effect::None);
+            }
+            if self.c.searching {
+                self.complete_search(reverse);
+                return Some(Effect::None);
+            }
+        }
         if self.ask.is_some() {
             if bytes == b"\x1b" {
                 self.ask = None;
+                self.complete.reset();
+                self.complete_hint.clear();
                 return Some(Effect::None);
             }
-            return (bytes.len() == 1 || bytes[0] != 0x1b).then(|| self.ask_key(bytes));
+            return (bytes == b"\x1b[Z" || bytes.len() == 1 || bytes[0] != 0x1b).then(|| self.ask_key(bytes));
         }
         if self.fullscreen && bytes != b"\x1b" {
             if let Some(id) = fs_key(bytes) {
@@ -1827,9 +2042,16 @@ impl Mode for CommanderMode {
             return None;
         }
         if let Some(e) = self.c.pipe_key(bytes) {
+            self.complete.reset();
+            self.complete_hint.clear();
             return Some(self.effect(e));
         }
-        self.c.search_key(bytes).then_some(Effect::None)
+        let took = self.c.search_key(bytes);
+        if took {
+            self.complete.reset();
+            self.complete_hint.clear();
+        }
+        took.then_some(Effect::None)
     }
 
     fn wants_text(&self) -> bool {
@@ -1843,9 +2065,16 @@ impl Mode for CommanderMode {
 
     fn escape(&mut self) -> bool {
         if self.ask.take().is_some() {
+            self.complete.reset();
+            self.complete_hint.clear();
             true
         } else if self.fullscreen {
-            self.fullscreen = false;
+            if self.fs_anim.as_ref().is_some_and(|a| !a.opening) {
+                self.fs_anim = None;
+                self.fullscreen = false;
+            } else {
+                self.toggle_fullscreen();
+            }
             true
         } else if self.menu_open {
             self.menu_open = false;
@@ -1981,6 +2210,7 @@ impl Mode for CommanderMode {
             "reverse" => self.c.flags.reverse = !self.c.flags.reverse,
             "sort" => self.c.flags.sort = [Sort::Name, Sort::Modified, Sort::Size][arg.clamp(0, 2) as usize],
             "close" => {
+                self.fs_anim = None;
                 self.fullscreen = false;
                 self.c.overlay = None
             }
@@ -2001,6 +2231,7 @@ impl Mode for CommanderMode {
             }
             // In the file view (and the player) back closes the view first.
             "parent" | "back" if previewing => {
+                self.fs_anim = None;
                 self.fullscreen = false;
                 self.c.overlay = None;
                 self.c.close_file();
@@ -2048,6 +2279,13 @@ impl Mode for CommanderMode {
     }
 
     fn view(&mut self, ctx: &Context, keys: &Keymap) -> View {
+        self.reduce_motion = ctx.reduce_motion;
+        if self.fs_anim.as_ref().is_some_and(|a| a.finished(std::time::Instant::now())) {
+            if self.fs_anim.as_ref().is_some_and(|a| !a.opening) {
+                self.fullscreen = false;
+            }
+            self.fs_anim = None;
+        }
         let vp = ctx.viewport;
         let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
         let a = ctx.area;
@@ -2206,11 +2444,20 @@ impl Mode for CommanderMode {
             keys.label("close")
         );
         if self.fullscreen && !file.as_deref().is_some_and(is_media) {
+            self.fs_anim = None;
             self.fullscreen = false;
         }
         let rect = if self.fullscreen { Rect { x: 0, y: 0, w: vp.width, h: vp.height } } else { rect };
         if let (true, Some(p)) = (self.fullscreen, &file) {
-            body = self.fullscreen_chrome(p, rect, cw, ch, keys, &mut o);
+            if self.fs_anim.is_none() {
+                body = self.fullscreen_chrome(p, rect, cw, ch, keys, &mut o);
+            } else {
+                o.items.clear();
+                o.menu = None;
+                self.menu_open = false;
+                self.hits.menu = Rect::default();
+                body = rect;
+            }
         }
         if let Some(p) = file {
             self.file_view(&p, body, cw, ch, &mut o);
@@ -2222,7 +2469,10 @@ impl Mode for CommanderMode {
                 o.items.push(item(fr, text.clone(), PanelStyle::Field { focused: true, valid: true }, UiAction::None));
                 o.items.push(item(
                     Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
-                    format!("{} · Enter asks to confirm · Esc cancels", ask.prompt()),
+                    {
+                        let extra = if self.complete_hint.is_empty() { "Tab completes".to_string() } else { self.complete_hint.clone() };
+                        format!("{} · {extra} · Enter asks to confirm · Esc cancels", ask.prompt())
+                    },
                     PanelStyle::Hint,
                     UiAction::None,
                 ));
@@ -2232,7 +2482,10 @@ impl Mode for CommanderMode {
                 o.items.push(item(fr, format!("| {}", self.c.pipe_cmd), PanelStyle::Field { focused: true, valid: true }, UiAction::None));
                 o.items.push(item(
                     Rect { x: fr.x + fr.w + cw, y: fr.y, w: (w - fr.w - cw).max(0), h: row_h },
-                    format!("pipe {n} path(s) · Enter runs · Esc cancels"),
+                    {
+                        let extra = if self.complete_hint.is_empty() { "Tab completes".to_string() } else { self.complete_hint.clone() };
+                        format!("pipe {n} path(s) · {extra} · Enter runs · Esc cancels")
+                    },
                     PanelStyle::Hint,
                     UiAction::None,
                 ));
@@ -2255,7 +2508,13 @@ impl Mode for CommanderMode {
                 // Feedback: what is filtered, how many match, and that typing goes here.
                 let n = self.c.visible().len();
                 let fb = match (self.c.searching, self.c.filter.is_empty()) {
-                    (true, true) => "searching · type to filter · Enter keeps · Esc cancels".to_string(),
+                    (true, true) => {
+                        if self.complete_hint.is_empty() {
+                            "searching · type to filter · Tab completes · Enter keeps · Esc cancels".to_string()
+                        } else {
+                            format!("{} · Enter keeps · Esc cancels", self.complete_hint)
+                        }
+                    }
                     (s, false) => {
                         let m = if n == 0 {
                             format!("no matches for \"{}\"", self.c.filter)
@@ -2338,6 +2597,7 @@ impl Mode for CommanderMode {
         let inner = if self.fullscreen { rect } else { Rect { x: rect.x + crate::host::RADIUS, w: rect.w - 2 * crate::host::RADIUS, ..rect } };
         let mut images: Vec<(ModeImage, Rect)> = images.into_iter().map(|(i, c)| (i, intersect(c, inner))).collect();
         let mut frames = o.frames;
+        self.apply_fs_anim(&mut images, &mut frames, &mut o.items, Rect { x: 0, y: 0, w: vp.width, h: vp.height });
         if let Some(m) = menu {
             images.retain(|(i, c)| !overlaps(intersect(i.rect, *c), m));
             frames.retain(|f| !overlaps(f.rect, m));
@@ -2345,12 +2605,15 @@ impl Mode for CommanderMode {
         let mut items = o.items;
         // Floating labels are drawn over the images; not over the ••• menu.
         items.extend(o.floats.into_iter().filter(|f| menu.is_none_or(|m| !overlaps(f.rect, m))));
-        View {
-            dock: Some(Panel { rect, items }),
-            panel,
-            images: images.into_iter().chain(frames.into_iter().map(|f| (f, inner))).filter_map(|(i, clip)| crop(i, clip)).collect(),
-            fullscreen: self.fullscreen,
+        let images: Vec<ModeImage> = images.into_iter().chain(frames.into_iter().map(|f| (f, inner))).filter_map(|(i, clip)| crop(i, clip)).collect();
+        if self.fs_anim.is_none() {
+            if let Some(i) = images.first() {
+                self.last_preview = Some(i.rect);
+            } else if matches!(self.c.overlay, Some(Overlay::Preview(_))) {
+                self.last_preview = None;
+            }
         }
+        View { dock: Some(Panel { rect, items }), panel, images, fullscreen: self.fullscreen }
     }
 }
 
@@ -2364,7 +2627,11 @@ impl CommanderMode {
     /// Escape sequences taken as text now ([`Mode::wants_key`]).
     pub fn taken_keys(&self) -> Vec<String> {
         const ALL: [&str; 8] = ["\x1b[D", "\x1bOD", "\x1b[C", "\x1bOC", "\x1b[A", "\x1bOA", "\x1b[B", "\x1bOB"];
-        ALL.iter().filter(|k| self.wants_key(k.as_bytes())).map(|k| k.to_string()).collect()
+        let mut v: Vec<String> = ALL.iter().filter(|k| self.wants_key(k.as_bytes())).map(|k| k.to_string()).collect();
+        if self.ask.is_some() || self.c.searching || self.c.piping {
+            v.push("\x1b[Z".into());
+        }
+        v
     }
 
     /// Show `dir` without touching the shell: list it here, or over the ssh
@@ -2484,6 +2751,38 @@ fn crop(mut i: ModeImage, clip: Rect) -> Option<ModeImage> {
     Some(i)
 }
 
+struct CommanderSource<'a> {
+    entries: &'a [Entry],
+    cwd: Option<&'a Path>,
+    remote: Option<&'a fetch::Remote>,
+    is_remote: bool,
+}
+
+impl mouser_mode_api::complete::PathSource for CommanderSource<'_> {
+    fn list(&self, dir: &Path) -> Vec<mouser_mode_api::complete::DirEnt> {
+        if !self.is_remote {
+            return mouser_mode_api::complete::FsSource.list(dir);
+        }
+        if self.cwd == Some(dir) {
+            return self.entries.iter().map(|e| mouser_mode_api::complete::DirEnt { name: e.name.clone(), is_dir: e.kind == Kind::Dir }).collect();
+        }
+        let Some(r) = self.remote else {
+            return Vec::new();
+        };
+        match r.run(&crate::remote::listing_command(dir)) {
+            Ok(out) => crate::remote::parse_ls(&String::from_utf8_lossy(&out), dir)
+                .into_iter()
+                .map(|e| mouser_mode_api::complete::DirEnt { name: e.name, is_dir: e.kind == Kind::Dir })
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        if self.is_remote { None } else { mouser_mode_api::complete::FsSource.home() }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2511,7 +2810,7 @@ pub(crate) mod tests {
 
     fn ctx() -> Context {
         let viewport = UiViewport { width: 1200, height: 900, cell_w: 9, cell_h: 18 };
-        Context { viewport, area: Rect { x: 0, y: 8, w: 1000, h: 892 } }
+        Context { viewport, area: Rect { x: 0, y: 8, w: 1000, h: 892 }, reduce_motion: true }
     }
 
     fn png(p: &Path) {
@@ -3144,7 +3443,11 @@ pub(crate) mod tests {
         assert_eq!(m.text(b"f"), None);
         assert_eq!(m.text(b"\x1b"), None, "Esc goes to escape()");
         // Resize: the rect follows the window.
-        let small = Context { viewport: UiViewport { width: 640, height: 480, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 8, w: 640, h: 472 } };
+        let small = Context {
+            viewport: UiViewport { width: 640, height: 480, cell_w: 9, cell_h: 18 },
+            area: Rect { x: 0, y: 8, w: 640, h: 472 },
+            reduce_motion: true,
+        };
         assert_eq!(m.view(&small, &k).dock.unwrap().rect, Rect { x: 0, y: 0, w: 640, h: 480 });
         // Esc leaves fullscreen, then closes the view.
         assert!(m.escape());
@@ -3164,6 +3467,100 @@ pub(crate) mod tests {
         m.action("fullscreen", 0);
         m.action("close", 0);
         assert!(!m.fullscreen);
+    }
+
+    fn near(a: Rect, b: Rect, px: i32) -> bool {
+        (a.x - b.x).abs() <= px && (a.y - b.y).abs() <= px && (a.w - b.w).abs() <= px && (a.h - b.h).abs() <= px
+    }
+
+    fn motion_ctx() -> Context {
+        let viewport = UiViewport { width: 1200, height: 900, cell_w: 9, cell_h: 18 };
+        Context { viewport, area: Rect { x: 0, y: 8, w: 1000, h: 892 }, reduce_motion: false }
+    }
+
+    #[test]
+    fn fs_anim_eases_in_out_over_220ms() {
+        let from = Rect { x: 10, y: 20, w: 100, h: 50 };
+        let to = Rect { x: 0, y: 0, w: 400, h: 200 };
+        let start = std::time::Instant::now();
+        let a = FsAnim { opening: true, from, to, start, ticking: false };
+        assert_eq!(a.rect(start), from);
+        assert_eq!(a.veil(start), 0);
+        let mid = start + std::time::Duration::from_millis(110);
+        assert_eq!(a.rect(mid), lerp_rect(from, to, 0.5), "cubic ease-in-out is 0.5 at the midpoint");
+        assert_eq!(a.veil(mid), 100);
+        let end = start + FsAnim::DUR;
+        assert_eq!(a.rect(end), to);
+        assert!(a.finished(end));
+        assert_eq!(a.veil(end), 200);
+        let close = FsAnim { opening: false, from: to, to: from, start, ticking: false };
+        assert_eq!(close.veil(start), 200);
+        assert_eq!(close.veil(end), 0);
+        assert_eq!(FsAnim::DUR, std::time::Duration::from_millis(220));
+    }
+
+    #[test]
+    fn fullscreen_eases_from_the_thumbnail_and_back() {
+        let t = tempfile::tempdir().unwrap();
+        image::RgbaImage::from_pixel(400, 300, image::Rgba([0, 255, 0, 255])).save(t.path().join("p.png")).unwrap();
+        let k = Keymap::new(cmdr::BINDINGS);
+        let mut m = CommanderMode::new();
+        m.cwd_changed(t.path());
+        m.c.overlay = Some(Overlay::Preview(t.path().join("p.png")));
+        let _ = wait_loaded(&mut m, 1);
+        let motion = motion_ctx();
+        let v = m.view(&motion, &k);
+        assert!(!v.fullscreen);
+        assert!(!v.images.is_empty(), "thumbnail-cache must keep the decoded preview");
+        let thumb = v.images[0].rect;
+        assert!(thumb.w > 0 && thumb.h > 0, "{thumb:?}");
+
+        assert_eq!(m.action("fullscreen", 0), Effect::None);
+        assert!(m.fullscreen && m.fs_anim.is_some_and(|a| a.opening));
+        let v = m.view(&motion, &k);
+        assert!(v.fullscreen);
+        assert!(
+            near(v.images[0].rect, thumb, 12),
+            "open starts at the thumbnail {:?}
+{:?}",
+            thumb,
+            v.images[0].rect
+        );
+        assert!(v.dock.as_ref().unwrap().items.iter().any(|i| matches!(i.style, PanelStyle::Dim(_))), "backdrop crossfade");
+        assert!(v.dock.as_ref().unwrap().items.iter().all(|i| !i.text.contains("exit fullscreen")), "chrome waits until the open finishes");
+
+        std::thread::sleep(FsAnim::DUR + std::time::Duration::from_millis(30));
+        let v = m.view(&motion, &k);
+        assert!(v.fullscreen && m.fs_anim.is_none());
+        let full = v.images[0].rect;
+        assert!(full.w > thumb.w && full.h > thumb.h, "settled fullscreen dest {full:?} vs {thumb:?}");
+        assert!((full.w as f64 / full.h as f64 - 4.0 / 3.0).abs() < 0.02, "{full:?}");
+        assert!(v.dock.as_ref().unwrap().items.iter().any(|i| i.text.starts_with("exit fullscreen")));
+
+        assert_eq!(m.action("fullscreen", 0), Effect::None);
+        assert!(m.fullscreen && m.fs_anim.is_some_and(|a| !a.opening), "close keeps fullscreen until it lands");
+        let v = m.view(&motion, &k);
+        assert!(
+            near(v.images[0].rect, full, 16),
+            "close starts at the fullscreen dest {:?}
+{:?}",
+            full,
+            v.images[0].rect
+        );
+        assert!(v.dock.as_ref().unwrap().items.iter().any(|i| matches!(i.style, PanelStyle::Dim(_))));
+
+        std::thread::sleep(FsAnim::DUR + std::time::Duration::from_millis(30));
+        let v = m.view(&motion, &k);
+        assert!(!m.fullscreen && m.fs_anim.is_none() && !v.fullscreen);
+        assert!(!v.images.is_empty(), "close must reuse the cached thumbnail, not flash a placeholder");
+        assert!(
+            near(v.images[0].rect, thumb, 12),
+            "close lands on the thumbnail {:?}
+{:?}",
+            thumb,
+            v.images[0].rect
+        );
+        assert!(v.dock.as_ref().unwrap().items.iter().all(|i| i.text != "image" && !i.text.contains("▶")));
     }
 
     #[test]
@@ -3233,7 +3630,11 @@ pub(crate) mod tests {
         let wide = m.view(&ctx(), &k).dock.unwrap();
         assert!(!wide.items.iter().any(|i| i.text == "•••"));
         assert_eq!(m.action("menu", 0), Effect::Pass, "no menu when everything fits");
-        let narrow = Context { viewport: UiViewport { width: 420, height: 600, cell_w: 9, cell_h: 18 }, area: Rect { x: 0, y: 8, w: 420, h: 592 } };
+        let narrow = Context {
+            viewport: UiViewport { width: 420, height: 600, cell_w: 9, cell_h: 18 },
+            area: Rect { x: 0, y: 8, w: 420, h: 592 },
+            reduce_motion: true,
+        };
         let d = m.view(&narrow, &k).dock.unwrap();
         let dots = d.items.iter().find(|i| i.text == "•••").expect("overflow button");
         assert!(dots.rect.x + dots.rect.w > 360, "upper right");
