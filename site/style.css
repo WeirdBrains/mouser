@@ -32,7 +32,7 @@ h3{font-size:1.05rem;margin:0 0 .4rem;color:var(--cyan)}
 .light .shot .media-frame{box-shadow:0 4px 24px rgba(4,25,42,.15)}
 .shot .media-frame img,.shot .media-frame video{
   display:block;width:100%;height:auto;max-width:100%;
-  object-fit:contain;background:#070D16;border:0;border-radius:var(--radius,8px);
+  object-fit:contain;background:transparent;border:0;border-radius:0;
   box-shadow:none;
 }
 .shot.beautiful h2{margin:0 0 .35rem;font-size:1.35rem}
@@ -128,7 +128,7 @@ a code,.doc a code{color:inherit}
 }
 .shot-card img{
   display:block;width:100%;height:auto;max-width:100%;
-  object-fit:contain;background:#070D16;border-radius:calc(var(--radius,8px) - 2px);
+  object-fit:contain;background:transparent;border-radius:0;
 }
 .shot-card figcaption{padding:.65rem .85rem;font-size:.9rem;color:#3f5b6e}
 .shot-card figcaption strong{color:inherit}
