@@ -109,3 +109,10 @@ pre code,.doc pre code{background:none;border:0;padding:0;border-radius:0;font-s
 a code,.doc a code{color:inherit}
 .doc h1 code,.doc h2 code{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);color:#e6fbff}
 .doc h3 code{background:#fff}
+
+/* Screenshots gallery */
+.shot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.25rem;margin:1.5rem 0 2rem}
+.shot-card{margin:0;background:var(--bg,#fff);border:1px solid var(--line);border-radius:var(--radius,8px);overflow:hidden;box-shadow:0 4px 24px rgba(4,25,42,.08)}
+.shot-card img{display:block;width:100%;height:auto;aspect-ratio:16/9;object-fit:cover;background:#04192A}
+.shot-card figcaption{padding:.65rem .85rem;font-size:.9rem;color:#3f5b6e}
+.shot-card figcaption strong{color:inherit}
