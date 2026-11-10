@@ -221,10 +221,11 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''# CLI
-      brew install --formula https://raw.githubusercontent.com/WeirdBrains/mouser/main/Formula/mouser.rb
+      .text('''brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser
+      # CLI
+      brew install weirdbrains/mouser/mouser
       # App
-      brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Casks/mouser.rb'''),
+      brew install --cask weirdbrains/mouser/mouser'''),
       ]),
       ]),
       ]),

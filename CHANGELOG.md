@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- Homebrew: the formula and cask carry real sha256s for both architectures (they were empty since the 1.4 releases, so `brew` refused them). `scripts/packaging.py` writes them from the release files, checked against each `.sha256`, and fails instead of writing an empty hash; CI checks the committed files and installs them on macOS. Install with `brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser` then `brew install weirdbrains/mouser/mouser` (or `--cask`). See docs/release.md.
+
 ## [1.5.0] - 2026-11-10
 
 ### Added
