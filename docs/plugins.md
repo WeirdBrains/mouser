@@ -149,8 +149,9 @@ keys = [{ id = "time", key = "t", describe = "show the time" }]
 ```
 
 A key is plain, live only while the mode has the keyboard (docs/modes.md §Focus): a
-letter, digit or punctuation key (not `:`), `alt+<key>`, `ctrl+alt+<letter>`, or `up`, `down`, `left`, `right`, `enter`, `pageup`, `pagedown`,
-`home`, `end`, `tab`, `space` or `backspace`. Without focus the mode gets no key at
+letter (case sensitive: `R` is Shift+R), digit or punctuation key (not `:`), `alt+<key>`, `ctrl+alt+<letter>`, or `up`, `down`, `left`, `right`, `enter`, `pageup`, `pagedown`,
+`home`, `end`, `tab`, `space`, `backspace` or `f1` (since Mouser 1.5). Every key with its
+`describe` text is listed in the host's Keyboard help (docs/modes.md §Keyboard help). Without focus the mode gets no key at
 all (the focus toggle, ctrl+alt+k, is the host's).
 
 It joins the mode switcher (`esc :h`; listed in `ctrl+shift+m`) after the official modes and

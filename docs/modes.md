@@ -83,8 +83,10 @@ Installed mode plugins (`kind = "mode"` over the command transport, with a
   search.
 - Full-screen programs (the alternate screen: vim, less, htop ...) get the whole
   window: the mode's view is hidden and no key is taken, Esc included.
-- `ctrl+shift+k`: the key mappings of the current mode. `ctrl+shift+m`: all modes
-  (click one to switch).
+- `ctrl+shift+k`: **Keyboard help**, every key of the current mode, Mouser's own
+  mode keys and the global keys, with what each does (`?` or F1 while commander
+  has the keyboard opens the same window). `ctrl+shift+m`: all modes (click one to
+  switch).
 - **Focus.** A mode never takes a key from the shell on its own. Without focus every
   key goes to the shell untouched; the mode binds one key only, the focus toggle
   **ctrl+alt+k**. The toggle, a click in the mode's view, or switching to the mode
@@ -111,7 +113,7 @@ Installed mode plugins (`kind = "mode"` over the command transport, with a
 key = "ctrl+alt+k"      # the toggle: alt+<key> or ctrl+alt+<letter>, never plain
 [commander.keys]
 switch_view = "t"       # a character, up / down / left / right / enter / tab / space /
-                        # backspace / pageup / pagedown / home / end, alt+<key>, ctrl+alt+<letter>
+                        # backspace / pageup / pagedown / home / end / f1, alt+<key>, ctrl+alt+<letter>
 ```
 
 Every key is rebindable. An unknown action or key is reported in the status bar and
@@ -138,6 +140,20 @@ these keys reach the shell's bindings: they only work while the mode has focus
 (ctrl+alt+k). While a search or text field is focused they are typed instead.
 One-character keys are case sensitive in `modes.toml` (`F` is Shift+F, `f` is f).
 
+### Keyboard help
+
+`?` (or F1) while a mode has the keyboard, or `ctrl+shift+k` from anywhere, opens
+**Keyboard help**: a window listing every key and what it does, in three groups:
+the current mode's keys (your `modes.toml` remaps included), Mouser's keys while a
+mode has focus (`F ] [ .`) and the global keys (F10, Alt+Esc, `esc :`, tabs,
+clipboard, font size, mouse). It is built from the live key tables each time it
+opens, so it can never disagree with what the keys do. ↑/↓, PgUp/PgDn and
+Home/End scroll it (`x–y of N` at the bottom when it does not fit); `?`, `q`, F1
+or Esc close it. While it is open other keys wait (F10 and Alt+Esc still work).
+A mode plugin gets it for free: its `[[mode.keys]]` are listed with their
+`describe` text (an action called `keys` or `help` that answers `show_keys` opens
+it, as commander does).
+
 ### Context menus
 
 Right-click in a mode's view (or press `.`) for a menu of **every action that
@@ -154,13 +170,13 @@ Commander's menus (keys are the defaults):
 
 | Where | Entries |
 | --- | --- |
-| a file | open (Enter), copy, copy to…, move to…, rename…, delete…, copy path, mark (Space), pipe (`\|`), back (`u`) |
+| a file | open (Enter), copy (`y`), copy to… (`c`), move to… (`M`), rename… (`r`), delete… (`d`), copy path (`Y`), mark (Space), pipe (`\|`), back (`u`) |
 | an image, video or audio file | the same, with play (Enter) and play / view fullscreen |
-| a folder | open (Enter), sync the shell here, the file entries, paste, back (`u`) |
-| the empty area | back, sync (`s`), new folder…, paste, sort by name / modified / size, reverse, switch view (`v`), larger / smaller tiles (`z` / `x`), dotfiles (`h`), search (`/`), mark all (`*`), first / last, options (`o`), manual (`m`) |
+| a folder | open (Enter), sync the shell here (`e`), the file entries, paste (`p`), back (`u`) |
+| the empty area | back, sync (`s`), new folder… (`n`), paste (`p`), sort by name / modified / size (`N` / `D` / `S`), reverse (`R`), list / grid / carousel (`L` / `G` / `C`), switch view (`v`), larger / smaller tiles (`z` / `x`), dotfiles (`h`), search (`/`), mark all (`*`), first / last, options (`o`), manual (`m`), keyboard help (`?`) |
 | image view, fullscreen or not | zoom in / out (`=` / `-`), fit (`0`), 100% (`1`), pan (arrows; ← / → step images when not zoomed), fullscreen / exit fullscreen (`f`), copy path, close (`q`) |
 | player, fullscreen or not | play / pause (`k`), back / forward 10 s (`j` / `l`), volume (`-` / `=`), fullscreen / exit fullscreen (`f`), copy path, close (`q`) |
-| text, Markdown, PDF or document view, the manual | scroll (↑ / ↓), page up / down, previous / next file (← / →), copy text, copy path, close (`q`) |
+| text, Markdown, PDF or document view, the manual | scroll (↑ / ↓), page up / down, previous / next file (← / →), copy text (`T`), copy path (`Y`), close (`q`) |
 
 File changes never happen straight away: copy to, move to, rename and new folder
 first ask for the destination or name in commander's prompt line. Tab completes
@@ -172,8 +188,11 @@ Mouser's approval card, which lists what will change. Nothing is ever
 overwritten: a target that exists stops the change. Delete is permanent (folders
 with everything in them); the card says so. `copy` remembers the items for
 `paste` in another folder; `copy path` and `copy text` put text on the
-clipboard. File changes are local only (greyed out in a remote folder), and the
-commander plugin declares `files.write` for them. The text view has no zoom of
+clipboard. In an SSH session the changes run **on the remote host** (the card
+says `on user@host`), over the session's own ssh connection, with the same rules
+(nothing overwritten, a folder never moved into itself); paste between this
+machine and a remote one is refused. The commander plugin declares `files.write`
+for them. The text view has no zoom of
 its own (use Mouser's font size, ctrl+= / ctrl+-).
 
 ### Commander
@@ -192,6 +211,8 @@ remappable):
 | key | list | grid | carousel |
 | --- | --- | --- | --- |
 | v | switch view: list → grid → carousel | | |
+| L / G / C | list / grid / carousel view | same | same |
+| ? or F1 | keyboard help: every key and what it does ([above](#keyboard-help)) | same | same |
 | ↑ / ↓ | previous / next row | row above / below (follows the wrap) | previous / next item |
 | ← / → | previous / next item | previous / next tile | previous / next item |
 | PgUp / PgDn | a screen of rows | a screen of tiles | 5 items |
@@ -209,6 +230,17 @@ remappable):
 | i | the header's `•••` menu when narrow | same | same |
 | ctrl+alt+k or Esc | give the keyboard back to the shell | same | same |
 | s | sync: move the shell to commander's folder (silently; see below) | same | same |
+| e | sync the shell to the selected folder | same | same |
+| O | open the selected image or video fullscreen | same | same |
+| y / p | copy the marked (or selected) items / paste them here (approval card) | same | same |
+| c / M | copy to… / move to… (asks for the folder) | same | same |
+| r / d / n | rename… / delete… / new folder… (approval card) | same | same |
+| Y / T | copy the path / the text of the file view to the clipboard | same | same |
+| N / D / S / R | sort by name / modified / size, reverse | same | same |
+
+Every entry of commander's menus has a key (a test fails if one does not), and the
+keyboard help lists them all. Upper-case letters are Shift+letter, so they never
+clash with the plain keys.
 
 Back works like `popd`, inside commander (it never runs `pushd`/`popd`). Entering a
 folder or opening a file pushes where you were onto a navigation stack: the path as
@@ -363,22 +395,35 @@ plus the selection's neighbours, so the incoming item loads during the slide.
 
 - Remote when the terminal's foreground process is `ssh` (typed, or the sidebar's
   launcher), or when an OSC 7 `file://host/path` names a host other than this one while
-  the local shell is not in the foreground. Folder: the remote shell's OSC 7 (the
-  remote shell must send it, e.g. `PROMPT_COMMAND='printf "\033]7;file://%s%s\007"
-  "$HOSTNAME" "$PWD"'`).
+  the local shell is not in the foreground.
+- Folder: nothing has to be set up on the host. An ssh started in a Mouser tab goes
+  through Mouser's ssh shim ([ssh.md](ssh.md)), which reports the remote login shell's
+  folder (OSC 7) and its process id (`OSC 1337;MouserRemoteShell=<pid>`) as the session
+  starts. Commander then follows that shell: each listing asks the host for the shell's
+  current folder (`/proc/<pid>/cwd`, else `lsof`), so a `cd` on the remote side moves
+  commander too (checked every 2 s). Where that can't be read it uses the last OSC 7
+  (a remote shell that sends its own, e.g. with `mouser shell-integration` installed
+  there), else the remote home folder.
 - Listing: `ls -la` on the host through a side channel: `ssh` with the running
   command's own connection options (`-p -l -i -F -J -o -4 -6`; `-F $MOUSER_SSH_CONFIG`
   if the command has none), `BatchMode=yes` (never prompts), multiplexed with
   `ControlMaster=auto`, `ControlPath=$MOUSER_HOME/cache/ssh/%C`, `ControlPersist=120`.
-  Fetched on a thread, refreshed every 5 s while shown.
+  The ssh shim makes your interactive session that connection's master, so the side
+  channel rides on the login you already did: password, one-time-code and
+  passphrase-key hosts work without a second prompt. Fetched on a thread, refreshed
+  every 2 s (5 s without a shell to follow) while shown.
+- File changes (copy, paste, move, rename, delete, new folder) run on the host over the
+  same channel, after the approval card ([above](#context-menus)).
 - Header: `user@host:/path` (clickable segments, back works); `cd`, back and pipe are
   typed into the PTY, so they run remotely.
 - Previews are not fetched: tiles show their kind with a `· remote` badge. Opening a
   remote file (viewer or player) is not supported: a notice says so (pipe it into a
   command instead).
-- No OSC 7 yet: `remote (host): no directory info ...` with a hint; no side channel
-  (mosh, a nested ssh): `remote: no ssh side channel ...`; the side channel failing
-  (password-only host): ssh's error and a hint. Local files are never shown for a
+- No folder at all (an ssh started outside Mouser's shim, before any OSC 7):
+  `remote (host): no directory info ...` with a hint; no side channel (mosh, a nested
+  ssh): `remote: no ssh side channel ...`; the side channel failing (a session that does
+  not share its connection, `MOUSER_SSH_SHARE=no` or your own ControlMaster settings,
+  on a password-only host): ssh's error and a hint. Local files are never shown for a
   remote shell. After `exit` the local shell is back and so is its folder.
 
 #### Image zoom, player controls, header menu

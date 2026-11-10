@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Added
+
+- Commander keyboard help: `?` or F1 (or `ctrl+shift+k` from anywhere) opens **Keyboard help**, every key of the mode, Mouser's mode keys and the global keys with what they do, built from the live key tables (remaps included); it scrolls and closes with `?`, `q` or Esc. See docs/modes.md §Keyboard help.
+- Commander has a key for every option: `L` / `G` / `C` list / grid / carousel, `O` open fullscreen, `e` sync to the selected folder, `y` / `p` copy / paste, `c` / `M` copy to / move to, `r` rename, `d` delete, `n` new folder, `Y` / `T` copy path / text, `N` / `D` / `S` sort by name / modified / size, `R` reverse. Mode plugins may bind Shift+letter and F1.
+- Commander file changes (copy, paste, move, rename, delete, new folder) work in SSH sessions: they run on the remote host after the approval card.
+
 ### Fixed
 
 - Commander in an SSH session lists the remote host without any setup there: the ssh shim reports the remote shell's folder and pid, and commander follows its `cd`s. The session's login is shared with commander (the interactive ssh is the ControlMaster), so password, one-time-code and passphrase-key hosts work too. `MOUSER_SSH_SHARE=no` turns the sharing off. See docs/ssh.md.

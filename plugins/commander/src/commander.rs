@@ -422,6 +422,29 @@ pub const BINDINGS: &[crate::modes::Binding] = &[
         "image / player: fullscreen, the whole window; eases from the thumbnail (Esc or the same key leaves; appearance.reduce_motion skips the motion)",
     ),
     b("menu", "i", "header overflow menu (\u{2022}\u{2022}\u{2022}) when the window is narrow"),
+    // Views: each one directly (v cycles them).
+    b("view_list", "L", "list view"),
+    b("view_grid", "G", "grid view"),
+    b("view_carousel", "C", "carousel view"),
+    // Every other option (the context menu's too) has a key.
+    b("open_fullscreen", "O", "open: play / view fullscreen"),
+    b("sync_item", "e", "sync the shell into the selected folder"),
+    b("copy", "y", "copy the marked (or selected) items, to paste in another folder"),
+    b("paste", "p", "paste the copied items here (into the selected folder when on one)"),
+    b("copy_to", "c", "copy to\u{2026} (asks where; Tab completes)"),
+    b("move_to", "M", "move to\u{2026} (asks where; Tab completes)"),
+    b("rename", "r", "rename\u{2026} (Tab completes)"),
+    b("delete", "d", "delete\u{2026} (asks first)"),
+    b("new_folder", "n", "new folder\u{2026} (Tab completes)"),
+    b("copy_path", "Y", "copy the path to the clipboard"),
+    b("copy_text", "T", "text view: copy the text"),
+    b("sort_name", "N", "sort by name"),
+    b("sort_modified", "D", "sort by modified (date)"),
+    b("sort_size", "S", "sort by size"),
+    b("reverse", "R", "reverse the order"),
+    // Keyboard help: every key and what it does (this table, live).
+    b("keys", "?", "keyboard help: all keys and what they do"),
+    b("help", "f1", "keyboard help (same as ?)"),
 ];
 
 const fn b(id: &'static str, key: &'static str, describe: &'static str) -> crate::modes::Binding {
@@ -940,7 +963,8 @@ pub fn manual(k: &crate::modes::Keymap) -> Vec<String> {
     }
     v.extend([
         String::new(),
-        "  ctrl+shift+k  key mappings     ctrl+shift+m  modes".into(),
+        "  ? or F1      keyboard help: every key, live from this table".into(),
+        "  ctrl+shift+k the same window from anywhere     ctrl+shift+m  modes".into(),
         String::new(),
         "REMAPPING".into(),
         format!("  {}:", crate::modes::modes_path().display()),
@@ -1118,6 +1142,27 @@ mod tests {
                     | "menu"
                     | "fullscreen"
                     | "sync"
+                    // The view's own (menu actions, one key per view / sort, help).
+                    | "view_list"
+                    | "view_grid"
+                    | "view_carousel"
+                    | "open_fullscreen"
+                    | "sync_item"
+                    | "copy"
+                    | "paste"
+                    | "copy_to"
+                    | "move_to"
+                    | "rename"
+                    | "delete"
+                    | "new_folder"
+                    | "copy_path"
+                    | "copy_text"
+                    | "sort_name"
+                    | "sort_modified"
+                    | "sort_size"
+                    | "reverse"
+                    | "keys"
+                    | "help"
             )
         }) {
             assert!(Action::from_id(b.id).is_some(), "{}", b.id);
