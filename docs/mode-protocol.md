@@ -284,6 +284,10 @@ Measured with the test plugin (`mouser-mode-echo`), 1080p RGBA at 60 fps for
 | macOS (Apple silicon), shared memory | 0 of 600 | 0.8 / 1.6 ms | 0.9 ms |
 | macOS (Apple silicon), inline | 0 of 600 | 3.5 / 4.7 ms | 0.5 ms |
 
+Commander's and chat's players come from the `mouser-media` crate, which
+follows these rules (two slots, skip rather than queue); see
+[Building a mode §Views and media](./building-modes.md#views-and-media).
+
 A key press takes 8 µs (Linux), 26 µs (Windows) or 5 µs (macOS) to reach the
 plugin and come back. Run the benchmark with
 `cargo test -p mouser-mode-api --release -- --ignored`.

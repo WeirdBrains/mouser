@@ -467,3 +467,23 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - the skia row is listed even when not in the order (as before);
   - questions 15–16 (engine alias kept; skia stays in the package);
   - the full test suite's deliberate engine-crash tests leave SIGABRT core dumps of the debug binary, and the desktop shows a "Process crashed: mouser-app" notice.
+
+### P7: views and media crates (docs/building-modes.md §Views and media)
+
+- `crates/mouser-views`: `Layout` (commander's `View` is a re-export),
+  `grid::Grid` + `Tiles`, `carousel::Strip`, `anim::{ease, lerp_rect, Slide}`,
+  `zoom`, `scroll::scrollbar`, `geom` (incl. `crop`), `text`.
+- `crates/mouser-media`: player, audio, process, still, detect, `anim::FsAnim`
+  and `view::MediaView` (moved from the chat plugin). `set_home` lets a mode
+  point the player's `[audio]` lookup at its own home (commander passes
+  `storage::resolve_home`).
+- Commander's own `audio.rs`, `player.rs`, `process.rs`, `Slide`, `FsAnim`,
+  zoom/geometry/label helpers are gone; grid and carousel geometry come from
+  mouser-views. No wire change: mode-api stays 0.3.0.
+- Both crates are `publish = false` and used by path; the standalone
+  commander needs them published (or as git dependencies) with mode-api 0.3.
+- `exec.rs` (chat `terminal_run`): Unix process group, Windows Job Object
+  with kill-on-close; neither is a sandbox (`setsid` / job breakaway escape).
+  The Windows test (`exec::windows_tests`) compiles for
+  x86_64-pc-windows-gnu (clippy clean); it runs in the Windows CI job, not
+  on the Linux box it was written on.

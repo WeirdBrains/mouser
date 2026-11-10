@@ -170,6 +170,46 @@ Declare every permission in `plugin.toml` and grant it before the call works:
 Mouser's popups name your plugin, take every key while open, and ignore
 clicks for the first 400 ms so nothing in the tab can answer them for you.
 
+## Views and media
+
+Two crates in Mouser's repository give a mode the views and media commander
+and chat are built on. Both only build panel items and pixels for the
+protocol above: nothing extra goes over the wire, and nothing in them talks to
+Mouser by itself.
+
+```toml
+mouser-views = { git = "https://github.com/WeirdBrains/mouser" }
+mouser-media = { git = "https://github.com/WeirdBrains/mouser" }
+```
+
+**mouser-views** lays out your items: `Layout` (list, grid or carousel, with
+`next()` and the names commander uses), `grid::Grid` (tiles in rows that
+scroll to the selection), `carousel::Strip` (the selection centred, neighbours
+cut off at the edges) with `anim::Slide` easing between positions, `zoom`
+(fit to width, contain, zoom about the pointer), `scroll::scrollbar` and the
+labels in `text` (`clip_text`, `range_label`, `path_segments`).
+
+**mouser-media** plays pictures, video and sound: `detect::find` finds media
+named in text (Markdown images and links, bare paths), `player::Player` plays
+video and audio with ffmpeg and cpal (output from `[audio]` in
+preferences.toml), `still::Stills` decodes pictures off the UI thread, and
+`anim::FsAnim` is the 220 ms ease-in-out flight to fullscreen and back.
+`view::MediaView` puts these together: `inline(...)` draws a player under a
+message, `fullscreen(...)` draws the open one over your space, and you pass
+it the `media_*` actions from `ui.action` (`action`) and keys while it is
+open (`key`). Send its pictures as images (shared memory when the ring is
+there) and free a slot only after `frame.presented`.
+
+A player draws from its own thread, so give it a `Waker` that makes your mode
+draw again: emit an event of your own to yourself (chat emits `chat.tick`, at
+most once per 8 ms; Mouser allows 200 emits a second) and redraw when it
+arrives. Call `mouser_media::set_home` if your mode keeps its own idea of
+Mouser's home (tests), so the player reads `[audio]` from the same place.
+
+Reading a picture or clip from disk needs `files.read` in `plugin.toml`; ffmpeg
+and ffprobe are found on `PATH`, and without them video shows a hint instead
+of playing.
+
 ## Context menus and MCP
 
 Answer `menu.open` with the actions that apply to the item under the pointer

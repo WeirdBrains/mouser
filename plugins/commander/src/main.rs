@@ -13,20 +13,20 @@
 // only the host used are unused here until the built-in mode goes.
 #![allow(dead_code)]
 
-mod audio;
 mod commander;
 mod fetch;
 mod host;
 mod menu;
 mod modes;
 mod ops;
-mod player;
-mod process;
 mod remote;
 mod storage;
 mod view;
 
+// The player, audio output and ffmpeg processes are mouser-media's (shared
+// with chat).
 use host::{Effect, Mode as _};
+use mouser_media::{player, process};
 use mouser_mode_api::events::{Event, Listener};
 use mouser_mode_api::protocol::{Accepted, ApiRange, BindingDecl, Handled, Hello, ImageFormat, ImageRef, Pixels, Provide, Wants};
 use mouser_mode_api::{Context, Host, serve};

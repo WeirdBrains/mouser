@@ -6,19 +6,8 @@
 use mouser_mode_api::ui::Rect;
 use std::time::{Duration, Instant};
 
-/// Ease-in-out (cubic): slow start, fast middle, slow stop.
-pub fn ease(t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
-}
-
-fn lerp_i(a: i32, b: i32, t: f64) -> i32 {
-    (a as f64 + (b - a) as f64 * t).round() as i32
-}
-
-pub fn lerp_rect(a: Rect, b: Rect, t: f64) -> Rect {
-    Rect { x: lerp_i(a.x, b.x, t), y: lerp_i(a.y, b.y, t), w: lerp_i(a.w, b.w, t), h: lerp_i(a.h, b.h, t) }
-}
+/// The ease and interpolation are mouser-views' (the carousel slide uses them too).
+pub use mouser_views::anim::{ease, lerp_rect};
 
 /// One open or close of a fullscreen picture or player.
 #[derive(Debug, Clone, Copy)]

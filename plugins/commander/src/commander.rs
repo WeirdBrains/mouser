@@ -326,30 +326,8 @@ fn local_parts(secs: i64) -> (usize, u32, u32, u32) {
     (u8::from(dt.month()) as usize - 1, dt.day() as u32, dt.hour() as u32, dt.minute() as u32)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum View {
-    #[default]
-    List,
-    Grid,
-    Carousel,
-}
-
-impl View {
-    pub fn next(self) -> Self {
-        match self {
-            View::List => View::Grid,
-            View::Grid => View::Carousel,
-            View::Carousel => View::List,
-        }
-    }
-    pub fn name(self) -> &'static str {
-        match self {
-            View::List => "list",
-            View::Grid => "grid",
-            View::Carousel => "carousel",
-        }
-    }
-}
+/// List / grid / carousel (mouser-views, shared with other modes).
+pub use mouser_views::Layout as View;
 
 /// Grid tile sizes (larger tiles: fewer per row).
 pub const TILE_SIZES: [i32; 4] = [96, 128, 176, 240];
