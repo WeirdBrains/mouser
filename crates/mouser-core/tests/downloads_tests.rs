@@ -390,6 +390,67 @@ fn github_releases_engines_and_the_official_lock_with_its_offline_bundle() {
     assert!(m.jobs().iter().any(|j| matches!(&j.state, State::Failed(e) if e.contains("sha256"))), "{:?}", m.jobs());
 }
 
+/// A lock naming `greeter` at `version` (signed by `key`, served by `s`).
+fn greeter_lock(h: &Path, s: &Server, key: &Signer, version: &str, perms: &[&str]) {
+    let t = mine();
+    let c = plugin_tgz("greeter", version, perms);
+    let path = format!("/o/greeter-{version}.tar.gz");
+    s.put(&path, c.clone());
+    let lock = format!(
+        "[[item]]\nname = \"greeter\"\nkind = \"plugin\"\nversion = \"{version}\"\n[item.assets.{t}]\nurl = \"{}\"\nsha256 = \"{}\"\nsize = {}\nminisig = '''{}'''\n",
+        s.url("localhost", &path),
+        sha(&c),
+        c.len(),
+        key.sign(&c)
+    );
+    std::fs::write(h.join("lock.toml"), lock).unwrap();
+}
+
+#[test]
+#[serial]
+fn a_newer_mouser_brings_its_official_plugins_up_to_the_pin() {
+    let h = home();
+    let s = Server::start();
+    let official = Signer::new();
+    unsafe {
+        std::env::set_var("MOUSER_TEST_LOCK", h.path().join("lock.toml"));
+        std::env::set_var("MOUSER_TEST_OFFICIAL_KEY", official.public());
+    }
+    let current = || install::current(Kind::Plugin, "greeter");
+    // Mouser 1: greeter 0.1.9 on first run.
+    greeter_lock(h.path(), &s, &official, "0.1.9", &["agent.use"]);
+    let m = Manager::new(false);
+    let asked = Arc::new(AtomicUsize::new(0));
+    let a = asked.clone();
+    m.set_asker(Arc::new(move |_| {
+        a.fetch_add(1, Ordering::SeqCst);
+        true
+    }));
+    assert_eq!(m.first_run(), 1);
+    m.wait();
+    assert_eq!(current().as_deref(), Some("0.1.9"));
+    assert!(install::outdated_official().is_empty(), "at the pin");
+    // Mouser 2 pins 0.1.10 (numerically newer), which also asks for files.read.
+    greeter_lock(h.path(), &s, &official, "0.1.10", &["agent.use", "files.read"]);
+    assert_eq!(install::outdated_official().len(), 1);
+    assert_eq!(m.first_run(), 1, "queued as an update");
+    m.wait();
+    assert_eq!(current().as_deref(), Some("0.1.10"), "{:?}", m.jobs());
+    assert_eq!(asked.load(Ordering::SeqCst), 1, "an added permission still asks");
+    assert_eq!(m.first_run(), 0);
+    // Rolled back from the pin by hand: left alone.
+    install::rollback(Kind::Plugin, "greeter").unwrap();
+    assert_eq!(current().as_deref(), Some("0.1.9"));
+    assert!(install::outdated_official().is_empty(), "a rollback is the user's choice");
+    // Installed from somewhere else (not the lock): never replaced.
+    let rec = install::record(Kind::Plugin, "greeter").unwrap();
+    let path = h.path().join("plugins/greeter/source.toml");
+    let text = std::fs::read_to_string(&path).unwrap().replace(&format!("src = {:?}", rec.src), "src = \"gh:someone/greeter\"");
+    std::fs::write(&path, text).unwrap();
+    greeter_lock(h.path(), &s, &official, "0.2.0", &["agent.use", "files.read"]);
+    assert!(install::outdated_official().is_empty(), "gh: installs keep their source");
+}
+
 #[test]
 #[serial]
 fn a_slow_server_and_failures_in_parallel_stay_within_the_caps_and_apart() {

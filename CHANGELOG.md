@@ -9,6 +9,7 @@
 - Chat looks like a terminal agent: rounded frame and bubbles, fullscreen in its pane, and it can run commands (`terminal_run`) after an approval card with Allow / Allow all / Deny; Allow all lasts for the conversation and `/revoke` or `/new` ends it. Commands run in their own process group, time out, and anything they leave running is stopped. See docs/chat.md.
 - Chat plays images, video and audio from messages and tool output inline, each with fullscreen (new `mouser-media` crate). mouser-mode-api 0.3: frame and bubble panel styles, Hugging Face and `agent.revoke_all` services.
 - Views and media for any mode plugin: `mouser-views` (list / grid / carousel layout, carousel slide, image zoom, scrollbars, labels) and `mouser-media` (player, inline players with fullscreen). Commander now runs on both instead of its own copies. See docs/building-modes.md §Views and media.
+- Updating Mouser updates the official plugins it pins: on start, official items installed at an older version than `plugins.lock` are updated (a new permission still asks; `gh:` installs and rollbacks are left alone). This release pins chat 0.1.3 and commander 0.1.5 (mouser-mode-api 0.3). See docs/downloads.md.
 
 ### Fixed
 
