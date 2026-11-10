@@ -7,83 +7,83 @@
 [[item]]
 name = "commander"
 kind = "plugin"
-version = "0.1.4"
+version = "0.1.5"
 [item.assets.aarch64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.4/mouser-commander-0.1.4-aarch64-apple-darwin.tar.gz"
-sha256 = "e50464ffc20ed73683a3fe39eb7ece2b1128b8c249c5e856bb9580129da55189"
-size = 1779364
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.5/mouser-commander-0.1.5-aarch64-apple-darwin.tar.gz"
+sha256 = "d70d2ad64fc12a733994ccaeadc2a767ca4cca47533dd956bd2b3151408a3565"
+size = 1825968
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YbM2yTQA9ExLdh6OnwRUj1maTzrFv0Ei8omMbG+6JZjgHK7xymqQoqwpun+au9wZE7WUuiXRYwriLVRke3UeDAQ=
-trusted comment: mouser-commander-0.1.4-aarch64-apple-darwin.tar.gz mouser-commander v0.1.4
-6prqUe6VE10otBi7yiimF5yuOiErkww7J3InUyclonQTn8oFJmaqdpsTbIilKHBcAhQoazoUGBreYMd+/w+gCw==
+RURGkX90IBe6YaDrLPw0s0r4QkEoWjq7+6j1on+/dqyhuuuNHEYLE/N8ltm5Y47fE3IPLFLM60SleCY+iZJrYLFq5SRts+wVbQc=
+trusted comment: mouser-commander-0.1.5-aarch64-apple-darwin.tar.gz mouser-commander v0.1.5
+48vhRkLAmiZLwSX07dB3gYPo2/IFCiEQvk2YnvG5P2FXOcmpIkI0yrftohRaxCoKs0t7bcIqQKmpbIaakwwbAA==
 '''
 [item.assets.x86_64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.4/mouser-commander-0.1.4-x86_64-apple-darwin.tar.gz"
-sha256 = "9a2526651c87908983cd576940882b29b33e00bbd7f4b4e84a5d94143d0dbad4"
-size = 1819859
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.5/mouser-commander-0.1.5-x86_64-apple-darwin.tar.gz"
+sha256 = "724f899777d7395fcc476e4926c36d993923ca772fab270e48b492d493fd95f8"
+size = 1863434
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YRjpcm9usBkJ4fp3B1T6llC8lFY6B9TpZlemjQ0/F68tGJw2yneQPcGP7waUc3RThRg1A7hMAYD8mzKGLo1YrA8=
-trusted comment: mouser-commander-0.1.4-x86_64-apple-darwin.tar.gz mouser-commander v0.1.4
-CavjCOJyHrZcbZOtyOIEUhCYHWMExjV+s5CKjryGKxPECsbnRXd8s+0sqgOPSGlP5YhOLTVWhE1b1saXtPa7AA==
+RURGkX90IBe6YZ1nGw+WY6433+m36onJYP0nQgEpFQkzq8VO5NpzBlmsYQmciXhKEzgH3nseZ+/nmT4EIzhVn3i0UMhJ9Olpiww=
+trusted comment: mouser-commander-0.1.5-x86_64-apple-darwin.tar.gz mouser-commander v0.1.5
+Z9XKX67B02zZvhcLGToK7lU/CBIOA3jJP+Sskex68scBPVZZrsMcb0cbB5TOpMADw37UIjfQ1blsGyKaFQgRCA==
 '''
 [item.assets.x86_64-pc-windows-msvc]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.4/mouser-commander-0.1.4-x86_64-pc-windows-msvc.tar.gz"
-sha256 = "cc9f5fe5fc47c80db8d17b1e85f950a8ff0b4b6a1dcacce2b09dafd3e4095beb"
-size = 1655481
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.5/mouser-commander-0.1.5-x86_64-pc-windows-msvc.tar.gz"
+sha256 = "338146aac23beb5518d6904502cc8652141b82d0259300244c06444130d4bb87"
+size = 1698966
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YVUxL2tfnO/6W6K2WpYuUG1Mrimy5UFqCPP+27erZLIw54yP3kD+0ptqiO9cM20rmhMP2bHvrwFD3j2PjNJAQA8=
-trusted comment: mouser-commander-0.1.4-x86_64-pc-windows-msvc.tar.gz mouser-commander v0.1.4
-ANi84SmDKW9fxB5J9uV2Kr+ZXrqsNgpPFEzC9ZPMVC2OityuvM5dEoZ6sJ50gNxpBrWcSsi8BXxbrBnQQjsrDQ==
+RURGkX90IBe6YXIS/DHT/EBvC7LZY14HaTiTfWxOdHLSMWZ15cjwkR/NrzCwdvikP7NepzxXbzCDpQmQa03Zj4/OwqeX+ZPS9A0=
+trusted comment: mouser-commander-0.1.5-x86_64-pc-windows-msvc.tar.gz mouser-commander v0.1.5
+i93pp2VsawmEEv5msI0LB6vIpryLu3SHi95Yoq6XwZ1uDy6IZcEn1Q2EHcBPk3JHpQ711oZiT5m8e/Rx6UqeCw==
 '''
 [item.assets.x86_64-unknown-linux-gnu]
-url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.4/mouser-commander-0.1.4-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "3b00b7b443d85a09089118ccba1db33409091f4d7a8479fc8b0f52deac7c3092"
-size = 2031082
+url = "https://github.com/WeirdBrains/mouser-commander/releases/download/v0.1.5/mouser-commander-0.1.5-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "2f57cc8453d50fd356cf99e10365ff958de7bfe9339e74b85470dcb09ddbdf0a"
+size = 2092298
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YRWcFJ6IoWDY2VvVXTFilFrVdIUhgusCqYFSR8ZHCqRY9KhyumjwJugAPY3LweGQTfc2IBwMoHddVz9Fz0KYRgk=
-trusted comment: mouser-commander-0.1.4-x86_64-unknown-linux-gnu.tar.gz mouser-commander v0.1.4
-0kWDdKbTMu+A5Xi9gO3kgsNRMW9RbMdJ4AczGLWGBi26JDftWyyAmgi1kd0TD6Q4refR5XrejAhyaFE+MzZQAA==
+RURGkX90IBe6YYBV23hF+hSeN4kj/NBouwuXMGaCjQAGTGTUGkNacowdhd4RaZlO+0spxcoqWgJEaJwR/3jykhB7+6n3r6IWXAU=
+trusted comment: mouser-commander-0.1.5-x86_64-unknown-linux-gnu.tar.gz mouser-commander v0.1.5
+pCmRGr68OkfbRJXUDMTDytdRZN9ayNs2Ls8BfyKOkM1wcs3RI/TZXAws6baqODifTXJDfrOF85PLBGjBOskZDQ==
 '''
 
 [[item]]
 name = "chat"
 kind = "plugin"
-version = "0.1.2"
+version = "0.1.3"
 [item.assets.aarch64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.2/mouser-chat-0.1.2-aarch64-apple-darwin.tar.gz"
-sha256 = "cb74aef7e88e9f25a49db85d417150c2deb8229b3e0cd213fe22bb52ec057a65"
-size = 669067
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.3/mouser-chat-0.1.3-aarch64-apple-darwin.tar.gz"
+sha256 = "62daa24dea4a5f8b30b5e6d812711feda74e7411caeef36db3c4ab5e57f80f3a"
+size = 1380756
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YavQh1YUdmU4t3335SgKhwOih9OUFi3Qkks4cAEq+J04tavCEt08r0iFbriwNsU4WxHjAzFAeKciiXNTXC9iXAQ=
-trusted comment: mouser-chat-0.1.2-aarch64-apple-darwin.tar.gz mouser-chat v0.1.2
-k9FS4xfABWEeWaCUf3vSbmVhcFieB31XcQCxNTrh53LrpharymqESph5HUytO8l4Sef2Dp9qKoq/AT1BFm6CDw==
+RURGkX90IBe6YcU606zKm/i1T/UJh9f5sZqYZRgCrz2vkuObO+3lRPvs1/GDgBlQ6zuLIRXuB3vQBTS7www+s3Au+7hV3i6EEAw=
+trusted comment: mouser-chat-0.1.3-aarch64-apple-darwin.tar.gz mouser-chat v0.1.3
+XtbOrmlyTF/qyQOEMD4hpWH9QvMflNwN+KTuaNqKzvWGxAwsj8tUEJRt3pLMMVndOSOPle1N8cB4fHJwawW3CA==
 '''
 [item.assets.x86_64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.2/mouser-chat-0.1.2-x86_64-apple-darwin.tar.gz"
-sha256 = "3f06a6a9e01cba7939f3ff0ef610fe7987dc0a2e5586a515da4590bcd31e6dbc"
-size = 679759
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.3/mouser-chat-0.1.3-x86_64-apple-darwin.tar.gz"
+sha256 = "7c99d43f4b1f7529007f959a60b664235aa8950de6c9269ba55207690c1e172c"
+size = 1409653
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YZkunUjCnuE560FrGXP/cKQUnFj3BB5/i4caH6naquMroix0LX3rz8/xueF2uDYCt0Dbr+NqImDm+12R7vfuPg8=
-trusted comment: mouser-chat-0.1.2-x86_64-apple-darwin.tar.gz mouser-chat v0.1.2
-RD4m0Eoei7CitFMeFE0zsM/DM+dkjAaBgYH+1PNmLCAypOrmSrH3jCWaMuFKD+zeNopv5yWUeFXgaLwRrJ1BCg==
+RURGkX90IBe6Yc+8Gf42uc1ZYmW0JvotEM33u79rxTk+GDDwcHMsHXoMsNOSlH4/w0lcKY1fF2w36ueoGN75QroiYdQPPJJ9IgU=
+trusted comment: mouser-chat-0.1.3-x86_64-apple-darwin.tar.gz mouser-chat v0.1.3
+5HQLXDFNd9pjCWR2F3e8nqa+IoKoaskLcgCts4vCsDHzzqw/hz2RMANnqu4qxhyfAr3cR5jrAiizDT5L5l9UAQ==
 '''
 [item.assets.x86_64-pc-windows-msvc]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.2/mouser-chat-0.1.2-x86_64-pc-windows-msvc.tar.gz"
-sha256 = "a7a1d19dbb1ebe7247b6f81868e5dbb51efca54384f3654ea5ca0da930a1fce9"
-size = 527651
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.3/mouser-chat-0.1.3-x86_64-pc-windows-msvc.tar.gz"
+sha256 = "9096d5f56fe3e66bb9ab9bb5ed38328b2d7e608547f7a130cb89120c6345a55b"
+size = 1258412
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YQ1+SUHp2I2Vul7YGv4l+zMITQxGK0omzwd2GeK9tWnyIBU2X9Q5j5wyxgEtHmbDLpiPWdJ+4LOOE1ZC0N+LrAE=
-trusted comment: mouser-chat-0.1.2-x86_64-pc-windows-msvc.tar.gz mouser-chat v0.1.2
-tpyV7VruXLiTEfoq4ZkP6sf+7tnUajlM7MQMMTpQtKnPWd2x/ITv9Tu8LHC2v5QNZhVSqfJCudaMsZFdHZRTBg==
+RURGkX90IBe6YSGPGWk+sgWIuONymRWfc3f9rshvKfG72ofKWzElTqTYAWMv6xCWbAOqBnpEYwZZEp7lBl6CPfNzMvPj1+0MFAo=
+trusted comment: mouser-chat-0.1.3-x86_64-pc-windows-msvc.tar.gz mouser-chat v0.1.3
+dkfK2G/W5/2tsx6oGUA+0+T+fvv2+oNQt110fMxD0gLr9Nx/stR0UAFE/SHm7+WjMvM8cU7522+JWikhQX5jAg==
 '''
 [item.assets.x86_64-unknown-linux-gnu]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.2/mouser-chat-0.1.2-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "dec77ac315776b5327b61d63ab75e5c601c946317264cc53288c55da839a0d6d"
-size = 749887
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.3/mouser-chat-0.1.3-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "d6e9ce9c1557487bd63ce7981f3ae6bb364ec99f02e0acc607a898219ac24a9a"
+size = 1569981
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YQOxxKoIqYaROztvu56y6F5s85wS3ee+T+XkqvMp1C2bZll6NzyrLOTQ1ZcDc1HFgAMGHVYaJkGJTFFeiPvD9Q0=
-trusted comment: mouser-chat-0.1.2-x86_64-unknown-linux-gnu.tar.gz mouser-chat v0.1.2
-AgwpQWw+4ZkIpNOkrj8lsE83VZEi6B+URGaLkW4sCzwuDd6icdp2xn5Qcre6cu/whjPOUr0ENU94nEca7VOjCg==
+RURGkX90IBe6YfZca4HCfp6WCuqmZlRzBBCnDWSxsRdvOzDYVOcAhmrsQ0IqAjcjDI/Fxv6p7sIY304DY78oIVT/4WF67EfLFA8=
+trusted comment: mouser-chat-0.1.3-x86_64-unknown-linux-gnu.tar.gz mouser-chat v0.1.3
+Qb9II4bUeUr+aAuAdgyc/6H+zE4SmVgYe3jJPEuMDdO8BUlV+99jQsn53y/ap2P/cFoyQWZh2oHX2LqckZ2UDw==
 '''
 
 [[item]]

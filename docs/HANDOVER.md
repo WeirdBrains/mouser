@@ -489,3 +489,18 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   The Windows test (`exec::windows_tests`) compiles for
   x86_64-pc-windows-gnu (clippy clean); it runs in the Windows CI job, not
   on the Linux box it was written on.
+- plugins.lock pins commander 0.1.5 and chat 0.1.3 (both on mode-api 0.3,
+  crates.io too); preferences stays 0.1.2 on mode-api 0.2 (the named
+  MessagePack encoding keeps it working). `install::outdated_official` +
+  `downloads::Manager::first_run` update lock-installed official plugins
+  older than the pin on start, so existing installs get the new chat.
+  Chat 0.1.3 and commander 0.1.5 are built for Mouser 1.5 (chat's frames
+  and bubbles need it); plugins carry no minimum-host field, so a 1.4 user
+  who installs them by `gh:` can get panels that host can't draw. `mouser plugin update` of an official
+  item follows the running Mouser's lock, so 1.4 stays on its pins.
+- Remaining gaps: views/media are libraries a mode links, not host features:
+  no protocol hook for the host to render or play media for a mode, no host
+  registry of custom views; a mode routes `media_*` actions and keys itself
+  and redraws through its own event. Carousel item drawing, badges and
+  preview loading stay in commander. `file:///C:/…` links aren't recognised
+  as media on Windows (bare `C:\…` paths are).

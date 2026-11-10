@@ -102,6 +102,13 @@ basic renderer, and each is used as soon as its own download verifies. If one
 fails (offline, say), Mouser carries on as a plain terminal with a note, and
 `esc :plugin retry` tries again.
 
+The same start also updates official items installed from the lock at an older
+version than this Mouser pins, so updating Mouser brings its plugins along (Mouser
+1.5 moves chat to 0.1.3 and commander to 0.1.5). An update that asks for a new
+permission shows its card first. Left alone: items installed from `gh:`, a path
+or a crate, ones at or past the pin, and ones rolled back from the pinned version
+(`mouser plugin rollback`).
+
 The `-full` offline bundle (`mouser-<target>-full.tar.gz`, `.zip` on Windows,
 on every release) carries the lock's archives for its target, every engine and
 official plugin with its `.minisig`, in `plugins/` beside

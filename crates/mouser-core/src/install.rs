@@ -1225,6 +1225,34 @@ pub fn missing_official() -> Vec<LockItem> {
         .collect()
 }
 
+/// Official items installed from the lock at a version older than this
+/// Mouser pins, so a Mouser update brings its plugins along. Skipped: items
+/// installed from elsewhere (`gh:`, a path, a crate), ones already at or past
+/// the pin, and ones that had the pinned version and were rolled back from it.
+pub fn outdated_official() -> Vec<LockItem> {
+    lock()
+        .item
+        .into_iter()
+        .filter(|i| {
+            let Some(rec) = record(i.kind, &i.name) else { return false };
+            let Some(cur) = current(i.kind, &i.name) else { return false };
+            matches!(Src::parse(&rec.src), Ok(Src::Official(n)) if n == i.name)
+                && !rec.versions.iter().any(|v| v == &version_dir(&i.version))
+                && older(&cur, &i.version)
+        })
+        .collect()
+}
+
+/// `a` < `b` as dotted numbers (`0.1.2` < `0.1.10`); false when either
+/// isn't one, so an unusual version is never replaced.
+fn older(a: &str, b: &str) -> bool {
+    let parse = |s: &str| s.split('.').map(|p| p.parse::<u64>().ok()).collect::<Option<Vec<u64>>>();
+    match (parse(a), parse(b)) {
+        (Some(a), Some(b)) => a < b,
+        _ => false,
+    }
+}
+
 /// An offline-bundle copy of a lock asset (`plugins/<file>` beside Mouser, or
 /// `MOUSER_OFFLINE_BUNDLE`), if there is one.
 pub fn offline_copy(a: &LockAsset) -> Option<PathBuf> {

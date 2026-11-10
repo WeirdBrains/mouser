@@ -287,10 +287,12 @@ impl Manager {
         }
     }
 
-    /// First run: queue every `plugins.lock` item that isn't installed or
-    /// shipped. Returns how many were queued.
+    /// First run, and every start: queue every `plugins.lock` item that
+    /// isn't installed or shipped, and every official one installed at an
+    /// older version than this Mouser pins. Returns how many were queued.
     pub fn first_run(self: &Arc<Self>) -> usize {
-        let missing = install::missing_official();
+        let mut missing = install::missing_official();
+        missing.extend(install::outdated_official());
         for it in &missing {
             self.enqueue(it.kind, &it.name, Op::FirstRun);
         }
