@@ -39,6 +39,7 @@ pub mod secrets;
 pub mod selection;
 pub mod shell_integration;
 pub mod ssh_config;
+pub mod ssh_term;
 pub mod storage;
 pub mod themes;
 pub mod types;

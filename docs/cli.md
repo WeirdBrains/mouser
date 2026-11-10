@@ -23,6 +23,7 @@ command and environment variable is also in the man pages (`man mouser`,
 | --- | --- |
 | `mouser md [FILE…]` | Markdown formatted into the terminal, stdin when no file ([Markdown rendering](./markdown.md)) |
 | `mouser show FILE…` | Images in any Fuzzball or Kitty-graphics terminal ([Terminal](./terminal.md)) |
+| `mouser ssh [SSH_ARGS…]` | ssh with `TERM=mouser` where the host knows it, else `xterm-256color` ([SSH and TERM](./ssh.md)) |
 | `mouser shell-integration zsh\|bash\|fish` | Directory reports and commander's silent `cd` ([Modes](./modes.md)) |
 | `mouser engine …` | Rendering engines ([Engines](./engines.md)) |
 | `mouser plugin …` | Plugins ([Plugins](./plugins.md)) |
@@ -56,6 +57,9 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_SECRET_STORE` | `file`: keys and tokens in a 0600 file under the home instead of the OS keychain. |
 | `MOUSER_SSH_BIN` | ssh binary for remote commander and the connection manager. |
 | `MOUSER_SSH_CONFIG` | SSH config Mouser reads and edits (default `~/.ssh/config`). |
+| `MOUSER_SSH_TERM` | `TERM` for ssh from a Mouser tab: `auto` (default: `mouser` where the host has its terminfo, else `xterm-256color`), `mouser`, or `xterm-256color`; per host with `SetEnv MOUSER_SSH_TERM=…` in ssh_config ([SSH and TERM](./ssh.md)). |
+| `MOUSER_SSH_WRAPPER` | Set in Mouser's tabs: the `ssh` shim the shell integration's `ssh` function runs ([SSH and TERM](./ssh.md)). |
+| `MOUSER_SSH_WRAPPED` | Set on the real ssh the shim runs, so an ssh wrapper of your own that calls `ssh` again is passed through unchanged. |
 | `MOUSER_REMOTE_BACKEND` | `rsync`, `scp` or `cat`: force how remote files are fetched. |
 | `MOUSER_PLAYER_LOG` | Write the media player's log to this file. |
 | `MOUSER_LLM_TIMINGS` | Print llama.cpp timings for the built-in local model. |

@@ -52,6 +52,10 @@ Not yet: DECSLRM (left/right margins), DECCOLM 132-column switching, double-size
 
 Mouser sets `COLORTERM=truecolor` and picks `TERM` in this order: `mouser` (if its terminfo is installed), then `xterm-256color`.
 
+Over ssh, Mouser keeps `TERM=mouser` on hosts that have its terminfo and sends
+`xterm-256color` to hosts that do not, so tmux and other curses programs start without
+installing anything there ([SSH and TERM](./ssh.md)).
+
 To install Mouser's own entry for your user (styled underlines, truecolor, synchronized output, bracketed paste and focus capabilities):
 
 ```sh

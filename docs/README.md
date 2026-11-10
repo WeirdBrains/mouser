@@ -12,6 +12,7 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 - [Chat](./chat.md): the agent chat mode
 - [Markdown rendering](./markdown.md): commander previews, chat replies, `mouser md`
 - [Connection manager](./connection-manager.md): SSH hosts
+- [SSH and TERM](./ssh.md): `TERM=mouser` where the host knows it, `xterm-256color` where it does not
 - [Themes](./themes.md)
 - [Preferences](./preferences.md)
 - [Storage](./storage.md): `~/.mouser` and `MOUSER_HOME`

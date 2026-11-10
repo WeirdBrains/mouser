@@ -5,6 +5,15 @@
 [[ -o interactive && -z ${_mouser_si-} ]] || return 0
 typeset -g _mouser_si=1
 
+# ssh from a Mouser tab: keep TERM=mouser where the host knows it, else
+# xterm-256color (docs/ssh.md). The PATH shim does the same unless the rc files
+# moved it (macOS path_helper); an ssh function of your own is left alone.
+if [[ -n ${MOUSER_SSH_WRAPPER-} ]] && (( ! $+functions[ssh] )); then
+  ssh() {
+    if [[ ${TERM-} == mouser && -x ${MOUSER_SSH_WRAPPER-} ]]; then "$MOUSER_SSH_WRAPPER" "$@"; else command ssh "$@"; fi
+  }
+fi
+
 _mouser_pct() {
   emulate -L zsh
   local LC_ALL=C s=$1 o= c

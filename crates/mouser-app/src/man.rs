@@ -35,6 +35,12 @@ pub const ENVIRONMENT: &[(&str, &str)] = &[
     ("MOUSER_SECRET_STORE", "file: keep API keys and tokens in a 0600 file under <home> instead of the OS keychain."),
     ("MOUSER_SSH_BIN", "ssh binary for remote commander and the connection manager (default ssh)."),
     ("MOUSER_SSH_CONFIG", "SSH config Mouser reads and edits (default ~/.ssh/config)."),
+    (
+        "MOUSER_SSH_TERM",
+        "TERM for ssh from a Mouser tab: auto (default: mouser where the host has its terminfo, else xterm-256color), mouser, or xterm-256color; per host with SetEnv MOUSER_SSH_TERM=... in ssh_config (docs/ssh.md).",
+    ),
+    ("MOUSER_SSH_WRAPPER", "Set in Mouser's tabs: the ssh shim the shell integration's ssh function runs (docs/ssh.md)."),
+    ("MOUSER_SSH_WRAPPED", "Set on the real ssh the shim runs, so an ssh wrapper of your own that calls ssh again is passed through unchanged."),
     ("MOUSER_REMOTE_BACKEND", "rsync, scp or cat: force how remote files are fetched."),
     ("MOUSER_PLAYER_LOG", "Write the media player's log to this file."),
     ("MOUSER_LLM_TIMINGS", "Print llama.cpp timings for the built-in local model."),
@@ -81,6 +87,7 @@ Tab completes the focused text field (commander move/copy/rename/new-folder/sear
 mouser \-e btop
 mouser \-\-working\-directory ~/src \-\- nvim .
 mouser show photo.png
+MOUSER_SSH_TERM=xterm\-256color ssh web1
 mouser md README.md
 printf %s "$XAI_KEY" | mouser model add grok \-\-key\-stdin
 mouser mcp cert status

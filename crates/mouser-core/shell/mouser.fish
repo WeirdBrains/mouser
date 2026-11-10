@@ -6,6 +6,19 @@ status is-interactive; or exit 0
 set -q __mouser_si; and exit 0
 set -g __mouser_si 1
 
+# ssh from a Mouser tab: keep TERM=mouser where the host knows it, else
+# xterm-256color (docs/ssh.md). The PATH shim does the same unless config.fish
+# moved it; an ssh function of your own is left alone.
+if set -q MOUSER_SSH_WRAPPER; and not functions -q ssh
+    function ssh --wraps ssh
+        if test "$TERM" = mouser; and test -x "$MOUSER_SSH_WRAPPER"
+            $MOUSER_SSH_WRAPPER $argv
+        else
+            command ssh $argv
+        end
+    end
+end
+
 function __mouser_pct
     string escape --style=url -- $argv[1]
 end

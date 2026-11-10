@@ -1,0 +1,29 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-ssh 1  "mouser-ssh 1.4.5" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-ssh \- ssh, with TERM=mouser kept where the host knows it and xterm\-256color where it does not (the same as the `ssh` Mouser puts on its tabs\*(Aq PATH); see docs/ssh.md
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser ssh\fR [\fISSH_ARGS\fR] 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+ssh, with TERM=mouser kept where the host knows it and xterm\-256color where it does not (the same as the `ssh` Mouser puts on its tabs\*(Aq PATH); see docs/ssh.md.
+.PP
+Interactive sessions check the server for Mouser\*(Aqs terminfo in the same connection; everything else (scp, sftp, git, \-N/\-W tunnels, \-O, no local terminal) runs the real ssh unchanged. MOUSER_SSH_TERM=auto|mouser|xterm\-256color (or `SetEnv MOUSER_SSH_TERM=…` for a host in ssh_config) overrides it.
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+[\fISSH_ARGS\fR]
+ssh\*(Aqs own options, destination and command
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.4.5
