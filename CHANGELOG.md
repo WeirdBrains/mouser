@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- Commander, chat and preferences plugins no longer exit at start on Mouser 1.4.5–1.4.8 (`array had incorrect length, expected 2`): Mouser sends plugins field-named MessagePack, so plugins built before a protocol field was added keep working.
+
 ## [1.4.8] - 2026-11-09
 
 ### Fixed

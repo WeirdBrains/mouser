@@ -96,7 +96,7 @@ pub fn connect(
     let api = match negotiate(ApiRange::CURRENT, hello.api) {
         Ok(a) => a,
         Err(reason) => {
-            let _ = codec::write(&mut tx, Wire::MsgPack, &Welcome::Rejected { reason: reason.clone() });
+            let _ = codec::write_named(&mut tx, Wire::MsgPack, &Welcome::Rejected { reason: reason.clone() });
             return fail(child, reason);
         }
     };
@@ -115,7 +115,7 @@ pub fn connect(
         mcp: None,
         restore,
     };
-    if let Err(e) = codec::write(&mut tx, Wire::MsgPack, &Welcome::Accepted(Box::new(accepted))) {
+    if let Err(e) = codec::write_named(&mut tx, Wire::MsgPack, &Welcome::Accepted(Box::new(accepted))) {
         return fail(child, e.to_string());
     }
     Ok(Connection { child, tx, rx, hello, api, ring })
@@ -123,7 +123,7 @@ pub fn connect(
 
 impl Connection {
     pub fn send(&mut self, m: &In) -> std::io::Result<()> {
-        codec::write(&mut self.tx, Wire::MsgPack, m)
+        codec::write_named(&mut self.tx, Wire::MsgPack, m)
     }
 
     /// Ask it to stop, then make sure it has.

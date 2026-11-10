@@ -149,3 +149,104 @@ fn escalation_only_in_the_visible_terminal() {
     assert!(s("sudo", Io::VisiblePty { new: false }).check_escalation().is_ok());
     assert!(s("ffmpeg", Io::Pipes).check_escalation().is_ok());
 }
+
+/// The handshake as the published mode-api 0.2.0 decodes it (commander
+/// 0.1.4, chat and preferences 0.1.2): `Context` without `reduce_motion`.
+mod published_0_2_0 {
+    use mouser_mode_api::{Rect, Viewport};
+    #[derive(Debug, serde::Deserialize)]
+    pub struct Context {
+        pub viewport: Viewport,
+        pub area: Rect,
+    }
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    pub struct Accepted {
+        pub api: u32,
+        pub session: String,
+        pub ctx: Context,
+        pub granted: Vec<String>,
+        pub denied: Vec<(String, String)>,
+        pub shm: Option<mouser_mode_api::protocol::ShmSpec>,
+        pub mcp: Option<mouser_mode_api::protocol::McpGrant>,
+        pub restore: Option<Vec<u8>>,
+    }
+    #[derive(Debug, serde::Deserialize)]
+    pub enum Welcome {
+        Accepted(Box<Accepted>),
+        #[allow(dead_code)]
+        Rejected {
+            reason: String,
+        },
+    }
+}
+
+fn welcome_now() -> mouser_mode_api::protocol::Welcome {
+    use mouser_mode_api::protocol::{Accepted, Welcome};
+    use mouser_mode_api::{Context, Rect, Viewport};
+    let ctx = Context {
+        viewport: Viewport { width: 800, height: 600, cell_w: 8, cell_h: 16 },
+        area: Rect { x: 0, y: 0, w: 800, h: 560 },
+        reduce_motion: true,
+    };
+    Welcome::Accepted(Box::new(Accepted {
+        api: 1,
+        session: "commander-1".into(),
+        ctx,
+        granted: vec!["files.read".into()],
+        denied: vec![("x.y".into(), "no".into())],
+        shm: None,
+        mcp: None,
+        restore: Some(vec![1, 2, 3]),
+    }))
+}
+
+#[test]
+fn host_welcome_decodes_in_plugins_built_on_the_published_0_2_0() {
+    // The bug: 1.4.5 sent Context as a 3-element array and every published
+    // plugin exited with "array had incorrect length, expected 2".
+    let mut array = Vec::new();
+    codec::write(&mut array, Wire::MsgPack, &welcome_now()).unwrap();
+    let err = codec::read::<published_0_2_0::Welcome>(&mut array.as_slice(), Wire::MsgPack, &mut Vec::new()).unwrap_err();
+    assert!(err.to_string().contains("incorrect length"), "{err}");
+
+    let mut named = Vec::new();
+    codec::write_named(&mut named, Wire::MsgPack, &welcome_now()).unwrap();
+    let Some(published_0_2_0::Welcome::Accepted(a)) = codec::read(&mut named.as_slice(), Wire::MsgPack, &mut Vec::new()).unwrap() else {
+        panic!("not accepted")
+    };
+    assert_eq!((a.ctx.viewport.width, a.ctx.area.h, a.session.as_str()), (800, 560, "commander-1"));
+    assert_eq!(a.restore.as_deref(), Some(&[1u8, 2, 3][..]));
+}
+
+#[test]
+fn named_host_messages_round_trip_into_the_current_crate() {
+    let mut named = Vec::new();
+    codec::write_named(&mut named, Wire::MsgPack, &welcome_now()).unwrap();
+    let back: mouser_mode_api::protocol::Welcome = codec::read(&mut named.as_slice(), Wire::MsgPack, &mut Vec::new()).unwrap().unwrap();
+    assert_eq!(back, welcome_now());
+    let msgs = vec![
+        In::Event(events::Event {
+            seq: 7,
+            ts_us: 1,
+            tab: Some(0),
+            name: "view.resized".into(),
+            payload: json!({"reduce_motion": true}),
+            origin: events::Origin::Plugin { name: "chat".into(), session: "s".into() },
+            cause: Some(3),
+            hops: 1,
+            synthetic: true,
+        }),
+        In::Response { id: 1, result: Err("no".into()) },
+        In::Stopping { reason: "quit".into() },
+    ];
+    let mut bytes = Vec::new();
+    for m in &msgs {
+        codec::write_named(&mut bytes, Wire::MsgPack, m).unwrap();
+    }
+    let (mut r, mut buf, mut got) = (bytes.as_slice(), Vec::new(), Vec::new());
+    while let Some(m) = codec::read::<In>(&mut r, Wire::MsgPack, &mut buf).unwrap() {
+        got.push(m);
+    }
+    assert_eq!(got, msgs);
+}
