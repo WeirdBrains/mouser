@@ -22,7 +22,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "BSD-3-Clause"
-version = "1.4.8"
+version = "1.4.9"
 authors = ["Mouser Contributors"]
 repository = ""
 homepage = ""

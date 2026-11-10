@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.4.9] - 2026-11-09
+
 ### Changed
 
 - CI and the Docs site workflow start on `v*` tag pushes (and manual dispatch), not on every push to `main`.
