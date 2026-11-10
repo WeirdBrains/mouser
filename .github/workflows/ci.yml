@@ -31,6 +31,8 @@ jobs:
         run: |
           set -eux
           brew tap-new --no-git weirdbrains/ci
+          # Current Homebrew loads third-party taps only once trusted (as users do).
+          if brew commands | grep -qx trust; then brew trust weirdbrains/ci; fi
           TAP="$(brew --repository)/Library/Taps/weirdbrains/homebrew-ci"
           mkdir -p "$TAP/Formula" "$TAP/Casks"
           cp Formula/mouser.rb "$TAP/Formula/"
