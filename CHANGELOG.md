@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-10
+
 ### Added
 
 - Commander keyboard help: `?` or F1 (or `ctrl+shift+k` from anywhere) opens **Keyboard help**, every key of the mode, Mouser's mode keys and the global keys with what they do, built from the live key tables (remaps included); it scrolls and closes with `?`, `q` or Esc. See docs/modes.md §Keyboard help.
@@ -15,6 +17,10 @@
 
 - The chat's `terminal_run` on Windows stops what a command started (a Job Object that kills its processes when it closes), as process groups already did on Linux and macOS. It is cleanup, not a sandbox; docs/chat.md says what can still outlive it (`setsid`, job breakaway).
 - Commander in an SSH session lists the remote host without any setup there: the ssh shim reports the remote shell's folder and pid, and commander follows its `cd`s. The session's login is shared with commander (the interactive ssh is the ControlMaster), so password, one-time-code and passphrase-key hosts work too. `MOUSER_SSH_SHARE=no` turns the sharing off. See docs/ssh.md.
+
+### Changed
+
+- Official plugins: chat 0.1.3 and commander 0.1.5 on mouser-mode-api 0.3.0, with mouser-views 0.1.0 and mouser-media 0.1.0 on crates.io.
 
 ## [1.4.10] - 2026-11-09
 
