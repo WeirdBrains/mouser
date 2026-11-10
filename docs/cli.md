@@ -58,6 +58,7 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_SSH_BIN` | ssh binary for remote commander and the connection manager. |
 | `MOUSER_SSH_CONFIG` | SSH config Mouser reads and edits (default `~/.ssh/config`). |
 | `MOUSER_SSH_TERM` | `TERM` for ssh from a Mouser tab: `auto` (default: `mouser` where the host has its terminfo, else `xterm-256color`), `mouser`, or `xterm-256color`; per host with `SetEnv MOUSER_SSH_TERM=…` in ssh_config ([SSH and TERM](./ssh.md)). |
+| `MOUSER_SSH_SHARE` | `no`: don't make ssh sessions from a Mouser tab a ControlMaster that commander shares (default yes); per host with `SetEnv MOUSER_SSH_SHARE=…` ([SSH and TERM](./ssh.md#commander-on-the-remote-host)). |
 | `MOUSER_SSH_WRAPPER` | Set in Mouser's tabs: the `ssh` shim the shell integration's `ssh` function runs ([SSH and TERM](./ssh.md)). |
 | `MOUSER_SSH_WRAPPED` | Set on the real ssh the shim runs, so an ssh wrapper of your own that calls `ssh` again is passed through unchanged. |
 | `MOUSER_REMOTE_BACKEND` | `rsync`, `scp` or `cat`: force how remote files are fetched. |

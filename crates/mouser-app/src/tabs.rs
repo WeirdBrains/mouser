@@ -130,7 +130,10 @@ impl Session {
     /// Where commander should look: local folder, or remote (foreground
     /// `ssh` and/or an OSC 7 from another host).
     pub fn place(&self) -> Option<mouser_core::remote::Place> {
-        let osc7 = self.parser.lock().unwrap().cwd.clone();
+        let (osc7, remote_pid) = {
+            let p = self.parser.lock().unwrap();
+            (p.cwd.clone(), p.remote_shell)
+        };
         let fg = self.foreground_argv();
         // The local folder only from /proc or a local OSC 7, never a remote one.
         let local = || {
@@ -148,7 +151,7 @@ impl Session {
                 .or_else(|| std::env::var_os("HOME").map(Into::into))
         };
         let shell_fg = self.shell_in_foreground().unwrap_or(true);
-        mouser_core::remote::place(osc7.as_deref(), fg.as_deref(), shell_fg, local())
+        mouser_core::remote::place(osc7.as_deref(), fg.as_deref(), shell_fg, local(), remote_pid)
     }
 
     /// argv of the terminal's foreground process (unix).

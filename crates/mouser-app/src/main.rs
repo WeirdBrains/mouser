@@ -3186,14 +3186,21 @@ fn attach_mode_view(
     use mouser_render::frame::PADDING;
     match place {
         Some(Place::Local(d)) => st.modes.set_cwd(Some(d)),
-        Some(Place::Remote { label, dir, ssh }) => {
-            let listing = match (&dir, &ssh) {
-                (Some(d), Some(t)) => st.remote.get(t, d, wake),
+        Some(Place::Remote { label, dir, ssh, pid }) => {
+            // Over the side channel: the shell's own folder when its pid is
+            // known, else the last OSC 7 folder, else the remote home.
+            let (dir, listing) = match (&dir, &ssh) {
+                (_, Some(t)) => match st.remote.get(t, dir.as_deref(), pid, wake) {
+                    Some(Ok((d, v))) => (Some(d), Some(Ok(v))),
+                    Some(Err(e)) => (dir.clone(), Some(Err(e))),
+                    None => (dir.clone(), None),
+                },
                 // A remote folder but no ssh to ask: say so (never local files).
-                (Some(_), None) => {
-                    Some(Err("remote: no ssh side channel for this session (only ssh is supported); the folder cannot be listed".into()))
-                }
-                _ => None,
+                (Some(_), None) => (
+                    dir.clone(),
+                    Some(Err("remote: no ssh side channel for this session (only ssh is supported); the folder cannot be listed".into())),
+                ),
+                (None, None) => (None, None),
             };
             st.modes.set_remote(&label, dir.as_deref(), listing, ssh.as_ref());
         }

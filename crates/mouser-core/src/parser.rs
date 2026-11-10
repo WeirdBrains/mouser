@@ -54,6 +54,11 @@ pub struct TerminalParser<W: Write> {
     pub links: Vec<String>,
     /// OSC 7 working directory.
     pub cwd: Option<String>,
+    /// The login shell's pid on an ssh host, from Mouser's ssh wrapper
+    /// (`OSC 1337 ; MouserRemoteShell=<pid>`, docs/ssh.md): commander reads
+    /// that shell's folder over the side channel. An empty value clears it;
+    /// so does an OSC 7 that comes after it (the remote shell reports itself).
+    pub remote_shell: Option<u32>,
     /// OSC 133 prompt marks: (absolute row, kind A/B/C/D).
     pub prompt_marks: Vec<(i64, char)>,
     pub title: String,
@@ -260,6 +265,7 @@ impl<W: Write> TerminalParser<W> {
             color_overrides: HashMap::new(),
             links: Vec::new(),
             cwd: None,
+            remote_shell: None,
             prompt_marks: Vec::new(),
             title: String::new(),
             term_name: "xterm-256color".into(),
@@ -1133,7 +1139,16 @@ impl<W: Write> Perform for TerminalParser<W> {
                 self.color_overrides.remove(&(256 + n - 110));
                 self.graphics_generation += 1;
             }
-            b"7" => self.cwd = Some(rest(1)),
+            b"7" => {
+                self.cwd = Some(rest(1));
+                // The remote shell sends its own OSC 7: that wins over the pid.
+                self.remote_shell = None;
+            }
+            b"1337" => {
+                if let Some(v) = rest(1).strip_prefix("MouserRemoteShell=") {
+                    self.remote_shell = v.trim().parse().ok().filter(|p| *p > 0);
+                }
+            }
             b"8" => {
                 let uri = rest(2);
                 self.style.link = if uri.is_empty() {

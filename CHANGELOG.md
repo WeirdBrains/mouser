@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- Commander in an SSH session lists the remote host without any setup there: the ssh shim reports the remote shell's folder and pid, and commander follows its `cd`s. The session's login is shared with commander (the interactive ssh is the ControlMaster), so password, one-time-code and passphrase-key hosts work too. `MOUSER_SSH_SHARE=no` turns the sharing off. See docs/ssh.md.
+
 ## [1.4.10] - 2026-11-09
 
 ### Changed
