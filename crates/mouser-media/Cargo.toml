@@ -5,7 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Media for Mouser mode plugins: the ffmpeg + cpal player, audio output, inline players with fullscreen and the open/close ease, shared by the commander and chat plugins"
-publish = false
+repository = "https://github.com/WeirdBrains/mouser"
+homepage = "https://mouser.weirdbrains.com"
+documentation = "https://docs.rs/mouser-media"
+readme = "README.md"
+keywords = ["terminal", "mouser", "plugin", "media-player", "ffmpeg"]
+categories = ["multimedia", "gui"]
 
 [dependencies]
 mouser-mode-api = { path = "../mouser-mode-api", version = "0.3.0" }
