@@ -81,8 +81,8 @@ class HomePage extends StatelessComponent {
       ]),
       div(classes: 'hero-meta', [
       p(classes: 'release', [
-      a(href: 'https://github.com/WeirdBrains/mouser/releases/tag/v1.4.10', [
-      .text('Version 1.4.10'),
+      a(href: 'https://github.com/WeirdBrains/mouser/releases/tag/v1.5.0', [
+      .text('Version 1.5.0'),
       ]),
       .text(' · BSD-3-Clause'),
       ]),
@@ -238,7 +238,7 @@ class HomePage extends StatelessComponent {
       curl -sL https://mouser.weirdbrains.com/mouser-release-key.asc | sudo pacman-key --add -
       # or: sudo pacman-key --keyserver hkps://keyserver.ubuntu.com --recv-keys 3561BE80D8B3E767CF0B0B176318D43051C4DBBC
       sudo pacman-key --lsign-key 6318D43051C4DBBC
-      sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/mouser-bin-1.4.10-1-x86_64.pkg.tar.zst
+      sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/mouser-bin-1.5.0-1-x86_64.pkg.tar.zst
       # Or build main from source
       git clone https://github.com/WeirdBrains/mouser
       cd mouser/packaging/arch/mouser-git && makepkg -si'''),
@@ -251,8 +251,8 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/mouser_1.4.10_amd64.deb
-      sudo apt install ./mouser_1.4.10_amd64.deb'''),
+      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/mouser_1.5.0_amd64.deb
+      sudo apt install ./mouser_1.5.0_amd64.deb'''),
       ]),
       ]),
       ]),
@@ -262,8 +262,8 @@ class HomePage extends StatelessComponent {
       ]),
       pre([
       code([
-      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/mouser-1.4.10-1.x86_64.rpm
-      sudo dnf install ./mouser-1.4.10-1.x86_64.rpm'''),
+      .text('''curl -LO https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/mouser-1.5.0-1.x86_64.rpm
+      sudo dnf install ./mouser-1.5.0-1.x86_64.rpm'''),
       ]),
       ]),
       ]),
@@ -273,19 +273,19 @@ class HomePage extends StatelessComponent {
       ]),
       p([
       .text('Download and run the '),
-      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/MouserSetup-1.4.10.exe', [
-      .text('installer (MouserSetup-1.4.10.exe)'),
+      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/MouserSetup-1.5.0.exe', [
+      .text('installer (MouserSetup-1.5.0.exe)'),
       ]),
       .text(', or use the '),
-      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/mouser-x86_64-pc-windows-msvc.zip', [
+      a(href: 'https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/mouser-x86_64-pc-windows-msvc.zip', [
       .text('portable zip'),
       ]),
       .text('. From PowerShell:'),
       ]),
       pre([
       code([
-      .text('''curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.4.10/MouserSetup-1.4.10.exe
-      .\\MouserSetup-1.4.10.exe'''),
+      .text('''curl.exe -LO https://github.com/WeirdBrains/mouser/releases/download/v1.5.0/MouserSetup-1.5.0.exe
+      .\\MouserSetup-1.5.0.exe'''),
       ]),
       ]),
       ]),
