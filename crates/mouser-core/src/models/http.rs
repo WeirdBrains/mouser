@@ -103,7 +103,8 @@ pub fn request(method: &str, url: &str, headers: &[(&str, String)], body: Option
     Ok(Response { status, headers: hs, body })
 }
 
-/// GET following up to 5 redirects (relative or absolute `Location`).
+/// GET following up to 5 redirects (relative or absolute `Location`), never
+/// from https down to http.
 pub fn get(url: &str, headers: &[(&str, String)], ca: Option<&std::path::Path>) -> Result<Response> {
     let mut url = url.to_string();
     for _ in 0..6 {
@@ -111,6 +112,9 @@ pub fn get(url: &str, headers: &[(&str, String)], ca: Option<&std::path::Path>) 
         if matches!(r.status, 301 | 302 | 303 | 307 | 308) {
             let loc = r.header("location").context("redirect without Location")?.to_string();
             url = if loc.starts_with("http://") || loc.starts_with("https://") {
+                if url.starts_with("https://") && loc.starts_with("http://") {
+                    bail!("refusing a redirect from https to plain http ({})", loc.split('?').next().unwrap_or(&loc));
+                }
                 loc
             } else {
                 let t = Target::parse(&url)?;

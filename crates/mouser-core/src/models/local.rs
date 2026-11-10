@@ -115,54 +115,78 @@ impl<'a> Consent<'a> {
 pub fn download(c: Consent<'_>, url: &str, progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<PathBuf> {
     let w = c.0;
     let dest = w.path();
+    fetch_file(url, &dest, w.size, Some(w.sha256), progress)?;
+    Ok(dest)
+}
+
+/// Download `url` to `dest` through `dest.gguf.part`: resumes a partial
+/// file, checks the size and (when known) the SHA256, then renames. A
+/// mismatch deletes the part. `progress(done, size)` returns false to cancel
+/// (the part is kept for the next try). Callers must hold a consent.
+pub(crate) fn fetch_file(url: &str, dest: &Path, size: u64, sha256: Option<&str>, progress: &mut dyn FnMut(u64, u64) -> bool) -> Result<()> {
+    let name = dest.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     std::fs::create_dir_all(dest.parent().context("dir")?)?;
+    if std::fs::metadata(dest).is_ok_and(|m| m.len() == size) && size > 0 {
+        // Already there: keep it only if it still matches its checksum.
+        match sha256 {
+            Some(want) if !sha256_of(dest)?.eq_ignore_ascii_case(want) => std::fs::remove_file(dest)?,
+            _ => {
+                progress(size, size);
+                return Ok(());
+            }
+        }
+    }
     let part = dest.with_extension("gguf.part");
     let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    let headers: Vec<(&str, String)> = if have > 0 && have < w.size { vec![("Range", format!("bytes={have}-"))] } else { vec![] };
-    let mut r = http::get(url, &headers, None)?;
-    let mut done = match r.status {
-        206 => have,
-        200 => 0,
-        s => {
-            let mut b = String::new();
-            let _ = (&mut r.body).take(4096).read_to_string(&mut b);
-            return Err(http::HttpError { status: s, body: b }.into());
+    let headers: Vec<(&str, String)> = if have > 0 && have < size { vec![("Range", format!("bytes={have}-"))] } else { vec![] };
+    let mut done;
+    if have < size || size == 0 {
+        let mut r = http::get(url, &headers, None)?;
+        done = match r.status {
+            206 => have,
+            200 => 0,
+            s => {
+                let mut b = String::new();
+                let _ = (&mut r.body).take(4096).read_to_string(&mut b);
+                return Err(http::HttpError { status: s, body: b }.into());
+            }
+        };
+        let mut f = std::fs::OpenOptions::new().create(true).write(true).append(done > 0).truncate(done == 0).open(&part)?;
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            if !progress(done, size) {
+                bail!("download cancelled at {} of {} (run it again to resume)", human(done), human(size));
+            }
+            let n = r.body.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n])?;
+            done += n as u64;
+            if done > size {
+                break;
+            }
         }
-    };
-    let mut f = std::fs::OpenOptions::new().create(true).write(true).append(done > 0).truncate(done == 0).open(&part)?;
-    let mut buf = vec![0u8; 1 << 20];
-    loop {
-        if !progress(done, w.size) {
-            bail!("download cancelled at {} of {} (run it again to resume)", human(done), human(w.size));
-        }
-        let n = r.body.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        f.write_all(&buf[..n])?;
-        done += n as u64;
-        if done > w.size {
-            break;
-        }
+        f.flush()?;
+    } else {
+        done = have;
     }
-    f.flush()?;
-    drop(f);
-    if done != w.size {
-        if done > w.size {
+    if done != size {
+        if done > size {
             let _ = std::fs::remove_file(&part);
         }
-        bail!("download stopped at {} of {} (run it again to resume)", human(done), human(w.size));
+        bail!("download stopped at {} of {} (run it again to resume)", human(done), human(size));
     }
-    let mut h = sha2::Sha256::new();
-    std::io::copy(&mut std::fs::File::open(&part)?, &mut h)?;
-    let got: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    if got != w.sha256 {
-        let _ = std::fs::remove_file(&part);
-        bail!("{}: checksum mismatch (got {got}); the file was deleted", w.file);
+    if let Some(want) = sha256 {
+        let got = sha256_of(&part)?;
+        if !got.eq_ignore_ascii_case(want) {
+            let _ = std::fs::remove_file(&part);
+            bail!("{name}: checksum mismatch (got {got}); the file was deleted");
+        }
     }
-    std::fs::rename(&part, &dest)?;
-    progress(done, w.size);
-    Ok(dest)
+    std::fs::rename(&part, dest)?;
+    progress(done, size);
+    Ok(())
 }
 
 fn sha256_of(p: &Path) -> Result<String> {
@@ -313,6 +337,9 @@ pub struct LocalPrefs {
     /// `mouser model local disable`: hide gemma-local until it is enabled again.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disabled: bool,
+    /// Models installed from Hugging Face (`mouser model hf install`, the chat's picker).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub installed: Vec<super::hf::Installed>,
 }
 
 pub fn prefs() -> LocalPrefs {
@@ -344,14 +371,25 @@ impl ModelProvider for Local {
                 _ => openai::OpenAi { id: "gemma-local".into(), url: url.clone(), key, models: vec![], ca: None }.chat(&r, sink),
             };
         }
-        let w = weights(&req.model).with_context(|| format!("gemma-local has no model {} (use {})", req.model, self.models.join(" or ")))?;
-        if !w.installed() {
-            bail!("{} is not downloaded yet ({}): mouser model local download {} (asks first)", w.label, human(w.size), w.id);
-        }
+        let path = match (weights(&req.model), super::hf::find(&req.model)) {
+            (Some(w), _) => {
+                if !w.installed() {
+                    bail!("{} is not downloaded yet ({}): mouser model local download {} (asks first)", w.label, human(w.size), w.id);
+                }
+                w.path()
+            }
+            (None, Some(h)) => {
+                if !h.complete() {
+                    bail!("{} ({}) is not fully downloaded: mouser model hf install {} {} (resumes; asks first)", h.id, h.repo, h.repo, h.label);
+                }
+                h.path()
+            }
+            (None, None) => bail!("gemma-local has no model {} (one of: {})", req.model, self.models.join(", ")),
+        };
         let b = backend().context(
             "this Mouser was built without the local model (cargo feature local-llm); or use a server: mouser model local url http://127.0.0.1:8080/v1",
         )?;
-        b.chat(&w.path(), req, sink)
+        b.chat(&path, req, sink)
     }
 }
 

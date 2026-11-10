@@ -47,6 +47,7 @@ pub const ENVIRONMENT: &[(&str, &str)] = &[
     ("MOUSER_SSH_WRAPPED", "Set on the real ssh the shim runs, so an ssh wrapper of your own that calls ssh again is passed through unchanged."),
     ("MOUSER_REMOTE_BACKEND", "rsync, scp or cat: force how remote files are fetched."),
     ("MOUSER_PLAYER_LOG", "Write the media player's log to this file."),
+    ("MOUSER_HF_URL", "Hugging Face Hub base URL for `mouser model hf` and the chat's model browser (default https://huggingface.co)."),
     ("MOUSER_LLM_TIMINGS", "Print llama.cpp timings for the built-in local model."),
     (
         "MOUSER_PLUGIN_DIRS",

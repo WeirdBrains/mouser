@@ -5,6 +5,7 @@
 - Commander keyboard help: `?` or F1 (or `ctrl+shift+k` from anywhere) opens **Keyboard help**, every key of the mode, Mouser's mode keys and the global keys with what they do, built from the live key tables (remaps included); it scrolls and closes with `?`, `q` or Esc. See docs/modes.md §Keyboard help.
 - Commander has a key for every option: `L` / `G` / `C` list / grid / carousel, `O` open fullscreen, `e` sync to the selected folder, `y` / `p` copy / paste, `c` / `M` copy to / move to, `r` rename, `d` delete, `n` new folder, `Y` / `T` copy path / text, `N` / `D` / `S` sort by name / modified / size, `R` reverse. Mode plugins may bind Shift+letter and F1.
 - Commander file changes (copy, paste, move, rename, delete, new folder) work in SSH sessions: they run on the remote host after the approval card.
+- Hugging Face models: search, details and install from the chat (`/hf`) or `mouser model hf search|info|install|list|remove`. Only GGUF files whose architecture the bundled llama.cpp supports are offered ("supported architecture, not load-tested"); others say why they won't run. Downloads resume, need and check the Hub's SHA256, and the installed model becomes the current one. Nothing from the repo is executed. See docs/models.md §Hugging Face.
 
 ### Fixed
 

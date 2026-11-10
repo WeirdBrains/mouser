@@ -8,6 +8,7 @@ pub mod anthropic;
 pub mod cursor;
 pub mod google;
 pub mod grokbot;
+pub mod hf;
 pub mod http;
 pub mod keys;
 pub mod local;
@@ -355,10 +356,11 @@ pub fn all() -> Vec<Provider> {
         let (d, all) = gemma_models();
         let mut models = vec![d.clone()];
         models.extend(all.into_iter().filter(|m| *m != d));
+        models.extend(p.local.iter().flat_map(|l| &l.installed).map(|i| i.id.clone()).filter(|i| !models.contains(i)).collect::<Vec<_>>());
         out.push(Provider {
             entry: ProviderEntry { name: "gemma-local".into(), api: Api::LlamaCpp, url: String::new(), key: None, models, ca: None },
             origin: Origin::Local,
-            description: "Gemma 4 on llama.cpp, built in (local-llm)".into(),
+            description: "Gemma 4 and Hugging Face GGUF models on llama.cpp, built in (local-llm)".into(),
         });
     }
     for i in crate::plugins::installed().into_iter().flatten() {

@@ -2,7 +2,7 @@
 
 use anyhow::{Result, bail};
 use mouser_core::models::{
-    self, Api, ChatRequest, ChatSink, Event, Message, Origin, PRESETS, Part, ProviderEntry, Role, ToolChoice, ToolSpec, local,
+    self, Api, ChatRequest, ChatSink, Event, Message, Origin, PRESETS, Part, ProviderEntry, Role, ToolChoice, ToolSpec, hf, local,
 };
 use std::io::Write;
 
@@ -33,6 +33,91 @@ pub enum Action {
     Default(String),
     /// The built-in local model (gemma-local).
     Local(LocalAction),
+    /// GGUF models from Hugging Face.
+    Hf(HfAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HfAction {
+    Search(String),
+    Info(String),
+    /// Without `yes` it shows the size and asks on the terminal.
+    Install {
+        id: String,
+        quant: Option<String>,
+        yes: bool,
+    },
+    List,
+    Remove(String),
+}
+
+fn run_hf(a: &HfAction, out: &mut dyn Write) -> Result<()> {
+    match a {
+        HfAction::Search(q) => {
+            let hits = hf::search(q, hf::SEARCH_LIMIT)?;
+            if hits.is_empty() {
+                writeln!(out, "no GGUF models match {q:?}")?;
+            }
+            for h in hits {
+                writeln!(out, "{:<56} ↓{:>7} ♥{:>6}  {}", h.id, hf::count(h.downloads), hf::count(h.likes), h.updated)?;
+            }
+            writeln!(out, "details: mouser model hf info ID   install: mouser model hf install ID [QUANT]")?;
+            Ok(())
+        }
+        HfAction::Info(id) => {
+            let d = hf::details(id)?;
+            for l in hf::details_lines(&d) {
+                writeln!(out, "{l}")?;
+            }
+            Ok(())
+        }
+        HfAction::Install { id, quant, yes } => {
+            if local::backend().is_none() && local::prefs().url.is_none() {
+                bail!("{}", local::NOT_BUILT);
+            }
+            let d = hf::details(id)?;
+            let q = match quant {
+                Some(q) => q.clone(),
+                None => hf::default_quant(&d).map(|q| q.label.clone()).ok_or_else(|| anyhow::anyhow!("{id} has no GGUF files"))?,
+            };
+            let plan = hf::Plan::new(&d, &q)?;
+            if !yes && !ask_yes(&plan.consent_text(), out)? {
+                writeln!(out, "not downloaded")?;
+                return Ok(());
+            }
+            let mut last = u64::MAX;
+            let r = hf::install(hf::Consent::given(&plan), &mut |d, t| {
+                let pct = d * 100 / t.max(1);
+                if pct != last {
+                    last = pct;
+                    eprint!("\r{} {pct}% ({} of {})   ", plan.quant.label, local::human(d), local::human(t));
+                }
+                true
+            });
+            eprintln!();
+            writeln!(out, "installed; default model: {}", r?)?;
+            Ok(())
+        }
+        HfAction::List => {
+            let all = hf::installed();
+            if all.is_empty() {
+                writeln!(out, "no Hugging Face models installed (mouser model hf search QUERY)")?;
+            }
+            for i in all {
+                let st = if i.complete() { "ready" } else { "incomplete (install again to resume)" };
+                writeln!(out, "gemma-local/{:<40} {:<40} {:>9}  {st}", i.id, i.repo, local::human(i.size()))?;
+            }
+            Ok(())
+        }
+        HfAction::Remove(id) => {
+            if hf::remove(id)? {
+                writeln!(out, "removed {id}")?;
+            } else {
+                writeln!(out, "{id} is not installed (mouser model hf list)")?;
+            }
+            Ok(())
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -483,6 +568,7 @@ pub fn run_io(a: &Action, out: &mut dyn Write, input: Option<&mut dyn std::io::B
         return add(name, api.as_deref(), url.as_deref(), key.as_deref(), ms, ca.as_deref(), *desktop, out, input);
     }
     match a {
+        Action::Hf(h) => run_hf(h, out),
         Action::List => {
             let d = models::default_choice();
             for p in models::all() {
