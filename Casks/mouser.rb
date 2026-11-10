@@ -1,12 +1,12 @@
 cask "mouser" do
-  version "1.4.5"
+  version "1.4.8"
   on_arm do
     sha256 ""
-    url "https://github.com/WeirdBrains/mouser/releases/download/v1.4.5/Mouser-aarch64-apple-darwin.dmg"
+    url "https://github.com/WeirdBrains/mouser/releases/download/v1.4.8/Mouser-aarch64-apple-darwin.dmg"
   end
   on_intel do
     sha256 ""
-    url "https://github.com/WeirdBrains/mouser/releases/download/v1.4.5/Mouser-x86_64-apple-darwin.dmg"
+    url "https://github.com/WeirdBrains/mouser/releases/download/v1.4.8/Mouser-x86_64-apple-darwin.dmg"
   end
   name "Mouser"
   desc "Mouser terminal emulator"
