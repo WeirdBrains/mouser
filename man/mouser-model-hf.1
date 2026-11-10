@@ -1,0 +1,45 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH mouser-model-hf 1  "mouser-model-hf 1.4.10" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+mouser\-model\-hf \- GGUF models from Hugging Face for the local engine: search, info, install, list, remove
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBmouser model hf\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+GGUF models from Hugging Face for the local engine: search, info, install, list, remove
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SUBCOMMANDS
+.TP
+mouser\-model\-hf\-search(1)
+Search Hugging Face for GGUF models (most downloaded first)
+.TP
+mouser\-model\-hf\-info(1)
+A model\*(Aqs card summary, numbers, license and quantizations
+.TP
+mouser\-model\-hf\-install(1)
+Download one quantization (default: the smallest Q4) and make it the default model. Shows the size and asks first
+.TP
+mouser\-model\-hf\-list(1)
+The installed Hugging Face models
+.TP
+mouser\-model\-hf\-remove(1)
+Delete an installed model\*(Aqs files
+.SH SEE ALSO
+\fBmouser\fR(1)
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v1.4.10

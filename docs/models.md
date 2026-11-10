@@ -230,6 +230,62 @@ Measured on an RTX 3060 (Vulkan, E2B Q4_0, warm cache): about 0.9 s to load, abo
 driver compiles shaders on first use, so the very first long prompt can take
 several seconds.
 
+## Hugging Face
+
+Any GGUF model on Hugging Face can be downloaded and run on the built-in
+llama.cpp engine (`gemma-local`). In the chat: **⌕ models**, `h` or `/hf`
+([Chat](./chat.md#models-from-hugging-face)). From the command line:
+
+```sh
+mouser model hf search qwen 0.5b           # GGUF models, most downloaded first: id, ↓downloads, ♥likes
+mouser model hf info bartowski/Qwen2.5-0.5B-Instruct-GGUF   # card summary, license, task, size, quantizations
+mouser model hf install bartowski/Qwen2.5-0.5B-Instruct-GGUF [Q4_K_M] [--yes]
+mouser model hf list                       # installed ones, with their gemma-local ids
+mouser model hf remove Qwen2.5-0.5B-Instruct-Q4_K_M
+mouser model test gemma-local/Qwen2.5-0.5B-Instruct-Q4_K_M
+```
+
+- **What runs:** GGUF files only (the format llama.cpp loads). A repository's
+  quantizations (Q2_K … Q8_0, IQ…, BF16, F16, F32) are listed with their sizes;
+  split files (`-00001-of-00003.gguf`) are one choice and download together.
+  Without a quantization, `install` takes the smallest Q4.
+- **Checked before download:** the model's GGUF architecture (from the Hub) must
+  be one the llama.cpp bundled with Mouser loads (`hf::LLAMA_CPP_ARCHS`, the
+  list in llama-cpp-sys-2 0.1.161) and a chat model. `info` and the chat's
+  details say "won't run" and why, and Install refuses, for an unknown
+  architecture ("isn't supported by the llama.cpp bundled with this Mouser"),
+  embedding, encoder, speech and draft models (bert, t5encoder, qwen3tts,
+  eagle3, …), a vision projector on its own (clip) and repositories without
+  GGUF files (safetensors and other formats don't run). When the Hub lists no
+  architecture it says the model is unverified: it may still fail to load, and
+  the chat says so on the first message. Vision projectors (`mmproj`) are left
+  out of downloads, so models answer with text only, and so are `imatrix`
+  files (calibration data, not models).
+- **Not load-tested:** a supported architecture is shown as "supported
+  architecture, not load-tested". Mouser doesn't load a file before you install
+  it, so a new variant of a known architecture (extra MTP heads, say) can still
+  fail on the first message; the chat then shows llama.cpp's error.
+- **Nothing from the repository runs as code:** only `.gguf` files are fetched
+  (no Python, no `trust_remote_code`); llama.cpp reads the weights, and the
+  GGUF's chat template is rendered by minijinja, a sandboxed template engine.
+- **Consent:** `install` (and the chat's **Install**) shows the repository,
+  quantization, size, source, folder and license and downloads only after you
+  agree; `--yes` skips the question. Gated models are refused (they need a
+  Hugging Face login, which Mouser doesn't support yet).
+- **Download:** to `<models dir>/hf/OWNER--NAME/`, resuming a `.part` file with
+  HTTP ranges, cancellable (Ctrl+C, or **cancel** in the chat) and checked
+  against the SHA256 the Hub publishes for each file; a mismatch deletes it. A
+  file with no published SHA256 is not downloaded, a file already there is
+  re-checked rather than trusted by its size, redirects never go from https to
+  plain http, and file names that could leave the folder (`..`, absolute,
+  backslashes, drive letters) are skipped.
+- **Then:** the model is recorded under `[models.local] installed` in
+  `config.toml`, `gemma-local` is enabled, and `gemma-local/ID` becomes the
+  default model, so the next chat message uses it. `ID` is the file name without
+  `.gguf` (with the owner in front if two repositories have the same file).
+- `MOUSER_HF_URL` points the search and downloads at another Hub (a mirror, or
+  the tests' mock server).
+
 ## Not yet
 
 Responses API, images, retries/backoff, listing models from the server

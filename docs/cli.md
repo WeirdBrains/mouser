@@ -63,6 +63,7 @@ usage when no guide has that name; `mouser COMMAND --help` always does.
 | `MOUSER_SSH_WRAPPED` | Set on the real ssh the shim runs, so an ssh wrapper of your own that calls `ssh` again is passed through unchanged. |
 | `MOUSER_REMOTE_BACKEND` | `rsync`, `scp` or `cat`: force how remote files are fetched. |
 | `MOUSER_PLAYER_LOG` | Write the media player's log to this file. |
+| `MOUSER_HF_URL` | Hugging Face Hub base URL for `mouser model hf` and the chat's model browser (default https://huggingface.co). |
 | `MOUSER_LLM_TIMINGS` | Print llama.cpp timings for the built-in local model. |
 | `MOUSER_PLUGIN_DIRS` | Plugin folders (a path list) replacing the offline bundle and system folders; empty: only `$MOUSER_HOME/plugins` ([Plugins](./plugins.md)). |
 | `MOUSER_ENGINE_DIRS` | Folders of engines shipped with Mouser (a path list) replacing `engines/` beside the executable; empty: none ([Engines](./engines.md)). |

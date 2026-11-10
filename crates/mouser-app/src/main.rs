@@ -357,6 +357,32 @@ enum ModelCommand {
         #[command(subcommand)]
         action: Option<LocalCommand>,
     },
+    /// GGUF models from Hugging Face for the local engine: search, info, install, list, remove.
+    Hf {
+        #[command(subcommand)]
+        action: HfCommand,
+    },
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum HfCommand {
+    /// Search Hugging Face for GGUF models (most downloaded first).
+    Search { query: Vec<String> },
+    /// A model's card summary, numbers, license and quantizations.
+    Info { id: String },
+    /// Download one quantization (default: the smallest Q4) and make it the
+    /// default model. Shows the size and asks first.
+    Install {
+        id: String,
+        quant: Option<String>,
+        /// Skip the question (you already agreed to the size shown by `info`).
+        #[arg(long)]
+        yes: bool,
+    },
+    /// The installed Hugging Face models.
+    List,
+    /// Delete an installed model's files.
+    Remove { id: String },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -1084,6 +1110,16 @@ fn main() -> Result<()> {
                         };
                         L::Url { url: url.clone(), api: api.clone(), model: model.clone(), key }
                     }
+                })
+            }
+            ModelCommand::Hf { action } => {
+                use mouser_app::model_cli::HfAction as H;
+                Action::Hf(match action {
+                    HfCommand::Search { query } => H::Search(query.join(" ")),
+                    HfCommand::Info { id } => H::Info(id.clone()),
+                    HfCommand::Install { id, quant, yes } => H::Install { id: id.clone(), quant: quant.clone(), yes: *yes },
+                    HfCommand::List => H::List,
+                    HfCommand::Remove { id } => H::Remove(id.clone()),
                 })
             }
             ModelCommand::Remove { name } => Action::Remove(name.clone()),
