@@ -708,8 +708,10 @@ mod tests {
         if let Some(f) = found {
             script(&bin, "infocmp", &format!("[ \"$1\" = mouser ] && exit {}; exit 1", if f { 0 } else { 1 }));
         }
-        let home = t.path().join("home");
-        std::fs::create_dir_all(home.join(".terminfo/m")).unwrap();
+        std::fs::create_dir_all(t.path().join("home/.terminfo/m")).unwrap();
+        // The real path: macOS's temp folder is behind a symlink (/var ->
+        // /private/var), and some shells report the physical folder.
+        let home = t.path().join("home").canonicalize().unwrap();
         if terminfo {
             std::fs::write(home.join(".terminfo/m/mouser"), "").unwrap();
         }
