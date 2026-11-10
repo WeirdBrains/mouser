@@ -13,7 +13,7 @@ fn script(p: &Path, body: &str) {
 }
 
 struct World {
-    _t: tempfile::TempDir,
+    t: tempfile::TempDir,
     shim: PathBuf,
     path: std::ffi::OsString,
     server_path: PathBuf,
@@ -39,14 +39,14 @@ fn world(infocmp_finds_mouser: bool) -> World {
     script(
         &sys.join("ssh"),
         r#"if [ "$1" = -G ]; then printf '%b' "$FAKE_G"; exit 0; fi
-echo "LOCAL TERM=$TERM WRAPPED=$MOUSER_SSH_WRAPPED ARGC=$#"
+echo "LOCAL TERM=$TERM WRAPPED=$MOUSER_SSH_WRAPPED ARGC=$# ARGV=$*"
 for last; do :; done
 case $last in
   "sh -c "*) HOME=/nonexistent SHELL=$SERVER/usershell PATH=$SERVER sh -c "$last" ;;
 esac"#,
     );
     let path = std::env::join_paths([shim_dir, sys, PathBuf::from("/usr/bin"), PathBuf::from("/bin")]).unwrap();
-    World { shim, path, server_path: server, _t: t }
+    World { shim, path, server_path: server, t }
 }
 
 const G: &str = "user me\\nrequesttty auto\\nsessiontype default\\nstdinnull no\\nforkafterauthentication no\\n";
@@ -62,6 +62,9 @@ fn in_pty(w: &World, args: &[&str], g: &str, env: &[(&str, &str)]) -> String {
     cmd.env("SERVER", &w.server_path);
     cmd.env_remove("MOUSER_SSH_TERM");
     cmd.env_remove("MOUSER_SSH_WRAPPED");
+    cmd.env_remove("MOUSER_SSH_SHARE");
+    // ControlPath sockets go under this home, never the real ~/.mouser.
+    cmd.env("MOUSER_HOME", w.t.path().join("home"));
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -89,8 +92,15 @@ fn first_ssh_to_a_host_without_mouser_terminfo_gets_xterm() {
     let w = world(false);
     let out = in_pty(&w, &["-p", "2222", "web1"], G, &[]);
     // ssh itself still runs with TERM=mouser locally; the server falls back.
-    assert!(out.contains("LOCAL TERM=mouser WRAPPED=1 ARGC=5"), "{out}");
+    // The session also becomes commander's ControlMaster (6 options added).
+    assert!(out.contains("LOCAL TERM=mouser WRAPPED=1 ARGC=11"), "{out}");
+    let cp = format!("ControlPath={}", w.t.path().join("home/cache/ssh/%C").display());
+    assert!(out.contains(&format!("ARGV=-o ControlMaster=auto -o {cp} -o ControlPersist=60 -t -p 2222 web1 sh -c")), "{out}");
     assert!(out.contains("REMOTE TERM=xterm-256color ARGS=-l"), "{out}");
+    // It tells Mouser where the remote shell is: OSC 7, then its pid.
+    assert!(out.contains("\x1b]7;file://") && out.contains("\x1b]1337;MouserRemoteShell="), "{out:?}");
+    // The shim first clears the last session's pid.
+    assert!(out.starts_with("\x1b]1337;MouserRemoteShell=\x07"), "{out:?}");
     let out = in_pty(&w, &["-t", "web1", "tmux", "new", "-A"], &G.replace("auto", "yes"), &[]);
     assert!(out.contains("REMOTE TERM=xterm-256color ARGS=-c tmux new -A"), "{out}");
 }
@@ -107,9 +117,14 @@ fn remote_command_in_config_and_overrides_fall_back_locally() {
     let w = world(true);
     // `RemoteCommand tmux new -A` + `RequestTTY yes` cannot take the check: TERM falls back here.
     let out = in_pty(&w, &["web1"], &format!("{}remotecommand tmux new -A\\n", G.replace("auto", "yes")), &[]);
-    assert!(out.contains("LOCAL TERM=xterm-256color WRAPPED=1 ARGC=1"), "{out}");
+    assert!(out.contains("LOCAL TERM=xterm-256color WRAPPED=1 ARGC=7"), "{out}");
     let out = in_pty(&w, &["web1"], G, &[("MOUSER_SSH_TERM", "xterm-256color")]);
+    assert!(out.contains("LOCAL TERM=xterm-256color WRAPPED=1 ARGC=7"), "{out}");
+    // Sharing off, or ssh_config's own ControlMaster: the arguments as typed.
+    let out = in_pty(&w, &["web1"], G, &[("MOUSER_SSH_TERM", "xterm-256color"), ("MOUSER_SSH_SHARE", "no")]);
     assert!(out.contains("LOCAL TERM=xterm-256color WRAPPED=1 ARGC=1"), "{out}");
+    let out = in_pty(&w, &["-p", "2222", "web1"], &format!("{G}controlmaster auto\\ncontrolpath /tmp/cm-%C\\n"), &[]);
+    assert!(out.contains("LOCAL TERM=mouser WRAPPED=1 ARGC=5"), "{out}");
     let out = in_pty(&w, &["web1"], G, &[("MOUSER_SSH_TERM", "mouser")]);
     assert!(out.contains("LOCAL TERM=mouser WRAPPED=1 ARGC=1") && !out.contains("REMOTE"), "{out}");
     // An explicit TERM is sent as is.
@@ -135,7 +150,11 @@ fn without_a_terminal_ssh_is_passed_through() {
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "LOCAL TERM=mouser WRAPPED=1 ARGC=6");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "LOCAL TERM=mouser WRAPPED=1 ARGC=6 ARGV=-x -- web1 scp -t /tmp",
+        "passed through unchanged"
+    );
     // `mouser ssh …` is the same as the shim.
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_mouser-app"))
         .args(["ssh", "web1", "true"])
@@ -146,7 +165,7 @@ fn without_a_terminal_ssh_is_passed_through() {
         .stdin(std::process::Stdio::null())
         .output()
         .unwrap();
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "LOCAL TERM=mouser WRAPPED=1 ARGC=2");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "LOCAL TERM=mouser WRAPPED=1 ARGC=2 ARGV=web1 true");
 }
 
 #[test]

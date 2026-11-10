@@ -252,6 +252,21 @@ fn osc_titles_cwd_marks_and_clipboard() {
 }
 
 #[test]
+fn osc_remote_shell_pid_from_the_ssh_wrapper() {
+    let (mut t, _) = term(10, 3);
+    // Mouser's ssh wrapper: the remote folder, then the login shell's pid.
+    t.feed(b"\x1b]7;file://web1/home/me\x07\x1b]1337;MouserRemoteShell=4242\x07");
+    assert_eq!((t.cwd.as_deref(), t.remote_shell), (Some("file://web1/home/me"), Some(4242)));
+    // The remote shell reporting its own folder takes over from the pid.
+    t.feed(b"\x1b]7;file://web1/srv\x07");
+    assert_eq!((t.cwd.as_deref(), t.remote_shell), (Some("file://web1/srv"), None));
+    t.feed(b"\x1b]1337;MouserRemoteShell=7\x07\x1b]1337;MouserRemoteShell=\x07");
+    assert_eq!(t.remote_shell, None, "the shim clears it before each ssh");
+    t.feed(b"\x1b]1337;SetMark\x07\x1b]1337;MouserRemoteShell=x\x07");
+    assert_eq!(t.remote_shell, None);
+}
+
+#[test]
 fn osc8_hyperlinks() {
     let (mut t, _) = term(10, 1);
     t.feed(b"a\x1b]8;id=1;https://x.test/a;b\x1b\\link\x1b]8;;\x1b\\z");

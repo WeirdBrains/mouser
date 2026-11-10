@@ -16,6 +16,10 @@ pub enum Place {
         label: String,
         dir: Option<PathBuf>,
         ssh: Option<SshTarget>,
+        /// The remote login shell's pid from Mouser's ssh wrapper
+        /// (`OSC 1337 ; MouserRemoteShell`): its folder is read over the side
+        /// channel, so commander follows `cd` without remote shell integration.
+        pid: Option<u32>,
     },
 }
 
@@ -136,14 +140,54 @@ pub fn local_hostname() -> &'static str {
 /// never shown; a remote OSC 7 counts only when its host is not this one and
 /// the local shell is not back in the foreground (`shell_fg`: after `exit`
 /// the last report is the remote one, stale).
-pub fn place(osc7_url: Option<&str>, fg: Option<&[String]>, shell_fg: bool, local_dir: Option<PathBuf>) -> Option<Place> {
+///
+/// `remote_pid`: the remote login shell's pid from Mouser's ssh wrapper. With
+/// it the OSC 7 just before it is the wrapper's own report from the host, so
+/// it counts whatever the host's name (`ssh localhost` included).
+pub fn place(osc7_url: Option<&str>, fg: Option<&[String]>, shell_fg: bool, local_dir: Option<PathBuf>, remote_pid: Option<u32>) -> Option<Place> {
     let ssh = fg.and_then(ssh_target);
-    let remote_dir = osc7_url.and_then(osc7).filter(|(h, _)| !is_local_host(h, local_hostname())).filter(|_| ssh.is_some() || !shell_fg);
+    let pid = remote_pid.filter(|_| ssh.is_some());
+    let remote_dir =
+        osc7_url.and_then(osc7).filter(|(h, _)| pid.is_some() || !is_local_host(h, local_hostname())).filter(|_| ssh.is_some() || !shell_fg);
     match (ssh, remote_dir) {
-        (Some(t), dir) => Some(Place::Remote { label: t.label(), dir: dir.map(|d| d.1), ssh: Some(t) }),
-        (None, Some((host, d))) => Some(Place::Remote { label: host, dir: Some(d), ssh: None }),
+        (Some(t), dir) => Some(Place::Remote { label: t.label(), dir: dir.map(|d| d.1), ssh: Some(t), pid }),
+        (None, Some((host, d))) => Some(Place::Remote { label: host, dir: Some(d), ssh: None, pid: None }),
         (None, None) => local_dir.map(Place::Local),
     }
+}
+
+/// The first line [`locate_listing_command`] prints: the folder it listed.
+pub const LOCATED: &str = "MOUSER-DIR ";
+
+/// POSIX `sh` for the remote side when commander follows the shell: the
+/// folder of the shell `pid` (`/proc/<pid>/cwd`, else `lsof` on BSD/macOS),
+/// else `dir` (the last OSC 7), else the home folder; then [`LOCATED`] and
+/// that folder's long listing. Run as `sh -c` so it works whatever the login
+/// shell is (fish, csh).
+pub fn locate_listing_command(pid: Option<u32>, dir: Option<&Path>) -> String {
+    let q = crate::commander::shell_quote;
+    let script = concat!(
+        "d=; if [ -n \"$1\" ]; then d=$(readlink \"/proc/$1/cwd\" 2>/dev/null) || d=; ",
+        "[ -n \"$d\" ] || d=$(lsof -a -p \"$1\" -d cwd -Fn 2>/dev/null | sed -n \"s/^n//p\" | head -n 1); fi; ",
+        "[ -n \"$d\" ] || d=$2; ",
+        "{ [ -n \"$d\" ] && cd -- \"$d\" 2>/dev/null; } || { [ -n \"$2\" ] && cd -- \"$2\" 2>/dev/null; } || cd || exit 1; ",
+        "printf \"MOUSER-DIR %s\\n\" \"$PWD\"; ",
+        "{ LC_ALL=C ls -la --time-style=+%s 2>/dev/null || LC_ALL=C ls -la; }"
+    );
+    let pid = pid.map(|p| p.to_string()).unwrap_or_default();
+    let dir = dir.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+    format!("sh -c {} mouser-ls {} {}", q(script), q(&pid), q(&dir))
+}
+
+/// Parse [`locate_listing_command`]'s output: the folder and its entries.
+pub fn parse_located(out: &str) -> Option<(PathBuf, Vec<Entry>)> {
+    let (first, rest) = out.split_once('\n').unwrap_or((out, ""));
+    let dir = PathBuf::from(first.strip_prefix(LOCATED)?.trim_end_matches('\r'));
+    if !dir.is_absolute() && !dir.to_string_lossy().starts_with('/') {
+        return None;
+    }
+    let entries = parse_ls(rest, &dir);
+    Some((dir, entries))
 }
 
 /// ssh options that take a value (OpenSSH).
@@ -269,17 +313,53 @@ mod tests {
         let local = Some(PathBuf::from("/home/m"));
         let here = format!("file://{}/home/m", local_hostname());
         let ssh = a(&["ssh", "web1"]);
-        assert_eq!(place(Some(&here), None, true, local.clone()), Some(Place::Local("/home/m".into())));
+        assert_eq!(place(Some(&here), None, true, local.clone(), None), Some(Place::Local("/home/m".into())));
         // ssh running, the remote shell has not reported yet: remote, folder unknown.
-        let p = place(Some(&here), Some(&ssh), false, local.clone()).unwrap();
-        assert!(matches!(&p, Place::Remote { label, dir: None, ssh: Some(_) } if label == "web1"), "{p:?}");
-        let p = place(Some("file://web1/srv"), Some(&ssh), false, local.clone()).unwrap();
+        let p = place(Some(&here), Some(&ssh), false, local.clone(), None).unwrap();
+        assert!(matches!(&p, Place::Remote { label, dir: None, ssh: Some(_), .. } if label == "web1"), "{p:?}");
+        let p = place(Some("file://web1/srv"), Some(&ssh), false, local.clone(), None).unwrap();
         assert!(matches!(&p, Place::Remote { dir: Some(d), .. } if d == Path::new("/srv")));
         // A remote OSC 7 without a visible ssh (mosh, nested): remote, no side channel.
-        let p = place(Some("file://web1/srv"), Some(&a(&["mosh-client"])), false, local.clone()).unwrap();
+        let p = place(Some("file://web1/srv"), Some(&a(&["mosh-client"])), false, local.clone(), Some(9)).unwrap();
         assert!(matches!(p, Place::Remote { ssh: None, .. }));
         // After `exit` the local shell is back: the remote report is stale.
-        assert_eq!(place(Some("file://web1/srv"), Some(&a(&["bash"])), true, local), Some(Place::Local("/home/m".into())));
+        assert_eq!(place(Some("file://web1/srv"), Some(&a(&["bash"])), true, local.clone(), Some(9)), Some(Place::Local("/home/m".into())));
+        // The wrapper's report: the pid, and its OSC 7 counts even for this host's name.
+        let p = place(Some(&here), Some(&a(&["ssh", "localhost"])), false, local.clone(), Some(4242)).unwrap();
+        assert!(matches!(&p, Place::Remote { dir: Some(d), pid: Some(4242), .. } if d == Path::new("/home/m")), "{p:?}");
+        let p = place(Some(&here), Some(&ssh), false, local, None).unwrap();
+        assert!(matches!(&p, Place::Remote { dir: None, pid: None, .. }), "{p:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn locates_the_shell_folder_by_pid_then_dir_then_home() {
+        let t = tempfile::tempdir().unwrap();
+        let (a, b) = (t.path().join("a dir"), t.path().join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("x.png"), "x").unwrap();
+        let run = |cmd: &str, home: &Path| {
+            let o = std::process::Command::new("sh").arg("-c").arg(cmd).env("HOME", home).output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            parse_located(&String::from_utf8_lossy(&o.stdout)).unwrap()
+        };
+        // A live process whose folder is `a dir`.
+        let mut child = std::process::Command::new("sleep").arg("30").current_dir(&a).spawn().unwrap();
+        let (d, v) = run(&locate_listing_command(Some(child.id()), Some(&b)), &b);
+        child.kill().ok();
+        child.wait().ok();
+        if Path::new("/proc/self/cwd").exists() {
+            assert_eq!(d, std::fs::canonicalize(&a).unwrap());
+            assert_eq!(v.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["x.png"]);
+            assert_eq!(v[0].path, d.join("x.png"));
+        }
+        // The pid gone: the last OSC 7 folder; nothing: home.
+        let (d, _) = run(&locate_listing_command(Some(999_999_999), Some(&b)), &a);
+        assert_eq!(d, b);
+        let (d, _) = run(&locate_listing_command(None, None), &b);
+        assert_eq!(d, b);
+        assert!(parse_located("total 0\n").is_none());
     }
 
     #[test]

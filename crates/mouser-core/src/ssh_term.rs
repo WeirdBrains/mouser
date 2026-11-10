@@ -20,6 +20,19 @@
 //! `MOUSER_SSH_TERM` (`auto`, `mouser`, `xterm-256color`), also per host as
 //! `SetEnv MOUSER_SSH_TERM=…` in ssh_config, and an explicit `TERM=… ssh`
 //! override the choice.
+//!
+//! For commander (docs/modes.md §SSH sessions) a wrapped session also:
+//!
+//! - shares its connection: `ControlMaster=auto` with Mouser's
+//!   `ControlPath` ([`share_opts`]), so commander's side channel rides the
+//!   login you already made (password, OTP, a key with a passphrase) instead
+//!   of opening a second, non-interactive one. Not when ssh_config sets its
+//!   own `ControlMaster`/`ControlPath`; `MOUSER_SSH_SHARE=no` (or per host
+//!   `SetEnv MOUSER_SSH_SHARE=no`) turns it off;
+//! - reports where the remote shell is: an OSC 7 with the starting folder
+//!   and `OSC 1337 ; MouserRemoteShell=<pid>` with the login shell's pid
+//!   ([`REMOTE_REPORT`]), so commander can follow its folder without any
+//!   remote shell integration. The shim clears the pid before each ssh.
 
 use std::path::{Path, PathBuf};
 
@@ -31,6 +44,10 @@ pub const ENV_MODE: &str = "MOUSER_SSH_TERM";
 pub const ENV_GUARD: &str = "MOUSER_SSH_WRAPPED";
 /// Where the shim is (for the shell integration's `ssh` function).
 pub const ENV_WRAPPER: &str = "MOUSER_SSH_WRAPPER";
+/// `no` / `off`: don't share the session's connection with commander.
+pub const ENV_SHARE: &str = "MOUSER_SSH_SHARE";
+/// Clears the remote shell pid Mouser keeps for the tab (printed by the shim).
+pub const CLEAR_REMOTE_SHELL: &str = "\x1b]1337;MouserRemoteShell=\x07";
 
 /// ssh options that take a value (OpenSSH).
 const WITH_VALUE: &str = "BbcDEeFIiJLlmOoPpQRSWw";
@@ -127,10 +144,22 @@ pub struct Config {
     pub fork: bool,
     /// `SetEnv MOUSER_SSH_TERM=…` for this host.
     pub mode: Option<Mode>,
+    /// `controlmaster` (`false` when unset).
+    pub control_master: String,
+    /// `controlpath` (`none` when unset).
+    pub control_path: String,
+    /// `SetEnv MOUSER_SSH_SHARE=…` for this host.
+    pub share: Option<bool>,
 }
 
 pub fn parse_config(out: &str) -> Config {
-    let mut c = Config { request_tty: "auto".into(), session_type: "default".into(), ..Config::default() };
+    let mut c = Config {
+        request_tty: "auto".into(),
+        session_type: "default".into(),
+        control_master: "false".into(),
+        control_path: "none".into(),
+        ..Config::default()
+    };
     for line in out.lines() {
         let (k, v) = line.split_once(' ').unwrap_or((line, ""));
         let v = v.trim();
@@ -141,10 +170,16 @@ pub fn parse_config(out: &str) -> Config {
             "remotecommand" => c.remote_command = !v.is_empty() && !v.eq_ignore_ascii_case("none"),
             "stdinnull" => c.stdin_null = yes(v),
             "forkafterauthentication" => c.fork = yes(v),
+            "controlmaster" => c.control_master = v.to_ascii_lowercase(),
+            "controlpath" => c.control_path = v.to_string(),
             "setenv" => {
                 for t in v.split_whitespace() {
-                    if let Some(m) = t.trim_matches('"').strip_prefix("MOUSER_SSH_TERM=") {
+                    let t = t.trim_matches('"');
+                    if let Some(m) = t.strip_prefix("MOUSER_SSH_TERM=") {
                         c.mode = Some(Mode::parse(Some(m.trim_matches('"'))));
+                    }
+                    if let Some(m) = t.strip_prefix("MOUSER_SSH_SHARE=") {
+                        c.share = Some(share_on(Some(m.trim_matches('"'))));
                     }
                 }
             }
@@ -156,6 +191,43 @@ pub fn parse_config(out: &str) -> Config {
 
 fn yes(v: &str) -> bool {
     matches!(v.to_ascii_lowercase().as_str(), "yes" | "true")
+}
+
+/// `MOUSER_SSH_SHARE`: on unless `no`, `off`, `0`, `false` or `never`.
+pub fn share_on(v: Option<&str>) -> bool {
+    !matches!(v.map(|s| s.trim().to_ascii_lowercase()).as_deref(), Some("no" | "off" | "0" | "false" | "never"))
+}
+
+/// Options that make an interactive session the ControlMaster commander's
+/// side channel uses (`control_dir`: Mouser's socket folder, the same
+/// `ControlPath` as `remote::SshTarget::argv`). The master stays up 60 s
+/// after the last session so `exit` never waits for a listing in flight.
+/// Nothing when sharing is off or ssh_config already multiplexes the host
+/// (its own `ControlMaster` or `ControlPath` is left alone), and nothing
+/// when the socket path would be too long for a Unix socket (ssh would
+/// refuse the login, so the session just doesn't share).
+pub fn share_opts(cfg: &Config, env_on: bool, control_dir: &Path) -> Vec<String> {
+    let on = cfg.share.unwrap_or(env_on);
+    let own = !matches!(cfg.control_master.as_str(), "false" | "no") || !cfg.control_path.eq_ignore_ascii_case("none");
+    if !on || own || !socket_fits(control_dir) {
+        return Vec::new();
+    }
+    [
+        "-o".to_string(),
+        "ControlMaster=auto".into(),
+        "-o".into(),
+        format!("ControlPath={}", control_dir.join("%C").display()),
+        "-o".into(),
+        "ControlPersist=60".into(),
+    ]
+    .into()
+}
+
+/// Whether `<dir>/%C` fits a Unix socket address: `%C` is 40 hex digits and
+/// ssh binds a temporary `<path>.<16 chars>` first; macOS allows 103 bytes
+/// (Linux 107).
+pub fn socket_fits(control_dir: &Path) -> bool {
+    control_dir.as_os_str().len() + 1 + 40 + 17 <= 103
 }
 
 /// What the shim does with one ssh invocation.
@@ -257,18 +329,27 @@ pub const REMOTE_CHECK: &str = concat!(
     "TERM=$t; export TERM"
 );
 
-/// The remote command for an interactive login: the check, the message of the
-/// day sshd skips for commands (unless `~/.hushlogin`), then the login shell.
+/// POSIX sh run on the server just before the login shell replaces it (same
+/// pid): an OSC 7 with the folder it starts in and `OSC 1337 ;
+/// MouserRemoteShell=<pid>`, so commander lists the host and follows the
+/// shell's folder (`/proc/<pid>/cwd`, `lsof` on BSD/macOS) with no remote
+/// shell integration. Only `\0` escapes (fish and csh keep them in single
+/// quotes), no `'` or `!`.
+pub const REMOTE_REPORT: &str = "printf \"\\033]7;file://%s%s\\007\\033]1337;MouserRemoteShell=%s\\007\" \"$(uname -n 2>/dev/null)\" \"$PWD\" \"$$\"";
+
+/// The remote command for an interactive login: the check, the report, the
+/// message of the day sshd skips for commands (unless `~/.hushlogin`), then
+/// the login shell.
 pub fn remote_login() -> String {
     format!(
-        "sh -c '{REMOTE_CHECK}; if [ -e \"$HOME/.hushlogin\" ]; then :; else cat /run/motd.dynamic /etc/motd 2>/dev/null; fi; exec \"${{SHELL:-/bin/sh}}\" -l'"
+        "sh -c '{REMOTE_CHECK}; {REMOTE_REPORT}; if [ -e \"$HOME/.hushlogin\" ]; then :; else cat /run/motd.dynamic /etc/motd 2>/dev/null; fi; exec \"${{SHELL:-/bin/sh}}\" -l'"
     )
 }
 
-/// The remote command for `ssh -t host CMD`: the check, then CMD through the
-/// login shell exactly as sshd would run it (`$SHELL -c CMD`).
+/// The remote command for `ssh -t host CMD`: the check and the report, then
+/// CMD through the login shell exactly as sshd would run it (`$SHELL -c CMD`).
 pub fn remote_command(cmd: &str) -> String {
-    format!("sh -c '{REMOTE_CHECK}; exec \"${{SHELL:-/bin/sh}}\" -c \"$1\"' mouser-ssh {}", quote(cmd))
+    format!("sh -c '{REMOTE_CHECK}; {REMOTE_REPORT}; exec \"${{SHELL:-/bin/sh}}\" -c \"$1\"' mouser-ssh {}", quote(cmd))
 }
 
 /// Whether `cmd` survives one more layer of single quotes in every common
@@ -341,6 +422,7 @@ pub fn run(args: Vec<String>) -> ! {
         wrapped: std::env::var_os(ENV_GUARD).is_some(),
         stdin_tty: std::io::stdin().is_terminal(),
     };
+    let mut cfg = None;
     let plan = match early(&args, &facts) {
         Err(p) => p,
         Ok(p) => {
@@ -351,18 +433,30 @@ pub fn run(args: Vec<String>) -> ! {
                 .stderr(std::process::Stdio::null())
                 .output();
             match out {
-                Ok(o) if o.status.success() => decide(&args, &p, &parse_config(&String::from_utf8_lossy(&o.stdout)), &facts),
+                Ok(o) if o.status.success() => {
+                    let c = parse_config(&String::from_utf8_lossy(&o.stdout));
+                    let plan = decide(&args, &p, &c, &facts);
+                    cfg = Some(c);
+                    plan
+                }
                 // ssh will report the bad command line itself.
                 _ => Plan::Pass,
             }
         }
     };
+    // A new session in a Mouser tab: forget the last remote shell's pid.
+    if facts.term == Some("mouser") && facts.stdin_tty && std::io::stdout().is_terminal() {
+        use std::io::Write;
+        let mut o = std::io::stdout();
+        let _ = o.write_all(CLEAR_REMOTE_SHELL.as_bytes()).and_then(|_| o.flush());
+    }
     let mut cmd = std::process::Command::new(&real);
     cmd.env(ENV_GUARD, "1");
-    match plan {
-        Plan::Pass => cmd.args(&args),
-        Plan::Fallback => cmd.args(&args).env("TERM", FALLBACK),
-        Plan::Probe(v) => cmd.args(v),
+    let share = |cfg: &Config| share_opts(cfg, share_on(std::env::var(ENV_SHARE).ok().as_deref()), &crate::fetch::control_dir());
+    match (plan, cfg) {
+        (Plan::Pass, _) => cmd.args(&args),
+        (Plan::Fallback, c) => cmd.args(c.as_ref().map(share).unwrap_or_default()).args(&args).env("TERM", FALLBACK),
+        (Plan::Probe(v), c) => cmd.args(c.as_ref().map(share).unwrap_or_default()).args(v),
     };
     exec(cmd)
 }
@@ -547,13 +641,46 @@ mod tests {
     }
 
     #[test]
+    fn sessions_share_their_connection_unless_configured() {
+        let d = Path::new("/h/.mouser/cache/ssh");
+        let o = share_opts(&cfg(), true, d);
+        assert_eq!(
+            o,
+            a(&["-o", "ControlMaster=auto", "-o", "-", "-o", "ControlPersist=60"])
+                .into_iter()
+                .enumerate()
+                .map(|(i, s)| if i == 3 { format!("ControlPath={}", d.join("%C").display()) } else { s })
+                .collect::<Vec<_>>()
+        );
+        assert!(share_opts(&cfg(), false, d).is_empty(), "MOUSER_SSH_SHARE=no");
+        // ssh_config multiplexes the host itself: left alone.
+        let own = parse_config("user me\ncontrolmaster auto\ncontrolpath ~/.ssh/cm-%C\n");
+        assert_eq!((own.control_master.as_str(), own.control_path.as_str()), ("auto", "~/.ssh/cm-%C"));
+        assert!(share_opts(&own, true, d).is_empty());
+        assert!(share_opts(&parse_config("controlpath /tmp/x\n"), true, d).is_empty());
+        // Per host: SetEnv MOUSER_SSH_SHARE=no wins over the environment, and yes too.
+        let off = parse_config("user me\nsetenv MOUSER_SSH_SHARE=no\n");
+        assert_eq!(off.share, Some(false));
+        assert!(share_opts(&off, true, d).is_empty());
+        assert!(!share_opts(&parse_config("setenv MOUSER_SSH_SHARE=yes\n"), false, d).is_empty());
+        assert!(share_on(None) && share_on(Some("auto")) && !share_on(Some("Off")) && !share_on(Some("0")));
+        assert_eq!(CLEAR_REMOTE_SHELL, "\x1b]1337;MouserRemoteShell=\x07");
+        // A MOUSER_HOME so deep the socket can't be bound: the login still works, unshared.
+        let deep = Path::new("/mnt/some/very/long/scratch/folder/for/tests/home/cache/ssh");
+        assert!(!socket_fits(deep) && share_opts(&cfg(), true, deep).is_empty());
+        assert!(socket_fits(Path::new("/home/someone-long-name/.mouser/cache/ssh")));
+    }
+
+    #[test]
     fn remote_scripts_are_quote_safe() {
         let login = remote_login();
         let inner = login.strip_prefix("sh -c '").and_then(|s| s.strip_suffix('\'')).unwrap();
         let cmd = remote_command("x");
         let cmd_inner = cmd.strip_prefix("sh -c '").and_then(|s| s.split_once("' mouser-ssh ")).unwrap().0;
-        for s in [REMOTE_CHECK, inner, cmd_inner] {
-            assert!(!s.contains(['\'', '\\', '!', '\n']), "{s}");
+        for s in [REMOTE_CHECK, REMOTE_REPORT, inner, cmd_inner] {
+            assert!(!s.contains(['\'', '!', '\n']), "{s}");
+            // Only `\0…` octal escapes: fish reads `\\` and `\'` in single quotes.
+            assert!(s.match_indices('\\').all(|(i, _)| s[i + 1..].starts_with('0')), "{s}");
         }
         assert_eq!(quote("a'b"), r"'a'\''b'");
     }
@@ -589,6 +716,7 @@ mod tests {
         std::fs::write(home.join(".hushlogin"), "").unwrap();
         let user_shell = script(t.path(), "usershell", "echo \"TERM=$TERM ARGS=$*\"");
         let out = std::process::Command::new(login_shell)
+            .current_dir(&home)
             .arg("-c")
             .arg(remote)
             .env_clear()
@@ -599,7 +727,13 @@ mod tests {
             .output()
             .unwrap();
         // stdout only: a login shell's own startup noise (vendor configs) goes to stderr.
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        // The report (OSC 7 + the pid) comes first; checked, then dropped.
+        let o = String::from_utf8_lossy(&out.stdout).into_owned();
+        let report = format!("\x1b]7;file://{}\x07\x1b]1337;MouserRemoteShell=", home.display());
+        let rest = o.strip_prefix(&report).unwrap_or_else(|| panic!("no report in {o:?}"));
+        let (pid, rest) = rest.split_once('\x07').unwrap();
+        assert!(pid.parse::<u32>().is_ok_and(|p| p > 0), "{pid:?}");
+        rest.trim().to_string()
     }
 
     /// Login shells to try the remote command in (those installed here).

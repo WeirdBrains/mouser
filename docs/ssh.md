@@ -55,6 +55,30 @@ shell integration (`mouser shell-integration zsh|bash|fish`, [Modes](./modes.md)
 `ssh` function you defined yourself is left alone; aliases such as `alias ssh='ssh -A'`
 keep working.
 
+## Commander on the remote host
+
+The shim also lets [commander](./modes.md) work on the host you are logged in to:
+
+- **One login.** An interactive session is started as an ssh *ControlMaster*
+  (`-o ControlMaster=auto -o ControlPath=$MOUSER_HOME/cache/ssh/%C -o ControlPersist=60`),
+  so commander's listings, previews and file changes reuse it instead of logging in
+  again. Hosts that need a password, a one-time code or a passphrase-protected key
+  work; the connection stays up 60 s after you leave so a quick reconnect is instant.
+  Your own `ControlMaster` / `ControlPath` in ssh_config are left alone (ssh then uses
+  yours).
+  A `MOUSER_HOME` so deep that the socket path would not fit a Unix socket (about 45
+  characters for `$MOUSER_HOME/cache/ssh`) is not shared either, so the login never
+  fails because of it.
+- **The remote folder.** Right before your login shell starts, the check prints two
+  private escape sequences that only Mouser reads: OSC 7 (`file://host/folder`) and
+  `OSC 1337;MouserRemoteShell=<pid>`. Commander follows that shell's folder on the host,
+  so nothing has to be installed or added to the remote shell's rc files.
+
+| Setting | Effect |
+| --- | --- |
+| `MOUSER_SSH_SHARE=no` | don't make sessions a ControlMaster (commander then needs a key or agent that logs in without a prompt) |
+| `SetEnv MOUSER_SSH_SHARE=no` (or `yes`) in a `Host` block | the same for one host |
+
 ## Choosing
 
 | Setting | Effect |
@@ -87,3 +111,5 @@ infocmp -x mouser | ssh web1 'sudo tic -x -'   # for everyone on the host
 - On Windows Mouser's tabs use `TERM=xterm-256color` already, so there is no shim.
 - ssh started on the server (a second hop from there) sends the server's `TERM`; use
   ProxyJump (`ssh -J web1 db1`) so the hop starts from Mouser.
+- Commander follows the remote shell through `/proc` (Linux) or `lsof`; on other hosts
+  it shows the folder you logged in to until the shell reports one itself (OSC 7).
