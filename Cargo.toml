@@ -12,7 +12,9 @@ members = [
   "crates/icon-tools",
   # The built-in local model (llama.cpp); mouser-app's default `local-llm` feature.
   "crates/mouser-llm",
-  # The media player and fullscreen ease shared by the commander and chat plugins.
+  # Views (list / grid / carousel, zoom, slide) and media (player, inline
+  # players with fullscreen) for mode plugins; commander and chat use both.
+  "crates/mouser-views",
   "crates/mouser-media",
   # Modes as plugin programs (transport = "mode"), on mouser-mode-api only.
   "plugins/preferences",
