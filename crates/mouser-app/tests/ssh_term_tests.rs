@@ -23,7 +23,9 @@ struct World {
 /// got and runs a remote command the way sshd would ($SHELL -c, $SHELL a fake
 /// login shell that prints TERM).
 fn world(infocmp_finds_mouser: bool) -> World {
-    let t = tempfile::tempdir().unwrap();
+    // Under /tmp: macOS's own temp folder is so deep that `<home>/cache/ssh/%C`
+    // would not fit a Unix socket, and the shim then (rightly) doesn't share.
+    let t = tempfile::Builder::new().tempdir_in("/tmp").unwrap();
     let shim_dir = t.path().join("shim");
     let shim = mouser_core::ssh_term::install_shim(&shim_dir, Path::new(env!("CARGO_BIN_EXE_mouser-app"))).unwrap();
     let sys = t.path().join("sys");
