@@ -1,0 +1,14 @@
+[package]
+name = "mouser-views"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Views for Mouser mode plugins: list / grid / carousel layout, carousel slide, image zoom and fit, scrollbars and labels, on mouser-mode-api panels"
+publish = false
+
+[dependencies]
+mouser-mode-api = { path = "../mouser-mode-api", version = "0.3.0" }
+
+[lints]
+workspace = true
