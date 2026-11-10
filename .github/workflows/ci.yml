@@ -6,6 +6,44 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The release scripts, and the committed Homebrew files used for real:
+  # brew downloads each architecture's asset and checks its sha256.
+  packaging:
+    name: release scripts + Homebrew (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: release.py and packaging.py tests
+        run: |
+          python3 scripts/test-release.py
+          python3 scripts/test-packaging.py
+          python3 scripts/packaging.py check
+      - name: Homebrew formula and cask from a local tap (macOS)
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
+        run: |
+          set -eux
+          brew tap-new --no-git weirdbrains/ci
+          TAP="$(brew --repository)/Library/Taps/weirdbrains/homebrew-ci"
+          mkdir -p "$TAP/Formula" "$TAP/Casks"
+          cp Formula/mouser.rb "$TAP/Formula/"
+          cp Casks/mouser.rb "$TAP/Casks/"
+          # Both architectures: fetch verifies each download against its sha256.
+          for arch in arm intel; do
+            brew fetch --force --arch="$arch" --formula weirdbrains/ci/mouser
+            brew fetch --force --arch="$arch" --cask weirdbrains/ci/mouser
+          done
+          brew install --formula weirdbrains/ci/mouser
+          "$(brew --prefix)/bin/mouser" --version
+          test -d "$(brew --prefix)/lib/mouser/engines"
+
   build-test:
     name: fmt + clippy + build + test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

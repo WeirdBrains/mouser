@@ -52,7 +52,11 @@ Local steps (per AGENTS.md)
    ```
 
    It bumps the versions (docs-only: `--patch`; feature: default MINOR), folds `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section (America/New_York) with the message added, commits `release: vX.Y.Z` with the message as the body, creates the annotated tag `vX.Y.Z` and runs `git push origin main --follow-tags`. Pushing that tag is what starts the Release workflow.
-3. After the Release workflow has published, update `Formula/mouser.rb`, `Casks/mouser.rb` and `packaging/arch/mouser-bin/` (`packaging/arch/update-bin.sh <ver>`) with the release's checksums in a follow-up `packaging:` commit.
+3. The Release workflow then pushes a `packaging:` commit: `Formula/mouser.rb` and `Casks/mouser.rb` from `scripts/packaging.py brew <ver> --assets dist`, and `packaging/arch/mouser-bin/` from `packaging/arch/update-bin.sh <ver>`. If that step fails, run the same by hand from the published release: `python3 scripts/packaging.py brew <ver> --release`, `packaging/arch/update-bin.sh <ver>`, commit `packaging: …`.
+
+Homebrew checksums (`scripts/packaging.py`)
+- `brew` hashes both macOS tarballs (formula) and both `.dmg`s (cask), checks each against its `.sha256`, and only then writes the two files. A missing asset, two different copies, or a mismatch exits 1 and writes nothing, so an empty `sha256 ""` can't be committed (1.4.x and 1.5.0 shipped empty ones: the workflow hashed `dist/<file>` while the artifacts sit in `dist/<artifact>/<file>`; fixed for 1.5.0 in a follow-up commit).
+- `check` fails on an empty or malformed sha256, a url for another version, or a missing architecture. CI runs it with `scripts/test-packaging.py` and `scripts/test-release.py`, and on macOS installs the committed formula from a local tap: `brew fetch` for both architectures (formula and cask), each download checked against its sha256, then `brew install` and `mouser --version`.
 
 `scripts/release.py`
 - Message: one sentence becomes one bullet under `### Added` (`### Fixed` with `--patch`; `--section Changed` etc. to choose); `- ` bullets and `### Heading` blocks are used as written. Keep it summary level, like the rest of `CHANGELOG.md`.
@@ -79,8 +83,9 @@ Notes
   - From source: `cd packaging/arch/mouser-git && makepkg -si`
   - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
-  - CLI: `brew install --formula https://raw.githubusercontent.com/WeirdBrains/mouser/main/Formula/mouser.rb`
-  - App: `brew install --cask https://raw.githubusercontent.com/WeirdBrains/mouser/main/Casks/mouser.rb`
+  - Tap this repository once: `brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser` (Homebrew no longer installs a formula from a URL).
+  - CLI: `brew install weirdbrains/mouser/mouser`
+  - App: `brew install --cask weirdbrains/mouser/mouser`
   - Or download the `.dmg` and drag `Mouser.app` to Applications.
 - Windows:
   - Download and run `MouserSetup-<ver>.exe` (Start Menu shortcut installed), or unzip the portable `.zip`.
