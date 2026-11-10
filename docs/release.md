@@ -1,7 +1,7 @@
 # Releases
 
 CI
-- `.github/workflows/ci.yml` runs on pushes to `main` across Ubuntu, macOS and Windows:
+- `.github/workflows/ci.yml` runs on `v*` tag pushes (and manual dispatch) across Ubuntu, macOS and Windows:
   - `cargo fmt --check`
   - `cargo clippy --all-targets -- -D warnings`
   - `cargo build --release`
@@ -38,7 +38,7 @@ Signing
 - `-full` offline bundles (the `plugins.lock` archives in `plugins/` beside Mouser) are built once the lock has entries; it is empty in this tree.
 
 What starts a release
-- Only a pushed `v*` tag runs the Release workflow (`on: push: tags: ['v*']`), and only a tag ref reaches the `publish` job (`if: startsWith(github.ref, 'refs/tags/v')`). A push to `main` runs CI and the Docs site workflow, never Release. A manual run (`workflow_dispatch`) builds and publishes nothing.
+- Only a pushed `v*` tag runs the Release, CI, and Docs site workflows. Only a tag ref reaches the Release `publish` job (`if: startsWith(github.ref, 'refs/tags/v')`). A push to `main` starts none of them. A manual Release run (`workflow_dispatch`) builds and publishes nothing; CI and the Docs site can also be started by hand.
 
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.

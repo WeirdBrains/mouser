@@ -43,7 +43,7 @@ These rules are adapted from the owner's Muninn project for this repository.
   `api`, or `internal`. Internal docs (maintainer/agent notes such as deploy-site, the
   release process and HANDOVER) stay in the repo and are not published to the site. CI
   (`scripts/check-doc-sections.py`) fails on an unmapped doc, and the Docs site workflow
-  rebuilds the site's pages from `docs/` on every push to main (skipping `internal`).
+  rebuilds the site's pages from `docs/` on a `v*` tag (skipping `internal`; also runnable by hand).
 - If Mouser exposes a CLI, generate man pages from clap definitions (clap_mangen) into
   `man/`, with additional FILES / ENVIRONMENT / EXIT STATUS / SECURITY / EXAMPLES sections.
 
