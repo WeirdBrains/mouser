@@ -75,9 +75,9 @@ jobs:
       - name: clippy + audio tests with JACK (Linux)
         if: runner.os == 'Linux'
         run: |
-          cargo clippy -p mouser-core -p mouser-render -p mouser-commander --features mouser-core/jack,mouser-render/jack,mouser-commander/jack --all-targets -- -D warnings
+          cargo clippy -p mouser-core -p mouser-render -p mouser-media -p mouser-commander --features mouser-core/jack,mouser-render/jack,mouser-media/jack,mouser-commander/jack --all-targets -- -D warnings
           cargo test -p mouser-core --features jack --lib audio
-          cargo test -p mouser-commander --features jack --bin mouser-commander audio
+          cargo test -p mouser-media --features jack --lib audio
 
 
       # The Windows build, for checking on a Windows machine without a release.

@@ -1,19 +1,21 @@
-//! Media in the chat: pictures, video and sound named in a message or a
-//! tool's output (`mouser_media::detect`) get a player under it. A picture
+//! Inline media for any mode: pictures, video and sound named in text
+//! (`crate::detect`), e.g. a chat message or a tool's output, get a player
+//! under it. A picture
 //! shows as a thumbnail; video and sound get play / pause and a progress
 //! bar (Mouser's player: ffmpeg + cpal, `mouser_media::player`). Any of them
 //! opens fullscreen within the chat's space with the same ease-in-out flight
 //! and dimmed backdrop as commander's viewer (`mouser_media::anim`).
 //!
-//! Nothing here knows about the chat: it draws into a rect and answers
-//! `media_*` actions, so it can move into `mouser-media` as a view any mode
-//! can use.
+//! Nothing here knows about the mode using it: it draws into a rect and
+//! answers `media_*` actions (`Action::Mode`), so a mode routes those
+//! actions and the fullscreen keys to it (docs/building-modes.md §Views and
+//! media).
 
-use mouser_media::Waker;
-use mouser_media::anim::FsAnim;
-use mouser_media::detect::{Kind, MediaRef};
-use mouser_media::player::{self, Player};
-use mouser_media::still::{Slot, Stills, fit};
+use crate::Waker;
+use crate::anim::FsAnim;
+use crate::detect::{Kind, MediaRef};
+use crate::player::{self, Player};
+use crate::still::{Slot, Stills, fit};
 use mouser_mode_api::{Action, PanelItem, PanelStyle, Rect};
 use std::sync::Arc;
 use std::time::Instant;
@@ -139,7 +141,7 @@ impl MediaView {
         self.wake();
     }
 
-    /// A `media_*` action; `area`: the chat's space (fullscreen).
+    /// A `media_*` action; `area`: the mode's space (fullscreen fills it).
     pub fn action(&mut self, id: &str, arg: i32, area: Rect) -> bool {
         let i = arg.max(0) as usize;
         match id {

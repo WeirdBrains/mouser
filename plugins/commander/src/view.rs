@@ -15,6 +15,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+pub use mouser_media::anim::FsAnim;
+pub use mouser_views::anim::Slide;
+pub use mouser_views::geom::{inside, intersect, overlaps, unpack_xy};
+pub use mouser_views::text::{clip_text, header_fit, path_segments, range_label};
+pub use mouser_views::zoom::{Zoom, contain_scale, fit_scale, zoom_about, zoom_rect};
+#[cfg(test)]
+use {mouser_media::anim::lerp_rect, mouser_views::geom::pack_xy};
+
 #[derive(Clone)]
 struct Thumb {
     key: u64,
@@ -378,116 +386,6 @@ fn kind_label(k: Kind) -> &'static str {
     }
 }
 
-/// Carousel slide: eases the shown position from where it was to the
-/// selection over [`Slide::DUR`]; a new target mid-slide starts from the
-/// current position and speed is continuous enough (ease-in-out).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Slide {
-    from: f64,
-    to: f64,
-    start: Option<std::time::Instant>,
-    /// A redraw ticker is running for this slide.
-    ticking: bool,
-}
-
-impl Slide {
-    pub const DUR: std::time::Duration = std::time::Duration::from_millis(180);
-
-    /// Ease-in-out (cubic): slow start, fast middle, slow stop.
-    pub fn ease(t: f64) -> f64 {
-        let t = t.clamp(0.0, 1.0);
-        if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
-    }
-
-    fn value(&self, now: std::time::Instant) -> f64 {
-        match self.start {
-            Some(s) => {
-                let t = now.saturating_duration_since(s).as_secs_f64() / Self::DUR.as_secs_f64();
-                self.from + (self.to - self.from) * Self::ease(t)
-            }
-            None => self.to,
-        }
-    }
-
-    /// The position to draw for `target` at `now` (retargets smoothly).
-    pub fn at(&mut self, target: f64, now: std::time::Instant) -> f64 {
-        if self.start.is_none() && self.from == 0.0 && self.to == 0.0 {
-            self.to = target;
-            self.from = target;
-        }
-        if target != self.to {
-            let cur = self.value(now);
-            // Far jumps (Home/End, search) don't fly past every item.
-            self.from = if (target - cur).abs() > 3.0 { target - (target - cur).signum() * 1.0 } else { cur };
-            self.to = target;
-            self.start = Some(now);
-            self.ticking = false;
-        }
-        let v = self.value(now);
-        if self.start.is_some_and(|s| now.saturating_duration_since(s) >= Self::DUR) {
-            self.start = None;
-            self.from = self.to;
-            self.ticking = false;
-            return self.to;
-        }
-        v
-    }
-
-    pub fn moving(&self) -> bool {
-        self.start.is_some()
-    }
-
-    fn end(&self) -> std::time::Instant {
-        self.start.map_or_else(std::time::Instant::now, |s| s + Self::DUR)
-    }
-}
-
-/// Open/close of the fullscreen image or player: the picture moves from the
-/// thumbnail (or file-view) rect to the window, and a dim backdrop crossfades.
-/// Time is wall-clock so the ease stays even if a frame is late.
-#[derive(Debug, Clone, Copy)]
-struct FsAnim {
-    opening: bool,
-    from: Rect,
-    to: Rect,
-    start: std::time::Instant,
-    ticking: bool,
-}
-
-impl FsAnim {
-    pub const DUR: std::time::Duration = std::time::Duration::from_millis(220);
-
-    fn progress(&self, now: std::time::Instant) -> f64 {
-        let t = now.saturating_duration_since(self.start).as_secs_f64() / Self::DUR.as_secs_f64();
-        Slide::ease(t)
-    }
-
-    fn finished(&self, now: std::time::Instant) -> bool {
-        now.saturating_duration_since(self.start) >= Self::DUR
-    }
-
-    fn rect(&self, now: std::time::Instant) -> Rect {
-        lerp_rect(self.from, self.to, self.progress(now))
-    }
-
-    fn veil(&self, now: std::time::Instant) -> u8 {
-        let p = if self.opening { self.progress(now) } else { 1.0 - self.progress(now) };
-        (p * 200.0).round().clamp(0.0, 200.0) as u8
-    }
-
-    fn end(&self) -> std::time::Instant {
-        self.start + Self::DUR
-    }
-}
-
-fn lerp_i(a: i32, b: i32, t: f64) -> i32 {
-    (a as f64 + (b - a) as f64 * t).round() as i32
-}
-
-fn lerp_rect(a: Rect, b: Rect, t: f64) -> Rect {
-    Rect { x: lerp_i(a.x, b.x, t), y: lerp_i(a.y, b.y, t), w: lerp_i(a.w, b.w, t), h: lerp_i(a.h, b.h, t) }
-}
-
 pub struct CommanderMode {
     pub c: Commander,
     per_row: usize,
@@ -589,18 +487,6 @@ impl Ask {
     }
 }
 
-/// Zoom of the image in the file view: scale (1.0 = actual pixels) and the
-/// image point (0..1) at the centre of the body.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Zoom {
-    pub path: PathBuf,
-    pub scale: f64,
-    pub cx: f64,
-    pub cy: f64,
-    /// Fit to the width (follows the window); false once zoomed.
-    pub fit: bool,
-}
-
 #[derive(Clone, Copy, Debug)]
 enum Press {
     Pan { at: (i32, i32), c0: (f64, f64) },
@@ -616,85 +502,6 @@ struct Hits {
     image: Rect,
     video: Rect,
     menu: Rect,
-}
-
-fn inside(r: Rect, (x, y): (i32, i32)) -> bool {
-    r.w > 0 && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
-}
-
-/// Pointer position packed into an action argument (`x | y << 15`).
-pub fn pack_xy(x: i32, y: i32) -> i32 {
-    x.clamp(0, 0x7fff) | (y.clamp(0, 0x7fff) << 15)
-}
-
-fn unpack_xy(a: i32) -> (i32, i32) {
-    (a & 0x7fff, (a >> 15) & 0x7fff)
-}
-
-/// Fit scale of a `nat` image in `body`: images fit the WIDTH (a tall one
-/// scrolls / pans vertically).
-pub fn fit_scale(body: Rect, nat: (u32, u32)) -> f64 {
-    if nat.0 == 0 || nat.1 == 0 {
-        return 1.0;
-    }
-    body.w as f64 / nat.0 as f64
-}
-
-/// Scale that shows the whole image inside `body` (fullscreen fit).
-pub fn contain_scale(body: Rect, nat: (u32, u32)) -> f64 {
-    if nat.0 == 0 || nat.1 == 0 {
-        return 1.0;
-    }
-    (body.w as f64 / nat.0 as f64).min(body.h as f64 / nat.1 as f64)
-}
-
-/// Where a zoomed image goes: centred when smaller than the body, else
-/// positioned by the centre point (clamped so no gap shows at the edges).
-pub fn zoom_rect(body: Rect, nat: (u32, u32), z: &mut Zoom) -> Rect {
-    let (dw, dh) = (nat.0 as f64 * z.scale, nat.1 as f64 * z.scale);
-    let axis = |b0: i32, bl: i32, d: f64, c: &mut f64| -> i32 {
-        if d <= bl as f64 {
-            *c = 0.5;
-            b0 + ((bl as f64 - d) / 2.0) as i32
-        } else {
-            let half = bl as f64 / 2.0 / d;
-            *c = c.clamp(half, 1.0 - half);
-            (b0 as f64 + bl as f64 / 2.0 - *c * d).round() as i32
-        }
-    };
-    let x = axis(body.x, body.w, dw, &mut z.cx);
-    let y = axis(body.y, body.h, dh, &mut z.cy);
-    Rect { x, y, w: dw.round().max(1.0) as i32, h: dh.round().max(1.0) as i32 }
-}
-
-/// Zoom by `factor` keeping the image point under `anchor` still.
-pub fn zoom_about(body: Rect, nat: (u32, u32), z: &mut Zoom, factor: f64, anchor: (i32, i32)) {
-    let r = zoom_rect(body, nat, z);
-    let u = ((anchor.0 - r.x) as f64 / r.w as f64).clamp(0.0, 1.0);
-    let v = ((anchor.1 - r.y) as f64 / r.h as f64).clamp(0.0, 1.0);
-    let fit = fit_scale(body, nat);
-    let s1 = (z.scale * factor).clamp(fit.min(1.0) * 0.5, 16.0);
-    let (dw, dh) = (nat.0 as f64 * s1, nat.1 as f64 * s1);
-    z.cx = u + (body.x as f64 + body.w as f64 / 2.0 - anchor.0 as f64) / dw;
-    z.cy = v + (body.y as f64 + body.h as f64 / 2.0 - anchor.1 as f64) / dh;
-    z.scale = s1;
-}
-
-/// Header buttons that fit in `room` px (right to left); the rest go to the
-/// ••• menu. Returns how many fit.
-pub fn header_fit(widths: &[i32], room: i32, menu_w: i32) -> usize {
-    let all: i32 = widths.iter().sum();
-    if all <= room {
-        return widths.len();
-    }
-    let mut used = menu_w;
-    widths
-        .iter()
-        .take_while(|w| {
-            used += **w;
-            used <= room
-        })
-        .count()
 }
 
 impl Default for CommanderMode {
@@ -745,17 +552,6 @@ fn float_label(full: Rect, clip: Rect, name: &str, cw: i32, ch: i32) -> Option<(
     (r.w > 0 && r.x >= clip.x && r.x + r.w <= clip.x + clip.w).then_some((r, text))
 }
 
-fn clip_text(s: &str, cols: i32) -> String {
-    let cols = cols.max(1) as usize;
-    if s.chars().count() <= cols {
-        s.to_string()
-    } else {
-        let mut t: String = s.chars().take(cols.saturating_sub(1)).collect();
-        t.push('…');
-        t
-    }
-}
-
 /// Builder state for one frame.
 /// How long fullscreen controls stay after the last pointer move or key.
 pub const FS_CONTROLS: std::time::Duration = std::time::Duration::from_millis(2500);
@@ -776,22 +572,9 @@ fn fs_key(bytes: &[u8]) -> Option<&'static str> {
     })
 }
 
-/// `x–y of N` for a view showing `shown` items from `first` of `total`.
-pub fn range_label(first: usize, shown: usize, total: usize) -> String {
-    if total == 0 {
-        return "0 of 0".into();
-    }
-    format!("{}–{} of {total}", (first + 1).min(total), (first + shown).min(total))
-}
-
 /// A slim scrollbar over `track` when not everything fits.
 fn scrollbar(o: &mut Out, track: Rect, first: usize, shown: usize, total: usize) {
-    if total <= shown || total == 0 || track.w <= 0 || track.h <= 0 {
-        return;
-    }
-    let start = (first * 1000 / total) as u16;
-    let len = (shown * 1000 / total).max(1) as u16;
-    o.items.push(item(track, "", PanelStyle::Scrollbar { start, len }, UiAction::None));
+    o.items.extend(mouser_views::scroll::scrollbar(track, first, shown, total, UiAction::None));
 }
 
 struct Out {
@@ -811,6 +594,8 @@ struct Out {
 
 impl CommanderMode {
     pub fn new() -> Self {
+        // The player reads [audio] from the same home commander uses.
+        mouser_media::set_home(crate::storage::resolve_home);
         Self {
             c: Commander::new(),
             per_row: 1,
@@ -1229,25 +1014,23 @@ impl CommanderMode {
         let d = badge_size(cw, ch);
         let (gap, label_h) = ((d / 2 + 6).max(10), ch + 4);
         let body = Rect { y: body.y + d / 2 + 2, h: body.h - d / 2 - 2, ..body };
-        let per_row = ((body.w - d / 2 - 6 + gap) / (ts + gap)).max(1) as usize;
-        let cell_h = ts + label_h + gap;
-        let vis_rows = ((body.h + gap) / cell_h).max(1) as usize;
-        self.per_row = per_row;
-        self.c.page = per_row * vis_rows;
-        let row = self.c.selected / per_row;
-        let mut first = self.c.scroll.min(row);
-        if row >= first + vis_rows {
-            first = row + 1 - vis_rows;
-        }
-        self.c.scroll = first;
         let vis: Vec<Entry> = self.c.visible().into_iter().cloned().collect();
-        let start = first * per_row;
-        let total_rows = vis.len().div_ceil(per_row);
-        scrollbar(o, Rect { x: body.x + body.w - 5, y: body.y, w: 5, h: body.h }, first, vis_rows, total_rows);
-        self.range = Some(range_label(start, (per_row * vis_rows).min(vis.len().saturating_sub(start)), vis.len()));
-        for (n, e) in vis.iter().enumerate().skip(start).take(per_row * vis_rows) {
-            let (r, col) = ((n - start) / per_row, (n - start) % per_row);
-            let tile = Rect { x: body.x + col as i32 * (ts + gap), y: body.y + r as i32 * cell_h, w: ts, h: ts };
+        let g = mouser_views::grid::Grid::new(
+            body,
+            mouser_views::grid::Tiles { size: ts, gap, label_h, reserve: d / 2 + 6 },
+            vis.len(),
+            self.c.selected,
+            self.c.scroll,
+        );
+        self.per_row = g.per_row;
+        self.c.page = g.page();
+        self.c.scroll = g.first;
+        let start = g.start();
+        scrollbar(o, Rect { x: body.x + body.w - 5, y: body.y, w: 5, h: body.h }, g.first, g.vis_rows, g.total_rows);
+        self.range = Some(range_label(start, g.page().min(vis.len().saturating_sub(start)), vis.len()));
+        for n in g.shown(vis.len()) {
+            let e = &vis[n];
+            let tile = g.tile_rect(n);
             o.items.push(item(tile, "", PanelStyle::Tile { selected: n == self.c.selected }, act("item", n as i32)));
             let inner = Rect { x: tile.x + 4, y: tile.y + 4, w: ts - 8, h: ts - 8 };
             self.content(e, (inner, inner), (ts as u32 * 2).max(256), (cw, ch), o);
@@ -1274,29 +1057,19 @@ impl CommanderMode {
         let ih = (body.h - label_h - 6).max(ch);
         let w = (body.w * 55 / 100).max(cw * 10);
         let gap = (d / 2 + 8).max(14);
-        let x_mid = body.x + (body.w - w) / 2;
-        // Items sit on a strip; `pos` (fractional while sliding) is in the middle.
-        // Neighbours are the same size, cut off by the edges (partial).
-        // What is on the strip now, plus the selection's neighbours (the
-        // incoming item while sliding).
-        let sel = self.c.selected as i64;
-        let lo = (pos.floor() as i64 - 1).min(sel - 1).max(0) as usize;
-        let hi = ((pos.ceil() as i64 + 1).max(sel + 1).max(0) as usize).min(vis.len().saturating_sub(1));
-        let mut order: Vec<usize> = (lo..=hi).collect();
-        // The one nearest the middle loads (and draws its frame) first.
-        order.sort_by(|a, b| (*a as f64 - pos).abs().total_cmp(&(*b as f64 - pos).abs()));
-        for &i in &order {
-            let x = x_mid + ((i as f64 - pos) * (w + gap) as f64).round() as i32;
-            let full = Rect { x, y: body.y, w, h: ih };
-            let (l, r) = (full.x.max(body.x), (full.x + w).min(body.x + body.w));
-            if r - l < 8 {
+        // Items sit on a strip (mouser-views): `pos` (fractional while
+        // sliding) in the middle, neighbours the same size, cut off by the
+        // edges; the one nearest the middle loads (and draws) first.
+        let strip = mouser_views::carousel::Strip::new(body, w, gap);
+        for i in mouser_views::carousel::Strip::order(pos, self.c.selected, vis.len()) {
+            let full = strip.rect(i, pos, ih);
+            let Some(clip) = strip.visible(full, 8) else {
                 // Off the strip still: load it so it is ready when it slides in.
                 if matches!(vis[i].kind, Kind::Image | Kind::Video) {
                     o.slots.push(((vis[i].path.clone(), 1024), full, Rect { w: 0, h: 0, ..full }));
                 }
                 continue;
-            }
-            let clip = Rect { x: l, y: full.y, w: r - l, h: ih };
+            };
             o.items.push(item(clip, "", PanelStyle::Tile { selected: i == self.c.selected }, act("item", i as i32)));
             let inner = |r: Rect| Rect { x: r.x + 6, y: r.y + 6, w: r.w - 12, h: r.h - 12 };
             if vis[i].kind == Kind::Dir {
@@ -2772,49 +2545,12 @@ impl CommanderMode {
     }
 }
 
-/// The header's path split into clickable pieces: (text, how many levels up
-/// it is). `~/a/b` gives `~`, `/a`, `/b` with 2, 1, 0; `/x` gives `/`, `x`.
-pub fn path_segments(shown: &str) -> Vec<(String, usize)> {
-    let parts: Vec<&str> = shown.split('/').collect();
-    let mut out: Vec<String> = Vec::new();
-    for (i, p) in parts.iter().enumerate() {
-        match (i, p.is_empty()) {
-            (0, true) => out.push("/".into()),
-            (_, true) => {}
-            (0, false) => out.push(p.to_string()),
-            _ if out.last().is_some_and(|l| l == "/") && out.len() == 1 => out.push(p.to_string()),
-            _ => out.push(format!("/{p}")),
-        }
-    }
-    let n = out.len();
-    out.into_iter().enumerate().map(|(i, t)| (t, n - 1 - i)).collect()
-}
-
-fn overlaps(a: Rect, b: Rect) -> bool {
-    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
-}
-
-fn intersect(a: Rect, b: Rect) -> Rect {
-    let (l, t) = (a.x.max(b.x), a.y.max(b.y));
-    let (r, bt) = ((a.x + a.w).min(b.x + b.w), (a.y + a.h).min(b.y + b.h));
-    Rect { x: l, y: t, w: (r - l).max(0), h: (bt - t).max(0) }
-}
-
 /// Cut an image drawn at `i.rect` to the visible part `clip` (carousel
 /// neighbours): the destination shrinks and `src` follows.
 fn crop(mut i: ModeImage, clip: Rect) -> Option<ModeImage> {
-    let f = i.rect;
-    let (l, t) = (f.x.max(clip.x), f.y.max(clip.y));
-    let (r, b) = ((f.x + f.w).min(clip.x + clip.w), (f.y + f.h).min(clip.y + clip.h));
-    if r <= l || b <= t {
-        return None;
-    }
-    let (sx, sy) = (i.width as f64 / f.w as f64, i.height as f64 / f.h as f64);
-    let px = |v: i32, s: f64, max: u32| ((v as f64 * s) as u32).min(max);
-    let (x0, y0) = (px(l - f.x, sx, i.width), px(t - f.y, sy, i.height));
-    let (x1, y1) = (px(r - f.x, sx, i.width), px(b - f.y, sy, i.height));
-    i.src = (x0, y0, (x1 - x0).max(1), (y1 - y0).max(1));
-    i.rect = Rect { x: l, y: t, w: r - l, h: b - t };
+    let (src, at) = mouser_views::geom::crop(i.rect, (i.width, i.height), clip)?;
+    i.src = src;
+    i.rect = at;
     Some(i)
 }
 

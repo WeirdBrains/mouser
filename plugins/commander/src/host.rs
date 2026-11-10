@@ -11,8 +11,8 @@ pub type UiAction = mouser_mode_api::Action;
 pub type UiViewport = mouser_mode_api::Viewport;
 pub type Panel = mouser_mode_api::ui::Panel<UiAction>;
 pub type PanelItem = mouser_mode_api::ui::PanelItem<UiAction>;
-pub type Waker = Arc<dyn Fn() + Send + Sync>;
 pub use crate::modes::{Binding, Keymap};
+pub use mouser_media::Waker;
 
 /// Gap between the terminal area's edge and the view (Mouser's frame padding).
 pub const PADDING: i32 = 8;

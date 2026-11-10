@@ -9,7 +9,7 @@
 //! ([`hub`]) and players for media named in the chat ([`media`]).
 
 mod hub;
-mod media;
+use mouser_media::view as media;
 
 use mouser_media::detect::{self, MediaRef};
 use mouser_mode_api::events::{Event, EventDecl, Listener};

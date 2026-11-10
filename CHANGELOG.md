@@ -8,6 +8,7 @@
 - Hugging Face models: search, details and install from the chat (`/hf`) or `mouser model hf search|info|install|list|remove`. Only GGUF files whose architecture the bundled llama.cpp supports are offered ("supported architecture, not load-tested"); others say why they won't run. Downloads resume, need and check the Hub's SHA256, and the installed model becomes the current one. Nothing from the repo is executed. See docs/models.md §Hugging Face.
 - Chat looks like a terminal agent: rounded frame and bubbles, fullscreen in its pane, and it can run commands (`terminal_run`) after an approval card with Allow / Allow all / Deny; Allow all lasts for the conversation and `/revoke` or `/new` ends it. Commands run in their own process group, time out, and anything they leave running is stopped. See docs/chat.md.
 - Chat plays images, video and audio from messages and tool output inline, each with fullscreen (new `mouser-media` crate). mouser-mode-api 0.3: frame and bubble panel styles, Hugging Face and `agent.revoke_all` services.
+- Views and media for any mode plugin: `mouser-views` (list / grid / carousel layout, carousel slide, image zoom, scrollbars, labels) and `mouser-media` (player, inline players with fullscreen). Commander now runs on both instead of its own copies. See docs/building-modes.md §Views and media.
 
 ### Fixed
 
