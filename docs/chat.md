@@ -67,10 +67,16 @@ its output and exit code to the model:
 - it runs in the active tab's folder (a remote tab: your home folder, since it
   runs here, not on the remote host), or the absolute `cwd` the model gives;
 - the card shows the exact command and the folder;
-- it stops after 120 s (the model may ask for up to 900 s), when you cancel the
-  turn, or with its whole process group; anything it leaves running in the
-  background is stopped when it ends (it is not a job runner); output is
+- it stops after 120 s (the model may ask for up to 900 s) or when you cancel
+  the turn, and what it started stops with it, also when it ends on its own
+  (it is not a job runner): on Linux and macOS it runs as its own process
+  group, on Windows in a Job Object that ends every process in it; output is
   capped at 64 KiB per stream;
+- this is cleanup, not a sandbox: the command runs as you, with your files and
+  network. A program that leaves the group on purpose keeps running: on Unix
+  one that starts a new session (`setsid`, a daemon that detaches), on Windows
+  one started with breakaway from the job where that is allowed, or one
+  started in the first instant before the shell is put in the job;
 - `TERM=dumb`, `PAGER=cat` and `GIT_PAGER=cat` keep programs from waiting for a
   pager.
 

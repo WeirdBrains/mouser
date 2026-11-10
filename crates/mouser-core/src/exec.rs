@@ -2,8 +2,17 @@
 //! chat's `terminal_run` tool (docs/chat.md). The command runs in your shell
 //! (`$SHELL -c`, `sh` without one; `cmd /C` on Windows) in the given folder,
 //! with no terminal and stdin closed, so prompts fail fast instead of
-//! hanging. It stops at the timeout or when `cancel` is set (the whole
-//! process group on Unix). Only ever called after the user allowed it.
+//! hanging. It stops at the timeout or when `cancel` is set, and what it
+//! started goes with it, also when it ends on its own: on Unix the command
+//! is a process group, on Windows a Job Object that kills everything in it
+//! when it closes. Only ever called after the user allowed it.
+//!
+//! This is cleanup, not a sandbox: the command runs as you with your
+//! files. A program that leaves its group on purpose (`setsid`, `nohup …
+//! &` under a new session, a daemon that double-forks into a new session)
+//! keeps running on Unix; on Windows a process started with
+//! `CREATE_BREAKAWAY_FROM_JOB` where the job allows it, or one started in
+//! the instant before the shell is put in the job, can too.
 
 use std::io::Read;
 use std::path::Path;
@@ -78,19 +87,110 @@ fn shell(command: &str) -> std::process::Command {
     }
 }
 
-/// SIGKILL the process group `pid` leads (set at spawn).
-fn kill_group(pid: u32) {
+/// The command and everything it starts: its process group (Unix) or a
+/// Job Object (Windows). [`Group::kill`] stops all of them; on Windows
+/// dropping it does too (kill-on-close).
+struct Group {
     #[cfg(unix)]
-    unsafe {
-        // SAFETY: signals only the child's own process group.
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
-    #[cfg(not(unix))]
-    let _ = pid;
+    pid: u32,
+    #[cfg(windows)]
+    job: Option<job::Job>,
 }
 
-fn kill(child: &mut Child) {
-    kill_group(child.id());
+impl Group {
+    fn of(child: &Child) -> Self {
+        #[cfg(unix)]
+        {
+            Group { pid: child.id() }
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawHandle;
+            Group { job: job::Job::kill_on_close().and_then(|j| j.assign(child.as_raw_handle()).then_some(j)) }
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = child;
+            Group {}
+        }
+    }
+
+    fn kill(&self) {
+        #[cfg(unix)]
+        unsafe {
+            // SAFETY: signals only the child's own process group (set at spawn).
+            libc::kill(-(self.pid as i32), libc::SIGKILL);
+        }
+        #[cfg(windows)]
+        if let Some(j) = &self.job {
+            j.terminate();
+        }
+    }
+}
+
+#[cfg(windows)]
+mod job {
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    };
+
+    pub struct Job(HANDLE);
+
+    // SAFETY: a job handle may be used and closed from any thread.
+    unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
+
+    impl Job {
+        /// A new unnamed job whose processes all end when its last handle closes.
+        pub fn kill_on_close() -> Option<Job> {
+            // SAFETY: plain Win32 calls on a handle we own; the info struct
+            // is zeroed (valid for every field) and sized for the call.
+            unsafe {
+                let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+                if h.is_null() {
+                    return None;
+                }
+                let job = Job(h);
+                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                let ok = SetInformationJobObject(
+                    job.0,
+                    JobObjectExtendedLimitInformation,
+                    &info as *const _ as *const _,
+                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                );
+                (ok != 0).then_some(job)
+            }
+        }
+
+        /// Put the process in the job (its later children join it too).
+        pub fn assign(&self, process: std::os::windows::io::RawHandle) -> bool {
+            // SAFETY: `process` is the live child's handle, owned by its `Child`.
+            unsafe { AssignProcessToJobObject(self.0, process as HANDLE) != 0 }
+        }
+
+        pub fn terminate(&self) {
+            // SAFETY: our own job handle.
+            unsafe {
+                TerminateJobObject(self.0, 1);
+            }
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: closing the handle we created (kill-on-close ends the rest).
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+fn kill(child: &mut Child, group: &Group) {
+    group.kill();
     let _ = child.kill();
 }
 
@@ -126,6 +226,7 @@ pub fn run(command: &str, dir: &Path, timeout: Duration, cancel: &AtomicBool) ->
         .env("GIT_PAGER", "cat")
         .spawn()
         .map_err(|e| format!("could not start the shell in {}: {e}", dir.display()))?;
+    let group = Group::of(&child);
     let out = reader(child.stdout.take().expect("piped"));
     let err = reader(child.stderr.take().expect("piped"));
     let start = Instant::now();
@@ -134,7 +235,7 @@ pub fn run(command: &str, dir: &Path, timeout: Duration, cancel: &AtomicBool) ->
         if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
             // What it left running in the background (holding the output
             // pipes open) ends with it: the tool is not a job runner.
-            kill_group(child.id());
+            group.kill();
             break Some(s);
         }
         if cancel.load(Ordering::SeqCst) {
@@ -143,7 +244,7 @@ pub fn run(command: &str, dir: &Path, timeout: Duration, cancel: &AtomicBool) ->
             timed_out = true;
         }
         if cancelled || timed_out {
-            kill(&mut child);
+            kill(&mut child, &group);
             let _ = child.wait();
             break None;
         }
@@ -240,5 +341,33 @@ mod tests {
         assert!(o.cancelled);
         let gpid: i32 = std::fs::read_to_string(&pidf).unwrap().trim().parse().unwrap();
         assert!(gpid != pid && wait_dead(gpid), "grandchild {gpid} still running");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// A background `cmd` that would write `marker` after ~3 s.
+    fn late(marker: &Path) -> String {
+        format!("start \"\" /b cmd /c \"ping -n 4 127.0.0.1 >nul & echo late> {}\"", marker.display())
+    }
+
+    fn gone(marker: &Path) -> bool {
+        std::thread::sleep(Duration::from_secs(5));
+        !marker.exists()
+    }
+
+    #[test]
+    fn the_job_object_ends_what_the_command_started() {
+        let d = tempfile::tempdir().unwrap();
+        let m = d.path().join("after-exit");
+        let o = run(&format!("{} & echo started", late(&m)), d.path(), Duration::from_secs(30), &AtomicBool::new(false)).unwrap();
+        assert_eq!((o.stdout.trim(), o.code), ("started", Some(0)), "{o:?}");
+        assert!(gone(&m), "a background process outlived the command");
+        let m = d.path().join("after-cancel");
+        let o = run(&format!("{} & ping -n 30 127.0.0.1 >nul", late(&m)), d.path(), Duration::from_millis(500), &AtomicBool::new(false)).unwrap();
+        assert!(o.timed_out, "{o:?}");
+        assert!(gone(&m), "a background process outlived the timeout");
     }
 }
