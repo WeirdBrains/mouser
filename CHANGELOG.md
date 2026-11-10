@@ -1,8 +1,11 @@
 ## [Unreleased]
 
+## [1.4.8] - 2026-11-09
+
 ### Fixed
 
 - ssh from Mouser: hosts without Mouser's terminfo get `TERM=xterm-256color` (tmux no longer fails with `missing or unsuitable terminal: mouser`); hosts that have it keep `TERM=mouser`. One connection, no install; `MOUSER_SSH_TERM` overrides it. See docs/ssh.md.
+- Fallback xterm
 
 ## [1.4.5] - 2026-11-06
 
