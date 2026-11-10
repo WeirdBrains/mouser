@@ -15,12 +15,14 @@ America/New_York, and an empty `## [Unreleased]` is left on top.
 Tag-time bumps (what earlier `release:` commits changed): the workspace
 version in Cargo.toml, crates/mouser-llm (and any member pinned to the
 workspace version), Cargo.lock when present (it is gitignored), the
-version lines of man/*.1 and "Current release" in docs/HANDOVER.md. The
+version lines of man/*.1, "Current release" in docs/HANDOVER.md, and the
+homepage version and install URLs in site_jaspr/lib/pages/home.dart. The
 Homebrew formula/cask and the mouser-bin PKGBUILD need the release's
 checksums and are updated after the Release workflow, not here.
 
-Pushing the `v*` tag is what starts the Release workflow; the push of main
-only runs CI. Refuses (exit 1, nothing written) off main, with a dirty
+Pushing the `v*` tag is what starts the Release and CI workflows. A push
+to main deploys the website when the commit touches the site or docs.
+Refuses (exit 1, nothing written) off main, with a dirty
 tree, when main is behind origin/main, when the tag exists, or when HEAD is
 not --expect-head. --dry-run prints every step and changes nothing;
 --no-push commits and tags without pushing. Python 3.8+. docs/release.md.
@@ -223,6 +225,20 @@ def bump_handover(text, new, date):
     return out
 
 
+def bump_home_dart(text, old, new):
+    """Replace the homepage's current version (hero link and install URLs)
+    with `new`. Uses the `releases/tag/vX.Y.Z` href, so a drifted
+    homepage still follows the release; `old` is kept for the same
+    signature as the other bump helpers."""
+    m = re.search(r"releases/tag/v(\d+\.\d+\.\d+)", text)
+    if not m:
+        raise ReleaseError("site_jaspr/lib/pages/home.dart has no releases/tag/vX.Y.Z")
+    current = m.group(1)
+    if current == new:
+        return text
+    return text.replace(current, new)
+
+
 def plan_edits(root, part, message, section, date):
     """Every file the release rewrites, as {relative path: (old, new)}, plus the
     old and new versions. Reads only; raises before anything is written."""
@@ -268,6 +284,12 @@ def plan_edits(root, part, message, section, date):
     if (root / "docs/HANDOVER.md").is_file():
         text = read("docs/HANDOVER.md")
         put("docs/HANDOVER.md", text, bump_handover(text, new, date))
+
+    rel = "site_jaspr/lib/pages/home.dart"
+    if not (root / rel).is_file():
+        raise ReleaseError(f"{rel} is missing (the homepage version lives on main)")
+    text = read(rel)
+    put(rel, text, bump_home_dart(text, old, new))
 
     text = read("CHANGELOG.md")
     put("CHANGELOG.md", text, rewrite_changelog(text, new, date, message, section))

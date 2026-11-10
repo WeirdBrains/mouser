@@ -1,21 +1,24 @@
 # Deploying the website
 
 mouser.weirdbrains.com is a [Jaspr](https://jaspr.site) static site. The Dart
-project lives in `site_jaspr/` on the **`site`** branch. `jaspr build` writes
-plain HTML to `site_jaspr/build/jaspr/`, which GitHub Pages deploys.
+project lives in `site_jaspr/` on **`main`**. `jaspr build` writes
+plain HTML to `site_jaspr/build/jaspr/`, which GitHub Actions deploys to
+GitHub Pages.
 
-- Pushing `site` runs the Pages workflow (`.github/workflows/pages.yml`), which
-  syncs `site/assets`, `site/style.css` and `site/main.js` into `site_jaspr/web/`,
-  runs `jaspr build`, and deploys `site_jaspr/build/jaspr`. It can also be started
-  by hand (workflow_dispatch).
+- The Docs site workflow (`.github/workflows/docs-site.yml`) builds and
+  deploys on a pushed `v*` tag, on a push to `main` that touches the site or
+  `docs/`, and when started by hand (`workflow_dispatch`). It syncs
+  `site/assets`, `site/style.css`, `site/main.js` and `site/CNAME` into
+  `site_jaspr/web/`, runs `jaspr build`, and deploys `site_jaspr/build/jaspr`.
+  The old `site` branch is no longer used for deploys.
 - `site/CNAME` (copied to the Jaspr output) holds `mouser.weirdbrains.com`; DNS
   is a CNAME to `weirdbrains.github.io` (not proxied), and Pages enforces HTTPS.
 - The Fuzzball crate page is `site_jaspr/lib/pages/fuzzball.dart` (URL
   `/fuzzball/`); the crate's own spec site is
   https://weirdbrains.github.io/fuzzball/.
-- After a release, bump the version and download links in
-  `site_jaspr/lib/pages/home.dart` on the `site` branch (commit `site: vX.Y.Z`).
-  `main` never contains the homepage. The version appears in the hero's release
+- `scripts/release.py` bumps the version and download links in
+  `site_jaspr/lib/pages/home.dart` in the same `release: vX.Y.Z` commit as the
+  crate version. The version appears in the hero's release
   link and in every install card that downloads a release asset: Arch
   (`mouser-bin-X.Y.Z-1-x86_64.pkg.tar.zst`), Debian/Ubuntu
   (`mouser_X.Y.Z_amd64.deb`), Fedora/RHEL (`mouser-X.Y.Z-1.x86_64.rpm`) and
@@ -41,16 +44,15 @@ plain HTML to `site_jaspr/build/jaspr/`, which GitHub Pages deploys.
   section (`user`, `developer`, `mcp`, `api`) or to `internal`. Public docs
   become pages; `internal` docs (this page, the release process, HANDOVER) stay
   in the repo only and never appear on the site. `docs/historical/` goes to the
-  archive. The Docs site workflow (`.github/workflows/docs-site.yml`) fails if a
-  doc is unmapped, and on every push to main that touches `docs/` it checks out
-  the `site` branch, builds the Jaspr site with `MOUSER_DOCS_DIR` pointed at
-  main's `docs/`, and deploys Pages. Pages that don't come from `docs/` (the
-  API crate table, drafts, "coming soon" stubs) live in
-  `site-src/<section>/*.md` on the `site` branch, with `title`/`status` front
-  matter. Manual rebuild on a `site` checkout:
+  archive. The Docs site workflow fails if a
+  doc is unmapped, then builds the Jaspr site with `MOUSER_DOCS_DIR` pointed at
+  `docs/` and `MOUSER_SITE_SRC` at `site-src/`. Pages that don't come from
+  `docs/` (the API crate table, drafts, "coming soon" stubs) live in
+  `site-src/<section>/*.md`, with `title`/`status` front
+  matter. Manual rebuild from a `main` checkout:
 
   ```bash
   ./site_jaspr/tool/sync_web.sh
   cd site_jaspr
-  MOUSER_DOCS_DIR=/path/to/main/docs jaspr build --sitemap-domain https://mouser.weirdbrains.com
+  MOUSER_DOCS_DIR=$PWD/../docs MOUSER_SITE_SRC=$PWD/../site-src jaspr build --sitemap-domain https://mouser.weirdbrains.com
   ```
