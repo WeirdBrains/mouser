@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+## [1.4.10] - 2026-11-09
+
+### Changed
+
+- The website now lives on main (Jaspr in site_jaspr/) and deploys with GitHub Actions; scripts/release.py bumps the homepage version in the same release commit.
+
 ## [1.4.9] - 2026-11-09
 
 ### Changed
