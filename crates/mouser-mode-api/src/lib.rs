@@ -23,6 +23,7 @@ pub mod events;
 pub mod highlight;
 pub mod host;
 pub mod host_api;
+pub mod hosted;
 #[cfg(feature = "markdown")]
 pub mod markdown;
 pub mod mode;
@@ -33,6 +34,7 @@ pub mod shm;
 pub mod supervisor;
 pub mod ui;
 
+pub use hosted::{Hosted, HostedItem, HostedView, ItemIcon, ViewLayout};
 pub use mode::{Context, Effect};
 pub use protocol::{API_VERSION, ApiRange};
 pub use serve::{Host, Mode, serve};

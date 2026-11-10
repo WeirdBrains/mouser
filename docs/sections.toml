@@ -26,6 +26,7 @@
 "plugins.md" = "developer"
 "mode-protocol.md" = "developer"
 "building-modes.md" = "developer"
+"host-views.md" = "developer"
 "custom-engines.md" = "developer"
 "fuzzball-integration.md" = "developer"
 "mcp-from-plugins.md" = "developer"

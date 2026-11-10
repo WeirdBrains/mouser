@@ -16,6 +16,7 @@ fn spec(args: &[&str]) -> Spec {
         args: args.iter().map(|s| s.to_string()).collect(),
         env: vec![],
         shm: None,
+        features: vec![],
     }
 }
 

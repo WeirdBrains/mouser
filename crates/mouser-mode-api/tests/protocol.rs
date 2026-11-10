@@ -198,7 +198,57 @@ fn welcome_now() -> mouser_mode_api::protocol::Welcome {
         shm: None,
         mcp: None,
         restore: Some(vec![1, 2, 3]),
+        features: vec!["views.1".into(), "media.1".into()],
     }))
+}
+
+#[test]
+fn features_are_offered_by_name_and_absent_from_older_hosts() {
+    let mouser_mode_api::protocol::Welcome::Accepted(a) = welcome_now() else { panic!() };
+    assert!(a.has(mouser_mode_api::hosted::FEATURE_VIEWS) && a.has(mouser_mode_api::hosted::FEATURE_MEDIA) && !a.has("x.1"));
+    // A Mouser before 1.6 sends no `features`: none offered.
+    let mut v = serde_json::to_value(welcome_now()).unwrap();
+    v["Accepted"].as_object_mut().unwrap().remove("features");
+    let old: mouser_mode_api::protocol::Welcome = serde_json::from_value(v).unwrap();
+    let mouser_mode_api::protocol::Welcome::Accepted(a) = old else { panic!() };
+    assert!(a.features.is_empty() && !a.has(mouser_mode_api::hosted::FEATURE_VIEWS));
+}
+
+#[test]
+fn hosted_views_round_trip_and_older_variants_keep_their_encoding() {
+    use mouser_mode_api::hosted::*;
+    use mouser_mode_api::protocol::Out;
+    let views = vec![
+        HostedView {
+            id: "files".into(),
+            rect: mouser_mode_api::Rect { x: 1, y: 2, w: 300, h: 200 },
+            in_panel: false,
+            content: Hosted::Items {
+                layout: ViewLayout::Grid,
+                items: vec![HostedItem { label: "a.png".into(), image: Some("/tmp/a.png".into()), ..Default::default() }],
+                select: Some(0),
+                focused: true,
+                tile: 0,
+            },
+        },
+        HostedView {
+            id: "clip".into(),
+            rect: Default::default(),
+            in_panel: true,
+            content: Hosted::Media { path: "/tmp/c.mp4".into(), autoplay: true },
+        },
+    ];
+    for wire in [Wire::MsgPack, Wire::Json] {
+        let mut buf = Vec::new();
+        codec::write(&mut buf, wire, &Out::Hosted(views.clone())).unwrap();
+        let back: Out = codec::read(&mut buf.as_slice(), wire, &mut Vec::new()).unwrap().unwrap();
+        assert_eq!(back, Out::Hosted(views.clone()));
+    }
+    // Variants go by name, so the older ones read as before; a host without
+    // `Hosted` can't read that one (hence the feature check).
+    let mut buf = Vec::new();
+    codec::write(&mut buf, Wire::MsgPack, &Out::Menu { x: 1, y: 2, entries: vec![] }).unwrap();
+    assert_eq!(buf[4..10], [0x81, 0xa4, b'M', b'e', b'n', b'u']);
 }
 
 #[test]

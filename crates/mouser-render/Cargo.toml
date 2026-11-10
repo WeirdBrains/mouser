@@ -10,6 +10,8 @@ repository = ""
 anyhow.workspace = true
 mouser-core = { path = "../mouser-core" }
 mouser-mode-api = { path = "../mouser-mode-api" }
+mouser-views = { path = "../mouser-views" }
+mouser-media = { path = "../mouser-media" }
 log.workspace = true
 winit.workspace = true
 palette.workspace = true
@@ -41,7 +43,7 @@ smithay-clipboard = "0.7.3"
 
 [features]
 # JACK output (docs/preferences.md §Audio); needs the JACK headers to build.
-jack = ["cpal/jack", "mouser-core/jack"]
+jack = ["cpal/jack", "mouser-core/jack", "mouser-media/jack"]
 
 [dev-dependencies]
 tempfile = "3.10.1"

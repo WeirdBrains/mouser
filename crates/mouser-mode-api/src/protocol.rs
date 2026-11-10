@@ -103,6 +103,18 @@ pub struct Accepted {
     pub mcp: Option<McpGrant>,
     /// Last [`Out::StateSave`] blob when restarted after a crash.
     pub restore: Option<Vec<u8>>,
+    /// What this Mouser offers beyond the base protocol
+    /// ([`crate::hosted::FEATURE_VIEWS`], [`crate::hosted::FEATURE_MEDIA`]).
+    /// Empty from a Mouser older than 1.6 (mode-api 0.4).
+    #[serde(default)]
+    pub features: Vec<String>,
+}
+
+impl Accepted {
+    /// The host offers `feature` (check before sending what needs it).
+    pub fn has(&self, feature: &str) -> bool {
+        self.features.iter().any(|f| f == feature)
+    }
 }
 
 /// The host's answer to [`Hello`].
@@ -269,6 +281,12 @@ pub enum Out {
         y: i32,
         entries: Vec<crate::ui::MenuEntry>,
     },
+    /// The views and players Mouser runs for the mode (latest wins; empty
+    /// removes them), drawn over the mode's dock or panel
+    /// ([`crate::hosted`]). Only when [`Accepted::features`] offers them: an
+    /// older host can't read it. Added in mode-api 0.4 (api 1, additive;
+    /// last, so older variants keep their encoding).
+    Hosted(Vec<crate::hosted::HostedView>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

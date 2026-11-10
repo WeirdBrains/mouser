@@ -52,6 +52,7 @@ fn accept(p: &mut Plugin, api: ApiRange, ring: Option<&Ring>) {
             shm: ring.map(Ring::spec),
             mcp: None,
             restore: None,
+            features: vec![],
         })),
     )
     .unwrap();

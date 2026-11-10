@@ -16,7 +16,7 @@ keeps its own state and sends the items in its panel.
 
 ```toml
 [dependencies]
-mouser-views = "0.1"
+mouser-views = "0.2"
 ```
 
 See [Building a mode plugin §Views and media](https://github.com/WeirdBrains/mouser/blob/main/docs/building-modes.md#views-and-media).

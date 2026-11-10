@@ -156,3 +156,44 @@ fn asks_for_agent_use_instead_of_hard_error() {
     assert!(saw_prompt, "expected agent.use permission prompt on chat welcome");
     drop(m);
 }
+
+#[test]
+fn pictures_named_in_the_chat_play_in_mousers_host_player() {
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    let dir = home.path().join("plugins/chat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_mouser-chat").replace('\\', "\\\\");
+    let manifest = include_str!("../plugin.toml").replace("command = [\"./mouser-chat\"]", &format!("command = [\"{exe}\"]"));
+    std::fs::write(dir.join("plugin.toml"), manifest).unwrap();
+    let mut store = Store::load();
+    for cap in ["run", "agent.use", "files.read"] {
+        store.set("chat", cap, Decision::Allow);
+    }
+    store.save().unwrap();
+    let pic = home.path().join("cat.png");
+    image::RgbaImage::from_pixel(40, 30, image::Rgba([9, 9, 9, 255])).save(&pic).unwrap();
+
+    let p = mouser_core::plugins::find("chat").expect("chat plugin");
+    let mut m = StdioMode::new(p, 3).unwrap();
+    m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
+    m.activate();
+    until(&mut m, "a focused input", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. })));
+    for c in format!("see {}\r", pic.display().to_string().replace('\\', "/")).chars() {
+        m.text(c.to_string().as_bytes());
+    }
+    let full = |v: &View| {
+        v.dock.iter().flat_map(|d| &d.items).find_map(|i| match &i.action {
+            mouser_render::ui::UiAction::Mode { action, arg } if action == "__hosted.media_full" => Some(*arg),
+            _ => None,
+        })
+    };
+    // Mouser (not the plugin) loads and draws the picture under the message.
+    until(&mut m, "the host-drawn picture", |v| full(v).is_some() && v.images.iter().any(|i| (i.width, i.height) == (40, 30)));
+    let v = m.view(&ctx(), &Keymap::new(&[]));
+    m.action("__hosted.media_full", full(&v).unwrap());
+    until(&mut m, "the host's fullscreen viewer", |v| texts(v).iter().any(|t| t.contains("close esc")));
+    assert!(m.escape(), "Esc closes Mouser's viewer first");
+    drop(m);
+}

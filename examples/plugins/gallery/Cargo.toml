@@ -1,0 +1,22 @@
+[package]
+name = "mouser-gallery"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Example mode plugin: a gallery whose grid and player Mouser runs (host views and media, mode-api 0.4)"
+publish = false
+
+[dependencies]
+# All a third-party mode needs: no mouser-views or mouser-media.
+mouser-mode-api = { path = "../../../crates/mouser-mode-api" }
+serde_json.workspace = true
+
+[dev-dependencies]
+mouser-core = { path = "../../../crates/mouser-core" }
+mouser-render = { path = "../../../crates/mouser-render" }
+image.workspace = true
+tempfile = "3.10.1"
+
+[lints]
+workspace = true

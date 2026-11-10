@@ -249,6 +249,9 @@ optional; it only lists the plugin.
 - `hello-mcp`: a stdio MCP server with a `greet` tool (python3, stdlib only).
 - `hello-fuzzball`: `./hello-fuzzball.sh` asks for `notify` + `screen.read` and prints the answer.
 - `hello-mode`: a mode on `h` that shows the directory and the time (POSIX sh).
+- `gallery`: a mode on `g` (Rust, mouser-mode-api only) that shows the pictures,
+  videos and sounds in the shell's folder in a grid and player that Mouser
+  runs (docs/host-views.md).
 
 ```
 mouser plugin install examples/plugins/hello-command

@@ -15,7 +15,7 @@ Mouser's commander and chat modes use it. Linux needs the ALSA headers
 
 ```toml
 [dependencies]
-mouser-media = "0.1"
+mouser-media = "0.2"
 ```
 
 See [Building a mode plugin §Views and media](https://github.com/WeirdBrains/mouser/blob/main/docs/building-modes.md#views-and-media).
