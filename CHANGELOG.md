@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.6.0] - 2026-11-10
+
 ### Added
 
 - Host views and media for mode plugins: a mode sends what to show (an item list, grid or carousel with thumbnails, or a picture, video or sound) and Mouser draws it, takes its keys and clicks, plays it inline and fullscreen and sends `view.*` / `media.*` events back. Offered as the `views.1` / `media.1` features in the handshake (mouser-mode-api 0.4, api 1 unchanged; older plugins are unaffected). The chat uses it for media in messages; `examples/plugins/gallery` is a third-party example with an end-to-end test. See docs/host-views.md.
@@ -7,6 +9,7 @@
 ### Changed
 
 - Chat 0.1.4 (pinned and installed by this Mouser; existing lock installs update on start): Mouser draws and plays the pictures, video and sound in the chat, and a playing clip keeps playing when the chat scrolls it out of view. Published: mouser-mode-api 0.4.0, mouser-views 0.2.0, mouser-media 0.2.0 and mouser-chat 0.1.4 on crates.io. Commander stays 0.1.5.
+- Official plugins: chat 0.1.4 on mouser-mode-api 0.4.0 and mouser-media 0.2.0 (mouser-views 0.2.0), all on crates.io; commander 0.1.5 and preferences 0.1.2 unchanged.
 
 ### Fixed
 
