@@ -759,13 +759,20 @@ mod tests {
             assert!(v.dock.is_none() && v.images.is_empty());
             ev.iter().any(|e| e.0 == "media.ended" && e.1["id"] == "c")
         });
-        // Sound: autoplay, then its end.
+        // Sound: autoplay, then its end (needs an audio output: a sound
+        // has no clock without one, e.g. on a CI runner with no card).
         h.set(vec![media("s", &wav, false)]);
-        let mut played = false;
-        run(&mut h, "the sound to play and end", &mut |_, ev| {
-            played |= ev.iter().any(|e| e.0 == "media.state" && e.1["playing"] == true);
-            played && ev.iter().any(|e| e.0 == "media.ended")
-        });
+        let mut v = View::default();
+        h.draw(&mut v, (8, 16), true, true);
+        if h.media.player.as_ref().is_some_and(|p| p.audio_host().is_some()) {
+            let mut played = false;
+            run(&mut h, "the sound to play and end", &mut |_, ev| {
+                played |= ev.iter().any(|e| e.0 == "media.state" && e.1["playing"] == true);
+                played && ev.iter().any(|e| e.0 == "media.ended")
+            });
+        } else {
+            eprintln!("sound part skipped: no audio output");
+        }
         // No longer sent: the player and its ffmpeg processes go.
         h.set(vec![]);
         assert!(h.media.player.is_none());
