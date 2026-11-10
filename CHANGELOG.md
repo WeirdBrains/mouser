@@ -4,6 +4,10 @@
 
 - Host views and media for mode plugins: a mode sends what to show (an item list, grid or carousel with thumbnails, or a picture, video or sound) and Mouser draws it, takes its keys and clicks, plays it inline and fullscreen and sends `view.*` / `media.*` events back. Offered as the `views.1` / `media.1` features in the handshake (mouser-mode-api 0.4, api 1 unchanged; older plugins are unaffected). The chat uses it for media in messages; `examples/plugins/gallery` is a third-party example with an end-to-end test. See docs/host-views.md.
 
+### Changed
+
+- Chat 0.1.4 (pinned and installed by this Mouser; existing lock installs update on start): Mouser draws and plays the pictures, video and sound in the chat, and a playing clip keeps playing when the chat scrolls it out of view. Published: mouser-mode-api 0.4.0, mouser-views 0.2.0, mouser-media 0.2.0 and mouser-chat 0.1.4 on crates.io. Commander stays 0.1.5.
+
 ### Fixed
 
 - Homebrew: the formula and cask carry real sha256s for both architectures (they were empty since the 1.4 releases, so `brew` refused them). `scripts/packaging.py` writes them from the release files, checked against each `.sha256`, and fails instead of writing an empty hash; CI checks the committed files and installs them on macOS. Install with `brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser` (and `brew trust weirdbrains/mouser` on current Homebrew), then `brew install weirdbrains/mouser/mouser` (or `--cask`). See docs/release.md.

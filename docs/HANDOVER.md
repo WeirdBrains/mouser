@@ -522,11 +522,11 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   and `examples/plugins/gallery` (third-party, mode-api only, end-to-end
   test). Commander keeps its own viewer (zoom, volume, scrub, window
   fullscreen, remote files) on mouser-media and needs no new release.
-- Not published yet: mode-api 0.4.0 (standalone WeirdBrains/mouser-mode-api),
-  views / media 0.2.0, chat 0.1.4 (prepared in its repo), Mouser 1.6.0 pins.
-- Remaining gaps: views/media are libraries a mode links, not host features:
-  no protocol hook for the host to render or play media for a mode, no host
-  registry of custom views; a mode routes `media_*` actions and keys itself
-  and redraws through its own event. Carousel item drawing, badges and
-  preview loading stay in commander. `file:///C:/…` links aren't recognised
-  as media on Windows (bare `C:\…` paths are).
+- Published 2026-11-10 for Mouser 1.6: mouser-mode-api 0.4.0 (WeirdBrains/mouser-mode-api
+  v0.4.0, crates.io), mouser-views / mouser-media 0.2.0 (crates.io, from this repo),
+  mouser-chat 0.1.4 (signed 4-target release, crates.io); plugins.lock pins chat 0.1.4,
+  commander stays 0.1.5, preferences 0.1.2.
+- Remaining limits: hosted views are a fixed set (items list/grid/carousel, media);
+  a mode can't register its own drawing code in the host. Commander's richer viewer
+  stays on mouser-media. `file:///C:/…` links aren't recognised as media on Windows
+  (bare `C:\…` paths are).
