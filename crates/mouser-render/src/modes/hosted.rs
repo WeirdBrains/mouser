@@ -64,6 +64,8 @@ pub struct HostedViews {
     autoplayed: HashSet<(String, String)>,
     events: Vec<(String, Value)>,
     waker: Option<Waker>,
+    /// The player was driven (a click, a key, a pause) since the last frame.
+    touched: bool,
 }
 
 fn act(id: impl Into<String>, arg: i32) -> UiAction {
@@ -135,6 +137,7 @@ impl HostedViews {
     pub fn pause(&mut self) {
         if let Some(p) = self.media.player.as_mut().filter(|p| p.playing()) {
             p.pause();
+            self.touched = true;
         }
     }
 
@@ -144,7 +147,7 @@ impl HostedViews {
     }
 
     fn focused(&self) -> Option<&HostedView> {
-        self.specs.iter().rev().find(|s| matches!(s.content, Hosted::Items { focused: true, .. }))
+        self.specs.iter().rev().find(|s| !s.offscreen && matches!(s.content, Hosted::Items { focused: true, .. }))
     }
 
     /// A fullscreen player is open.
@@ -218,6 +221,7 @@ impl HostedViews {
     pub fn key(&mut self, bytes: &[u8]) -> bool {
         let s = String::from_utf8_lossy(bytes).into_owned();
         if let Some((area, _)) = self.full_area.filter(|_| self.media.is_open()) {
+            self.touched = true;
             return self.media.key(&s, area);
         }
         let Some((id, d)) = self.key_move(&s) else { return false };
@@ -260,6 +264,7 @@ impl HostedViews {
         } else if id.starts_with("media_") {
             let area = self.full_area.map(|a| a.0).or_else(|| self.media.shown.get(arg.max(0) as usize).map(|s| s.1)).unwrap_or_default();
             self.media.action(id, arg, area);
+            self.touched = true;
             self.wake();
         }
     }
@@ -279,6 +284,20 @@ impl HostedViews {
         let specs = self.specs.clone();
         let mut full_layer = None;
         for s in &specs {
+            if s.offscreen {
+                // Not drawn; a player of it keeps going (and notices its end).
+                if let Hosted::Media { path, .. } = &s.content {
+                    let m = media_ref(path);
+                    if let Some(p) = self.media.player.as_mut().filter(|p| p.path == m.path) {
+                        p.tick();
+                    }
+                    if self.media.full.as_ref() == Some(&m) {
+                        full_layer = Some(s.in_panel);
+                    }
+                    self.tell_media(&s.id, &m);
+                }
+                continue;
+            }
             let out = if s.in_panel { &mut panel } else { &mut dock };
             match &s.content {
                 Hosted::Items { items, focused, tile, .. } => {
@@ -336,12 +355,13 @@ impl HostedViews {
                 continue;
             }
             let slot = if in_panel { &mut view.panel } else { &mut view.dock };
-            let rect = specs.iter().filter(|s| s.in_panel == in_panel).map(|s| s.rect).reduce(union).unwrap_or_default();
+            let rect = specs.iter().filter(|s| s.in_panel == in_panel && !s.offscreen).map(|s| s.rect).reduce(union).unwrap_or_default();
             slot.get_or_insert_with(|| Panel { rect, items: vec![] }).items.extend(items);
         }
         for (p, clip) in pics {
             push_pic(&mut view.images, p, clip);
         }
+        self.touched = false;
         if let Some((area, in_panel)) = full_rect {
             // Nothing drawn under the player shows through it.
             view.images.retain(|i| !mouser_views::geom::overlaps(i.rect, area));
@@ -476,6 +496,12 @@ impl HostedViews {
     }
 
     fn tell_media(&mut self, id: &str, m: &MediaRef) {
+        // Video ticks as it draws; sound needs it too, to notice its end.
+        if m.kind == Kind::Audio
+            && let Some(p) = self.media.player.as_mut().filter(|p| p.path == m.path)
+        {
+            p.tick();
+        }
         let p = self.media.player.as_ref().filter(|p| p.path == m.path);
         let now = MediaState {
             playing: p.is_some_and(|p| p.playing()),
@@ -484,7 +510,11 @@ impl HostedViews {
             fullscreen: self.media.full.as_ref() == Some(m),
             error: p.and_then(|p| p.error.clone()),
         };
-        let at_end = p.is_some_and(|p| !p.playing() && p.info.duration > 0.0 && p.position() >= p.info.duration - 0.25);
+        // The end: the player stopped by itself (nobody paused it since the
+        // last frame), or its clock is at the end.
+        let was_playing = self.told.get(id).is_some_and(|s| s.playing);
+        let at_end =
+            p.is_some_and(|p| !p.playing() && ((was_playing && !self.touched) || p.info.duration > 0.0 && p.position() >= p.info.duration - 0.25));
         if self.told.get(id) != Some(&now) {
             self.events.push((
                 "media.state".into(),
@@ -541,6 +571,7 @@ mod tests {
                 focused: true,
                 tile: 0,
             },
+            offscreen: false,
         }
     }
 
@@ -615,6 +646,7 @@ mod tests {
             rect: Rect { x: 0, y: 0, w: 300, h: 200 },
             in_panel: true,
             content: Hosted::Media { path: "/no/such.png".into(), autoplay: true },
+            offscreen: false,
         };
         h.set(vec![m]);
         let mut v = View::default();
@@ -624,5 +656,126 @@ mod tests {
         assert!(v.images.is_empty() && h.take_events().is_empty());
         h.set(vec![]);
         assert!(h.is_empty());
+    }
+
+    #[test]
+    fn custom_tile_size_layer_and_relayout_from_the_mode() {
+        let mut h = HostedViews::default();
+        let mut v = items(4, ViewLayout::Grid, None);
+        v.in_panel = true;
+        if let Hosted::Items { tile, .. } = &mut v.content {
+            *tile = 50;
+        }
+        h.set(vec![v.clone()]);
+        let out = draw(&mut h);
+        assert!(out.dock.is_none());
+        let t = out.panel.as_ref().unwrap().items.iter().find(|i| matches!(i.style, PanelStyle::Tile { .. })).unwrap();
+        assert_eq!((t.rect.w, t.rect.h), (50, 50));
+        // The mode changes the layout: applied (the user's own `v` is kept
+        // only until the mode sends a different one).
+        if let Hosted::Items { layout, .. } = &mut v.content {
+            *layout = ViewLayout::List;
+        }
+        h.set(vec![v.clone()]);
+        assert!(draw(&mut h).panel.unwrap().items.iter().any(|i| matches!(i.style, PanelStyle::Row { .. })));
+        // Off screen: kept (selection), not drawn, no keys.
+        h.key(b"\x1b[B");
+        v.offscreen = true;
+        h.set(vec![v.clone()]);
+        let out = draw(&mut h);
+        assert!(out.panel.is_none() && !h.takes(b"\x1b[B"));
+        v.offscreen = false;
+        h.set(vec![v]);
+        assert_eq!(h.items["v"].selected, 1);
+    }
+
+    type Check<'a> = dyn FnMut(&View, &[(String, Value)]) -> bool + 'a;
+
+    /// ffmpeg's children of this process (Linux: /proc).
+    #[cfg(target_os = "linux")]
+    fn ffmpeg_children() -> usize {
+        let me = std::process::id();
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .flatten()
+            .filter_map(|e| std::fs::read_to_string(e.path().join("stat")).ok())
+            .filter(|s| {
+                s.contains("(ffmpeg)")
+                    && s.rsplit(')').next().and_then(|r| r.split_whitespace().nth(1)).and_then(|p| p.parse::<u32>().ok()) == Some(me)
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_real_clip_plays_on_off_screen_to_the_end_and_its_processes_go() {
+        if !mouser_media::player::available() {
+            eprintln!("skipped: no ffmpeg / ffprobe on PATH");
+            return;
+        }
+        let d = tempfile::tempdir().unwrap();
+        let clip = d.path().join("c.mp4");
+        let st = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=80x60:rate=10:duration=1.5"])
+            .args(["-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1.5", "-c:v", "mpeg4", "-c:a", "aac", "-shortest"])
+            .arg(&clip)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let wav = d.path().join("s.wav");
+        let st = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "0.6"])
+            .arg(&wav)
+            .status()
+            .unwrap();
+        assert!(st.success());
+        let media = |id: &str, path: &std::path::Path, offscreen: bool| HostedView {
+            id: id.into(),
+            rect: Rect { x: 0, y: 0, w: 400, h: 200 },
+            in_panel: false,
+            content: Hosted::Media { path: path.display().to_string(), autoplay: true },
+            offscreen,
+        };
+        let run = |h: &mut HostedViews, what: &str, f: &mut Check<'_>| {
+            let end = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < end {
+                let mut v = View::default();
+                h.draw(&mut v, (8, 16), true, true);
+                if f(&v, &h.take_events()) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("timed out waiting for {what}");
+        };
+        let mut h = HostedViews::default();
+        h.set(vec![media("c", &clip, false)]);
+        run(&mut h, "video frames", &mut |v, _| v.images.iter().any(|i| i.width * 3 == i.height * 4));
+        assert!(h.media.player.as_ref().is_some_and(|p| p.playing()));
+        #[cfg(target_os = "linux")]
+        assert!(ffmpeg_children() > 0);
+        // Scrolled away: registered off screen, nothing drawn, still playing to the end.
+        h.set(vec![media("c", &clip, true)]);
+        run(&mut h, "media.ended off screen", &mut |v, ev| {
+            assert!(v.dock.is_none() && v.images.is_empty());
+            ev.iter().any(|e| e.0 == "media.ended" && e.1["id"] == "c")
+        });
+        // Sound: autoplay, then its end.
+        h.set(vec![media("s", &wav, false)]);
+        let mut played = false;
+        run(&mut h, "the sound to play and end", &mut |_, ev| {
+            played |= ev.iter().any(|e| e.0 == "media.state" && e.1["playing"] == true);
+            played && ev.iter().any(|e| e.0 == "media.ended")
+        });
+        // No longer sent: the player and its ffmpeg processes go.
+        h.set(vec![]);
+        assert!(h.media.player.is_none());
+        #[cfg(target_os = "linux")]
+        {
+            let end = Instant::now() + Duration::from_secs(5);
+            while ffmpeg_children() > 0 && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(ffmpeg_children(), 0);
+        }
     }
 }

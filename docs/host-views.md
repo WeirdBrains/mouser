@@ -23,7 +23,8 @@ Mouser](#supporting-older-mouser).
 1. In `welcome`, check `accepted.has(FEATURE_VIEWS)` / `has(FEATURE_MEDIA)`.
 2. Send your own panel as usual (`Host::view`): titles, buttons, hints.
 3. Send the views Mouser runs (`Host::hosted`): one `HostedView` per area,
-   each with a stable `id` and a `rect` inside your dock or panel.
+   each with a stable `id` and a `rect` inside your dock or panel
+   (`offscreen: true` keeps one registered without drawing it).
 4. Listen for `view.*` and `media.*` events and update your state. Send
    `hosted` again whenever what you show changes; the latest list wins.
 
@@ -41,6 +42,7 @@ let files = HostedView {
         focused: true, // this view takes the arrow keys
         tile: 0,       // Mouser picks the tile size
     },
+    offscreen: false,
 };
 host.hosted(vec![files])?;
 host.view(Some(my_panel), None, vec![], false)?;
@@ -49,10 +51,12 @@ host.view(Some(my_panel), None, vec![], false)?;
 `examples/plugins/gallery` is a complete plugin (about 250 lines, mouser-mode-api
 only): the pictures, videos and sounds in the shell's folder, shown in a grid,
 with a player for the one you open. Its test
-(`examples/plugins/gallery/tests/through_mouser.rs`) runs the real program
-under Mouser's host. It checks that the tiles and thumbnails are drawn, that
-the arrows, `v` and clicks work, and that Enter, fullscreen and Esc do what
-they should.
+(`examples/plugins/gallery/tests/`) runs the real program under Mouser's
+host. It checks that the tiles and thumbnails are drawn, that the arrows,
+`v` and clicks work, and that Enter, fullscreen and Esc do what they should.
+It plays a real clip through the host player, to the end. It checks that
+taking back `files.read` stops the reads, that a restarted plugin registers
+its views again, and that a host without the features gets no `Hosted`.
 
 ## Item views
 
@@ -105,6 +109,12 @@ before any Escape of yours. `autoplay` starts video and sound the first time
 the view appears. A player stops when you stop sending its view, and pauses
 when your mode is switched away.
 
+To keep something without drawing it, send its view with `offscreen: true`.
+A clip that scrolled out of a transcript keeps playing that way (chat does
+this for the clip that is playing), and an item view keeps its selection and
+scroll. An off-screen view takes no keys and draws nothing; send it again
+with `offscreen: false` to show it where it was.
+
 Video and sound use ffmpeg and ffprobe from `PATH`; without them the player
 says so. Mouser plays one file at a time.
 
@@ -113,7 +123,8 @@ Events (listen for `media.*`):
 - `media.state` `{id, playing, position, duration, fullscreen, error}`: sent
   when the player starts, pauses, seeks or opens / closes fullscreen, and
   about once a second while it plays (`position` in whole seconds).
-- `media.ended` `{id}`: playback reached the end.
+- `media.ended` `{id}`: playback reached the end (the player stopped by
+  itself, not because the user or a mode switch paused it).
 
 ## Permissions
 

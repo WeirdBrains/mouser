@@ -197,3 +197,78 @@ fn pictures_named_in_the_chat_play_in_mousers_host_player() {
     assert!(m.escape(), "Esc closes Mouser's viewer first");
     drop(m);
 }
+
+#[test]
+fn a_clip_keeps_playing_when_the_chat_scrolls_it_out_of_view() {
+    if !mouser_media::player::available() {
+        eprintln!("skipped: no ffmpeg / ffprobe on PATH");
+        return;
+    }
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    let dir = home.path().join("plugins/chat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_mouser-chat").replace('\\', "\\\\");
+    let manifest = include_str!("../plugin.toml").replace("command = [\"./mouser-chat\"]", &format!("command = [\"{exe}\"]"));
+    std::fs::write(dir.join("plugin.toml"), manifest).unwrap();
+    let mut store = Store::load();
+    for cap in ["run", "agent.use", "files.read"] {
+        store.set("chat", cap, Decision::Allow);
+    }
+    store.save().unwrap();
+    let clip = home.path().join("clip.mp4");
+    let st = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=96x64:rate=10:duration=20"])
+        .args(["-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "20", "-c:v", "mpeg4", "-c:a", "aac", "-shortest"])
+        .arg(&clip)
+        .status()
+        .unwrap();
+    assert!(st.success());
+
+    let p = mouser_core::plugins::find("chat").expect("chat plugin");
+    let mut m = StdioMode::new(p, 3).unwrap();
+    m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
+    m.activate();
+    until(&mut m, "a focused input", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. })));
+    let type_line = |m: &mut StdioMode, s: &str| {
+        for c in format!("{s}\r").chars() {
+            m.text(c.to_string().as_bytes());
+        }
+    };
+    type_line(&mut m, &format!("see {}", clip.display().to_string().replace('\\', "/")));
+    let play = |v: &View| {
+        v.dock.iter().flat_map(|d| &d.items).find_map(|i| match &i.action {
+            mouser_render::ui::UiAction::Mode { action, arg } if action == "__hosted.media_play" => Some((*arg, i.text.clone())),
+            _ => None,
+        })
+    };
+    until(&mut m, "the clip's player", |v| play(v).is_some());
+    let v = m.view(&ctx(), &Keymap::new(&[]));
+    m.action("__hosted.media_play", play(&v).unwrap().0);
+    until(&mut m, "playing", |v| play(v).is_some_and(|p| p.1 == "❚❚"));
+    // Enough turns to push the clip off the top.
+    let mut turns = 1;
+    while play(&m.view(&ctx(), &Keymap::new(&[]))).is_some() {
+        assert!(turns < 60, "the clip never scrolled out");
+        type_line(&mut m, &format!("turn {turns}"));
+        let want = format!("turn {turns}");
+        until(&mut m, "the turn", |v| texts(v).iter().any(|t| t == &want));
+        until(&mut m, "the reply", |v| !texts(v).iter().any(|t| t.contains("thinking")));
+        turns += 1;
+    }
+    std::thread::sleep(Duration::from_millis(1500));
+    for _ in 0..40 {
+        m.view(&ctx(), &Keymap::new(&[]));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Back up to it: still playing (it would show ▶ had it stopped).
+    for _ in 0..30 {
+        m.action("up", 0);
+        if play(&m.view(&ctx(), &Keymap::new(&[]))).is_some() {
+            break;
+        }
+    }
+    until(&mut m, "the clip still playing", |v| play(v).is_some_and(|p| p.1 == "❚❚"));
+    drop(m);
+}

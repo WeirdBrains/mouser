@@ -13,6 +13,8 @@ mouser-mode-api = { path = "../../../crates/mouser-mode-api" }
 serde_json.workspace = true
 
 [dev-dependencies]
+# Tests only: is ffmpeg there for the player test.
+mouser-media = { path = "../../../crates/mouser-media" }
 mouser-core = { path = "../../../crates/mouser-core" }
 mouser-render = { path = "../../../crates/mouser-render" }
 image.workspace = true

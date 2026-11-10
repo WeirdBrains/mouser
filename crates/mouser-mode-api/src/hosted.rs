@@ -40,6 +40,11 @@ pub struct HostedView {
     #[serde(default)]
     pub in_panel: bool,
     pub content: Hosted,
+    /// Keep it registered without drawing it: an item view keeps its
+    /// selection and scroll, a player keeps playing (a clip scrolled out of
+    /// a transcript). It takes no keys while off screen.
+    #[serde(default)]
+    pub offscreen: bool,
 }
 
 /// What a hosted view shows.

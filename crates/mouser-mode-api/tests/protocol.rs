@@ -230,12 +230,14 @@ fn hosted_views_round_trip_and_older_variants_keep_their_encoding() {
                 focused: true,
                 tile: 0,
             },
+            offscreen: false,
         },
         HostedView {
             id: "clip".into(),
             rect: Default::default(),
             in_panel: true,
             content: Hosted::Media { path: "/tmp/c.mp4".into(), autoplay: true },
+            offscreen: true,
         },
     ];
     for wire in [Wire::MsgPack, Wire::Json] {

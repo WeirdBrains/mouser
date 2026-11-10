@@ -513,6 +513,11 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   plugin field wins except in fullscreen), Esc closes fullscreen first,
   `view.*` / `media.*` events (now in `HOST_FACTS`), pause on deactivate,
   cleared when the plugin stops. `files.read` gates every file read.
+  `HostedView.offscreen` keeps a view registered undrawn (chat keeps its
+  playing clip that way while scrolled away). `media.ended` = the player
+  paused itself with no host action that frame (its audio clock can read
+  short of the duration at the end); sound is ticked by the host so its end
+  is noticed.
 - Users: in-tree chat (hosted media when `media.1`, else its own MediaView)
   and `examples/plugins/gallery` (third-party, mode-api only, end-to-end
   test). Commander keeps its own viewer (zoom, volume, scrub, window
