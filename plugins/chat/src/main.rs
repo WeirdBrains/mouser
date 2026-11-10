@@ -1251,7 +1251,7 @@ mod menu_tests {
             display: "mouser.terminal_run".into(),
             args: "{}".into(),
             state: "done".into(),
-            output: "wrote /tmp/plot.png and /tmp/a.wav".into(),
+            output: if cfg!(windows) { r"wrote C:\tmp\plot.png and C:\tmp\a.wav" } else { "wrote /tmp/plot.png and /tmp/a.wav" }.into(),
         }];
         let none = BTreeSet::new();
         let r = rows(&entries, &none, &none, 80, false, None);

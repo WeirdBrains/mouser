@@ -119,6 +119,8 @@ pub fn find(text: &str, home: Option<&Path>) -> Vec<MediaRef> {
 mod tests {
     use super::*;
 
+    // Unix paths: `/tmp/…` is not absolute on Windows (no drive).
+    #[cfg(unix)]
     #[test]
     fn finds_markdown_images_links_and_bare_paths_once() {
         let home = Path::new("/home/u");
@@ -138,5 +140,13 @@ mod tests {
         );
         assert!(find("no media here: /usr/bin/ls", None).is_empty());
         assert!(find("~/a.png", None).is_empty(), "no home, no ~");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn finds_windows_paths() {
+        let t = r"Saved ![plot](C:\tmp\plot.png) and `D:/clips/a.mp4`; not \rel\b.wav or C:\Windows\notepad.exe.";
+        let got: Vec<(PathBuf, Kind)> = find(t, None).into_iter().map(|m| (m.path, m.kind)).collect();
+        assert_eq!(got, [(PathBuf::from(r"C:\tmp\plot.png"), Kind::Image), (PathBuf::from("D:/clips/a.mp4"), Kind::Video)]);
     }
 }
