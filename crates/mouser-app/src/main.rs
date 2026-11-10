@@ -126,6 +126,20 @@ enum Command {
         /// zsh, bash, fish or pwsh (powershell).
         shell: String,
     },
+    /// ssh, with TERM=mouser kept where the host knows it and xterm-256color
+    /// where it does not (the same as the `ssh` Mouser puts on its tabs' PATH);
+    /// see docs/ssh.md.
+    ///
+    /// Interactive sessions check the server for Mouser's terminfo in the same
+    /// connection; everything else (scp, sftp, git, -N/-W tunnels, -O, no local
+    /// terminal) runs the real ssh unchanged. MOUSER_SSH_TERM=auto|mouser|xterm-256color
+    /// (or `SetEnv MOUSER_SSH_TERM=…` for a host in ssh_config) overrides it.
+    #[command(disable_help_flag = true)]
+    Ssh {
+        /// ssh's own options, destination and command.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, value_name = "SSH_ARGS")]
+        args: Vec<String>,
+    },
     /// Show images in this terminal (Fuzzball graphics, or Kitty graphics as a fallback; works in tmux with allow-passthrough).
     ///
     /// Formats: PNG, JPEG, GIF (first frame), WebP, BMP. Video and audio are not
@@ -776,6 +790,15 @@ fn main() -> Result<()> {
     mouser_llm::register();
     // Isolated custom engine process (docs/engines.md §7); not a user command.
     let args: Vec<String> = std::env::args().collect();
+    // Mouser's `ssh` shim (a link named ssh) and `mouser ssh`: TERM fallback
+    // for hosts without Mouser's terminfo, then the real ssh (docs/ssh.md).
+    let argv0 = args.first().map(|a| std::path::Path::new(a).file_stem().unwrap_or_default().to_string_lossy().into_owned());
+    if argv0.as_deref() == Some("ssh") {
+        mouser_core::ssh_term::run(args[1..].to_vec());
+    }
+    if args.get(1).map(String::as_str) == Some("ssh") {
+        mouser_core::ssh_term::run(args[2..].to_vec());
+    }
     // Engine probe child (docs/downloads.md): loads one library, prints its name.
     if args.get(1).map(String::as_str) == Some("__engine-probe") {
         let Some(lib) = args.get(2) else { std::process::exit(2) };
@@ -1102,6 +1125,18 @@ fn main() -> Result<()> {
     // size is known, so its first prompt is drawn for the right width.
     let size = Size { cols: 100, rows: 30 };
     let tabs = Arc::new(Mutex::new(tabs::Tabs::default()));
+    // The ssh shim on the tabs' PATH (docs/ssh.md).
+    #[cfg(unix)]
+    if let Ok(exe) = std::env::current_exe() {
+        let dir = match std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).filter(|d| d.is_dir()) {
+            Some(run) => run.join("mouser").join("bin"),
+            None => mouser_core::storage::resolve_home().join("bin"),
+        };
+        match mouser_core::ssh_term::install_shim(&dir, &exe) {
+            Ok(_) => mouser_pty::set_ssh_shim_dir(dir),
+            Err(e) => log::warn!("ssh shim in {}: {e}", dir.display()),
+        }
+    }
     let first_session = match handoff {
         Some(h) => {
             tabs::Session::handed_off(if h.title.trim().is_empty() { "console".to_string() } else { h.title }, h.handles, size, sb_cfg.clone())

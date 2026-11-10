@@ -21,6 +21,7 @@ SSH hosts come from `~/.ssh/config`
   (globs and relative paths supported). Wildcard-only patterns such as `Host *` are skipped.
   The list reloads automatically within ~2 s when the config or an included file changes.
 - Click a host's name to run `ssh <alias>` in the terminal, so ssh applies the config itself.
+  The session keeps `TERM=mouser` only where the host has Mouser's terminfo ([SSH and TERM](./ssh.md)).
 - Add, edit (HostName, User, Port, IdentityFile, ProxyJump; alias renames the `Host` line) and
   delete write to `~/.ssh/config`. A host defined in an included file is edited in that file.
   Only the affected lines change: comments, blank lines, ordering, indentation and other options are

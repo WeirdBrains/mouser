@@ -54,8 +54,27 @@ pub fn spawn_argv_in(argv: &[String], cwd: Option<&Path>, cols: u16, rows: u16, 
     spawn_in_pty(cmd, cols, rows, pixel_width, pixel_height)
 }
 
+/// The folder holding Mouser's `ssh` shim (docs/ssh.md), set once by the app.
+static SSH_SHIM_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Put `dir` (holding the `ssh` shim, a link to Mouser) first on the `PATH`
+/// of every shell and command started from now on, when `TERM` is `mouser`,
+/// so ssh from a Mouser shell falls back to `xterm-256color` on hosts without
+/// Mouser's terminfo (docs/ssh.md).
+pub fn set_ssh_shim_dir(dir: std::path::PathBuf) {
+    let _ = SSH_SHIM_DIR.set(dir);
+}
+
 fn term_env(cmd: &mut CommandBuilder) {
-    cmd.env("TERM", term_name());
+    let term = term_name();
+    cmd.env("TERM", term);
+    if term == "mouser"
+        && let Some(dir) = SSH_SHIM_DIR.get()
+    {
+        let path = cmd.get_env("PATH").map(|p| p.to_os_string()).or_else(|| env::var_os("PATH"));
+        cmd.env("PATH", path_with(dir, path));
+        cmd.env("MOUSER_SSH_WRAPPER", dir.join("ssh"));
+    }
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "Mouser");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
@@ -97,6 +116,15 @@ pub fn shell_command() -> CommandBuilder {
     cmd
 }
 
+/// `PATH` with `dir` first (once).
+fn path_with(dir: &Path, path: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    let mut v = vec![dir.to_path_buf()];
+    if let Some(p) = path {
+        v.extend(env::split_paths(&p).filter(|d| d != dir));
+    }
+    env::join_paths(v).unwrap_or_default()
+}
+
 fn default_shell() -> String {
     if cfg!(windows) { "powershell.exe".to_string() } else { "/bin/sh".to_string() }
 }
@@ -125,4 +153,18 @@ fn terminfo_exists(name: &str) -> bool {
     let first = name.chars().next().unwrap_or('x');
     let hex = format!("{:x}", first as u32);
     dirs.iter().any(|d| d.join(first.to_string()).join(name).exists() || d.join(&hex).join(name).exists())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shim_dir_goes_first_once() {
+        let dir = Path::new("/run/user/1/mouser/bin");
+        let p = path_with(dir, Some(env::join_paths(["/usr/bin", "/run/user/1/mouser/bin", "/bin"]).unwrap()));
+        let v: Vec<_> = env::split_paths(&p).collect();
+        assert_eq!(v, ["/run/user/1/mouser/bin", "/usr/bin", "/bin"].map(std::path::PathBuf::from));
+        assert_eq!(path_with(dir, None), dir.as_os_str());
+    }
 }
