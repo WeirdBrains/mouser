@@ -222,6 +222,7 @@ class HomePage extends StatelessComponent {
       pre([
       code([
       .text('''brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser
+      brew trust weirdbrains/mouser   # current Homebrew asks for this once
       # CLI
       brew install weirdbrains/mouser/mouser
       # App

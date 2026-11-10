@@ -83,7 +83,7 @@ Notes
   - From source: `cd packaging/arch/mouser-git && makepkg -si`
   - Planned: `yay -S mouser-git` (or `mouser-bin`) once published to the AUR.
 - macOS:
-  - Tap this repository once: `brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser` (Homebrew no longer installs a formula from a URL).
+  - Tap this repository once: `brew tap weirdbrains/mouser https://github.com/WeirdBrains/mouser` (Homebrew no longer installs a formula from a URL); current Homebrew also asks you to trust it: `brew trust weirdbrains/mouser`.
   - CLI: `brew install weirdbrains/mouser/mouser`
   - App: `brew install --cask weirdbrains/mouser/mouser`
   - Or download the `.dmg` and drag `Mouser.app` to Applications.
