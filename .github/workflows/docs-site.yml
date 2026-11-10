@@ -2,8 +2,28 @@ name: Docs site
 on:
   push:
     tags: [ "v*" ]
+    branches: [ "main" ]
+    paths:
+      - "docs/**"
+      - "site_jaspr/**"
+      - "site-src/**"
+      - "site/assets/**"
+      - "site/style.css"
+      - "site/main.js"
+      - "site/CNAME"
+      - "scripts/check-doc-sections.py"
+      - ".github/workflows/docs-site.yml"
   pull_request:
-    paths: [ "docs/**" ]
+    paths:
+      - "docs/**"
+      - "site_jaspr/**"
+      - "site-src/**"
+      - "site/assets/**"
+      - "site/style.css"
+      - "site/main.js"
+      - "site/CNAME"
+      - "scripts/check-doc-sections.py"
+      - ".github/workflows/docs-site.yml"
   workflow_dispatch:
 permissions:
   contents: read
@@ -29,27 +49,24 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        with: { path: main }
-      - uses: actions/checkout@v4
-        with: { ref: site, path: site }
       - uses: dart-lang/setup-dart@v1
       - name: Sync static assets into the Jaspr web folder
-        run: bash site/site_jaspr/tool/sync_web.sh
+        run: bash site_jaspr/tool/sync_web.sh
       - name: Install Jaspr CLI
         run: dart pub global activate jaspr_cli
       - name: Get dependencies
-        working-directory: site/site_jaspr
+        working-directory: site_jaspr
         run: dart pub get
       - name: Build static site
-        working-directory: site/site_jaspr
+        working-directory: site_jaspr
         env:
-          MOUSER_DOCS_DIR: ${{ github.workspace }}/main/docs
-          MOUSER_SITE_SRC: ${{ github.workspace }}/site/site-src
+          MOUSER_DOCS_DIR: ${{ github.workspace }}/docs
+          MOUSER_SITE_SRC: ${{ github.workspace }}/site-src
         run: jaspr build --sitemap-domain https://mouser.weirdbrains.com
       - name: Strip build extras from the Pages artifact
-        run: bash site/site_jaspr/tool/clean_artifact.sh
+        run: bash site_jaspr/tool/clean_artifact.sh
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
-        with: { path: site/site_jaspr/build/jaspr }
+        with: { path: site_jaspr/build/jaspr }
       - id: deployment
         uses: actions/deploy-pages@v4

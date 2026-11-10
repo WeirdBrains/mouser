@@ -38,7 +38,7 @@ Signing
 - `-full` offline bundles (the `plugins.lock` archives in `plugins/` beside Mouser) are built once the lock has entries; it is empty in this tree.
 
 What starts a release
-- Only a pushed `v*` tag runs the Release, CI, and Docs site workflows. Only a tag ref reaches the Release `publish` job (`if: startsWith(github.ref, 'refs/tags/v')`). A push to `main` starts none of them. A manual Release run (`workflow_dispatch`) builds and publishes nothing; CI and the Docs site can also be started by hand.
+- Only a pushed `v*` tag runs the Release and CI workflows. Only a tag ref reaches the Release `publish` job (`if: startsWith(github.ref, 'refs/tags/v')`). A push to `main` starts neither. The Docs site workflow deploys from GitHub Actions on a `v*` tag, on a `main` push that touches the site or `docs/`, and when started by hand. A manual Release run (`workflow_dispatch`) builds and publishes nothing; CI can also be started by hand.
 
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.

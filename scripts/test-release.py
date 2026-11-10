@@ -49,6 +49,11 @@ FILES = {
     "man/mouser.1": '.TH mouser 1  "mouser 1.4.5" \n.SH NAME\nmouser\n.SH VERSION\nv1.4.5\n',
     "docs/HANDOVER.md": "# Notes\n\nRepo. Current release: v1.4.5 (2026-11-06). CI.\n",
     "CHANGELOG.md": CHANGELOG,
+    "site_jaspr/lib/pages/home.dart": (
+        "      a(href: 'https://github.com/WeirdBrains/mouser/releases/tag/v1.4.5', [\n"
+        "      .text('Version 1.4.5'),\n"
+        "      sudo pacman -U https://github.com/WeirdBrains/mouser/releases/download/v1.4.5/mouser-bin-1.4.5-1-x86_64.pkg.tar.zst\n"
+    ),
     ".gitignore": "Cargo.lock\n",
 }
 LOCK = ('[[package]]\nname = "app"\nversion = "1.4.4"\n\n[[package]]\nname = "core"\nversion = "0.4.0"\n\n'
@@ -74,6 +79,20 @@ class Bump(unittest.TestCase):
         for v in ("1.4", "1.4.5-rc1", "v1.4.5"):
             with self.assertRaises(release.ReleaseError):
                 release.bump(v)
+
+    def test_home_dart(self):
+        text = FILES["site_jaspr/lib/pages/home.dart"]
+        out = release.bump_home_dart(text, "1.4.5", "1.4.6")
+        self.assertIn("tag/v1.4.6", out)
+        self.assertIn("Version 1.4.6", out)
+        self.assertIn("mouser-bin-1.4.6-1-x86_64.pkg.tar.zst", out)
+        self.assertNotIn("1.4.5", out)
+        drifted = release.bump_home_dart(text, "1.4.7", "1.4.8")
+        self.assertIn("Version 1.4.8", drifted)
+        self.assertNotIn("1.4.5", drifted)
+        self.assertEqual(release.bump_home_dart(out, "1.4.6", "1.4.6"), out)
+        with self.assertRaises(release.ReleaseError):
+            release.bump_home_dart("no version here", "1.4.5", "1.4.6")
 
     def test_cargo_and_lock(self):
         self.assertEqual(release.workspace_version(CARGO), "1.4.5")
@@ -199,7 +218,11 @@ class Flow(unittest.TestCase):
         self.assertEqual(sh(self.origin, "rev-parse", "main"), sh(self.repo, "rev-parse", "HEAD"))
         self.assertEqual(sh(self.origin, "rev-parse", "v1.4.6^{commit}"), sh(self.repo, "rev-parse", "HEAD"))
         files = sh(self.repo, "show", "--name-only", "--format=", "HEAD").split()
-        self.assertEqual(sorted(files), ["CHANGELOG.md", "Cargo.toml", "crates/mouser-llm/Cargo.toml", "docs/HANDOVER.md", "man/mouser.1"])
+        self.assertEqual(sorted(files), ["CHANGELOG.md", "Cargo.toml", "crates/mouser-llm/Cargo.toml", "docs/HANDOVER.md", "man/mouser.1", "site_jaspr/lib/pages/home.dart"])
+        home = (self.repo / "site_jaspr/lib/pages/home.dart").read_text()
+        self.assertIn("Version 1.4.6", home)
+        self.assertIn("mouser-bin-1.4.6-1-x86_64.pkg.tar.zst", home)
+        self.assertNotIn("1.4.5", home)
         self.assertIn('version = "0.4.0"', (self.repo / "crates/core/Cargo.toml").read_text())
         lock = (self.repo / "Cargo.lock").read_text()
         self.assertIn('name = "app"\nversion = "1.4.6"', lock)
@@ -224,6 +247,15 @@ class Flow(unittest.TestCase):
         self.assertEqual(sh(self.repo, "cat-file", "-t", "v2.0.0"), "tag")
         self.assertEqual(sh(self.origin, "rev-parse", "main"), self.head)
         self.assertEqual(sh(self.origin, "tag"), "")
+
+    def test_home_dart_required(self):
+        (self.repo / "site_jaspr/lib/pages/home.dart").unlink()
+        sh(self.repo, "add", "-A")
+        sh(self.repo, "commit", "-q", "-m", "drop home")
+        sh(self.repo, "push", "-q", "origin", "main")
+        rc, _, err = self.run_release("--patch", "--no-push", "x")
+        self.assertEqual(rc, 1)
+        self.assertIn("home.dart", err)
 
     def assertRefused(self, *args, expect=""):
         before = self.snapshot()

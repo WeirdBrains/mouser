@@ -57,8 +57,7 @@ Placeholders are drawn by `KittyGraphics::placeholder_draws` from the live scree
 Not yet done: IME events, lock-key state.
 
 ## Website
-- Lives on the `site` branch in `site/` (plain HTML/CSS/JS).
-- `.github/workflows/pages.yml` deploys GitHub Pages on pushes to `site`.
+- Jaspr site in `site_jaspr/` on `main` (static assets in `site/`); GitHub Actions (`.github/workflows/docs-site.yml`) deploys Pages.
 - Sections alternate light/dark with subtle gradients, starting light (hero).
 - Rounded corners use `--radius: 20px` in `site/style.css` (cards, code, buttons, images, tables).
 - To do: confirm feature claims (compressed scrollback, Windows builds, Homebrew
@@ -72,7 +71,7 @@ Not yet done: IME events, lock-key state.
 Releases happen only with the maintainer's explicit approval.
 
 ## Rules
-- Work on `main`, no PRs/branches (exception: `site` for the website).
+- Work on `main`, no PRs/branches.
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo test --workspace` must pass.
 - Never touch the real `~/.mouser`; never force-push; ask before adding dependencies.
@@ -167,8 +166,7 @@ stays unless the maintainer decides otherwise.
   `pre-session-split` (adf349b)**, do not move or delete it. Off with `MOUSER_PROC_FORK=0` (was `MOUSER_SPLIT` before any release; no alias).
   Drag-to-reorder engines (t149u): `ui::EngineDrag` etc., drag state in `run`, drawn in
   `frame.rs`, `UiAction::ReorderEngines` -> app `reorder_engines` (`set_priority`).
-- Still open: Fuzzball IME events and lock-key state; the known gaps; the `site` branch
-  is not pushed yet (Pages not enabled); ratatui hyperlinks part 1 waits on upstream
+- Still open: Fuzzball IME events and lock-key state; the known gaps; ratatui hyperlinks part 1 waits on upstream
   ratatui#2854.
 
 ## Open decisions
