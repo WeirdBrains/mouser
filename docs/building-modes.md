@@ -67,7 +67,7 @@ Depend on the public crate and implement `Mode`, then call `serve` from
 ```toml
 # Cargo.toml
 [dependencies]
-mouser-mode-api = "0.3"
+mouser-mode-api = "0.4"
 serde_json = "1"
 ```
 
@@ -172,14 +172,23 @@ clicks for the first 400 ms so nothing in the tab can answer them for you.
 
 ## Views and media
 
-Two crates on crates.io (from Mouser's repository) give a mode the views and
-media commander and chat are built on. Both only build panel items and pixels for the
+On Mouser 1.6 and later, the simplest way is to let Mouser run them:
+send a `Hosted` list (an item view as a list, grid or carousel, or a media
+player). Mouser then draws it, handles its keys, clicks and playback, and sends
+you `view.*` and `media.*` events. See docs/host-views.md and
+`examples/plugins/gallery`. Chat does this for the pictures, video and sound in
+a conversation.
+
+To draw them yourself (on older Mouser versions, or for views the host
+doesn't offer, such as commander's zooming viewer), two crates on crates.io
+(from Mouser's repository) give a mode the views and media commander and chat
+are built on. Both only build panel items and pixels for the
 protocol above: nothing extra goes over the wire, and nothing in them talks to
 Mouser by itself.
 
 ```toml
-mouser-views = "0.1"
-mouser-media = "0.1"
+mouser-views = "0.2"
+mouser-media = "0.2"
 ```
 
 **mouser-views** lays out your items: `Layout` (list, grid or carousel, with

@@ -63,6 +63,12 @@ impl Host {
         self.send(&Out::Menu { x, y, entries })
     }
 
+    /// The views and players Mouser runs for this mode (latest wins); only
+    /// when the `Welcome` offered them ([`Accepted::has`], mode-api 0.4).
+    pub fn hosted(&self, views: Vec<crate::hosted::HostedView>) -> io::Result<()> {
+        self.send(&Out::Hosted(views))
+    }
+
     pub fn wants(&self, w: crate::protocol::Wants) -> io::Result<()> {
         self.send(&Out::Wants(w))
     }

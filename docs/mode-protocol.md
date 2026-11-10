@@ -132,6 +132,11 @@ when the wire format breaks, separately from the crate's version; additions
 that old plugins can ignore (new events, optional fields) keep it. Plugins can
 add or drop listeners later with `Subscribe` and `Unsubscribe`.
 
+`Accepted.features` (Mouser 1.6+, mouser-mode-api 0.4) lists what this host
+offers beyond the base protocol: `views.1` and `media.1` (§Host views and
+media). It is missing (empty) from older hosts; check it with
+`Accepted::has` before sending anything that needs it.
+
 ## Events
 
 Everything Mouser tells a plugin is an `Event`: a sequence number, a time,
@@ -216,6 +221,21 @@ behind the rows drawn after it (`mine` tints it with the accent). A dock item
 whose action is `mouser.dock_full` toggles the host's fullscreen for the mode
 panel, like its ⤢ button and `F`. Mouser draws them from 1.5; an older Mouser
 can't read a view that uses them.
+
+### Host views and media (mouser-mode-api 0.4, api 1)
+
+`Hosted(Vec<HostedView>)` registers views and players that Mouser runs for the
+mode: item views (list, grid or carousel, with thumbnails) and media (picture,
+video or sound, inline and fullscreen), each with an `id` and a `rect` in the
+dock or panel. Mouser draws them over the plugin's own panel and takes their
+keys and clicks. It redraws them as they animate or play. It reports back
+through `view.selected`, `view.activated`, `view.layout`, `media.state` and
+`media.ended` (host events; `files.read` is needed to read the files). The
+latest `Hosted` replaces the last; an empty list removes them all.
+
+Send it only when `Accepted.features` has `views.1` (items) or `media.1`
+(media): it is the last `Out` variant and older hosts can't read it. The
+guide is docs/host-views.md; `examples/plugins/gallery` is a full plugin.
 
 #### Over MCP
 

@@ -24,6 +24,8 @@ pub struct Spec {
     pub env: Vec<(String, String)>,
     /// Shared-memory ring: slots and bytes per slot (`None`: inline images).
     pub shm: Option<(u32, usize)>,
+    /// What the host offers ([`crate::protocol::Accepted::features`]).
+    pub features: Vec<String>,
 }
 
 /// What Mouser grants a plugin after reading its `Hello`.
@@ -114,6 +116,7 @@ pub fn connect(
         shm: ring.as_ref().map(Ring::spec),
         mcp: None,
         restore,
+        features: spec.features.clone(),
     };
     if let Err(e) = codec::write_named(&mut tx, Wire::MsgPack, &Welcome::Accepted(Box::new(accepted))) {
         return fail(child, e.to_string());

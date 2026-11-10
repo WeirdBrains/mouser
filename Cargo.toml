@@ -20,6 +20,8 @@ members = [
   "plugins/preferences",
   "plugins/commander",
   "plugins/chat",
+  # A third-party mode on host views and media (mouser-mode-api only).
+  "examples/plugins/gallery",
 ]
 resolver = "2"
 

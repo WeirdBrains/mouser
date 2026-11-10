@@ -498,6 +498,27 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   and bubbles need it); plugins carry no minimum-host field, so a 1.4 user
   who installs them by `gh:` can get panels that host can't draw. `mouser plugin update` of an official
   item follows the running Mouser's lock, so 1.4 stays on its pins.
+
+### P8: host views and media (docs/host-views.md)
+
+- Wire: `Out::Hosted(Vec<HostedView>)` (last `Out` variant; enum variants
+  go by name, so older variants are unchanged) and `Accepted.features`
+  (`#[serde(default)]`; `views.1`, `media.1`). `host::Spec.features` is what
+  the host offers. mouser-mode-api 0.4.0 (api stays 1); mouser-views and
+  mouser-media 0.2.0 only for the new mode-api dependency.
+- Host: `crates/mouser-render/src/modes/hosted.rs` (`HostedViews`), owned by
+  `StdioMode`: selection / scroll / layout / slide per id, mouser-views
+  layout, mouser-media `Stills` thumbnails and one `MediaView` player,
+  `__hosted.` action ids, keys before the plugin's bindings (a focused
+  plugin field wins except in fullscreen), Esc closes fullscreen first,
+  `view.*` / `media.*` events (now in `HOST_FACTS`), pause on deactivate,
+  cleared when the plugin stops. `files.read` gates every file read.
+- Users: in-tree chat (hosted media when `media.1`, else its own MediaView)
+  and `examples/plugins/gallery` (third-party, mode-api only, end-to-end
+  test). Commander keeps its own viewer (zoom, volume, scrub, window
+  fullscreen, remote files) on mouser-media and needs no new release.
+- Not published yet: mode-api 0.4.0 (standalone WeirdBrains/mouser-mode-api),
+  views / media 0.2.0, chat 0.1.4 (prepared in its repo), Mouser 1.6.0 pins.
 - Remaining gaps: views/media are libraries a mode links, not host features:
   no protocol hook for the host to render or play media for a mode, no host
   registry of custom views; a mode routes `media_*` actions and keys itself

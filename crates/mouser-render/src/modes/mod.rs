@@ -10,6 +10,7 @@
 //! `mouser-mode-api` (docs/protocol.md) by [`stdio::StdioMode`] or, for
 //! command-transport plugins, [`plugin::PluginMode`]. None is compiled in.
 
+pub mod hosted;
 pub mod plugin;
 pub mod prompt;
 pub mod services;

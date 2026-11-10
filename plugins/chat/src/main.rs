@@ -6,7 +6,10 @@
 //! events in a grokbot-tui-like layout: a rounded frame, your messages in
 //! bubbles on the right and the model's on the left (Markdown as it streams
 //! in), the input line, a model picker, the Hugging Face browser
-//! ([`hub`]) and players for media named in the chat ([`media`]).
+//! ([`hub`]) and players for media named in the chat. Mouser 1.6+ runs
+//! those players itself (host media, `media.1`: one [`HostedView`] per
+//! picture, video or sound shown); an older Mouser gets them drawn here
+//! with `mouser_media::view` ([`media`]).
 
 mod hub;
 use mouser_media::view as media;
@@ -16,7 +19,7 @@ use mouser_mode_api::events::{Event, EventDecl, Listener};
 use mouser_mode_api::host_api::Call;
 use mouser_mode_api::markdown as md;
 use mouser_mode_api::protocol::{Accepted, ApiRange, BindingDecl, Handled, Hello, ImageFormat, ImageRef, Pixels, Provide, Wants};
-use mouser_mode_api::{Action, Context, Effect, Host, Mode, Panel, PanelItem, PanelStyle, Rect, dock_chrome_height, serve};
+use mouser_mode_api::{Action, Context, Effect, Host, Hosted, HostedView, Mode, Panel, PanelItem, PanelStyle, Rect, dock_chrome_height, serve};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -105,6 +108,9 @@ struct Chat {
     wants: Option<Wants>,
     /// The panel drawn last (for media fullscreen).
     area: Rect,
+    /// Mouser runs the players (`media.1`): the ones in view this frame.
+    host_media: Option<Vec<HostedView>>,
+    host_media_sent: Option<Vec<HostedView>>,
 }
 
 /// Where the context menu was opened.
@@ -762,6 +768,9 @@ impl Chat {
         self.area = rect;
         self.media.reduce_motion = ctx.reduce_motion;
         self.media.begin();
+        if let Some(v) = self.host_media.as_mut() {
+            v.clear();
+        }
         let row_h = ch + 4;
         let (x0, w) = (rect.x + 4, rect.w - 8);
         let mut items = Vec::new();
@@ -880,6 +889,10 @@ impl Chat {
         }
         // A fullscreen picture or player covers the chat's space.
         self.media.fullscreen(rect, (cw, row_h), &mut items, &mut pics);
+        if self.host_media.is_some() && self.host_media != self.host_media_sent {
+            let _ = host.hosted(self.host_media.clone().unwrap_or_default());
+            self.host_media_sent = self.host_media.clone();
+        }
         self.send_view(host, Panel { rect, items }, pics);
         let w = self.wants();
         if self.wants.as_ref() != Some(&w) {
@@ -950,7 +963,15 @@ impl Chat {
                     }
                     if *part == 0 && i + of <= shown.len() {
                         let mr = Rect { x, y: ry, w: rw, h: *of as i32 * row_h };
-                        self.media.inline(m, mr, (cw, row_h), items, pics);
+                        match self.host_media.as_mut() {
+                            Some(v) => v.push(HostedView {
+                                id: format!("m{}", v.len()),
+                                rect: mr,
+                                in_panel: false,
+                                content: Hosted::Media { path: m.path.display().to_string(), autoplay: false },
+                            }),
+                            None => self.media.inline(m, mr, (cw, row_h), items, pics),
+                        }
                     } else {
                         let name = m.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                         items.push(item(Rect { x, y: ry, w: rw, h: row_h }, format!("▶ {name} (scroll to see it)"), PanelStyle::Hint, Action::None));
@@ -1057,6 +1078,8 @@ impl Mode for Chat {
         self.granted = w.granted.clone();
         self.busy = vec![false; w.shm.as_ref().map_or(0, |r| r.slots as usize)];
         self.media.waker = Some(self.waker(host));
+        self.host_media = w.has(mouser_mode_api::hosted::FEATURE_MEDIA).then(Vec::new);
+        self.host_media_sent = None;
         self.focused = true;
         self.call(host, "agent.state", json!({}), Asked::State);
         self.call(host, "agent.models", json!({}), Asked::Other);

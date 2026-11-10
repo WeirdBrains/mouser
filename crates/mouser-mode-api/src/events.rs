@@ -122,7 +122,8 @@ pub enum EmitResult {
 }
 
 /// Facts only the host can assert: never emitted by a plugin or MCP client.
-pub const HOST_FACTS: &[&str] = &["shell.", "term.", "agent.", "approval.", "tab.", "plugin.", "models.", "frame.", "fs.", "proc."];
+pub const HOST_FACTS: &[&str] =
+    &["shell.", "term.", "agent.", "approval.", "tab.", "plugin.", "models.", "frame.", "fs.", "proc.", "view.", "media."];
 
 /// Input-style events a plugin may synthesize into its own mode.
 pub const SELF_INPUT: &[&str] = &["input.key", "input.text", "ui.action", "input.scroll", "timer.fired"];

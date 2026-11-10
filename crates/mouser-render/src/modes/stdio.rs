@@ -20,7 +20,11 @@
 //!   ([`super::prompt`]), and `agent.*` drives an agent session that runs in
 //!   Mouser (models, keys, tools and their approval cards stay here; the
 //!   plugin gets `agent.state` events with the transcript);
-//! - typing reaches the plugin only while its view has a focused `Field`.
+//! - typing reaches the plugin only while its view has a focused `Field`;
+//! - views and media the plugin registers (`Out::Hosted`, offered as the
+//!   `views.1` / `media.1` features) are run here by [`super::hosted`]:
+//!   drawn onto its dock or panel, with their keys, clicks, playback and
+//!   redraws, and `view.*` / `media.*` events back.
 //!
 //! The program only starts once `run` is allowed (`mouser plugin permissions
 //! NAME run=allow`), like command plugins. If it keeps crashing the dock
@@ -98,6 +102,8 @@ pub struct StdioMode {
     hf: Option<Arc<HfDownload>>,
     /// The last `models.download` payload sent.
     hf_sent: Option<Value>,
+    /// Views and media Mouser runs for the plugin (`Out::Hosted`).
+    hosted: super::hosted::HostedViews,
 }
 
 /// A Hugging Face install Mouser runs for a mode plugin (`models.hf_install`):
@@ -182,6 +188,7 @@ impl StdioMode {
             menu: None,
             hf: None,
             hf_sent: None,
+            hosted: Default::default(),
         })
     }
 
@@ -201,7 +208,14 @@ impl StdioMode {
         let Some(ctx) = self.ctx else { return false };
         let argv = self.plugin.argv();
         let Some((program, args)) = argv.split_first() else { return false };
-        let spec = Spec { name: self.name.into(), program: program.into(), args: args.to_vec(), env: vec![], shm: Some(SHM) };
+        let spec = Spec {
+            name: self.name.into(),
+            program: program.into(),
+            args: args.to_vec(),
+            env: vec![],
+            shm: Some(SHM),
+            features: vec![mouser_mode_api::hosted::FEATURE_VIEWS.into(), mouser_mode_api::hosted::FEATURE_MEDIA.into()],
+        };
         let declared = self.plugin.manifest.permissions.clone();
         let name = self.name;
         let grant = move |h: &mouser_mode_api::protocol::Hello| {
@@ -301,6 +315,7 @@ impl StdioMode {
             }
             Out::Wants(w) => self.wants = Some(w),
             Out::Menu { x, y, entries } => self.menu = Some((x, y, entries)),
+            Out::Hosted(views) => self.hosted.set(views),
             Out::Effect(e) => {
                 let granted = self.granted();
                 match e.permission() {
@@ -705,6 +720,12 @@ impl StdioMode {
             .any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. } | PanelStyle::Popup))
     }
 
+    fn hosted_events(&mut self) {
+        for (name, payload) in self.hosted.take_events() {
+            self.event(&name, payload);
+        }
+    }
+
     fn notice(&self, ctx: &Context, text: &str, restart: bool) -> Panel {
         let vp = ctx.viewport;
         let (cw, ch) = (vp.cell_w.max(1), vp.cell_h.max(1));
@@ -769,6 +790,7 @@ impl Mode for StdioMode {
 
     fn deactivate(&mut self) {
         self.active = false;
+        self.hosted.pause();
         if self.was_running {
             self.event("mode.deactivated", json!({}));
         }
@@ -783,6 +805,11 @@ impl Mode for StdioMode {
     }
 
     fn action(&mut self, id: &str, arg: i32) -> Effect {
+        if let Some(h) = id.strip_prefix(super::hosted::PREFIX) {
+            self.hosted.action(h, arg);
+            self.hosted_events();
+            return Effect::None;
+        }
         if id == RESTART {
             if let Some(s) = &mut self.sup {
                 s.restart(Instant::now());
@@ -794,6 +821,12 @@ impl Mode for StdioMode {
     }
 
     fn text(&mut self, bytes: &[u8]) -> Option<Effect> {
+        // A fullscreen player, then a focused hosted view (unless a field
+        // of the plugin's has the keyboard).
+        if (self.hosted.fullscreen() || !self.typing()) && self.hosted.key(bytes) {
+            self.hosted_events();
+            return Some(Effect::None);
+        }
         if !self.typing() {
             return None;
         }
@@ -816,6 +849,9 @@ impl Mode for StdioMode {
     }
 
     fn wants_key(&self, bytes: &[u8]) -> bool {
+        if (self.hosted.fullscreen() || !self.typing()) && self.hosted.takes(bytes) {
+            return true;
+        }
         match &self.wants {
             Some(w) => w.text && w.keys.iter().any(|k| k.as_bytes() == bytes),
             None => self.typing(),
@@ -823,6 +859,10 @@ impl Mode for StdioMode {
     }
 
     fn escape(&mut self) -> bool {
+        if self.hosted.escape() {
+            self.hosted_events();
+            return true;
+        }
         let took = match &self.wants {
             Some(w) => w.escape,
             None => self.typing(),
@@ -907,6 +947,10 @@ impl Mode for StdioMode {
         if !running {
             // A crashed or stopped plugin takes no keys.
             self.wants = None;
+            // ... and runs no views until it sends them again.
+            if !self.hosted.is_empty() {
+                self.hosted.set(vec![]);
+            }
         }
         self.was_running = running;
         if let Some(e) = &self.error {
@@ -920,7 +964,15 @@ impl Mode for StdioMode {
             self.last_status = status.clone();
         }
         match self.sup.as_ref().map(|s| s.state().clone()) {
-            Some(State::Running) | None => self.view.clone(),
+            Some(State::Running) | None => {
+                let mut v = self.view.clone();
+                if !self.hosted.is_empty() {
+                    let files = self.granted().iter().any(|g| g == "files.read");
+                    self.hosted.draw(&mut v, (ctx.viewport.cell_w, ctx.viewport.cell_h), files, ctx.reduce_motion);
+                    self.hosted_events();
+                }
+                v
+            }
             Some(State::Waiting { until, .. }) => {
                 if let Some(w) = &self.waker {
                     // Poll again when the restart is due.
@@ -955,6 +1007,7 @@ impl Mode for StdioMode {
     }
 
     fn set_waker(&mut self, w: Waker) {
+        self.hosted.set_waker(w.clone());
         self.waker = Some(w);
     }
 

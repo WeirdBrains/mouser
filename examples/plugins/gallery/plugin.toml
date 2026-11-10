@@ -1,0 +1,23 @@
+# A third-party mode plugin on mouser-mode-api alone (docs/building-modes.md
+# §Host views and media): it lists the pictures, videos and sounds in the
+# shell's folder and lets Mouser run the grid / list / carousel and the
+# player (mode-api 0.4, Mouser 1.6+). Build it, put the binary next to this
+# file, then `mouser plugin install ./examples/plugins/gallery` and
+# `mouser plugin permissions gallery run=allow files.read=allow`.
+name = "gallery"
+version = "0.1.0"
+description = "gallery mode: the pictures, videos and sounds in the shell's folder, in a grid Mouser draws and plays"
+permissions = ["files.read"]
+
+[[provides]]
+kind = "mode"
+
+[run]
+transport = "mode"
+command = ["./mouser-gallery"]
+
+[mode]
+hotkey = "g"
+keys = [
+  { id = "reload", key = "r", describe = "list the folder again" },
+]
