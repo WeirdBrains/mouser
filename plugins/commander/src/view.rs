@@ -3144,6 +3144,114 @@ pub(crate) mod tests {
         );
     }
 
+    /// Every option has a key, and the key does what the menu entry does:
+    /// views, sorts, the keyboard help, and file changes (queued for the
+    /// approval card, never done straight away; remote: on that host only).
+    #[test]
+    fn every_option_key_does_its_action() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        std::fs::write(d.join("a.txt"), "hello\n").unwrap();
+        std::fs::write(d.join("big.bin"), vec![0u8; 4096]).unwrap();
+        std::fs::create_dir(d.join("sub")).unwrap();
+        let mut m = CommanderMode::new();
+        m.c.flags.all = false;
+        m.cwd_changed(d);
+        let k = Keymap::new(cmdr::BINDINGS);
+        m.view(&ctx(), &k);
+        let press = |m: &mut CommanderMode, key: &[u8]| {
+            let id = k.lookup(key).unwrap_or_else(|| panic!("{:?} is bound", String::from_utf8_lossy(key))).to_string();
+            m.action(&id, 0)
+        };
+        let at = |m: &CommanderMode, n: &str| m.c.visible().iter().position(|e| e.name == n).unwrap();
+        // Views.
+        for (key, view) in [(b"G", Layout::Grid), (b"C", Layout::Carousel), (b"L", Layout::List)] {
+            press(&mut m, key);
+            assert_eq!(m.c.view, view);
+        }
+        // Sorts and reverse.
+        for (key, sort) in [(b"S", Sort::Size), (b"D", Sort::Modified), (b"N", Sort::Name)] {
+            press(&mut m, key);
+            assert_eq!(m.c.flags.sort, sort);
+        }
+        press(&mut m, b"R");
+        assert!(m.c.flags.reverse);
+        press(&mut m, b"R");
+        assert!(!m.c.flags.reverse);
+        // Keyboard help: ? and F1 (both F1 encodings).
+        for key in [&b"?"[..], b"\x1bOP", b"\x1b[11~"] {
+            assert_eq!(press(&mut m, key), Effect::ShowKeys);
+        }
+        // Copy path, copy, paste, delete: queued only.
+        m.c.selected = at(&m, "a.txt");
+        press(&mut m, b"Y");
+        assert_eq!(m.clip, vec![d.join("a.txt").display().to_string()]);
+        press(&mut m, b"y");
+        assert_eq!(m.yank, vec![d.join("a.txt")]);
+        m.c.selected = at(&m, "big.bin");
+        press(&mut m, b"p");
+        assert_eq!(m.ops, vec![crate::ops::Op::CopyTo { from: vec![d.join("a.txt")], to: d.to_path_buf() }]);
+        m.ops.clear();
+        press(&mut m, b"d");
+        assert_eq!(m.ops, vec![crate::ops::Op::Delete(vec![d.join("big.bin")])]);
+        assert!(d.join("big.bin").exists(), "nothing deleted before the card");
+        m.ops.clear();
+        // Prompts: rename, new folder, copy to, move to.
+        press(&mut m, b"r");
+        assert!(matches!(&m.ask, Some((Ask::Rename(p), n)) if p == &d.join("big.bin") && n == "big.bin"));
+        assert_eq!(press(&mut m, b"d"), Effect::None, "keys wait while a name is asked");
+        assert!(m.ops.is_empty());
+        m.ask = None;
+        press(&mut m, b"n");
+        assert!(matches!(&m.ask, Some((Ask::NewFolder(p), n)) if p == d && n.is_empty()));
+        m.ask = None;
+        press(&mut m, b"c");
+        assert!(matches!(&m.ask, Some((Ask::CopyTo(v), s)) if v == &[d.join("big.bin")] && s == &format!("{}/", d.display())));
+        m.ask = None;
+        press(&mut m, b"M");
+        assert!(matches!(&m.ask, Some((Ask::MoveTo(v), _)) if v == &[d.join("big.bin")]));
+        m.ask = None;
+        // Sync to the selected folder; fullscreen open of a non-media file just opens it.
+        m.c.selected = at(&m, "sub");
+        assert_eq!(press(&mut m, b"e"), Effect::Cd(d.join("sub")));
+        m.c.selected = at(&m, "a.txt");
+        press(&mut m, b"O");
+        assert!(matches!(&m.c.overlay, Some(Overlay::Preview(p)) if p == &d.join("a.txt")) && !m.fullscreen);
+        m.view(&ctx(), &k);
+        m.clip.clear();
+        press(&mut m, b"T");
+        assert_eq!(m.clip, vec!["hello".to_string()], "copy text of the file view");
+        m.action("close", 0);
+
+        // Remote without a side channel: changes are refused, nothing queued.
+        let ent = |n: &str| Entry {
+            name: n.into(),
+            path: PathBuf::from(format!("/srv/{n}")),
+            kind: cmdr::kind_of(n),
+            mode: "-rw-r--r--".into(),
+            size: 3,
+            modified: None,
+        };
+        m.remote_changed("me@web1", Some(Path::new("/srv")), Some(Ok(vec![ent("x.txt")])));
+        m.c.selected = 0;
+        assert!(matches!(press(&mut m, b"d"), Effect::Say(e) if e.contains("no ssh side channel")));
+        assert!(m.ops.is_empty() && m.op_target().is_err());
+        // With one: the change is queued for that host.
+        m.remote_ssh(Some(&crate::remote::SshTarget { opts: vec![], dest: "me@web1".into() }));
+        assert!(matches!(m.op_target(), Ok(Some(_))));
+        press(&mut m, b"d");
+        assert_eq!(m.ops, vec![crate::ops::Op::Delete(vec![PathBuf::from("/srv/x.txt")])]);
+        m.ops.clear();
+        // Copied there, pasted here: refused (no copying between machines).
+        press(&mut m, b"y");
+        m.remote_ssh(None);
+        m.c.remote = None;
+        m.cwd_changed(d);
+        assert_eq!(m.op_target(), Ok(None));
+        assert!(matches!(press(&mut m, b"p"), Effect::Say(e) if e.contains("me@web1")));
+        assert!(m.ops.is_empty());
+    }
+
     #[test]
     fn pages_marks_and_pipe_in_every_view() {
         let t = tempfile::tempdir().unwrap();
