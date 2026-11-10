@@ -10,12 +10,14 @@ publish = false
 [dependencies]
 mouser-mode-api = { path = "../../crates/mouser-mode-api", features = ["markdown"] }
 serde_json.workspace = true
+mouser-media = { path = "../../crates/mouser-media" }
 
 [dev-dependencies]
 mouser-core = { path = "../../crates/mouser-core" }
 mouser-render = { path = "../../crates/mouser-render" }
 tempfile = "3.10.1"
 anyhow.workspace = true
+image.workspace = true
 
 [lints]
 workspace = true

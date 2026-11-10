@@ -6,6 +6,8 @@
 - Commander has a key for every option: `L` / `G` / `C` list / grid / carousel, `O` open fullscreen, `e` sync to the selected folder, `y` / `p` copy / paste, `c` / `M` copy to / move to, `r` rename, `d` delete, `n` new folder, `Y` / `T` copy path / text, `N` / `D` / `S` sort by name / modified / size, `R` reverse. Mode plugins may bind Shift+letter and F1.
 - Commander file changes (copy, paste, move, rename, delete, new folder) work in SSH sessions: they run on the remote host after the approval card.
 - Hugging Face models: search, details and install from the chat (`/hf`) or `mouser model hf search|info|install|list|remove`. Only GGUF files whose architecture the bundled llama.cpp supports are offered ("supported architecture, not load-tested"); others say why they won't run. Downloads resume, need and check the Hub's SHA256, and the installed model becomes the current one. Nothing from the repo is executed. See docs/models.md §Hugging Face.
+- Chat looks like a terminal agent: rounded frame and bubbles, fullscreen in its pane, and it can run commands (`terminal_run`) after an approval card with Allow / Allow all / Deny; Allow all lasts for the conversation and `/revoke` or `/new` ends it. Commands run in their own process group, time out, and anything they leave running is stopped. See docs/chat.md.
+- Chat plays images, video and audio from messages and tool output inline, each with fullscreen (new `mouser-media` crate). mouser-mode-api 0.3: frame and bubble panel styles, Hugging Face and `agent.revoke_all` services.
 
 ### Fixed
 

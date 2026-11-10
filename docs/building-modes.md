@@ -67,7 +67,7 @@ Depend on the public crate and implement `Mode`, then call `serve` from
 ```toml
 # Cargo.toml
 [dependencies]
-mouser-mode-api = "0.2"
+mouser-mode-api = "0.3"
 serde_json = "1"
 ```
 

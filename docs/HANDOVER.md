@@ -389,7 +389,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - local-llm: `llm/mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst` (depends on vulkan-icd-loader).
 - Core: `agent.rs`.
   - `Chat` (send/cancel/answer/clear, `State` with entries and the pending card) and the `AgentHost` trait.
-  - `Check` (Allow / Deny / Ask lines) and `Answer` (Once / ForChat / Deny).
+  - `Check` (Allow / Deny / Ask lines) and `Answer` (Once / All / Deny; All is "Allow all" for the rest of the chat, `State.allow_all`, revoked by `revoke_all` or a new chat).
   - `redact()`, `untrusted()`, MAX_STEPS 8, tool output capped at 8,000 characters, transcripts `$MOUSER_HOME/chats/*.jsonl` (0600).
   - `Preferences.chat` (`[chat] transcripts`).
   - Malformed calls with an empty name are dropped; small models sometimes emit them.

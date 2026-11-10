@@ -59,7 +59,14 @@ pub const METHODS: &[(&str, Option<&str>)] = &[
     ("agent.send", Some("agent.use")),
     ("agent.cancel", Some("agent.use")),
     ("agent.clear", Some("agent.use")),
+    ("agent.revoke_all", Some("agent.use")),
     ("agent.state", Some("agent.use")),
+    // Hugging Face models for the local engine (search, details, a
+    // consented install that Mouser downloads; progress as `models.download`).
+    ("models.hf_search", Some("agent.use")),
+    ("models.hf_details", Some("agent.use")),
+    ("models.hf_install", Some("agent.use")),
+    ("models.hf_cancel", Some("agent.use")),
     ("permissions.granted", None),
     ("permissions.request", None),
     ("fetch", Some("net.fetch")),

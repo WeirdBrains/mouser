@@ -64,7 +64,10 @@ declared in `plugin.toml` and granted:
 | `agent.models`, `agent.set_default {model}` | `agent.use` | providers, their models and the default. Never a key |
 
 When a service needs a capability the manifest declares and the store is still **Ask**, Mouser shows the approval popup and retries the call after Allow always — it does not return `… is not allowed` until the user picks Never (or Deny for that attempt).
-| `agent.send {text}`, `agent.cancel`, `agent.clear`, `agent.state` | `agent.use` | an agent session that runs inside Mouser with your models, keys and tools. Replies stream to the plugin as `agent.state` events: `entries` (`user`, `assistant`, `tool`, `note`, `error`), `running`, `model`, `card_open`. Tool-call cards are drawn by Mouser, never by the plugin |
+| `agent.send {text}`, `agent.cancel`, `agent.clear`, `agent.state` | `agent.use` | an agent session that runs inside Mouser with your models, keys and tools. Replies stream to the plugin as `agent.state` events: `entries` (`user`, `assistant`, `tool`, `note`, `error`), `running`, `model`, `card_open`, `allow_all`. Tool-call cards are drawn by Mouser, never by the plugin (Allow / Allow all / Deny) |
+| `agent.revoke_all` | `agent.use` | turn the session's Allow all off. Only the user turns it on, in Mouser's card |
+| `models.hf_search {query}`, `models.hf_details {id}` | `agent.use` | Hugging Face GGUF models: `[{id, downloads, likes, pipeline, updated}]`; one model's card summary, numbers, license, `lines`, `quants` (`label`, `size`, `human`, `files`, `installed`, `spec`) and `default_quant` |
+| `models.hf_install {id, quant}`, `models.hf_cancel` | `agent.use` | Mouser re-reads the model from the Hub, asks you in its own popup (size, license, folder), then downloads it: `{"started": true}` or `{"decision": "deny"}`. Progress comes as `models.download` events (`repo`, `quant`, `done`, `total`, `state`: downloading / done / cancelled / failed, `spec`, `error`); when done it is the default model. One download at a time |
 
 Mouser's popups name the plugin that asks. They take every key and click while
 open, and their buttons do nothing for the first 400 ms, so a plugin (or the
@@ -202,6 +205,17 @@ Mouser fills in each entry's `key` from the user's `modes.toml` when the entry's
 now. `Host::menu(x, y, entries)` sends it from `serve()`. `ClipboardSet` puts text
 on the clipboard with no permission (for "copy path" and the like); reading the
 clipboard is not offered.
+
+### Frames and bubbles (mouser-mode-api 0.3, api 1)
+
+Two panel styles draw a chat the way grokbot-tui does, with rounded corners:
+`Frame { focused }` is a rounded outline whose item text is a title set into
+its top edge (in the accent colour when `focused`), with nothing filled, so the
+items after it show inside; `Bubble { mine }` is a rounded message background
+behind the rows drawn after it (`mine` tints it with the accent). A dock item
+whose action is `mouser.dock_full` toggles the host's fullscreen for the mode
+panel, like its ⤢ button and `F`. Mouser draws them from 1.5; an older Mouser
+can't read a view that uses them.
 
 #### Over MCP
 

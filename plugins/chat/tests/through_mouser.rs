@@ -102,7 +102,9 @@ fn chats_through_mouser_agent() {
     let mut m = StdioMode::new(p, 3).unwrap();
     m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
     m.activate();
-    until(&mut m, "the chat dock", |v| texts(v).iter().any(|t| t.starts_with("chat · ")));
+    until(&mut m, "the chat's rounded frame", |v| {
+        v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Frame { .. }) && i.text.starts_with("Chat: "))
+    });
     until(&mut m, "a focused input", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Field { focused: true, .. })));
     assert!(m.wants_text());
     for b in ["h", "i", "\r"] {
@@ -110,11 +112,14 @@ fn chats_through_mouser_agent() {
     }
     until(&mut m, "the streamed Markdown reply", |v| {
         let t = texts(v);
-        t.iter().any(|t| t == "Hello") && t.iter().any(|t| t == "echo") && t.iter().any(|t| t.starts_with("you"))
+        t.iter().any(|t| t == "Hello") && t.iter().any(|t| t == "echo") && t.iter().any(|t| t == "hi")
     });
     let v = m.view(&ctx(), &Keymap::new(&[]));
     let bold = v.dock.iter().flat_map(|d| &d.items).find(|i| i.text == "Hello").unwrap();
     assert!(matches!(bold.style, PanelStyle::Md { flags, .. } if flags & mouser_core::markdown::BOLD != 0), "{:?}", bold.style);
+    let bubbles: Vec<bool> =
+        v.dock.iter().flat_map(|d| &d.items).filter_map(|i| if let PanelStyle::Bubble { mine } = i.style { Some(mine) } else { None }).collect();
+    assert_eq!(bubbles, [true, false], "your message and the reply, each in a bubble");
     drop(m);
 }
 

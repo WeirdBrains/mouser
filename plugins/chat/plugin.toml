@@ -1,10 +1,11 @@
 # The chat mode as a plugin (docs/chat.md). It replaces the built-in chat
 # mode when installed. The agent itself runs in Mouser: models, API keys,
-# tools and their approval cards never reach this program.
+# tools and their approval cards never reach this program. files.read is
+# asked for only when a message names a picture, video or sound to show.
 name = "chat"
 version = "0.1.0"
-description = "chat mode: ask about the terminal; the agent, its models and tool approvals run in Mouser"
-permissions = ["agent.use"]
+description = "chat mode: ask about the terminal or have it run commands; the agent, its models (Hugging Face too) and tool approvals run in Mouser"
+permissions = ["agent.use", "files.read"]
 
 [[provides]]
 kind = "mode"
@@ -19,6 +20,7 @@ keys = [
   { id = "focus", key = "i", describe = "type a message (Enter sends)" },
   { id = "cancel", key = "x", describe = "cancel the running turn (also Esc)" },
   { id = "model", key = "m", describe = "switch model (also click the model name)" },
+  { id = "hub", key = "h", describe = "search Hugging Face for a model to install (also /hf)" },
   { id = "clear", key = "l", describe = "new chat (clears the transcript)" },
   { id = "up", key = "pageup", describe = "scroll the transcript up" },
   { id = "down", key = "pagedown", describe = "scroll the transcript down" },

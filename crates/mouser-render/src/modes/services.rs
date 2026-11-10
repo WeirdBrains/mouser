@@ -178,6 +178,17 @@ fn service(method: &str, params: &Value, env: &Env) -> Reply {
             mouser_core::models::save(&m).map_err(|e| format!("{e:#}"))?;
             Ok(json!(spec))
         })()),
+        "models.hf_search" => {
+            let q = params["query"].as_str().unwrap_or("").to_string();
+            later(move || {
+                let hits = mouser_core::models::hf::search(&q, mouser_core::models::hf::SEARCH_LIMIT).map_err(|e| format!("{e:#}"))?;
+                Ok(json!(hits))
+            })
+        }
+        "models.hf_details" => {
+            let Some(id) = params["id"].as_str().map(str::to_string) else { return now(Err("params.id missing".into())) };
+            later(move || hf_details(&id))
+        }
         "fetch" => match fetch_args(params) {
             Ok(a) => later(move || fetch(a)),
             Err(e) => now(Err(e)),
@@ -194,6 +205,35 @@ fn service(method: &str, params: &Value, env: &Env) -> Reply {
         }
         m => now(Err(format!("{m} is not available yet"))),
     }
+}
+
+/// A repository's details for the chat: the facts, the card's lines, the
+/// quantizations (smallest first) and the one installed by default.
+fn hf_details(id: &str) -> Answer {
+    use mouser_core::models::hf;
+    let d = hf::details(id).map_err(|e| format!("{e:#}"))?;
+    let installed: Vec<(String, String)> =
+        hf::installed().into_iter().filter(|i| i.repo == d.id && i.complete()).map(|i| (i.label, format!("gemma-local/{}", i.id))).collect();
+    let quants: Vec<Value> = d
+        .quants
+        .iter()
+        .map(|q| {
+            let spec = installed.iter().find(|(l, _)| *l == q.label).map(|(_, s)| s.clone());
+            json!({"label": q.label, "id": q.id, "size": q.size(), "human": mouser_core::models::local::human(q.size()),
+                   "files": q.files.len(), "installed": spec.is_some(), "spec": spec})
+        })
+        .collect();
+    Ok(json!({
+        "id": d.id, "downloads": d.downloads, "likes": d.likes, "license": d.license, "pipeline": d.pipeline,
+        "architecture": d.architecture, "context_length": d.context_length, "params": d.params, "gated": d.gated,
+        "updated": d.updated, "summary": d.summary, "lines": hf::details_lines(&d), "quants": quants,
+        "default_quant": hf::default_quant(&d).map(|q| q.label.clone()),
+        "support": match hf::support(&d) {
+            hf::Support::Supported => json!({"runs": true, "architecture": d.architecture}),
+            hf::Support::Unverified => json!({"runs": true, "unverified": true}),
+            hf::Support::No(why) => json!({"runs": false, "why": why}),
+        },
+    }))
 }
 
 /// Providers and the default, never a key.

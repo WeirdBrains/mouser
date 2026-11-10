@@ -599,9 +599,53 @@ fn draw_panel(canvas: &mut dyn Draw, fonts: &mut FontStack, p: &ui::Panel, bg: u
             ui::PanelStyle::MdCode { top, bottom } => md_code(canvas, b, top, bottom, mix(panel, fg, 0.08), panel),
             ui::PanelStyle::MdQuote => canvas.fill_rect(b.x, b.y, b.w, b.h, mix(panel, accent, 0.55)),
             ui::PanelStyle::MdRule => canvas.fill_rect(b.x, b.y + b.h / 2, b.w, 1, mix(panel, fg, 0.3)),
+            ui::PanelStyle::Frame { focused } => frame_box(canvas, fonts, b, &it.text, if focused { accent } else { border }, (fg, panel)),
+            ui::PanelStyle::Bubble { mine } => {
+                let fill = if mine { mix(panel, accent, 0.16) } else { mix(panel, fg, 0.07) };
+                round_rect(canvas, b.x, b.y, b.w, b.h, RADIUS.min(b.h / 2), fill, panel);
+            }
             // Drawn by draw_floats, after the images.
             ui::PanelStyle::FloatLabel | ui::PanelStyle::Badge(_) => {}
         }
+    }
+}
+
+/// A rounded outline (1 px, `edge`) with `title` set into its top edge
+/// (`╭ title ───╮`); the inside is left as it is.
+fn frame_box(canvas: &mut dyn Draw, fonts: &mut FontStack, b: ui::Rect, title: &str, edge: u32, (fg, panel): (u32, u32)) {
+    if b.w <= 2 * RADIUS || b.h <= 2 * RADIUS {
+        return;
+    }
+    let r = RADIUS;
+    // Straight edges, then the four quarter-circle corners pixel by pixel.
+    canvas.fill_rect(b.x + r, b.y, b.w - 2 * r, 1, edge);
+    canvas.fill_rect(b.x + r, b.y + b.h - 1, b.w - 2 * r, 1, edge);
+    canvas.fill_rect(b.x, b.y + r, 1, b.h - 2 * r, edge);
+    canvas.fill_rect(b.x + b.w - 1, b.y + r, 1, b.h - 2 * r, edge);
+    let rf = r as f64 - 0.5;
+    for dy in 0..r {
+        for dx in 0..r {
+            let (fx, fy) = (rf - dx as f64, rf - dy as f64);
+            let d = (fx * fx + fy * fy).sqrt();
+            let cover = (1.0 - (d - rf).abs()).clamp(0.0, 1.0) as f32;
+            if cover > 0.05 {
+                let c = mix(panel, edge, cover);
+                for (x, y) in
+                    [(b.x + dx, b.y + dy), (b.x + b.w - 1 - dx, b.y + dy), (b.x + dx, b.y + b.h - 1 - dy), (b.x + b.w - 1 - dx, b.y + b.h - 1 - dy)]
+                {
+                    canvas.fill_rect(x, y, 1, 1, c);
+                }
+            }
+        }
+    }
+    if !title.is_empty() {
+        let max = ((b.w - 4 * r) / fonts.cell_w.max(1)).max(0) as usize;
+        let t: String = format!(" {title} ").chars().take(max).collect();
+        let tw = ui::text_cols(&t) * fonts.cell_w;
+        let tx = b.x + r + fonts.cell_w;
+        let ty = b.y - fonts.cell_h / 2;
+        canvas.fill_rect(tx, b.y - 1, tw, 3, panel);
+        canvas.draw_text(fonts, tx, ty, &t, fg);
     }
 }
 
