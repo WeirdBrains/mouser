@@ -480,8 +480,10 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Commander's own `audio.rs`, `player.rs`, `process.rs`, `Slide`, `FsAnim`,
   zoom/geometry/label helpers are gone; grid and carousel geometry come from
   mouser-views. No wire change: mode-api stays 0.3.0.
-- Both crates are `publish = false` and used by path; the standalone
-  commander needs them published (or as git dependencies) with mode-api 0.3.
+- Both crates are published on crates.io from this repo (0.1.0, after
+  mouser-mode-api 0.3.0 from WeirdBrains/mouser-mode-api); the workspace uses
+  them by path with the version, and the standalone commander and chat repos
+  depend on the registry versions. Publish order: mode-api, views, media.
 - `exec.rs` (chat `terminal_run`): Unix process group, Windows Job Object
   with kill-on-close; neither is a sandbox (`setsid` / job breakaway escape).
   The Windows test (`exec::windows_tests`) compiles for

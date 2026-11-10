@@ -172,14 +172,14 @@ clicks for the first 400 ms so nothing in the tab can answer them for you.
 
 ## Views and media
 
-Two crates in Mouser's repository give a mode the views and media commander
-and chat are built on. Both only build panel items and pixels for the
+Two crates on crates.io (from Mouser's repository) give a mode the views and
+media commander and chat are built on. Both only build panel items and pixels for the
 protocol above: nothing extra goes over the wire, and nothing in them talks to
 Mouser by itself.
 
 ```toml
-mouser-views = { git = "https://github.com/WeirdBrains/mouser" }
-mouser-media = { git = "https://github.com/WeirdBrains/mouser" }
+mouser-views = "0.1"
+mouser-media = "0.1"
 ```
 
 **mouser-views** lays out your items: `Layout` (list, grid or carousel, with

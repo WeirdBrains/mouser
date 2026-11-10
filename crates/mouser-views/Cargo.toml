@@ -5,7 +5,12 @@ edition.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Views for Mouser mode plugins: list / grid / carousel layout, carousel slide, image zoom and fit, scrollbars and labels, on mouser-mode-api panels"
-publish = false
+repository = "https://github.com/WeirdBrains/mouser"
+homepage = "https://mouser.weirdbrains.com"
+documentation = "https://docs.rs/mouser-views"
+readme = "README.md"
+keywords = ["terminal", "mouser", "plugin", "ui", "layout"]
+categories = ["gui", "command-line-interface"]
 
 [dependencies]
 mouser-mode-api = { path = "../mouser-mode-api", version = "0.3.0" }
