@@ -29,11 +29,30 @@ fn bad(e: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }
 
+/// Write one message, MessagePack structs as arrays (the plugin side: the
+/// host reads both shapes).
 pub fn write<T: Serialize>(w: &mut impl Write, wire: Wire, msg: &T) -> io::Result<()> {
     let body = match wire {
         Wire::MsgPack => rmp_serde::to_vec(msg).map_err(bad)?,
         Wire::Json => serde_json::to_vec(msg).map_err(bad)?,
     };
+    frame(w, body)
+}
+
+/// Write one message with MessagePack structs as maps keyed by field name
+/// (what the host sends a plugin). A plugin built before a field was added
+/// skips the unknown key; as an array the extra element made its decoder
+/// fail ("array had incorrect length") and the plugin exit at the
+/// handshake. Plugins built from any mode-api version read both shapes.
+pub fn write_named<T: Serialize>(w: &mut impl Write, wire: Wire, msg: &T) -> io::Result<()> {
+    let body = match wire {
+        Wire::MsgPack => rmp_serde::to_vec_named(msg).map_err(bad)?,
+        Wire::Json => serde_json::to_vec(msg).map_err(bad)?,
+    };
+    frame(w, body)
+}
+
+fn frame(w: &mut impl Write, body: Vec<u8>) -> io::Result<()> {
     if body.len() > MAX_FRAME {
         return Err(bad(format!("frame of {} bytes is over the {MAX_FRAME} limit", body.len())));
     }

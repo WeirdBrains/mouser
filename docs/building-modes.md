@@ -132,7 +132,9 @@ Build the binary, put it next to `plugin.toml` as `./hello-mode` (or change
 ### JSON instead of MessagePack
 
 Set `MOUSER_MODE_WIRE=json` to speak JSON frames. Useful while debugging from
-another language; MessagePack stays the default.
+another language; MessagePack stays the default. In MessagePack, Mouser sends
+structs as maps keyed by field name (see docs/mode-protocol.md §Framing), so
+ignore unknown keys: fields are added without bumping the api.
 
 ## What arrives and what you send
 

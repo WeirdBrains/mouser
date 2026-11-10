@@ -99,6 +99,14 @@ The body is MessagePack by default. Set `MOUSER_MODE_WIRE=json` to use JSON
 instead, which makes plugins easy to write and debug in any language. Frames
 over 64 MiB are refused.
 
+In MessagePack, Mouser writes its messages (`Welcome`, events, responses,
+`Stopping`) with structs as **maps keyed by field name**, so a plugin built
+against an older mode-api skips a field added since then (`Context.reduce_motion`
+in 1.4.5, say) instead of failing to decode. A plugin may send its own
+messages with structs as arrays (the mode-api default) or as maps; Mouser reads
+both. A MessagePack decoder in another language should accept both shapes and
+ignore unknown keys.
+
 ## Handshake and versions
 
 1. The plugin sends `Hello`: the api range it speaks (`min`, `max`), its name
