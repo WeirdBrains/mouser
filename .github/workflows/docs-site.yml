@@ -1,8 +1,7 @@
 name: Docs site
 on:
   push:
-    branches: [ "main" ]
-    paths: [ "docs/**", "scripts/check-doc-sections.py", ".github/workflows/docs-site.yml" ]
+    tags: [ "v*" ]
   pull_request:
     paths: [ "docs/**" ]
   workflow_dispatch:
