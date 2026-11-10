@@ -1,6 +1,8 @@
-//! File changes from the context menu: copy, move, rename, delete, a new
-//! folder, paste. Each is described first and runs only after the user
-//! said yes on Mouser's approval card; none ever replaces an existing file.
+//! File changes from the context menu (and their keys): copy, move, rename,
+//! delete, a new folder, paste. Each is described first and runs only after
+//! the user said yes on Mouser's approval card; none ever replaces an
+//! existing file. In an SSH session they run on the remote host, over the
+//! session's side channel ([`Op::run_remote`]), never on local paths.
 
 use std::path::{Path, PathBuf};
 
@@ -103,6 +105,64 @@ impl Op {
     }
 }
 
+/// POSIX `sh` for a change on the remote host (arguments: see [`Op::remote_argv`]).
+/// The same rules as [`Op::run`]: never over an existing file, never into itself.
+const REMOTE_SCRIPT: &str = concat!(
+    "op=$1; to=$2; many=$3; shift 3; ",
+    "case $op in ",
+    "copy|move) ",
+    "if [ \"$many\" = 1 ]; then if [ -d \"$to\" ]; then :; else echo \"$to is not a folder\" >&2; exit 1; fi; fi; ",
+    "for p in \"$@\"; do ",
+    "if [ \"$many\" = 1 ] || [ -d \"$to\" ]; then t=\"${to%/}/${p##*/}\"; else t=$to; fi; ",
+    "if [ -e \"$t\" ] || [ -L \"$t\" ]; then echo \"$t already exists\" >&2; exit 1; fi; ",
+    "case \"$t/\" in \"$p/\"*) echo \"$t is inside $p\" >&2; exit 1;; esac; ",
+    "if [ \"$op\" = move ]; then mv -- \"$p\" \"$t\" || exit 1; else cp -RP -- \"$p\" \"$t\" || exit 1; fi; ",
+    "done;; ",
+    "rename) if [ -e \"$to\" ] || [ -L \"$to\" ]; then echo \"$to already exists\" >&2; exit 1; fi; mv -- \"$1\" \"$to\";; ",
+    "delete) rm -rf -- \"$@\";; ",
+    "mkdir) mkdir -- \"$to\";; ",
+    "*) exit 2;; esac"
+);
+
+impl Op {
+    /// `sh -c SCRIPT mouser-op OP TO MANY PATHS…` for the remote host.
+    pub fn remote_argv(&self) -> Vec<String> {
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let (op, to, many, paths): (&str, String, bool, Vec<String>) = match self {
+            Op::CopyTo { from, to } => ("copy", s(to), from.len() > 1, from.iter().map(|p| s(p)).collect()),
+            Op::MoveTo { from, to } => ("move", s(to), from.len() > 1, from.iter().map(|p| s(p)).collect()),
+            Op::Rename { from, to } => ("rename", s(to), false, vec![s(from)]),
+            Op::Delete(v) => ("delete", String::new(), false, v.iter().map(|p| s(p)).collect()),
+            Op::NewFolder(p) => ("mkdir", s(p), false, Vec::new()),
+        };
+        let mut v = vec!["sh".to_string(), "-c".into(), REMOTE_SCRIPT.into(), "mouser-op".into(), op.into(), to, if many { "1" } else { "0" }.into()];
+        v.extend(paths);
+        v
+    }
+
+    /// The remote command line ([`Op::remote_argv`], quoted for the login shell).
+    pub fn remote_command(&self) -> String {
+        self.remote_argv().iter().map(|a| crate::commander::shell_quote(a)).collect::<Vec<_>>().join(" ")
+    }
+
+    /// Carry it out on the remote host (after the user said yes).
+    pub fn run_remote(&self, r: &crate::fetch::Remote) -> Result<String, String> {
+        r.run(&self.remote_command())?;
+        Ok(self.done())
+    }
+
+    /// What happened, for the status bar.
+    fn done(&self) -> String {
+        match self {
+            Op::CopyTo { from, to } => format!("copied {} item(s) to {}", from.len(), to.display()),
+            Op::MoveTo { from, to } => format!("moved {} item(s) to {}", from.len(), to.display()),
+            Op::Rename { to, .. } => format!("renamed to {}", to.display()),
+            Op::Delete(v) => format!("deleted {} item(s)", v.len()),
+            Op::NewFolder(p) => format!("created {}", p.display()),
+        }
+    }
+}
+
 fn remove(p: &Path) -> std::io::Result<()> {
     if p.symlink_metadata()?.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) }
 }
@@ -138,6 +198,45 @@ pub fn valid_name(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The remote script, run here with `sh` as the host would.
+    #[cfg(unix)]
+    #[test]
+    fn remote_ops_follow_the_same_rules() {
+        let t = tempfile::tempdir().unwrap();
+        let d = t.path();
+        let run = |op: Op| {
+            let v = op.remote_argv();
+            let o = std::process::Command::new(&v[0]).args(&v[1..]).output().unwrap();
+            if o.status.success() { Ok(op.done()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
+        };
+        std::fs::write(d.join("a b.txt"), "a").unwrap();
+        std::fs::create_dir(d.join("sub")).unwrap();
+        std::fs::write(d.join("sub/b.txt"), "b").unwrap();
+        std::fs::create_dir(d.join("dst")).unwrap();
+        run(Op::CopyTo { from: vec![d.join("a b.txt"), d.join("sub")], to: d.join("dst") }).unwrap();
+        assert_eq!(std::fs::read_to_string(d.join("dst/sub/b.txt")).unwrap(), "b");
+        assert!(d.join("a b.txt").exists());
+        assert!(run(Op::CopyTo { from: vec![d.join("a b.txt")], to: d.join("dst") }).unwrap_err().contains("already exists"));
+        assert!(run(Op::CopyTo { from: vec![d.join("a b.txt"), d.join("sub")], to: d.join("nope") }).unwrap_err().contains("not a folder"));
+        // One item to a new name.
+        run(Op::CopyTo { from: vec![d.join("a b.txt")], to: d.join("c.txt") }).unwrap();
+        assert!(d.join("c.txt").is_file());
+        run(Op::Rename { from: d.join("c.txt"), to: d.join("e.txt") }).unwrap();
+        assert!(run(Op::Rename { from: d.join("e.txt"), to: d.join("dst") }).is_err(), "rename never replaces");
+        run(Op::MoveTo { from: vec![d.join("e.txt")], to: d.join("sub") }).unwrap();
+        assert!(d.join("sub/e.txt").exists() && !d.join("e.txt").exists());
+        assert!(run(Op::MoveTo { from: vec![d.join("sub")], to: d.join("sub") }).unwrap_err().contains("inside"), "not into itself");
+        run(Op::NewFolder(d.join("new it's"))).unwrap();
+        assert!(d.join("new it's").is_dir());
+        assert_eq!(run(Op::Delete(vec![d.join("sub"), d.join("new it's")])).unwrap(), "deleted 2 item(s)");
+        assert!(!d.join("sub").exists() && d.join("dst/a b.txt").exists());
+        // Quoted for the login shell: a name with a quote survives.
+        let c = Op::NewFolder(d.join("q'x")).remote_command();
+        let o = std::process::Command::new("sh").arg("-c").arg(&c).output().unwrap();
+        assert!(o.status.success() && d.join("q'x").is_dir(), "{c}");
+        assert!(!REMOTE_SCRIPT.contains(['\'', '!', '\\']));
+    }
 
     #[test]
     fn copy_move_rename_delete_never_overwrite() {

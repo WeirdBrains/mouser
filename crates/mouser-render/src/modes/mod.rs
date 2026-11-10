@@ -129,6 +129,30 @@ pub const HOST_BINDINGS: &[Binding] = &[
     Binding { id: "menu", key: ".", describe: "context menu for the selected item (or right-click)" },
 ];
 
+/// Mouser's own keys, in every mode and without one: the end of the
+/// keyboard help ([`Host::keys_panel`]). The tab and window shortcuts are
+/// `crate::tab_key` and `crate::font_zoom_key`; keep this table with them.
+pub const GLOBAL_KEYS: &[(&str, &str)] = &[
+    ("ctrl+shift+k", "keyboard help: this window (? or F1 in a mode)"),
+    ("ctrl+shift+m", "modes"),
+    ("esc : <key> Enter", "switch mode (its own key again: modes off)"),
+    ("alt+:", "the mode command line at once"),
+    ("F10", "Mouser's command line (`:c`, `:downloads`, ...)"),
+    ("alt+esc", "connections sidebar on / off"),
+    ("ctrl+shift+t", "new tab"),
+    ("ctrl+shift+w", "close the tab"),
+    ("ctrl+tab / ctrl+shift+tab", "next / previous tab"),
+    ("alt+1 \u{2026} alt+9", "go to tab 1 \u{2026} 9"),
+    ("ctrl+shift+c / ctrl+shift+v", "copy the selection / paste (Cmd+C / Cmd+V on macOS)"),
+    ("shift+insert, middle-click", "paste the selection (PRIMARY)"),
+    ("ctrl+= / ctrl+- / ctrl+0", "font larger / smaller / reset"),
+    ("mouse", "click selects, double-click opens, wheel moves, right-click: menu"),
+];
+
+/// Keys that scroll the keyboard help, and the ones that close it.
+const HELP_SCROLL: &[(&str, i32)] = &[("up", -1), ("down", 1), ("pageup", -10), ("pagedown", 10), ("home", -100_000), ("end", 100_000)];
+const HELP_CLOSE: &[&str] = &["?", "q", "f1"];
+
 /// An open context menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Menu {
@@ -160,6 +184,8 @@ pub struct Host {
     modes: Vec<(Box<dyn Mode>, Keymap)>,
     current: Option<usize>,
     window: Option<Window>,
+    /// First line shown in the keyboard help (it scrolls when long).
+    keys_scroll: usize,
     cwd: Option<PathBuf>,
     /// The current mode has the keyboard.
     focused: bool,
@@ -202,6 +228,7 @@ impl Host {
         let mut h = Self {
             current: None,
             window: None,
+            keys_scroll: 0,
             cwd: None,
             focused: false,
             focus_key,
@@ -346,6 +373,16 @@ impl Host {
     /// mode's input first, then its bindings; anything else is dropped so
     /// nothing reaches the shell. Mouser's own F10 and Alt+Esc pass through.
     pub fn key(&mut self, bytes: &[u8]) -> Option<Effect> {
+        // The keyboard help is modal: it scrolls and closes; the rest waits.
+        if self.window == Some(Window::Keys) && (self.focused() || help_key(bytes).is_some()) && !self.is_focus_key(bytes) {
+            match help_key(bytes) {
+                Some(Ok(n)) => self.keys_scroll = (self.keys_scroll as i64 + n as i64).max(0) as usize,
+                Some(Err(())) => self.window = None,
+                None if bytes == b"\x1b[21~" || bytes == b"\x1b\x1b" => return None,
+                None => {}
+            }
+            return Some(Effect::None);
+        }
         self.current?;
         if self.is_focus_key(bytes) {
             self.focused = !self.focused;
@@ -385,6 +422,9 @@ impl Host {
 
     /// Would [`Host::key`] take these bytes (no side effects)?
     pub fn takes(&self, bytes: &[u8]) -> bool {
+        if self.window == Some(Window::Keys) && help_key(bytes).is_some() {
+            return true;
+        }
         self.current.is_some() && (self.is_focus_key(bytes) || (self.focused && bytes != b"\x1b[21~" && bytes != b"\x1b\x1b"))
     }
 
@@ -532,6 +572,11 @@ impl Host {
     /// A click in the mode's view or window (or a host action): it gives
     /// the mode the keyboard, except the wheel. [`FOCUS_ACTION`] toggles.
     pub fn action(&mut self, id: &str, arg: i32) -> Effect {
+        // The wheel over the keyboard help scrolls it.
+        if id == "scroll" && self.window == Some(Window::Keys) {
+            self.keys_scroll = (self.keys_scroll as i64 + arg as i64 * 3).max(0) as usize;
+            return Effect::None;
+        }
         if id == FOCUS_ACTION {
             self.focused = !self.focused && self.current.is_some();
             return Effect::None;
@@ -591,8 +636,15 @@ impl Host {
         self.window.is_some()
     }
 
+    /// The keyboard help (ctrl+shift+k, a mode's `?` / F1): open or close.
     pub fn show_keys(&mut self) {
         self.window = if self.window == Some(Window::Keys) { None } else { Some(Window::Keys) };
+        self.keys_scroll = 0;
+    }
+
+    /// Whether the keyboard help is open.
+    pub fn keys_open(&self) -> bool {
+        self.window == Some(Window::Keys)
     }
 
     pub fn show_modes(&mut self) {
@@ -658,7 +710,11 @@ impl Host {
             v.panel = Some(menu_panel(m, ctx.viewport));
         }
         match window {
-            Some(Window::Keys) => v.panel = Some(self.keys_panel(ctx.viewport)),
+            Some(Window::Keys) => {
+                // Scrolled past the end (End, the wheel): back to the last page.
+                self.keys_scroll = self.keys_scroll.min(self.keys_lines().len().saturating_sub(help_rows(ctx.viewport)));
+                v.panel = Some(self.keys_panel(ctx.viewport));
+            }
             Some(Window::Modes) => v.panel = Some(self.modes_panel(ctx.viewport)),
             None => {}
         }
@@ -682,8 +738,15 @@ impl Host {
         }
     }
 
-    /// Ctrl+Shift+K: the current mode's mappings plus the global keys.
+    /// Ctrl+Shift+K, or a mode's `?` / F1: the keyboard help, built from
+    /// the live key tables (the current mode's keymap with `modes.toml`
+    /// applied, the host's keys, [`GLOBAL_KEYS`]), so it never drifts.
     pub fn keys_panel(&self, vp: UiViewport) -> Panel {
+        scrolled_panel(vp, "Keyboard help", &self.keys_lines(), self.keys_scroll, "\u{2191}/\u{2193} PgUp/PgDn scroll \u{b7} ? q Esc close")
+    }
+
+    /// The keyboard help's lines: (key, what it does).
+    pub fn keys_lines(&self) -> Vec<(String, String)> {
         let mut lines: Vec<(String, String)> = Vec::new();
         match self.current {
             Some(i) => {
@@ -701,12 +764,9 @@ impl Host {
             None => lines.push(("no mode".into(), String::new())),
         }
         lines.push((String::new(), String::new()));
-        lines.push(("mouse".into(), "click selects, double-click opens, wheel moves".into()));
-        lines.push(("esc : <key> Enter".into(), "switch mode (its own key again: modes off)".into()));
-        lines.push(("ctrl+shift+k".into(), "this window".into()));
-        lines.push(("ctrl+shift+m".into(), "modes".into()));
-        lines.push(("esc".into(), "close".into()));
-        list_panel(vp, "Key mappings", &lines, |_| UiAction::None)
+        lines.push(("Mouser".into(), "everywhere".into()));
+        lines.extend(GLOBAL_KEYS.iter().map(|(k, d)| (k.to_string(), d.to_string())));
+        lines
     }
 
     /// Ctrl+Shift+M: the registered modes; click one to switch.
@@ -845,6 +905,39 @@ pub fn list_panel(vp: UiViewport, title: &str, lines: &[(String, String)], actio
         }
     }
     Panel { rect, items }
+}
+
+/// Help keys: `Ok(lines)` scrolls, `Err` closes.
+fn help_key(bytes: &[u8]) -> Option<Result<i32, ()>> {
+    let is = |k: &str| mouser_core::modes::key_bytes(k).is_some_and(|v| v.iter().any(|b| b.as_slice() == bytes));
+    if let Some((_, n)) = HELP_SCROLL.iter().find(|(k, _)| is(k)) {
+        return Some(Ok(*n));
+    }
+    HELP_CLOSE.iter().any(|k| is(k)).then_some(Err(()))
+}
+
+/// Rows a [`scrolled_panel`] shows at once (title, gap and footer aside).
+fn help_rows(vp: UiViewport) -> usize {
+    let row_h = (vp.cell_h + 6).max(1);
+    (((vp.height - 16 - 2 * 14 - 6) / row_h) - 3).max(1) as usize
+}
+
+/// [`list_panel`] that scrolls: the rows from `scroll` that fit, and a
+/// footer with the position and `hint` when they don't all fit.
+pub fn scrolled_panel(vp: UiViewport, title: &str, lines: &[(String, String)], scroll: usize, hint: &str) -> Panel {
+    let room = help_rows(vp);
+    if lines.len() <= room + 1 {
+        return list_panel(vp, title, lines, |_| UiAction::None);
+    }
+    let first = scroll.min(lines.len() - room);
+    let mut shown: Vec<(String, String)> = lines[first..first + room].to_vec();
+    // The footer is padded to the widest line of all, so the columns and the
+    // window keep their width while it scrolls.
+    let wl = lines.iter().map(|l| l.0.chars().count()).max().unwrap_or(0);
+    let wr = lines.iter().map(|l| l.1.chars().count()).max().unwrap_or(0);
+    let pos = format!("{}\u{2013}{} of {}", first + 1, first + room, lines.len());
+    shown.push((format!("{pos:<wl$}"), format!("{hint:<wr$}")));
+    list_panel(vp, title, &shown, |_| UiAction::None)
 }
 
 /// The largest `w` x `h` that fits in `r` with the image's aspect, centred.
@@ -1266,6 +1359,54 @@ mod tests {
         assert!(h.escape() && !h.has_window());
         let m = h.modes_panel(vp);
         assert!(m.items.iter().any(|i| i.action == UiAction::SwitchMode('c')));
+    }
+
+    /// `?` and F1 are commander's keyboard-help keys; the help lists every
+    /// binding from the live keymap plus Mouser's own keys, scrolls when it
+    /// doesn't fit and closes with `?`, `q` or Esc.
+    #[test]
+    fn keyboard_help_lists_every_key_and_scrolls() {
+        let vp = UiViewport { width: 1200, height: 300, cell_w: 9, cell_h: 18 };
+        let ctx = Context { viewport: vp, area: Rect { x: 0, y: 0, w: 900, h: 300 }, reduce_motion: false };
+        let mut h = Host::new(vec![cmdr()]);
+        h.focus(true);
+        assert_eq!(h.key(b"?"), Some(Effect::Say("keys".into())), "? is the mode's keys action");
+        assert_eq!(h.key(b"\x1bOP"), Some(Effect::Say("help".into())), "F1 too");
+        h.show_keys();
+        let lines = h.keys_lines();
+        for b in manifest_keys(OFFICIAL[0]) {
+            assert!(lines.iter().any(|(k, d)| *k == b.key && *d == b.describe), "{} missing from the help", b.id);
+        }
+        for (k, _) in GLOBAL_KEYS {
+            assert!(lines.iter().any(|(l, _)| l == k), "{k}");
+        }
+        assert!(lines.iter().any(|(k, _)| k == "F"), "the host's own keys too");
+        // Small window: a page and a position footer.
+        let text = |h: &mut Host| h.view(&ctx).panel.unwrap().items.iter().map(|i| i.text.clone()).collect::<Vec<_>>();
+        let first = text(&mut h);
+        assert!(first.iter().any(|t| t.starts_with("1\u{2013}")), "{first:?}");
+        assert!(h.takes(b"\x1b[B"), "the help takes its scroll keys");
+        assert_eq!(h.key(b"\x1b[6~"), Some(Effect::None));
+        let paged = text(&mut h);
+        assert!(paged.iter().any(|t| t.starts_with("11\u{2013}")), "{paged:?}");
+        h.key(b"\x1b[F");
+        let end = text(&mut h);
+        assert!(end.iter().any(|t| t.trim_end().ends_with(&format!("\u{2013}{n} of {n}", n = lines.len()))), "{end:?}");
+        assert!(end.iter().any(|t| t == "mouse"), "End shows the last line");
+        h.key(b"\x1b[H");
+        assert_eq!(text(&mut h), first, "Home: back to the top");
+        // Other keys wait while it is open; `?` closes it.
+        assert_eq!(h.key(b"v"), Some(Effect::None));
+        assert_eq!(h.key(b"?"), Some(Effect::None));
+        assert!(!h.keys_open());
+        assert_eq!(h.key(b"v"), Some(Effect::Say("switch_view".into())));
+        // Opened from the shell (ctrl+shift+k): q closes it, typing still reaches the shell.
+        h.focus(false);
+        h.show_keys();
+        assert_eq!(h.key(b"x"), None);
+        assert!(h.takes(b"q"));
+        h.key(b"q");
+        assert!(!h.keys_open() && !h.takes(b"q"));
     }
 
     #[test]

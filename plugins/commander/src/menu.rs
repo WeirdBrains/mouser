@@ -50,8 +50,8 @@ const IMAGE: &[Cx] = &[Image, FsImage];
 const PLAYER: &[Cx] = &[Player, FsPlayer];
 const LIST: &[Cx] = &[Folder, File, Media, Empty];
 
-/// Every action the menu can show, in menu order. Actions without a key
-/// binding (copy, move, rename ...) have their key shown as nothing.
+/// Every action the menu can show, in menu order. Every one has a key
+/// binding (`commander::BINDINGS`), shown beside it.
 pub const ACTIONS: &[Act] = &[
     // On an item.
     a("open", 0, "open", &[Folder, File]),
@@ -98,11 +98,14 @@ pub const ACTIONS: &[Act] = &[
     a("sync", 0, "sync the shell to this folder", &[Empty]),
     a("new_folder", 0, "new folder…", &[Empty]),
     a("paste", 0, "paste", &[Folder, Empty]),
-    a("sort", 0, "sort by name", &[Empty]),
-    a("sort", 1, "sort by modified", &[Empty]),
-    a("sort", 2, "sort by size", &[Empty]),
+    a("sort_name", 0, "sort by name", &[Empty]),
+    a("sort_modified", 0, "sort by modified", &[Empty]),
+    a("sort_size", 0, "sort by size", &[Empty]),
     a("reverse", 0, "reverse order", &[Empty]),
     a("switch_view", 0, "switch view", &[Empty]),
+    a("view_list", 0, "list view", &[Empty]),
+    a("view_grid", 0, "grid view", &[Empty]),
+    a("view_carousel", 0, "carousel view", &[Empty]),
     a("bigger", 0, "larger tiles", &[Empty]),
     a("smaller", 0, "smaller tiles", &[Empty]),
     a("hidden", 0, "show / hide dotfiles", &[Empty]),
@@ -112,11 +115,12 @@ pub const ACTIONS: &[Act] = &[
     a("last", 0, "last item", &[Empty]),
     a("options", 0, "options", &[Empty]),
     a("man", 0, "manual", &[Empty]),
+    a("keys", 0, "keyboard help", &[Folder, File, Media, Empty, Image, FsImage, Player, FsPlayer, Text]),
 ];
 
 /// Bindings that are never menu entries: the header's own overflow menu,
-/// and `back`, the second key of `parent` (the menu shows that one).
-pub const NOT_IN_MENUS: &[&str] = &["menu", "back"];
+/// `back` and `help`, second keys of `parent` and `keys` (the menu shows those).
+pub const NOT_IN_MENUS: &[&str] = &["menu", "back", "help"];
 
 /// Whether an action can run now (else its entry is greyed out).
 pub type Enabled<'a> = &'a dyn Fn(&str) -> bool;
@@ -130,16 +134,9 @@ pub fn entries(cx: Cx, item: Option<usize>, keys: &Keymap, enabled: Enabled<'_>)
         .filter(|x| x.cx.contains(&cx))
         .map(|x| {
             let key = keys.keys.iter().find(|k| k.0 == x.id).map(|k| k.1.clone()).unwrap_or_default();
-            // Sort is the one action whose argument is its own; items carry
-            // their index (the menu picks the item it was opened on).
-            let arg = if x.id == "sort" { x.arg } else { item.map_or(x.arg, |i| i as i32) };
-            MenuEntry {
-                id: format!("menu:{}", x.id),
-                arg,
-                label: x.label.into(),
-                key: if x.id == "sort" { String::new() } else { key },
-                enabled: enabled(x.id),
-            }
+            // Items carry their index (the menu picks the item it was opened on).
+            let arg = item.map_or(x.arg, |i| i as i32);
+            MenuEntry { id: format!("menu:{}", x.id), arg, label: x.label.into(), key, enabled: enabled(x.id) }
         })
         .collect()
 }
@@ -206,7 +203,16 @@ mod tests {
     fn text_view() {
         has(
             Text,
-            &[("up", "up"), ("down", "down"), ("page_up", "pageup"), ("page_down", "pagedown"), ("close", "q"), ("copy_text", ""), ("copy_path", "")],
+            &[
+                ("up", "up"),
+                ("down", "down"),
+                ("page_up", "pageup"),
+                ("page_down", "pagedown"),
+                ("close", "q"),
+                ("copy_text", "T"),
+                ("copy_path", "Y"),
+                ("keys", "?"),
+            ],
         );
     }
 
@@ -214,28 +220,44 @@ mod tests {
     fn list_file_media_and_folder() {
         let item = [
             ("open", "enter"),
-            ("copy", ""),
-            ("copy_to", ""),
-            ("move_to", ""),
-            ("rename", ""),
-            ("delete", ""),
-            ("copy_path", ""),
+            ("copy", "y"),
+            ("copy_to", "c"),
+            ("move_to", "M"),
+            ("rename", "r"),
+            ("delete", "d"),
+            ("copy_path", "Y"),
             ("mark", "space"),
             ("pipe", "|"),
         ];
         has(File, &item);
         has(Media, &item);
-        has(Media, &[("open_fullscreen", "")]);
+        has(Media, &[("open_fullscreen", "O")]);
         assert!(entries(Media, Some(3), &keys(), &|_| true).iter().any(|e| e.label == "play" && e.arg == 3), "media: play, on that item");
-        has(Folder, &[("open", "enter"), ("parent", "u"), ("sync_item", ""), ("delete", "")]);
+        has(Folder, &[("open", "enter"), ("parent", "u"), ("sync_item", "e"), ("delete", "d"), ("paste", "p")]);
         assert!(!ids(File).iter().any(|(i, _)| i == "play_pause" || i == "new_folder"));
     }
 
     #[test]
     fn empty_area() {
-        has(Empty, &[("new_folder", ""), ("paste", ""), ("sort", ""), ("switch_view", "v"), ("sync", "s"), ("hidden", "h"), ("search", "/")]);
-        let sorts = entries(Empty, None, &keys(), &|_| true).into_iter().filter(|e| e.id == "menu:sort").map(|e| e.arg).collect::<Vec<_>>();
-        assert_eq!(sorts, [0, 1, 2]);
+        has(
+            Empty,
+            &[
+                ("new_folder", "n"),
+                ("paste", "p"),
+                ("sort_name", "N"),
+                ("sort_modified", "D"),
+                ("sort_size", "S"),
+                ("reverse", "R"),
+                ("switch_view", "v"),
+                ("view_list", "L"),
+                ("view_grid", "G"),
+                ("view_carousel", "C"),
+                ("sync", "s"),
+                ("hidden", "h"),
+                ("search", "/"),
+                ("keys", "?"),
+            ],
+        );
         assert!(!ids(Empty).iter().any(|(i, _)| i == "delete" || i == "open"));
     }
 
@@ -260,23 +282,9 @@ mod tests {
         for b in crate::commander::BINDINGS {
             assert!(NOT_IN_MENUS.contains(&b.id) || ACTIONS.iter().any(|a| a.id == b.id), "{} is in no menu", b.id);
         }
-        let menu_only = [
-            "open_fullscreen",
-            "sync_item",
-            "copy",
-            "copy_to",
-            "move_to",
-            "rename",
-            "delete",
-            "copy_path",
-            "copy_text",
-            "new_folder",
-            "paste",
-            "sort",
-            "reverse",
-        ];
+        // Every option has a key: each menu action is a binding.
         for a in ACTIONS {
-            assert!(crate::commander::BINDINGS.iter().any(|b| b.id == a.id) || menu_only.contains(&a.id), "{} is unknown", a.id);
+            assert!(crate::commander::BINDINGS.iter().any(|b| b.id == a.id), "{} has no key", a.id);
         }
     }
 }

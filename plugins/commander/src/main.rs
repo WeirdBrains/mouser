@@ -49,8 +49,9 @@ struct State {
     busy: Vec<bool>,
     /// Item rectangles in the last view (index), for a right-click.
     items: Vec<(mouser_mode_api::Rect, i32)>,
-    /// File changes on Mouser's approval card, by request id.
-    asked: Vec<(u64, ops::Op)>,
+    /// File changes on Mouser's approval card, by request id, and the
+    /// remote host they run on (`None`: this machine).
+    asked: Vec<(u64, ops::Op, Option<fetch::Remote>)>,
 }
 
 /// Images this big go through shared memory (player frames, large
@@ -135,10 +136,25 @@ impl State {
     /// card (they run on yes), text to the clipboard.
     fn flush(&mut self, host: &Host) {
         use mouser_mode_api::host_api::Call;
-        for op in std::mem::take(&mut self.mode.ops) {
-            let (title, detail) = op.describe();
-            if let Ok(id) = host.request(Call::Approve { title, detail, options: vec!["once".into(), "deny".into()] }) {
-                self.asked.push((id, op));
+        let ops = std::mem::take(&mut self.mode.ops);
+        if !ops.is_empty() {
+            // Where the listing is: a remote shell's changes run on its host.
+            match self.mode.op_target() {
+                Ok(on) => {
+                    for op in ops {
+                        let (mut title, mut detail) = op.describe();
+                        if let Some(label) = self.mode.c.remote.as_ref().filter(|_| on.is_some()) {
+                            title = format!("{} (on {label})", title.trim_end_matches('?')) + "?";
+                            detail = format!("{detail}\non {label}, over the session's ssh connection");
+                        }
+                        if let Ok(id) = host.request(Call::Approve { title, detail, options: vec!["once".into(), "deny".into()] }) {
+                            self.asked.push((id, op, on.clone()));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = host.effect(Effect::Say(e));
+                }
             }
         }
         for t in std::mem::take(&mut self.mode.clip) {
@@ -149,17 +165,17 @@ impl State {
 
     /// Mouser's answer to an approval card: run the change on yes.
     fn approved(&mut self, id: u64, r: &Result<serde_json::Value, String>, host: &Host) {
-        let Some(i) = self.asked.iter().position(|(a, _)| *a == id) else { return };
-        let (_, op) = self.asked.remove(i);
+        let Some(i) = self.asked.iter().position(|(a, _, _)| *a == id) else { return };
+        let (_, op, on) = self.asked.remove(i);
         let msg = match r {
-            Ok(v) if v["decision"] == "once" => match op.run() {
+            Ok(v) if v["decision"] == "once" => match on.as_ref().map_or_else(|| op.run(), |r| op.run_remote(r)) {
                 Ok(m) => m,
                 Err(e) => format!("not done: {e}"),
             },
             Ok(_) => "cancelled".into(),
             Err(e) => format!("not done: {e}"),
         };
-        self.mode.c.relist();
+        self.mode.relist();
         let _ = host.effect(Effect::Say(msg));
     }
 

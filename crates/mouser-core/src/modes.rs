@@ -25,7 +25,7 @@ pub struct Binding {
     pub id: &'static str,
     /// A plain key while the mode has focus: a character, or `up`, `down`,
     /// `left`, `right`, `enter`, `pageup`, `pagedown`, `home`, `end`,
-    /// `space`, `backspace`, `tab`; `alt+<char>` and `ctrl+alt+<letter>`
+    /// `space`, `backspace`, `tab`, `f1`; `alt+<char>` and `ctrl+alt+<letter>`
     /// work too.
     pub key: &'static str,
     pub describe: &'static str,
@@ -163,6 +163,7 @@ pub fn key_bytes(key: &str) -> Option<Vec<Vec<u8>>> {
         "end" => vec![b"\x1b[F".to_vec(), b"\x1bOF".to_vec(), b"\x1b[4~".to_vec()],
         "space" => vec![b" ".to_vec()],
         "backspace" => vec![b"\x7f".to_vec(), b"\x08".to_vec()],
+        "f1" => vec![b"\x1bOP".to_vec(), b"\x1b[11~".to_vec()],
         // One character keeps its case: `F` is Shift+F, not `f`.
         _ => {
             let mut c = key.chars();
@@ -229,7 +230,7 @@ mod tests {
         assert_eq!(r.lookup(b"\x1bk"), Some("up"));
         assert_eq!(r.lookup(b"\x1b\x0f"), Some("open"));
         assert_eq!(r.label("open"), "ctrl+alt+o");
-        assert!(Keymap::new(B).apply("commander", "[commander.keys]\nup = \"f1\"\n").is_err());
+        assert!(Keymap::new(B).apply("commander", "[commander.keys]\nup = \"f13\"\n").is_err());
         assert!(Keymap::new(B).apply("commander", "[commander.keys]\nnope = \"q\"\n").is_err());
         assert!(key_bytes("ctrl+alt+1").is_none() && key_bytes("ctrl+alt+ab").is_none());
     }

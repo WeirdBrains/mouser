@@ -315,9 +315,10 @@ fn builtin_hotkeys() -> Vec<String> {
 
 fn valid_key(k: &str) -> bool {
     let mut c = k.chars();
-    // A letter, digit or punctuation key (not `:`, which starts `esc :`).
-    matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_lowercase() || ch.is_ascii_digit() || (ch.is_ascii_punctuation() && ch != ':'))
-        || matches!(k, "up" | "down" | "left" | "right" | "enter" | "pageup" | "pagedown" | "home" | "end" | "tab" | "space" | "backspace")
+    // A letter (`F` is shift+f), digit or punctuation key (not `:`, which
+    // starts `esc :`).
+    matches!((c.next(), c.next()), (Some(ch), None) if ch.is_ascii_alphanumeric() || (ch.is_ascii_punctuation() && ch != ':'))
+        || matches!(k, "up" | "down" | "left" | "right" | "enter" | "pageup" | "pagedown" | "home" | "end" | "tab" | "space" | "backspace" | "f1")
         // alt+<key> and ctrl+alt+<letter>.
         || k.strip_prefix("alt+").is_some_and(|r| !r.starts_with("alt+") && !r.starts_with("ctrl+") && valid_key(r))
         || k.strip_prefix("ctrl+alt+").is_some_and(|l| l.len() == 1 && l.as_bytes()[0].is_ascii_lowercase())
@@ -340,7 +341,7 @@ fn check_mode(name: &str, m: &ModeSection) -> Result<()> {
         }
         if !valid_key(&k.key) || k.key == "esc" {
             bail!(
-                "[[mode.keys]] key {:?} for {} is not a single letter, digit or punctuation key, alt+<key>, ctrl+alt+letter, nor arrow/enter/page/home/end/tab/space/backspace",
+                "[[mode.keys]] key {:?} for {} is not a single letter, digit or punctuation key, alt+<key>, ctrl+alt+letter, nor arrow/enter/page/home/end/tab/space/backspace/f1",
                 k.key,
                 k.id
             );
@@ -1086,6 +1087,9 @@ keys = [{ id = "again", key = "r", describe = "ask again" }]
         bad(MODE.replace("key = \"r\"", "key = \"shift+r\""), "not a single");
         assert!(Manifest::parse(&MODE.replace("key = \"r\"", "key = \"ctrl+alt+r\"")).is_ok(), "ctrl+alt+letter is a key");
         assert!(Manifest::parse(&MODE.replace("key = \"r\"", "key = \"alt+up\"")).is_ok(), "alt+<key> is a key");
+        assert!(Manifest::parse(&MODE.replace("key = \"r\"", "key = \"R\"")).is_ok(), "shift+letter is a key");
+        assert!(Manifest::parse(&MODE.replace("key = \"r\"", "key = \"f1\"")).is_ok(), "F1 is a key");
+        bad(MODE.replace("key = \"r\"", "key = \"f2\""), "not a single");
         bad(MODE.replace("[mode]\nhotkey = \"s\"\nkeys = [{ id = \"again\", key = \"r\", describe = \"ask again\" }]", ""), "needs a [mode]");
         let eng = r#"
 name = "fancy"

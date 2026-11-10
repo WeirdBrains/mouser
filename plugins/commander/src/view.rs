@@ -562,6 +562,8 @@ pub struct CommanderMode {
     pub clip: Vec<String>,
     /// Paths `copy` remembered for `paste`.
     yank: Vec<PathBuf>,
+    /// Where they are: `None` this machine, else the remote label.
+    yank_at: Option<String>,
     /// Tab-completion cycle for the focused prompt (ask / search / pipe).
     complete: mouser_mode_api::complete::Engine,
     complete_hint: String,
@@ -849,6 +851,7 @@ impl CommanderMode {
             ops: Vec::new(),
             clip: Vec::new(),
             yank: Vec::new(),
+            yank_at: None,
             complete: mouser_mode_api::complete::Engine::new(),
             complete_hint: String::new(),
         }
@@ -878,17 +881,38 @@ impl CommanderMode {
     /// The context menu for `item` (`None`: off the items, or a file view).
     pub fn menu(&self, item: Option<usize>, keys: &Keymap) -> Vec<mouser_mode_api::MenuEntry> {
         let cx = self.menu_cx(item);
-        let local = self.c.remote.is_none();
+        // Local, or remote with a side channel to run the change on the host.
+        let can_change = self.op_target().is_ok();
         let viewing = matches!(self.c.overlay, Some(Overlay::Preview(_)) | Some(Overlay::Man));
         let item = if viewing { None } else { item };
         let enabled = |id: &str| match id {
-            "copy" | "copy_to" | "move_to" | "rename" | "delete" | "new_folder" => local,
-            "paste" => local && !self.yank.is_empty(),
+            "copy" | "copy_to" | "move_to" | "rename" | "delete" | "new_folder" => can_change,
+            "paste" => can_change && !self.yank.is_empty(),
             "copy_text" => self.full_text.is_some() || self.c.overlay == Some(Overlay::Man),
             "play_pause" | "seek_back" | "seek_forward" | "volume_down" | "volume_up" => self.player.is_some(),
             _ => true,
         };
         crate::menu::entries(cx, item, keys, &enabled)
+    }
+
+    /// Where file changes run: this machine (`None`), or the remote host
+    /// over the session's side channel. A remote listing without one: no changes.
+    pub fn op_target(&self) -> Result<Option<fetch::Remote>, String> {
+        match (&self.c.remote, &self.ssh) {
+            (None, _) => Ok(None),
+            (Some(_), Some(r)) => Ok(Some(r.clone())),
+            (Some(l), None) => Err(format!("{l}: no ssh side channel, so files there can't be changed from commander")),
+        }
+    }
+
+    /// List the folder again after a change (remote: asked on the host).
+    pub fn relist(&mut self) {
+        match (self.c.remote.is_some(), self.c.cwd.clone()) {
+            (true, Some(d)) => {
+                let _ = self.browse(d);
+            }
+            _ => self.c.relist(),
+        }
     }
 
     /// The paths an item action works on: the marked ones when the item is
@@ -904,7 +928,8 @@ impl CommanderMode {
 
     /// A picked menu entry (`menu:<id>`, the item index as its argument).
     fn menu_action(&mut self, id: &str, arg: i32) -> Effect {
-        let item_action = !matches!(id, "sort") && !matches!(self.c.overlay, Some(Overlay::Preview(_)) | Some(Overlay::Man));
+        let item_action = !matches!(id, "sort" | "sort_name" | "sort_modified" | "sort_size")
+            && !matches!(self.c.overlay, Some(Overlay::Preview(_)) | Some(Overlay::Man));
         if item_action
             && arg >= 0
             && (arg as usize) < self.c.visible().len()
@@ -916,6 +941,11 @@ impl CommanderMode {
         }
         let dir = self.c.cwd.clone();
         let paths = self.op_paths();
+        if matches!(id, "copy" | "copy_to" | "move_to" | "rename" | "delete" | "new_folder" | "paste")
+            && let Err(e) = self.op_target()
+        {
+            return Effect::Say(e);
+        }
         match id {
             "open_fullscreen" => {
                 let e = self.c.open_selected();
@@ -931,6 +961,7 @@ impl CommanderMode {
             },
             "copy" => {
                 self.yank = paths;
+                self.yank_at = self.c.remote.clone();
                 Effect::Say(format!("{} item(s) to paste", self.yank.len()))
             }
             "copy_to" | "move_to" if !paths.is_empty() => {
@@ -957,6 +988,10 @@ impl CommanderMode {
                 }
                 None => Effect::None,
             },
+            "paste" if !self.yank.is_empty() && self.yank_at != self.c.remote => Effect::Say(format!(
+                "the copied items are on {}; paste them there (copying between machines isn't supported here)",
+                self.yank_at.as_deref().unwrap_or("this machine")
+            )),
             "paste" => match dir {
                 Some(d) if !self.yank.is_empty() => {
                     // On a folder: into it; else into this folder.
@@ -2099,6 +2134,38 @@ impl Mode for CommanderMode {
             self.pointer(id, unpack_xy(arg));
             return Effect::None;
         }
+        // Keys for what the context menu offers: the same action, on the
+        // marked or selected items.
+        if matches!(
+            id,
+            "open_fullscreen"
+                | "sync_item"
+                | "copy"
+                | "paste"
+                | "copy_to"
+                | "move_to"
+                | "rename"
+                | "delete"
+                | "new_folder"
+                | "copy_path"
+                | "copy_text"
+        ) {
+            if self.ask.is_some() {
+                return Effect::None;
+            }
+            return self.menu_action(id, -1);
+        }
+        // One key per view and per sort order.
+        let (id, arg) = match id {
+            "view_list" => ("view", 0),
+            "view_grid" => ("view", 1),
+            "view_carousel" => ("view", 2),
+            "sort_name" => ("sort", 0),
+            "sort_modified" => ("sort", 1),
+            "sort_size" => ("sort", 2),
+            "help" => ("keys", 0),
+            i => (i, arg),
+        };
         if id == "fullscreen" {
             let media = matches!(&self.c.overlay, Some(Overlay::Preview(p)) if is_media(p));
             if !media && !self.fullscreen {
@@ -3022,7 +3089,7 @@ pub(crate) mod tests {
         let fo = menu_ids(&m, Some(dir));
         assert!(["open", "parent", "sync_item"].iter().all(|i| fo.contains(&i.to_string())));
         let e = menu_ids(&m, None);
-        assert!(["new_folder", "paste", "sort"].iter().all(|i| e.contains(&i.to_string())));
+        assert!(["new_folder", "paste", "sort_name", "sort_size", "view_grid", "keys"].iter().all(|i| e.contains(&i.to_string())));
         assert!(!m.menu(None, &k).iter().find(|e| e.id == "menu:paste").unwrap().enabled, "nothing copied yet");
         // Delete asks first; the file stays until the card says yes.
         m.action("menu:delete", file as i32);
