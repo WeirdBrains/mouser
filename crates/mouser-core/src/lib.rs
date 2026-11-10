@@ -6,6 +6,7 @@ pub mod compression;
 pub mod connections;
 pub mod downloads;
 pub mod engines;
+pub mod exec;
 pub mod fetch;
 pub mod fileops;
 pub mod fuzzball;

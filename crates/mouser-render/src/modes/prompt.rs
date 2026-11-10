@@ -18,15 +18,15 @@ pub enum PromptKind {
     /// `permissions.request`: grant a permission the manifest declares
     /// (saved like any approval: once, always, deny, never).
     Permission { cap: String, detail: Vec<String> },
-    /// A tool call the plugin's agent session wants to make.
-    AgentTool { display: String, lines: Vec<String>, for_chat: bool },
+    /// A tool call the plugin's agent session wants to make: Allow / Allow all / Deny.
+    AgentTool { display: String, lines: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromptAnswer {
     Once,
-    /// "Allow for this chat" (agent tool cards only).
-    ForChat,
+    /// "Allow all": every computer action for the rest of the chat (agent tool cards only).
+    AllowAll,
     Deny,
     /// The typed value of a [`PromptKind::Secret`].
     Secret(String),

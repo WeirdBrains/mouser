@@ -220,7 +220,6 @@ fn the_card_asks_and_deny_or_never_skip_the_tool() {
     let t = setup(vec![Step::Call("mouser__ask", "{}"), Step::Call("mouser__ask", "{}"), Step::Call("mouser__never", "{}"), Step::Say("ok")], false);
     t.chat.send("go");
     wait("card", || card(&t.chat));
-    assert!(t.chat.state.lock().unwrap().pending.as_ref().unwrap().for_chat);
     assert!(t.calls.lock().unwrap().is_empty(), "nothing runs before the answer");
     t.chat.answer(Answer::Once);
     wait("second card", || card(&t.chat));
@@ -232,28 +231,38 @@ fn the_card_asks_and_deny_or_never_skip_the_tool() {
 
 #[test]
 #[serial_test::serial]
-fn allow_for_this_chat_is_remembered_but_never_for_shell() {
+fn allow_all_skips_cards_for_the_chat_but_never_a_never() {
     let t = setup(
         vec![
             Step::Call("mouser__ask", "{}"),
+            Step::Call("mouser__shell_run", "{\"command\":\"ls\"}"),
+            Step::Call("mouser__never", "{}"),
             Step::Call("mouser__ask", "{}"),
-            Step::Call("mouser__shell_run", "{\"command\":\"ls\"}"),
-            Step::Call("mouser__shell_run", "{\"command\":\"ls\"}"),
             Step::Say("ok"),
         ],
         false,
     );
     t.chat.send("go");
     wait("card", || card(&t.chat));
-    t.chat.answer(Answer::ForChat);
-    // The second ask runs without a card; the shell asks, and ForChat is not offered.
-    wait("shell card", || card(&t.chat) && t.calls.lock().unwrap().len() == 2);
-    assert!(!t.chat.state.lock().unwrap().pending.as_ref().unwrap().for_chat);
-    t.chat.answer(Answer::ForChat);
-    wait("shell card again", || card(&t.chat) && t.calls.lock().unwrap().len() == 3);
-    t.chat.answer(Answer::Once);
+    t.chat.answer(Answer::All);
     wait("turn", || !t.chat.running());
-    assert_eq!(t.calls.lock().unwrap().len(), 4);
+    assert_eq!(t.calls.lock().unwrap().len(), 3, "the shell and the second ask ran without cards");
+    assert_eq!(tool_state(&t.chat, 2), ToolState::Denied, "a broker never still blocks");
+    assert!(t.chat.state.lock().unwrap().allow_all);
+    // Revoked: the next action asks again (the script starts over).
+    t.chat.revoke_all();
+    t.chat.send("again");
+    wait("card again", || card(&t.chat));
+    t.chat.answer(Answer::Deny);
+    wait("the refusal reaches the model", || {
+        t.seen.lock().unwrap().last().is_some_and(|r| format!("{:?}", r.messages.last().unwrap().parts).contains("the user denied this call"))
+    });
+    t.chat.cancel();
+    wait("turn", || !t.chat.running());
+    // A new chat forgets "Allow all".
+    t.chat.state.lock().unwrap().allow_all = true;
+    t.chat.clear();
+    assert!(!t.chat.state.lock().unwrap().allow_all);
 }
 
 #[test]

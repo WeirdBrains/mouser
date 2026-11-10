@@ -94,6 +94,27 @@ pub struct StdioMode {
     dock: mouser_mode_api::DockSize,
     /// A context menu from the plugin, waiting for the host.
     menu: Option<(i32, i32, Vec<mouser_mode_api::MenuEntry>)>,
+    /// The Hugging Face install running for this plugin (one at a time).
+    hf: Option<Arc<HfDownload>>,
+    /// The last `models.download` payload sent.
+    hf_sent: Option<Value>,
+}
+
+/// A Hugging Face install Mouser runs for a mode plugin (`models.hf_install`):
+/// progress goes back as `models.download` events.
+#[derive(Default)]
+pub struct HfDownload {
+    pub state: std::sync::Mutex<Value>,
+    pub cancel: std::sync::atomic::AtomicBool,
+}
+
+impl HfDownload {
+    fn set(&self, f: impl FnOnce(&mut Value)) {
+        f(&mut self.state.lock().unwrap());
+    }
+    fn running(&self) -> bool {
+        self.state.lock().unwrap()["state"] == "downloading"
+    }
 }
 
 enum Waiting {
@@ -103,6 +124,14 @@ enum Waiting {
         rx: Receiver<PromptAnswer>,
         secret: Option<String>,
         permission: bool,
+    },
+    /// Reading the repository to install (sizes and checksums come from
+    /// the Hub, never from the plugin), before asking.
+    HfPlan(Receiver<Result<mouser_core::models::hf::Plan, String>>),
+    /// The download question for this plan in Mouser's popup.
+    HfConsent {
+        rx: Receiver<PromptAnswer>,
+        plan: mouser_core::models::hf::Plan,
     },
     /// Ask for a declared capability, then re-dispatch `call` if granted.
     ServiceAfterGrant {
@@ -151,6 +180,8 @@ impl StdioMode {
             remote_told: None,
             dock: Default::default(),
             menu: None,
+            hf: None,
+            hf_sent: None,
         })
     }
 
@@ -368,6 +399,17 @@ impl StdioMode {
                             }
                             return self.ask(id, PromptKind::Permission { cap, detail }, None, true);
                         }
+                        "models.hf_install" => return self.hf_install(id, params),
+                        "models.hf_cancel" => {
+                            let r = match &self.hf {
+                                Some(d) if d.running() => {
+                                    d.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                                    Ok(json!({"cancelled": true}))
+                                }
+                                _ => Ok(json!({"cancelled": false})),
+                            };
+                            return self.respond(id, r);
+                        }
                         m if m.starts_with("agent.") && !matches!(m, "agent.models" | "agent.set_default") => {
                             let r = self.agent_call(m, params);
                             return self.respond(id, r);
@@ -403,6 +445,9 @@ impl StdioMode {
         let mut done = Vec::new();
         let mut retry = Vec::new();
         let mut pending_worker = false;
+        // (index, id, a plan to ask about, a plan the user said yes to).
+        type HfAsk = (usize, u64, Option<mouser_core::models::hf::Plan>, Option<mouser_core::models::hf::Plan>);
+        let mut hf_asks: Vec<HfAsk> = Vec::new();
         for (i, (id, w)) in self.waiting.iter().enumerate() {
             match w {
                 Waiting::Worker(rx) => match rx.try_recv() {
@@ -426,6 +471,17 @@ impl StdioMode {
                     };
                     done.push((i, *id, r));
                 }
+                Waiting::HfPlan(rx) => match rx.try_recv() {
+                    Ok(Ok(plan)) => hf_asks.push((i, *id, Some(plan), None)),
+                    Ok(Err(e)) => done.push((i, *id, Err(e))),
+                    Err(TryRecvError::Disconnected) => done.push((i, *id, Err("worker stopped".into()))),
+                    Err(TryRecvError::Empty) => pending_worker = true,
+                },
+                Waiting::HfConsent { rx, plan } => match rx.try_recv() {
+                    Ok(PromptAnswer::Deny) | Err(TryRecvError::Disconnected) => done.push((i, *id, Ok(json!({"decision": "deny"})))),
+                    Ok(_) => hf_asks.push((i, *id, None, Some(plan.clone()))),
+                    Err(TryRecvError::Empty) => {}
+                },
                 Waiting::ServiceAfterGrant { rx, call } => match rx.try_recv() {
                     Err(TryRecvError::Empty) => {}
                     Err(TryRecvError::Disconnected) | Ok(PromptAnswer::Deny) => {
@@ -447,6 +503,11 @@ impl StdioMode {
         for (i, id, call) in retry {
             remove.push((i, None, Some((id, call))));
         }
+        let mut hf_next = Vec::new();
+        for (i, id, ask, yes) in hf_asks {
+            remove.push((i, None, None));
+            hf_next.push((id, ask, yes));
+        }
         remove.sort_by_key(|a| std::cmp::Reverse(a.0));
         let mut retries = Vec::new();
         for (i, resp, ret) in remove {
@@ -461,8 +522,104 @@ impl StdioMode {
         for (id, call) in retries {
             self.request(id, call);
         }
+        for (id, ask, yes) in hf_next {
+            if let Some(plan) = ask {
+                let (p, rx) = Prompt::new(
+                    self.name,
+                    PromptKind::Approve {
+                        title: format!("Install {} {} from Hugging Face?", plan.repo, plan.quant.label),
+                        detail: plan.consent_text(),
+                    },
+                );
+                self.prompts.push(p);
+                self.waiting.push((id, Waiting::HfConsent { rx, plan }));
+                if let Some(w) = &self.waker {
+                    w();
+                }
+            }
+            if let Some(plan) = yes {
+                let r = self.hf_start(plan);
+                self.respond(id, r);
+            }
+        }
         if pending_worker {
             self.poll_later();
+        }
+    }
+
+    /// `models.hf_install {id, quant}`: read the repository on a worker, ask
+    /// in Mouser's popup (size, source, folder, license), then download.
+    fn hf_install(&mut self, id: u64, params: &Value) {
+        if self.hf.as_ref().is_some_and(|d| d.running()) {
+            return self.respond(id, Err("a model is already downloading (models.hf_cancel stops it)".into()));
+        }
+        let (Some(repo), quant) = (params["id"].as_str().map(str::to_string), params["quant"].as_str().map(str::to_string)) else {
+            return self.respond(id, Err("params.id missing".into()));
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use mouser_core::models::hf;
+            let r = (|| {
+                let d = hf::details(&repo).map_err(|e| format!("{e:#}"))?;
+                let q = match quant {
+                    Some(q) => q,
+                    None => hf::default_quant(&d).map(|q| q.label.clone()).ok_or_else(|| format!("{repo} has no GGUF files"))?,
+                };
+                hf::Plan::new(&d, &q).map_err(|e| format!("{e:#}"))
+            })();
+            let _ = tx.send(r);
+        });
+        self.waiting.push((id, Waiting::HfPlan(rx)));
+        self.poll_later();
+    }
+
+    /// Download a consented plan on a thread; the state is sent as `models.download`.
+    fn hf_start(&mut self, plan: mouser_core::models::hf::Plan) -> Answer {
+        use mouser_core::models::hf;
+        let d = Arc::new(HfDownload::default());
+        d.set(|v| {
+            *v = json!({"repo": plan.repo, "quant": plan.quant.label, "id": plan.id(), "done": 0, "total": plan.quant.size(), "state": "downloading"})
+        });
+        self.hf = Some(d.clone());
+        let w = self.waker.clone();
+        std::thread::spawn(move || {
+            let mut last = u64::MAX;
+            let r = hf::install(hf::Consent::given(&plan), &mut |done, total| {
+                let step = done * 200 / total.max(1);
+                if step != last {
+                    last = step;
+                    d.set(|v| v["done"] = json!(done));
+                    if let Some(w) = &w {
+                        w();
+                    }
+                }
+                !d.cancel.load(std::sync::atomic::Ordering::SeqCst)
+            });
+            d.set(|v| match r {
+                Ok(spec) => {
+                    v["state"] = json!("done");
+                    v["spec"] = json!(spec);
+                }
+                Err(_) if d.cancel.load(std::sync::atomic::Ordering::SeqCst) => v["state"] = json!("cancelled"),
+                Err(e) => {
+                    v["state"] = json!("failed");
+                    v["error"] = json!(format!("{e:#}"));
+                }
+            });
+            if let Some(w) = &w {
+                w();
+            }
+        });
+        Ok(json!({"started": true}))
+    }
+
+    /// Send the install's state when it changed.
+    fn hf_tick(&mut self) {
+        let Some(d) = self.hf.clone() else { return };
+        let v = d.state.lock().unwrap().clone();
+        if self.hf_sent.as_ref() != Some(&v) {
+            self.hf_sent = Some(v.clone());
+            self.event("models.download", v);
         }
     }
 
@@ -482,6 +639,11 @@ impl StdioMode {
                 if chat.send(text) { Ok(json!({"started": true})) } else { Err("a reply is still running (or the text is empty)".into()) }
             }
             "agent.cancel" => Ok(json!({"cancelled": chat.cancel()})),
+            // Only ever turns "Allow all" off; on is a click in Mouser's popup.
+            "agent.revoke_all" => {
+                chat.revoke_all();
+                Ok(Value::Null)
+            }
             "agent.clear" => {
                 chat.clear();
                 Ok(Value::Null)
@@ -500,20 +662,20 @@ impl StdioMode {
         let Some(chat) = self.agent.clone() else { return };
         let card = {
             let s = chat.state.lock().unwrap();
-            s.pending.as_ref().map(|p| (p.display.clone(), p.lines.clone(), p.for_chat))
+            s.pending.as_ref().map(|p| (p.display.clone(), p.lines.clone()))
         };
         match card {
-            Some((display, lines, for_chat)) => {
+            Some((display, lines)) => {
                 let tag = format!("{display}\n{}", lines.join("\n"));
                 if self.agent_card.as_deref() != Some(&tag) {
                     self.agent_card = Some(tag);
-                    let (p, rx) = Prompt::new(self.name, PromptKind::AgentTool { display, lines, for_chat });
+                    let (p, rx) = Prompt::new(self.name, PromptKind::AgentTool { display, lines });
                     self.prompts.push(p);
                     let c = chat.clone();
                     std::thread::spawn(move || {
                         let a = match rx.recv() {
                             Ok(PromptAnswer::Once) | Ok(PromptAnswer::Secret(_)) => mouser_core::agent::Answer::Once,
-                            Ok(PromptAnswer::ForChat) => mouser_core::agent::Answer::ForChat,
+                            Ok(PromptAnswer::AllowAll) => mouser_core::agent::Answer::All,
                             _ => mouser_core::agent::Answer::Deny,
                         };
                         c.answer(a);
@@ -725,6 +887,7 @@ impl Mode for StdioMode {
         }
         self.pump();
         self.agent_tick();
+        self.hf_tick();
         let running = self.sup.as_ref().is_some_and(|s| *s.state() == State::Running);
         if running && !self.was_running {
             // Started, or back after a crash: where the shell is, and
@@ -826,7 +989,7 @@ fn agent_state(chat: &mouser_core::agent::Chat) -> Value {
             Entry::Error(t) => json!({"error": t}),
         })
         .collect();
-    json!({"entries": entries, "running": s.running, "model": s.model, "card_open": s.pending.is_some()})
+    json!({"entries": entries, "running": s.running, "model": s.model, "card_open": s.pending.is_some(), "allow_all": s.allow_all})
 }
 
 impl Drop for StdioMode {

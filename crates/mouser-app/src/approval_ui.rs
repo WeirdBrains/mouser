@@ -41,10 +41,8 @@ pub enum PromptTag {
     Secret,
     /// A permission from the plugin's manifest: Allow always / Deny / Never.
     Permission,
-    /// An agent tool card; "Allow for this chat" when offered.
-    AgentTool {
-        for_chat: bool,
-    },
+    /// An agent tool card: Allow / Allow all / Deny.
+    AgentTool,
 }
 
 pub struct Request {
@@ -81,10 +79,11 @@ impl Request {
                 Some(String::new()),
             ),
             PromptKind::Permission { cap, detail } => (PromptTag::Permission, vec![cap], detail.into_iter().skip(1).collect(), None),
-            PromptKind::AgentTool { display, lines, for_chat } => {
+            PromptKind::AgentTool { display, lines } => {
                 let mut d = vec![format!("  run {display}")];
                 d.extend(lines.into_iter().map(|l| format!("  {l}")));
-                (PromptTag::AgentTool { for_chat }, vec![], d, None)
+                d.push("  Allow all: every computer action in this chat runs without asking (until a new chat).".into());
+                (PromptTag::AgentTool, vec![], d, None)
             }
         };
         let once_only = tag != PromptTag::Permission;
@@ -117,9 +116,7 @@ impl Request {
 fn buttons_for(r: &Request) -> Vec<(&'static str, u8, bool)> {
     match r.tag() {
         Some(PromptTag::Secret) => vec![("Save [enter]", 0, true), ("Cancel [esc]", 2, false)],
-        Some(PromptTag::AgentTool { for_chat: true }) => {
-            vec![("Allow once [y]", 0, true), ("Allow for this chat [a]", 1, false), ("Deny [n]", 2, false)]
-        }
+        Some(PromptTag::AgentTool) => vec![("Allow [y]", 0, true), ("Allow all [a]", 1, false), ("Deny [n]", 2, false)],
         _ => ui::APPROVAL_BUTTONS.iter().filter(|b| offer_for(r).contains(&b.1)).copied().collect(),
     }
 }
@@ -251,7 +248,7 @@ impl Approvals {
 fn offer_for(r: &Request) -> Vec<u8> {
     match r.tag() {
         Some(PromptTag::Permission) => vec![1, 2, 3],
-        Some(PromptTag::AgentTool { for_chat: true }) => vec![0, 1, 2],
+        Some(PromptTag::AgentTool) => vec![0, 1, 2],
         _ if r.once_only => vec![0, 2],
         _ => offer(&r.scope),
     }
@@ -262,7 +259,7 @@ pub fn prompt_answer(r: &mut Request, a: Answer) -> PromptAnswer {
     match (a, r.secret.take()) {
         (Answer::Once, Some(v)) => PromptAnswer::Secret(v),
         (Answer::Once, None) => PromptAnswer::Once,
-        (Answer::Always, _) if matches!(r.tag(), Some(PromptTag::AgentTool { .. })) => PromptAnswer::ForChat,
+        (Answer::Always, _) if r.tag() == Some(PromptTag::AgentTool) => PromptAnswer::AllowAll,
         (Answer::Always, _) => PromptAnswer::Once,
         _ => PromptAnswer::Deny,
     }
@@ -323,11 +320,18 @@ mod tests {
         let (mut r, ans) = a.key(b"a").unwrap();
         assert_eq!((ans, r.once_only, r.caps.clone()), (Answer::Always, false, vec!["net.fetch".to_string()]));
         assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::Once);
-        let (p, _rx) = Prompt::new("chat", PromptKind::AgentTool { display: "mouser.shell_run".into(), lines: vec!["ls".into()], for_chat: true });
+        let (p, _rx) = Prompt::new("chat", PromptKind::AgentTool { display: "mouser.shell_run".into(), lines: vec!["ls".into()] });
         a.push(Request::from_prompt(p));
         arm(&mut a);
+        let labels: Vec<&str> = buttons_for(a.queue.front().unwrap()).iter().map(|b| b.0).collect();
+        assert_eq!(labels, ["Allow [y]", "Allow all [a]", "Deny [n]"]);
         let (mut r, ans) = a.key(b"a").unwrap();
-        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::ForChat);
+        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::AllowAll);
+        let (p, _rx) = Prompt::new("chat", PromptKind::AgentTool { display: "mouser.terminal_run".into(), lines: vec!["ls".into()] });
+        a.push(Request::from_prompt(p));
+        arm(&mut a);
+        let (mut r, ans) = a.key(b"n").unwrap();
+        assert_eq!(prompt_answer(&mut r, ans), PromptAnswer::Deny, "deny is the refusal sent to the model");
         let (p, _rx) = Prompt::new("x", PromptKind::Approve { title: "Go?".into(), detail: vec![] });
         a.push(Request::from_prompt(p));
         assert!(a.key(b"a").is_none(), "Approve is once or deny");

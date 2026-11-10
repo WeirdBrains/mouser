@@ -109,6 +109,17 @@ pub enum PanelStyle {
     MdQuote,
     /// Markdown thematic break.
     MdRule,
+    /// A rounded outline box (the chat's frames, like grokbot-tui's): the
+    /// item's text is a title set into the top edge; `focused` draws it in the
+    /// accent. Nothing is filled, so items drawn after it show inside.
+    Frame {
+        focused: bool,
+    },
+    /// A rounded message bubble behind the rows drawn after it; `mine`
+    /// tints it with the accent (your messages).
+    Bubble {
+        mine: bool,
+    },
 }
 
 /// What clicking a panel item a mode drew does. Mouser's own windows use a

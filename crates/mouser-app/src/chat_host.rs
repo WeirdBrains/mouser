@@ -2,6 +2,9 @@
 //! screen and scrollback, Mouser's own tools (in-process, the same as the MCP
 //! server's), and the tools of connected MCP servers and MCP plugins.
 //!
+//! `mouser.terminal_run` runs a command on this computer (not in a tab) and
+//! returns its output, like an agent's shell (`mouser_core::exec`).
+//!
 //! Permissions: Mouser's typing/running/file-writing tools ask on every call
 //! (the card shows the real command, path and tab; a broker "never" for the
 //! `chat` plugin blocks them). Read tools only obey a "never". MCP tools follow
@@ -19,6 +22,8 @@ use std::sync::{Arc, Mutex};
 /// The broker's name for the chat's use of Mouser's own tools.
 pub const WHO: &str = "chat";
 const CLIENT: &str = "mouser-chat";
+/// The chat-only tool that runs a command on this computer.
+pub const TERMINAL: &str = "terminal_run";
 
 pub struct ChatHost {
     tools: AppTools,
@@ -28,6 +33,20 @@ impl ChatHost {
     pub fn new(tabs: Arc<Mutex<tabs::Tabs>>, app_state: Arc<Mutex<AppState>>) -> Self {
         ChatHost { tools: AppTools { tabs, app_state, preapproved: true } }
     }
+}
+
+/// Text for an approval card: line breaks as ⏎ and every other control
+/// character (escape sequences, bidi overrides) as `�`, so nothing in the
+/// command can hide or restyle part of it.
+fn visible(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\r' | '\n' => '⏎',
+            '\t' => ' ',
+            c if c.is_control() || ('\u{202a}'..='\u{202e}').contains(&c) || ('\u{2066}'..='\u{2069}').contains(&c) => '�',
+            c => c,
+        })
+        .collect()
 }
 
 /// A tool name the model APIs accept (`^[a-zA-Z0-9_-]{1,64}$`).
@@ -54,6 +73,23 @@ fn text(v: Value) -> String {
 }
 
 impl ChatHost {
+    /// Where `terminal_run` runs: `cwd`, else the active tab's local folder,
+    /// else the home folder (a remote tab's folder is on another machine).
+    fn terminal_dir(&self, args: &Value) -> Result<std::path::PathBuf, String> {
+        if let Some(c) = args["cwd"].as_str().filter(|c| !c.is_empty()) {
+            let p = std::path::PathBuf::from(c);
+            if !p.is_absolute() || !p.is_dir() {
+                return Err(format!("cwd {c} is not an absolute folder on this computer"));
+            }
+            return Ok(p);
+        }
+        let t = self.tools.tabs.lock().unwrap();
+        if let Some(mouser_core::remote::Place::Local(d)) = t.active().and_then(|a| a.place()) {
+            return Ok(d);
+        }
+        Ok(std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir))
+    }
+
     fn tab_title(&self, args: &Value) -> String {
         let t = self.tools.tabs.lock().unwrap();
         let i = match args.get("tab").and_then(Value::as_u64) {
@@ -97,6 +133,19 @@ impl AgentHost for ChatHost {
                 }
             })
             .collect();
+        v.push(AgentTool {
+            name: model_name("mouser", TERMINAL),
+            display: format!("mouser.{TERMINAL}"),
+            description: "Run a command line on this computer (your shell, no terminal, stdin closed) and get its output and exit code. \
+Runs in the active tab's folder unless `cwd` is given. Asks the user first (Allow / Allow all / Deny)."
+                .into(),
+            schema: serde_json::json!({"type": "object", "properties": {
+                "command": {"type": "string", "description": "the command line"},
+                "cwd": {"type": "string", "description": "absolute folder to run in (default: the active tab's folder)"},
+                "timeout_s": {"type": "integer", "description": "seconds before it is stopped (default 120, at most 900)"}
+            }, "required": ["command"]}),
+            always_ask: true,
+        });
         for s in mcp_clients().snapshot() {
             if s.status != mouser_core::mcp_client::Status::Connected {
                 continue;
@@ -117,6 +166,16 @@ impl AgentHost for ChatHost {
     }
 
     fn check(&self, tool: &AgentTool, args: &Value) -> Check {
+        if tool.display == format!("mouser.{TERMINAL}") {
+            if let mouser_core::permissions::Check::Deny = Broker::check(WHO, &["shell.type".to_string()], &Scope::Installed) {
+                return Check::Deny(format!("shell.type is set to never for {WHO} (mouser plugin permissions {WHO})"));
+            }
+            let cmd = args["command"].as_str().unwrap_or("");
+            return match self.terminal_dir(args) {
+                Ok(d) => Check::Ask(vec!["Run on this computer:".into(), format!("  {}", visible(cmd)), format!("in {}", d.display())]),
+                Err(e) => Check::Deny(e),
+            };
+        }
         if let Some(n) = tool.display.strip_prefix("mouser.") {
             let cap = cap_of(n).to_string();
             if let mouser_core::permissions::Check::Deny = Broker::check(WHO, std::slice::from_ref(&cap), &Scope::Installed) {
@@ -132,7 +191,7 @@ impl AgentHost for ChatHost {
                         continue;
                     }
                     let s = v.as_str().map(String::from).unwrap_or_else(|| v.to_string());
-                    lines.push(format!("{k}: {}", s.replace(['\r', '\n'], "⏎")));
+                    lines.push(format!("{k}: {}", visible(&s)));
                 }
             }
             return Check::Ask(lines);
@@ -151,6 +210,9 @@ impl AgentHost for ChatHost {
     }
 
     fn call(&self, tool: &AgentTool, args: &Value) -> Result<String, String> {
+        if tool.display == format!("mouser.{TERMINAL}") {
+            return self.call_cancellable(tool, args, &std::sync::atomic::AtomicBool::new(false));
+        }
         if let Some(n) = tool.display.strip_prefix("mouser.") {
             return self.tools.call(CLIENT, n, args).map(text);
         }
@@ -159,6 +221,12 @@ impl AgentHost for ChatHost {
     }
 
     fn call_cancellable(&self, tool: &AgentTool, args: &Value, cancel: &std::sync::atomic::AtomicBool) -> Result<String, String> {
+        if tool.display == format!("mouser.{TERMINAL}") {
+            let cmd = args["command"].as_str().ok_or("command is required")?;
+            let secs = args["timeout_s"].as_u64().unwrap_or(mouser_core::exec::TIMEOUT).max(1);
+            let o = mouser_core::exec::run(cmd, &self.terminal_dir(args)?, std::time::Duration::from_secs(secs), cancel)?;
+            return if o.code == Some(0) { Ok(o.report()) } else { Err(o.report()) };
+        }
         match tool.display.strip_prefix("mouser.") {
             // Mouser's own tools are short and in-process.
             Some(_) => self.call(tool, args),
@@ -167,5 +235,13 @@ impl AgentHost for ChatHost {
                 mcp_clients().call_cancellable(id, name, args.clone(), Some(cancel)).map_err(|e| format!("{e:#}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cards_show_control_characters_instead_of_running_them() {
+        assert_eq!(super::visible("rm -rf /tmp/x\r\necho \x1b[8mhidden\u{202e}"), "rm -rf /tmp/x⏎⏎echo �[8mhidden�");
     }
 }
