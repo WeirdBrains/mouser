@@ -231,7 +231,9 @@ dock or panel. Mouser draws them over the plugin's own panel and takes their
 keys and clicks. It redraws them as they animate or play. It reports back
 through `view.selected`, `view.activated`, `view.layout`, `media.state` and
 `media.ended` (host events; `files.read` is needed to read the files). The
-latest `Hosted` replaces the last; an empty list removes them all.
+latest `Hosted` replaces the last; an empty list removes them all. A view
+sent with `offscreen: true` stays registered (its selection, or its player
+playing) without being drawn or taking keys.
 
 Send it only when `Accepted.features` has `views.1` (items) or `media.1`
 (media): it is the last `Out` variant and older hosts can't read it. The

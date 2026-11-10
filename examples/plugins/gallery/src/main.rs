@@ -100,6 +100,7 @@ impl Gallery {
                     rect: Rect { h: body.h - ch - 8, ..body },
                     in_panel: false,
                     content: Hosted::Media { path: p.display().to_string(), autoplay: true },
+                    offscreen: false,
                 });
             }
             None => hosted.push(HostedView {
@@ -125,6 +126,7 @@ impl Gallery {
                     focused: true,
                     tile: 0,
                 },
+                offscreen: false,
             }),
         }
         // Escape comes here while the player is open (back to the folder).

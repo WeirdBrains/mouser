@@ -111,6 +111,8 @@ struct Chat {
     /// Mouser runs the players (`media.1`): the ones in view this frame.
     host_media: Option<Vec<HostedView>>,
     host_media_sent: Option<Vec<HostedView>>,
+    /// Host players playing now (`media.state`): id → path.
+    host_playing: HashMap<String, String>,
 }
 
 /// Where the context menu was opened.
@@ -616,6 +618,7 @@ impl Chat {
                 self.media.player = None;
                 self.media.full = None;
                 self.media.stills.clear();
+                self.host_playing.clear();
             }
             "link" => {
                 if let Some(u) = self.links.get(arg.max(0) as usize) {
@@ -889,6 +892,21 @@ impl Chat {
         }
         // A fullscreen picture or player covers the chat's space.
         self.media.fullscreen(rect, (cw, row_h), &mut items, &mut pics);
+        // A clip playing in Mouser's player keeps playing when it scrolls
+        // out of view (registered off screen until it stops).
+        if let Some(v) = self.host_media.as_mut() {
+            for (id, path) in &self.host_playing {
+                if !v.iter().any(|h| &h.id == id) {
+                    v.push(HostedView {
+                        id: id.clone(),
+                        rect: Rect::default(),
+                        in_panel: false,
+                        content: Hosted::Media { path: path.clone(), autoplay: false },
+                        offscreen: true,
+                    });
+                }
+            }
+        }
         if self.host_media.is_some() && self.host_media != self.host_media_sent {
             let _ = host.hosted(self.host_media.clone().unwrap_or_default());
             self.host_media_sent = self.host_media.clone();
@@ -965,10 +983,12 @@ impl Chat {
                         let mr = Rect { x, y: ry, w: rw, h: *of as i32 * row_h };
                         match self.host_media.as_mut() {
                             Some(v) => v.push(HostedView {
-                                id: format!("m{}", v.len()),
+                                // Stable while it scrolls: the message and the file.
+                                id: format!("e{}:{}", r.entry, m.path.display()),
                                 rect: mr,
                                 in_panel: false,
                                 content: Hosted::Media { path: m.path.display().to_string(), autoplay: false },
+                                offscreen: false,
                             }),
                             None => self.media.inline(m, mr, (cw, row_h), items, pics),
                         }
@@ -1062,6 +1082,7 @@ impl Mode for Chat {
                 "agent.state",
                 "models.*",
                 "frame.presented",
+                "media.state",
                 TICK,
             ]
             .iter()
@@ -1104,6 +1125,23 @@ impl Mode for Chat {
             "agent.state" => self.apply_state(&e.payload),
             "models.download" => self.download_changed(&e.payload, host),
             TICK => self.tick.store(false, Ordering::SeqCst),
+            "media.state" => {
+                let id = e.payload["id"].as_str().unwrap_or_default().to_string();
+                if e.payload["playing"] == true {
+                    if self.host_playing.contains_key(&id) {
+                        return Handled::Handled;
+                    }
+                    let path = self.host_media_sent.iter().flatten().find(|h| h.id == id).and_then(|h| match &h.content {
+                        Hosted::Media { path, .. } => Some(path.clone()),
+                        _ => None,
+                    });
+                    if let Some(p) = path {
+                        self.host_playing.insert(id, p);
+                    }
+                } else if self.host_playing.remove(&id).is_none() {
+                    return Handled::Handled;
+                }
+            }
             "frame.presented" => {
                 let slot = e.payload["slot"].as_u64().unwrap_or(u64::MAX) as usize;
                 if let Some(b) = self.busy.get_mut(slot) {
