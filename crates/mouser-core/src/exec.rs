@@ -71,8 +71,12 @@ impl Output {
 fn shell(command: &str) -> std::process::Command {
     #[cfg(windows)]
     {
+        // Passed to cmd as typed: std's argument quoting (`\"`) is not
+        // cmd's, and would mangle any command with quotes in it. With /S,
+        // cmd drops exactly the outer pair of quotes added here.
+        use std::os::windows::process::CommandExt;
         let mut c = crate::process::command("cmd");
-        c.args(["/C", command]);
+        c.raw_arg(format!("/S /C \"{command}\""));
         c
     }
     #[cfg(not(windows))]
@@ -356,6 +360,13 @@ mod windows_tests {
     fn gone(marker: &Path) -> bool {
         std::thread::sleep(Duration::from_secs(5));
         !marker.exists()
+    }
+
+    #[test]
+    fn quotes_reach_cmd_as_typed() {
+        let d = tempfile::tempdir().unwrap();
+        let o = run(r#"echo "a b" & echo x"y"z"#, d.path(), Duration::from_secs(30), &AtomicBool::new(false)).unwrap();
+        assert_eq!((o.stdout.replace("\r\n", "\n").as_str(), o.code), ("\"a b\" \nx\"y\"z\n", Some(0)), "{o:?}");
     }
 
     #[test]
