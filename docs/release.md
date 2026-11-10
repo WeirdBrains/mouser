@@ -37,11 +37,29 @@ Signing
 - Plugins and engines published from their own repos are signed there.
 - `-full` offline bundles (the `plugins.lock` archives in `plugins/` beside Mouser) are built once the lock has entries; it is empty in this tree.
 
+What starts a release
+- Only a pushed `v*` tag runs the Release workflow (`on: push: tags: ['v*']`), and only a tag ref reaches the `publish` job (`if: startsWith(github.ref, 'refs/tags/v')`). A push to `main` runs CI and the Docs site workflow, never Release. A manual run (`workflow_dispatch`) builds and publishes nothing.
+
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.
-2. Bump versions (docs-only: PATCH; feature: MINOR), update `CHANGELOG.md`.
-3. Commit as `release: vX.Y.Z` and create an annotated tag `vX.Y.Z`.
-4. Push: `git push origin main --follow-tags`.
+2. On a clean, up-to-date `main`, run `scripts/release.py`:
+
+   ```bash
+   scripts/release.py "Tab completion in every text field"   # MINOR: 1.4.5 -> 1.5.0
+   scripts/release.py --patch "Commander no longer crashes on start"   # 1.4.6
+   scripts/release.py --major "New plugin protocol"   # 2.0.0
+   scripts/release.py --dry-run "..."   # print every step and the diffs, change nothing
+   ```
+
+   It bumps the versions (docs-only: `--patch`; feature: default MINOR), folds `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section (America/New_York) with the message added, commits `release: vX.Y.Z` with the message as the body, creates the annotated tag `vX.Y.Z` and runs `git push origin main --follow-tags`. Pushing that tag is what starts the Release workflow.
+3. After the Release workflow has published, update `Formula/mouser.rb`, `Casks/mouser.rb` and `packaging/arch/mouser-bin/` (`packaging/arch/update-bin.sh <ver>`) with the release's checksums in a follow-up `packaging:` commit.
+
+`scripts/release.py`
+- Message: one sentence becomes one bullet under `### Added` (`### Fixed` with `--patch`; `--section Changed` etc. to choose); `- ` bullets and `### Heading` blocks are used as written. Keep it summary level, like the rest of `CHANGELOG.md`.
+- Bumps what earlier `release:` commits bumped: `[workspace.package] version` in `Cargo.toml`, `crates/mouser-llm/Cargo.toml` (and any member pinned to the workspace version), `Cargo.lock` if present (gitignored, so not committed), the version lines in `man/*.1` (the man tests compare them with the generated pages), whatever version they carry, and `Current release` in `docs/HANDOVER.md`. The Homebrew files and `mouser-bin` PKGBUILD need the release checksums, so they stay a step 3 follow-up.
+- Refuses (exit 1, nothing written) when not on `main`, with uncommitted tracked changes, when `main` is behind or diverged from `origin/main`, when the tag exists locally or on `origin`, or when HEAD is not `--expect-head SHA`. If the commit fails, the files are put back.
+- `--no-push` commits and tags without pushing (push later with `git push origin main --follow-tags`); `--no-fetch` skips the `origin` checks; `--date YYYY-MM-DD` overrides the date.
+- Tests: `python3 scripts/test-release.py` (temporary repos with a local bare `origin`; no network).
 
 Notes
 - Waypipe and X11 are Linux features; on macOS and Windows they are disabled in UI with an explanation (XQuartz/VcXsrv hints).
