@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- `mouser shell-integration --install` adds a marked block that loads the integration to the shell's startup file (zsh, bash, fish, PowerShell; the shell from `$SHELL`, or named; `--rc FILE`, `--dry-run`), with a backup, idempotently; `--uninstall` removes it. See docs/cli.md §Shell integration.
+
 ### Changed
 
 - Yes/no questions default to yes (`[Y/n]`): `mouser plugin` / `mouser engine` `install` and `update` (`Install?`), `mouser model local download` and `mouser model hf install` (`Download it?`), and deleting a saved connection (Enter in its dialog, or Enter / `:yes` after `:del-conn`). `n` or `no` says no; end of input, a read error or no terminal still says no (`--yes` for scripts). Approvals with more choices (allow once / always / deny) are unchanged. See docs/cli.md §Questions.

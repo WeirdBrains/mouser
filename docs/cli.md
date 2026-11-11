@@ -24,7 +24,7 @@ command and environment variable is also in the man pages (`man mouser`,
 | `mouser md [FILE…]` | Markdown formatted into the terminal, stdin when no file ([Markdown rendering](./markdown.md)) |
 | `mouser show FILE…` | Images in any Fuzzball or Kitty-graphics terminal ([Terminal](./terminal.md)) |
 | `mouser ssh [SSH_ARGS…]` | ssh with `TERM=mouser` where the host knows it, else `xterm-256color` ([SSH and TERM](./ssh.md)) |
-| `mouser shell-integration zsh\|bash\|fish` | Directory reports and commander's silent `cd` ([Modes](./modes.md)) |
+| `mouser shell-integration zsh\|bash\|fish\|pwsh [--install \| --uninstall]` | Directory reports and commander's silent `cd` ([Modes](./modes.md)); [installing it](#shell-integration) |
 | `mouser engine …` | Rendering engines ([Engines](./engines.md)) |
 | `mouser plugin …` | Plugins ([Plugins](./plugins.md)) |
 | `mouser model …` | Model providers, including grok ([Models](./models.md)) |
@@ -35,6 +35,37 @@ command and environment variable is also in the man pages (`man mouser`,
 
 `mouser help COMMAND` (for example `mouser help model add`) prints that command's
 usage when no guide has that name; `mouser COMMAND --help` always does.
+
+## Shell integration
+
+`mouser shell-integration SHELL` prints the integration script (zsh, bash, fish or
+pwsh) for your startup file to load. To have Mouser add the load line for you:
+
+```sh
+mouser shell-integration --install            # the shell in $SHELL (PowerShell on Windows)
+mouser shell-integration fish --install       # name the shell
+mouser shell-integration --install --dry-run  # show the change, write nothing
+mouser shell-integration --install --rc FILE  # another startup file
+mouser shell-integration --uninstall          # take it out again
+```
+
+| Shell | File edited |
+| --- | --- |
+| zsh | `$ZDOTDIR/.zshrc` (else `~/.zshrc`) |
+| bash | `~/.bashrc` (on macOS, make sure `~/.bash_profile` sources it) |
+| fish | `$XDG_CONFIG_HOME/fish/conf.d/mouser.fish` (else `~/.config/…`), a file of its own |
+| pwsh | PowerShell's `$PROFILE` (asked from `pwsh`; else the usual profile path) |
+
+`--install` adds a block between `# >>> mouser shell integration >>>` and
+`# <<< mouser shell integration <<<` that loads the integration only when `mouser`
+is on `PATH`. It prints the block, the file and the backup it made first
+(`FILE.mouser-bak`, then `.mouser-bak.2`, … so an older backup is kept). Running it
+again changes nothing; a block from an older Mouser is updated in place. A symlinked
+startup file is edited through the link, and its permissions and line endings are
+kept. When the file already loads `mouser shell-integration` on a line you wrote,
+it is left alone and the line is named. A broken block (one marker without the
+other) is refused with nothing written. `--uninstall` removes only the block (with
+the same backup), never your own lines.
 
 ## Questions
 

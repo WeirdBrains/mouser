@@ -375,7 +375,11 @@ class HomePage extends StatelessComponent {
       code([
       .text('mouser shell-integration fish | source'),
       ]),
-      .text(').'),
+      .text('), or let Mouser add it to your startup file: '),
+      code([
+      .text('mouser shell-integration --install'),
+      ]),
+      .text('.'),
       ]),
       p([
       .text('Optional terminfo entry: '),

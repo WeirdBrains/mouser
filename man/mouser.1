@@ -60,7 +60,7 @@ Command to run, after `\-\-` (same as \-e)
 .SH SUBCOMMANDS
 .TP
 mouser\-shell\-integration(1)
-Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
+Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`. Or let Mouser add that: `mouser shell\-integration \-\-install` (the shell from $SHELL) writes a marked block to ~/.zshrc, ~/.bashrc, fish/conf.d/mouser.fish or $PROFILE, keeping a .mouser\-bak backup; `\-\-uninstall` takes it out again (docs/cli.md §Shell integration)
 .TP
 mouser\-ssh(1)
 ssh, with TERM=mouser kept where the host knows it and xterm\-256color where it does not (the same as the `ssh` Mouser puts on its tabs\*(Aq PATH); see docs/ssh.md
