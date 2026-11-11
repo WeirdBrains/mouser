@@ -81,6 +81,8 @@ struct Chat {
     /// Model picker: (provider/model choices, highlighted). Choice 0 is
     /// "Search Hugging Face…".
     picker: Option<(Vec<String>, usize)>,
+    /// Where the picker was last drawn: a press outside it closes it.
+    picker_rect: Option<Rect>,
     default_model: Option<String>,
     status: Option<(String, bool)>,
     asked: HashMap<u64, Asked>,
@@ -595,6 +597,17 @@ impl Chat {
                         self.call(host, "agent.set_default", json!({"model": m}), Asked::SetDefault);
                     }
                 }
+                // The window sends the pointer over the view as it moves and
+                // presses (`pointer_*`): moving onto a choice must not close
+                // the picker, and a press on a choice is followed by its
+                // `pick`. Only a press outside the picker closes it.
+                "pointer_move" | "pointer_up" => return,
+                "pointer_down" => {
+                    let (x, y) = (arg & 0x7fff, (arg >> 15) & 0x7fff);
+                    if !self.picker_rect.is_some_and(|r| x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) {
+                        self.picker = None;
+                    }
+                }
                 _ => self.picker = None,
             }
             return;
@@ -876,6 +889,7 @@ impl Chat {
             let pw = (w / 2).max(cw * 34);
             let ph = (choices.len().max(1) as i32) * row_h;
             let top = y + row_h;
+            self.picker_rect = Some(Rect { x: x0, y: top, w: pw, h: ph });
             items.push(item(Rect { x: x0, y: top, w: pw, h: ph }, "", PanelStyle::Popup, Action::None));
             for (j, c) in choices.iter().enumerate() {
                 let r = Rect { x: x0, y: top + j as i32 * row_h, w: pw, h: row_h };

@@ -139,7 +139,8 @@ ignore unknown keys: fields are added without bumping the api.
 ## What arrives and what you send
 
 **In (events):** `mode.activated` / `mode.deactivated`, `ui.action` (a bound
-key or a click), `input.text` / `input.key` / `input.escape` while you asked
+key or a click; also `pointer_down` / `pointer_move` / `pointer_up` as the
+pointer moves and presses over your view, docs/mode-protocol.md), `input.text` / `input.key` / `input.escape` while you asked
 for the keyboard, `shell.cwd_changed`, `shell.remote_*` with `remote.read`,
 `menu.open` for context menus, `view.resized` (including dock size and
 `reduce_motion`),

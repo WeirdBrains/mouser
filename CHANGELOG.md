@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Fixed
+
+- Chat: the model picker (click the model name) stayed open only until the pointer moved, so a model couldn't be chosen with the mouse; moving onto a model now keeps it open, a click picks it, and a press outside closes it. Docs: modes get `pointer_down` / `pointer_move` / `pointer_up` as `ui.action` ids (docs/mode-protocol.md).
+
 ## [1.6.0] - 2026-11-10
 
 ### Added

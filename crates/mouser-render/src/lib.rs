@@ -662,10 +662,13 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         dock_edge_hover = edge;
                         window.set_cursor(if edge { CursorIcon::NsResize } else { CursorIcon::Default });
                     }
-                    if let Some(on_act) = &hooks.on_ui_action
-                        && (dock_press || last_ui.as_ref().is_some_and(|l| l.panel.is_none() && l.dock.as_ref().is_some_and(|d| d.panel.rect.contains(px, py))))
-                    {
-                        on_act(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::pack_xy(px, py) });
+                    let moved = if dock_press {
+                        Some(ui::UiAction::Mode { action: "pointer_move".into(), arg: modes::pack_xy(px, py) })
+                    } else {
+                        last_ui.as_ref().and_then(|l| ui::dock_move(l, px, py))
+                    };
+                    if let (Some(on_act), Some(a)) = (&hooks.on_ui_action, moved) {
+                        on_act(a);
                         dirty = true;
                         if dock_press {
                             return;
