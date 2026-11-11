@@ -29,6 +29,8 @@ These rules are adapted from the owner's Muninn project for this repository.
   `git push origin main --follow-tags`.
 - `scripts/release.py [--major|--patch] "message"` does all of this (MINOR by default);
   the `v*` tag push is what starts the Release workflow. See `docs/release.md`.
+- Every release ends with the TAUR upload: after the Release workflow's `packaging:`
+  commit, `git pull` and `python3 scripts/taur.py publish X.Y.Z` (taurctl signed in).
 - `CHANGELOG.md` (Keep a Changelog format) stays summary level: a few short one-line
   bullets per release naming the feature. No implementation details or file lists.
 

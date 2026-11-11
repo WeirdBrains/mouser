@@ -1,5 +1,6 @@
-# Maintainer: Michael Christenson II <placeholder: set before publishing to the AUR>
-# Release workflow: pkgver and the sha256sums are filled in by packaging/arch/update-bin.sh.
+# Maintainer: Michael Christenson II <m3talsmith@gmail.com>
+# Release workflow: pkgver and the sha256sums are filled in by packaging/arch/update-bin.sh;
+# every release publishes this recipe to TAUR with scripts/taur.py publish (docs/release.md §TAUR).
 pkgname=mouser-bin
 _pkgname=mouser
 pkgver=1.6.0

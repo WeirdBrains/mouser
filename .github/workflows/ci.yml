@@ -22,6 +22,7 @@ jobs:
         run: |
           python3 scripts/test-release.py
           python3 scripts/test-packaging.py
+          python3 scripts/test-taur.py
           python3 scripts/packaging.py check
       - name: Homebrew formula and cask from a local tap (macOS)
         if: runner.os == 'macOS'

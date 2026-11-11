@@ -20,6 +20,10 @@ homepage version and install URLs in site_jaspr/lib/pages/home.dart. The
 Homebrew formula/cask and the mouser-bin PKGBUILD need the release's
 checksums and are updated after the Release workflow, not here.
 
+Every release ends with the TAUR upload (required): once the Release
+workflow's `packaging:` commit is on main, `git pull` and run
+`python3 scripts/taur.py publish X.Y.Z` (taurctl signed in; docs/release.md).
+
 Pushing the `v*` tag is what starts the Release and CI workflows. A push
 to main deploys the website when the commit touches the site or docs.
 Refuses (exit 1, nothing written) off main, with a dirty
@@ -35,6 +39,12 @@ ORDER = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
 # version even if it drifted (members pinned to the workspace version follow too).
 FOLLOW = ("crates/mouser-llm",)
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+
+def taur_step(version):
+    """The release's last step, printed so it isn't skipped (docs/release.md §TAUR)."""
+    return (f"when the Release workflow's packaging commit is on main, git pull && "
+            f"python3 scripts/taur.py publish {version}  # uploads mouser-bin to TAUR with taurctl")
 
 
 class ReleaseError(Exception):
@@ -380,6 +390,7 @@ def main(argv=None):
             print("[dry-run] commit message:\n" + commit_msg)
             print(f"[dry-run] git tag -a {tag} -m {tag}")
             print("[dry-run] " + ("(no push)" if a.no_push else "git push origin main --follow-tags  # the v* tag starts the Release workflow"))
+            print(f"[dry-run] then: {taur_step(new)}")
             return 0
 
         # Write everything, commit; on any failure put the files back.
@@ -414,6 +425,7 @@ def main(argv=None):
         if r.returncode != 0:
             raise ReleaseError(f"push failed; {tag} and the commit are local. Retry: git push origin main --follow-tags")
         print(f"pushed main and {tag}; the tag push starts the Release workflow")
+        print(f"next (required): {taur_step(new)}")
         return 0
     except ReleaseError as e:
         print(f"release: {e}", file=sys.stderr)
