@@ -2,6 +2,8 @@
 
 ### Added
 
+- `mouser model hf search` shows each model's download size (smallest–largest quantization, split files summed, `unknown` when the Hub gives none), from file metadata only with bounded requests and time.
+- `mouser model hf pick [QUERY]`: choose a Hugging Face GGUF on the terminal (query, model, quantization with its size), then the usual install question and checked download; Esc goes back, Ctrl-C leaves, and the terminal is always restored.
 - `mouser shell-integration --install` adds a marked block that loads the integration to the shell's startup file (zsh, bash, fish, PowerShell; the shell from `$SHELL`, or named; `--rc FILE`, `--dry-run`), with a backup, idempotently; `--uninstall` removes it. See docs/cli.md §Shell integration.
 
 ### Changed

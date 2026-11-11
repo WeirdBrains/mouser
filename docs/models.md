@@ -237,7 +237,8 @@ llama.cpp engine (`gemma-local`). In the chat: **⌕ models**, `h` or `/hf`
 ([Chat](./chat.md#models-from-hugging-face)). From the command line:
 
 ```sh
-mouser model hf search qwen 0.5b           # GGUF models, most downloaded first: id, ↓downloads, ♥likes
+mouser model hf search qwen 0.5b           # GGUF models, most downloaded first: id, download size, ↓downloads, ♥likes
+mouser model hf pick [qwen 0.5b]           # choose on the terminal: query → model → quantization → install
 mouser model hf info bartowski/Qwen2.5-0.5B-Instruct-GGUF   # card summary, license, task, size, quantizations
 mouser model hf install bartowski/Qwen2.5-0.5B-Instruct-GGUF [Q4_K_M] [--yes]
 mouser model hf list                       # installed ones, with their gemma-local ids
@@ -245,6 +246,23 @@ mouser model hf remove Qwen2.5-0.5B-Instruct-Q4_K_M
 mouser model test gemma-local/Qwen2.5-0.5B-Instruct-Q4_K_M
 ```
 
+- **Download size in `search`:** the smallest to the largest quantization
+  (`0.49–8.10 GB`; one size when there is one), with split files summed. It
+  comes from each repository's file metadata (`/api/models/ID?blobs=true`: names
+  and sizes, never weights), at most 6 requests at a time and 15 seconds in
+  all. `unknown` when the Hub didn't answer in time or gave no sizes, `no GGUF`
+  when only projectors or `imatrix` files are there, and a `*` when some
+  quantizations' sizes are unknown (a missing split part counts as unknown).
+  Vision projectors (`mmproj`) and `imatrix` files are never counted.
+- **Choosing on the terminal:** `mouser model hf pick [QUERY]` asks for a query,
+  lists the results with their sizes, then the chosen model's quantizations with
+  each size (the default marked), and hands the choice to `install`: the same
+  question (`Download it? [Y/n]`), resumable download and checksums. ↑/↓ (or
+  `j`/`k`), Page Up/Down, Home/End move; Enter chooses; `/` searches again; Esc
+  goes back a step (and leaves from the results); Ctrl-C or `q` leaves; nothing
+  downloads until you answer the question. It needs a terminal: without one it
+  stops at once (scripts use `search` and `install`). The terminal is put back
+  (alternate screen left, cursor shown, settings restored) however it ends.
 - **What runs:** GGUF files only (the format llama.cpp loads). A repository's
   quantizations (Q2_K … Q8_0, IQ…, BF16, F16, F32) are listed with their sizes;
   split files (`-00001-of-00003.gguf`) are one choice and download together.

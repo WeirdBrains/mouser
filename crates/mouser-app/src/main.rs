@@ -386,8 +386,13 @@ enum ModelCommand {
 
 #[derive(clap::Subcommand, Debug)]
 enum HfCommand {
-    /// Search Hugging Face for GGUF models (most downloaded first).
+    /// Search Hugging Face for GGUF models (most downloaded first), with each
+    /// one's download size (smallest–largest quantization, split files summed).
     Search { query: Vec<String> },
+    /// Choose interactively on the terminal: type a query, pick a repository,
+    /// then a quantization (with its size); it installs like `install` (asks
+    /// first). Esc goes back, Ctrl-C leaves; needs a terminal.
+    Pick { query: Vec<String> },
     /// A model's card summary, numbers, license and quantizations.
     Info { id: String },
     /// Download one quantization (default: the smallest Q4) and make it the
@@ -1142,6 +1147,7 @@ fn main() -> Result<()> {
                 use mouser_app::model_cli::HfAction as H;
                 Action::Hf(match action {
                     HfCommand::Search { query } => H::Search(query.join(" ")),
+                    HfCommand::Pick { query } => H::Pick(Some(query.join(" ")).filter(|q| !q.trim().is_empty())),
                     HfCommand::Info { id } => H::Info(id.clone()),
                     HfCommand::Install { id, quant, yes } => H::Install { id: id.clone(), quant: quant.clone(), yes: *yes },
                     HfCommand::List => H::List,
