@@ -105,7 +105,7 @@ fails (offline, say), Mouser carries on as a plain terminal with a note, and
 
 The same start also updates official items installed from the lock at an older
 version than this Mouser pins, so updating Mouser brings its plugins along (Mouser
-1.5 moved chat to 0.1.3 and commander to 0.1.5; 1.6 moves chat to 0.1.4). An update that asks for a new
+1.5 moved chat to 0.1.3 and commander to 0.1.5; 1.6 moved chat to 0.1.4; 1.7 moves chat to 0.1.5). An update that asks for a new
 permission shows its card first. Left alone: items installed from `gh:`, a path
 or a crate, ones at or past the pin, and ones rolled back from the pinned version
 (`mouser plugin rollback`).

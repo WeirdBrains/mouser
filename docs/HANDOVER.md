@@ -528,6 +528,8 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   v0.4.0, crates.io), mouser-views / mouser-media 0.2.0 (crates.io, from this repo),
   mouser-chat 0.1.4 (signed 4-target release, crates.io); plugins.lock pins chat 0.1.4,
   commander stays 0.1.5, preferences 0.1.2.
+- Mouser 1.7 pins mouser-chat 0.1.5 (WeirdBrains/mouser-chat v0.1.5, signed 4-target
+  release, crates.io): the model picker fix (7543cc1) synced from `plugins/chat`.
 - Remaining limits: hosted views are a fixed set (items list/grid/carousel, media);
   a mode can't register its own drawing code in the host. Commander's richer viewer
   stays on mouser-media. `file:///C:/…` links aren't recognised as media on Windows
