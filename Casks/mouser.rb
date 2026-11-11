@@ -1,12 +1,12 @@
 cask "mouser" do
-  version "1.6.0"
+  version "1.7.0"
   on_arm do
-    sha256 "b284b6ee9cc768c830c227d7849a89676207cdf311f7ef68cc68b4942b9b34e4"
-    url "https://github.com/WeirdBrains/mouser/releases/download/v1.6.0/Mouser-aarch64-apple-darwin.dmg"
+    sha256 "4ab5e73d1638f1bac424b8bfe6838ab2628103c0e0d3f8534974a0c83dcbd2bb"
+    url "https://github.com/WeirdBrains/mouser/releases/download/v1.7.0/Mouser-aarch64-apple-darwin.dmg"
   end
   on_intel do
-    sha256 "86edaeeb97152fed16f0f871288ad89436876319440b99046c6db1c8d5024c1b"
-    url "https://github.com/WeirdBrains/mouser/releases/download/v1.6.0/Mouser-x86_64-apple-darwin.dmg"
+    sha256 "bf0676b326accd4fbc62397ec8dc5322ecdc41acd3fd90fc82cda307b505ca17"
+    url "https://github.com/WeirdBrains/mouser/releases/download/v1.7.0/Mouser-x86_64-apple-darwin.dmg"
   end
   name "Mouser"
   desc "Mouser terminal emulator"

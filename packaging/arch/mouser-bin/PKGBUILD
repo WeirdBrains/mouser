@@ -3,7 +3,7 @@
 # every release publishes this recipe to TAUR with scripts/taur.py publish (docs/release.md §TAUR).
 pkgname=mouser-bin
 _pkgname=mouser
-pkgver=1.6.0
+pkgver=1.7.0
 pkgrel=1
 pkgdesc="Mouser terminal emulator with compressed scrollback, Fuzzball and Kitty graphics (prebuilt binary)"
 arch=('x86_64')
@@ -22,8 +22,8 @@ conflicts=('mouser' 'mouser-git')
 options=('!strip' '!debug')
 source=("${_pkgname}-src-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
 source_x86_64=("${_pkgname}-${pkgver}-x86_64-unknown-linux-gnu.tar.gz::${url}/releases/download/v${pkgver}/mouser-x86_64-unknown-linux-gnu.tar.gz")
-sha256sums=('74e46f49f618f5e102d5e904897e89c659d28ff29bb0720e7459c24c4cd2cae5')
-sha256sums_x86_64=('b7769e82cc37d7ae92fa0f4465f360bda408e3599f4c0d8d9e87b0c5095eb7df')
+sha256sums=('a42a9af5629c57e23ea86707c382c7cb5f369c8bfe0439e25dc9434e56aad30c')
+sha256sums_x86_64=('7c5c5da597251b06b80413b0b828e0f70a302951373b9601b34573ef959a16c0')
 
 build() {
   cd "${_pkgname}-${pkgver}"
