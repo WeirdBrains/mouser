@@ -2,6 +2,7 @@
 
 ### Fixed
 
+- Pressing Shift (or Ctrl, Alt, Super, or a lock key) on its own no longer scrolls a scrolled-back terminal to the bottom, so you can hold Shift to extend a selection or start Ctrl+Shift+C without losing your place; typing still goes to the bottom.
 - Chat: the model picker (click the model name) stayed open only until the pointer moved, so a model couldn't be chosen with the mouse; moving onto a model now keeps it open, a click picks it, and a press outside closes it. Docs: modes get `pointer_down` / `pointer_move` / `pointer_up` as `ui.action` ids (docs/mode-protocol.md).
 
 ## [1.6.0] - 2026-11-10
