@@ -50,6 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
+        with:
+          # site_jaspr's locked build_web_compilers needs SDK < 3.14 (3.14.0 broke
+          # dart pub get on 2026-11-11); move with the pubspec.
+          sdk: 3.13.7
       - name: Sync static assets into the Jaspr web folder
         run: bash site_jaspr/tool/sync_web.sh
       - name: Install Jaspr CLI
