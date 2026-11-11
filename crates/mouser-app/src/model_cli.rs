@@ -49,6 +49,8 @@ pub enum HfAction {
     },
     List,
     Remove(String),
+    /// Choose on the terminal (query, repository, quantization), then `Install`.
+    Pick(Option<String>),
 }
 
 fn run_hf(a: &HfAction, out: &mut dyn Write) -> Result<()> {
@@ -58,12 +60,30 @@ fn run_hf(a: &HfAction, out: &mut dyn Write) -> Result<()> {
             if hits.is_empty() {
                 writeln!(out, "no GGUF models match {q:?}")?;
             }
-            for h in hits {
-                writeln!(out, "{:<56} ↓{:>7} ♥{:>6}  {}", h.id, hf::count(h.downloads), hf::count(h.likes), h.updated)?;
+            let ids: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
+            let sizes = hf::search_sizes(&ids, hf::SIZE_WORKERS, hf::SIZE_DEADLINE);
+            if !hits.is_empty() {
+                writeln!(out, "{:<56} {:>16} {:>8} {:>7}  updated", "model", "download", "↓", "♥")?;
+            }
+            for (h, s) in hits.iter().zip(&sizes) {
+                writeln!(out, "{}", hf::search_line(h, s))?;
+            }
+            if !hits.is_empty() {
+                writeln!(out, "download: smallest–largest quantization (split files summed); * some sizes unknown")?;
             }
             writeln!(out, "details: mouser model hf info ID   install: mouser model hf install ID [QUANT]")?;
             Ok(())
         }
+        HfAction::Pick(q) => match crate::hf_pick::pick(q.as_deref())? {
+            Some((id, quant)) => {
+                writeln!(out, "{id} {quant}")?;
+                run_hf(&HfAction::Install { id, quant: Some(quant), yes: false }, out)
+            }
+            None => {
+                writeln!(out, "nothing chosen; nothing downloaded")?;
+                Ok(())
+            }
+        },
         HfAction::Info(id) => {
             let d = hf::details(id)?;
             for l in hf::details_lines(&d) {

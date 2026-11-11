@@ -292,3 +292,79 @@ fn imatrix_and_mmproj_files_are_not_quantizations() {
     let labels: Vec<&str> = q.iter().map(|q| q.label.as_str()).collect();
     assert_eq!(labels, ["IQ2_XS", "Q4_K_M"], "smallest first, no imatrix or mmproj");
 }
+
+fn file(n: &str, size: u64) -> hf::HfFile {
+    hf::HfFile { name: n.into(), size, sha256: Some("ab".repeat(32)) }
+}
+
+#[test]
+fn sizes_are_a_range_split_parts_summed_and_unknown_when_missing() {
+    let q = hf::quants(&[
+        file("m-Q4_K_M.gguf", 4_920_000_000),
+        file("m-IQ2_XS.gguf", 2_100_000_000),
+        file("big/m-F16-00002-of-00002.gguf", 7_000_000_000),
+        file("big/m-F16-00001-of-00002.gguf", 9_000_000_000),
+        file("m-imatrix.gguf", 9),
+        file("mmproj-m-F16.gguf", 99_000_000_000),
+    ]);
+    assert_eq!(q.iter().find(|q| q.label == "F16").unwrap().known_size(), Some(16_000_000_000), "split parts summed");
+    let s = hf::Sizes::of(&q);
+    assert_eq!(s, hf::Sizes::Range { min: 2_100_000_000, max: 16_000_000_000, partial: false }, "no imatrix or mmproj");
+    assert_eq!(s.label(), "2.10–16.00 GB");
+
+    let one = hf::quants(&[file("m-Q8_0.gguf", 534_000_000)]);
+    assert_eq!(hf::Sizes::of(&one).label(), "534.0 MB");
+    let small = hf::quants(&[file("m-Q8_0.gguf", 534_000_000), file("m-Q2_K.gguf", 210_000_000)]);
+    assert_eq!(hf::Sizes::of(&small).label(), "210.0–534.0 MB");
+
+    // A missing part or a size the Hub didn't give: unknown for that quant.
+    let gap = hf::quants(&[file("m-F16-00001-of-00003.gguf", 5), file("m-F16-00003-of-00003.gguf", 5)]);
+    assert_eq!(gap[0].known_size(), None);
+    assert_eq!(hf::Sizes::of(&gap), hf::Sizes::Unknown);
+    assert_eq!(hf::Sizes::of(&gap).label(), "unknown");
+    let mixed = hf::quants(&[file("m-Q4_0.gguf", 3_000_000_000), file("m-Q8_0.gguf", 0)]);
+    assert_eq!(hf::Sizes::of(&mixed).label(), "3.00 GB*");
+    assert_eq!(hf::Sizes::of(&hf::quants(&[file("mmproj-x-F16.gguf", 5)])), hf::Sizes::NoGguf);
+}
+
+#[test]
+fn search_sizes_read_only_metadata_with_bounded_concurrency_and_time() {
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let (now, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (n2, p2) = (now.clone(), peak.clone());
+    let ids: Vec<String> = (0..12).map(|i| format!("o/m{i}")).collect();
+    let t = std::time::Instant::now();
+    let got = hf::search_sizes_with(&ids, 3, std::time::Duration::from_secs(5), move |id| {
+        let c = n2.fetch_add(1, SeqCst) + 1;
+        p2.fetch_max(c, SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        n2.fetch_sub(1, SeqCst);
+        if id == "o/m11" {
+            std::thread::sleep(std::time::Duration::from_secs(30)); // never answers in time
+        }
+        hf::Sizes::Range { min: id[3..].parse().unwrap(), max: 100, partial: false }
+    });
+    assert!(t.elapsed() < std::time::Duration::from_secs(10), "the deadline bounds the wait");
+    assert!(peak.load(SeqCst) <= 3, "at most 3 at once, saw {}", peak.load(SeqCst));
+    for (i, s) in got.iter().enumerate().take(11) {
+        assert_eq!(*s, hf::Sizes::Range { min: i as u64, max: 100, partial: false }, "order kept");
+    }
+    assert_eq!(got[11], hf::Sizes::Unknown, "too slow: unknown");
+}
+
+#[test]
+fn search_sizes_against_the_hub_fetch_metadata_not_weights() {
+    let (base, seen) = hub(routes(false));
+    with_env(&base, |_| {
+        let ids = vec!["acme/Tiny-GGUF".to_string(), "acme/Missing".to_string()];
+        let s = hf::search_sizes(&ids, 2, std::time::Duration::from_secs(10));
+        // Q4_K_M (25 bytes) and the split F16 (13 + 13): mmproj left out.
+        assert_eq!(s[0], hf::Sizes::Range { min: ONE.len() as u64, max: (PART1.len() + PART2.len()) as u64, partial: false });
+        assert_eq!(s[1], hf::Sizes::Unknown, "a 404 is unknown");
+        let seen = seen.lock().unwrap();
+        assert!(seen.iter().all(|p| p.starts_with("/api/models/")), "only metadata requests: {seen:?}");
+        let hit = hf::Hit { id: "acme/Tiny-GGUF".into(), downloads: 1234, likes: 56, pipeline: String::new(), updated: "2026-10-01".into() };
+        let line = hf::search_line(&hit, &s[0]);
+        assert!(line.starts_with("acme/Tiny-GGUF ") && line.contains(" 25–26 bytes ↓   1.2k"), "{line}");
+    });
+}

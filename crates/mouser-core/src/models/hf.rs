@@ -103,6 +103,164 @@ impl Quant {
     pub fn size(&self) -> u64 {
         self.files.iter().map(|f| f.size).sum()
     }
+
+    /// The download size, when the Hub gave every file's size and a split
+    /// GGUF has all its parts (`-00001-of-00003` … `-00003-of-00003`).
+    pub fn known_size(&self) -> Option<u64> {
+        if self.files.is_empty() || self.files.iter().any(|f| f.size == 0) {
+            return None;
+        }
+        let parts: Vec<Option<(u32, u32)>> = self.files.iter().map(|f| split_of(stem_of(&f.name))).collect();
+        match parts.first().copied().flatten() {
+            None if self.files.len() == 1 => {}
+            None => return None,
+            Some((_, of)) => {
+                let mut nums: Vec<u32> = Vec::new();
+                for p in &parts {
+                    match p {
+                        Some((n, o)) if *o == of => nums.push(*n),
+                        _ => return None,
+                    }
+                }
+                nums.sort_unstable();
+                if nums != (1..=of).collect::<Vec<_>>() {
+                    return None;
+                }
+            }
+        }
+        Some(self.size())
+    }
+}
+
+fn stem_of(name: &str) -> &str {
+    let file = name.rsplit('/').next().unwrap_or(name);
+    file.strip_suffix(".gguf").or_else(|| file.strip_suffix(".GGUF")).unwrap_or(file)
+}
+
+/// `-00002-of-00003` at the end of a stem: (part, of).
+fn split_of(stem: &str) -> Option<(u32, u32)> {
+    let (head, of) = stem.rsplit_once("-of-")?;
+    let (_, part) = head.rsplit_once('-')?;
+    let digits = |s: &str| s.len() == 5 && s.chars().all(|c| c.is_ascii_digit());
+    (digits(of) && digits(part)).then_some((part.parse().ok()?, of.parse().ok()?))
+}
+
+/// What a search result would download: one size, a range across its
+/// quantizations, or unknown (docs/models.md §Hugging Face).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sizes {
+    /// The repository couldn't be read in time, or no quantization has a size.
+    Unknown,
+    /// No GGUF quantization (only projectors, importance matrices…).
+    NoGguf,
+    /// Smallest and largest quantization; `partial` when some others' sizes are unknown.
+    Range { min: u64, max: u64, partial: bool },
+}
+
+impl Sizes {
+    pub fn of(quants: &[Quant]) -> Sizes {
+        if quants.is_empty() {
+            return Sizes::NoGguf;
+        }
+        let known: Vec<u64> = quants.iter().filter_map(Quant::known_size).collect();
+        match (known.iter().min(), known.iter().max()) {
+            (Some(&min), Some(&max)) => Sizes::Range { min, max, partial: known.len() < quants.len() },
+            _ => Sizes::Unknown,
+        }
+    }
+
+    /// `4.92 GB`, `0.49–8.10 GB`, `unknown`; `*` marks a partial range.
+    pub fn label(&self) -> String {
+        match *self {
+            Sizes::Unknown => "unknown".into(),
+            Sizes::NoGguf => "no GGUF".into(),
+            Sizes::Range { min, max, partial } => {
+                let star = if partial { "*" } else { "" };
+                if min == max {
+                    format!("{}{star}", human(min))
+                } else if max >= 1_000_000_000 {
+                    format!("{:.2}–{:.2} GB{star}", min as f64 / 1e9, max as f64 / 1e9)
+                } else if max >= 1_000_000 {
+                    format!("{:.1}–{:.1} MB{star}", min as f64 / 1e6, max as f64 / 1e6)
+                } else {
+                    format!("{min}–{max} bytes{star}")
+                }
+            }
+        }
+    }
+}
+
+/// A repository's GGUF quantizations from its file metadata only
+/// (`/api/models/ID?blobs=true`: names, sizes, hashes; no weights, no card).
+pub fn repo_quants(id: &str) -> Result<Vec<Quant>> {
+    check_repo(id)?;
+    let (owner, name) = id.split_once('/').context("id")?;
+    let v = http::get_json(
+        &format!("{}/api/models/{}/{}?blobs=true", base(), encode(owner), encode(name)),
+        &[("Accept", "application/json".into())],
+        None,
+    )
+    .with_context(|| format!("reading {id} on Hugging Face"))?;
+    Ok(parse_details(&v).quants)
+}
+
+/// Requests in flight at once for [`search_sizes`].
+pub const SIZE_WORKERS: usize = 6;
+/// How long [`search_sizes`] waits in all before the rest are unknown.
+pub const SIZE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// [`Sizes`] for each repository (same order), at most `workers` requests at
+/// a time; whatever hasn't answered by `deadline` is [`Sizes::Unknown`].
+pub fn search_sizes(ids: &[String], workers: usize, deadline: std::time::Duration) -> Vec<Sizes> {
+    search_sizes_with(ids, workers, deadline, |id| repo_quants(id).map(|q| Sizes::of(&q)).unwrap_or(Sizes::Unknown))
+}
+
+/// [`search_sizes`] with the lookup given (tests count its concurrency).
+pub fn search_sizes_with(
+    ids: &[String],
+    workers: usize,
+    deadline: std::time::Duration,
+    lookup: impl Fn(&str) -> Sizes + Send + Sync + 'static,
+) -> Vec<Sizes> {
+    use std::sync::{Arc, Mutex, mpsc};
+    let mut out = vec![Sizes::Unknown; ids.len()];
+    if ids.is_empty() {
+        return out;
+    }
+    let end = std::time::Instant::now() + deadline;
+    let queue = Arc::new(Mutex::new(ids.iter().cloned().enumerate().collect::<std::collections::VecDeque<_>>()));
+    let lookup = Arc::new(lookup);
+    let (tx, rx) = mpsc::channel();
+    for _ in 0..workers.clamp(1, ids.len()) {
+        let (queue, lookup, tx) = (queue.clone(), lookup.clone(), tx.clone());
+        // Detached: a stuck request outlives the deadline without holding the listing.
+        std::thread::spawn(move || {
+            loop {
+                let Some((i, id)) = queue.lock().unwrap().pop_front() else { break };
+                if std::time::Instant::now() >= end || tx.send((i, lookup(&id))).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    drop(tx);
+    let mut got = 0;
+    while got < ids.len() {
+        let left = end.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(left) {
+            Ok((i, s)) => {
+                out[i] = s;
+                got += 1;
+            }
+            Err(_) => break,
+        }
+    }
+    out
+}
+
+/// One `mouser model hf search` line.
+pub fn search_line(h: &Hit, size: &Sizes) -> String {
+    format!("{:<56} {:>16} ↓{:>7} ♥{:>6}  {}", h.id, size.label(), count(h.downloads), count(h.likes), h.updated)
 }
 
 /// A repository's details.
@@ -758,7 +916,8 @@ pub fn details_lines(d: &Details) -> Vec<String> {
     v.push(format!("{} GGUF quantizations:", d.quants.len()));
     for q in &d.quants {
         let parts = if q.files.len() > 1 { format!(" ({} files)", q.files.len()) } else { String::new() };
-        v.push(format!("  {:<12} {:>9}{parts}", q.label, human(q.size())));
+        let size = q.known_size().map_or_else(|| "unknown".to_string(), human);
+        v.push(format!("  {:<12} {:>9}{parts}", q.label, size));
     }
     v
 }
