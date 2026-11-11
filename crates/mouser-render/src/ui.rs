@@ -1157,6 +1157,13 @@ pub fn dock_press(l: &UiLayout, x: i32, y: i32) -> Option<Vec<UiAction>> {
     over_dock(l, x, y).then(|| vec![UiAction::Mode { action: "pointer_down".into(), arg: crate::modes::pack_xy(x, y) }, hit_test(l, x, y)])
 }
 
+/// The pointer moving over a mode's view: `pointer_move` (a drag in progress
+/// sends it outside the view too; the window handles that). `None`: not over
+/// the view.
+pub fn dock_move(l: &UiLayout, x: i32, y: i32) -> Option<UiAction> {
+    over_dock(l, x, y).then(|| UiAction::Mode { action: "pointer_move".into(), arg: crate::modes::pack_xy(x, y) })
+}
+
 /// The wheel over a mode's view (`lines` > 0 is up): "scroll", or with Ctrl
 /// a zoom about the pointer. `None`: not over the view.
 pub fn dock_wheel(l: &UiLayout, x: i32, y: i32, lines: isize, ctrl: bool) -> Option<Vec<UiAction>> {

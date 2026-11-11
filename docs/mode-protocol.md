@@ -38,7 +38,11 @@ keys = [{ id = "refresh", key = "r", describe = "refresh" }]
 `mouser plugin install DIR`, then allow it to run with
 `mouser plugin permissions hello run=allow` (and any permission it lists). It
 joins the mode switcher (`esc :h`). Mouser starts it the first time it's drawn.
-A bound key or a click arrives as a `ui.action` event, typing as `input.text`,
+A bound key or a click arrives as a `ui.action` event (the pointer over the
+view also arrives there, as the ids `pointer_down`, `pointer_move` and
+`pointer_up` with `arg` = x | y << 15 in window pixels: a press is
+`pointer_down` and then the clicked item's action, so a dropdown should close
+only on a `pointer_down` outside it, never on other ids), typing as `input.text`,
 switching modes as `mode.activated`/`mode.deactivated`, and the shell's folder
 as `shell.cwd_changed` (with `files.read`). An effect it isn't allowed shows a
 status message instead. Its emits come back to its own listeners. Typing

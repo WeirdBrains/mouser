@@ -272,3 +272,104 @@ fn a_clip_keeps_playing_when_the_chat_scrolls_it_out_of_view() {
     until(&mut m, "the clip still playing", |v| play(v).is_some_and(|p| p.1 == "❚❚"));
     drop(m);
 }
+
+/// The model picker with the mouse, routed as the window routes it: a press
+/// over the view is `ui::dock_press` (`pointer_down`, then the item under the
+/// pointer), moving over it is `ui::dock_move` (`pointer_move`), and the
+/// release is `pointer_up`. Opening the picker from the header and moving to
+/// a model must leave it open, and a click on the model must pick it; a press
+/// outside the picker closes it.
+#[test]
+fn the_model_picker_takes_a_mouse_click() {
+    use mouser_render::modes::pack_xy;
+    use mouser_render::ui;
+    let _guard = HOME_LOCK.lock().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("MOUSER_HOME", home.path()) };
+    let dir = home.path().join("plugins/chat");
+    std::fs::create_dir_all(&dir).unwrap();
+    let exe = env!("CARGO_BIN_EXE_mouser-chat").replace('\\', "\\\\");
+    let manifest = include_str!("../plugin.toml").replace("command = [\"./mouser-chat\"]", &format!("command = [\"{exe}\"]"));
+    std::fs::write(dir.join("plugin.toml"), manifest).unwrap();
+    let mut store = Store::load();
+    store.set("chat", "run", Decision::Allow);
+    store.set("chat", "agent.use", Decision::Allow);
+    store.save().unwrap();
+
+    let p = mouser_core::plugins::find("chat").expect("chat plugin");
+    let mut m = StdioMode::new(p, 3).unwrap();
+    m.set_agent(Arc::new(|| Chat::new(Arc::new(Host))));
+    m.activate();
+    let layout = |m: &mut StdioMode| {
+        let mut l = ui::without_sidebar(1200, 900);
+        let dock = m.view(&ctx(), &Keymap::new(&[])).dock.expect("the chat's view");
+        l.dock = Some(ui::Dock { inset: dock.rect.h + 8, panel: dock, fullscreen: false });
+        l
+    };
+    let rect_of = |m: &mut StdioMode, f: &dyn Fn(&ui::PanelItem) -> bool| -> Option<ui::Rect> {
+        layout(m).dock.unwrap().panel.items.iter().rev().find(|i| f(i)).map(|i| i.rect)
+    };
+    let press = |m: &mut StdioMode, x: i32, y: i32| {
+        let acts = ui::dock_press(&layout(m), x, y).expect("over the chat's view");
+        for a in acts {
+            if let ui::UiAction::Mode { action, arg } = a {
+                m.action(&action, arg);
+            }
+        }
+        m.action("pointer_up", pack_xy(x, y));
+    };
+    let moves = |m: &mut StdioMode, from: (i32, i32), to: (i32, i32)| {
+        for k in 0..=8 {
+            let (x, y) = (from.0 + (to.0 - from.0) * k / 8, from.1 + (to.1 - from.1) * k / 8);
+            if let Some(ui::UiAction::Mode { action, arg }) = ui::dock_move(&layout(m), x, y) {
+                m.action(&action, arg);
+            }
+            m.view(&ctx(), &Keymap::new(&[]));
+        }
+    };
+    let options = |m: &mut StdioMode| -> Vec<(String, ui::Rect)> {
+        layout(m)
+            .dock
+            .unwrap()
+            .panel
+            .items
+            .iter()
+            .filter(|i| matches!(i.style, PanelStyle::Option { .. }))
+            .map(|i| (i.text.clone(), i.rect))
+            .collect()
+    };
+    let is_model = |i: &ui::PanelItem| matches!(&i.action, ui::UiAction::Mode { action, .. } if action == "model");
+    until(&mut m, "the header's model name", |v| v.dock.iter().flat_map(|d| &d.items).any(is_model));
+    let open = |m: &mut StdioMode| -> (i32, i32) {
+        let r = rect_of(m, &is_model).unwrap();
+        let at = (r.x + r.w / 2, r.y + r.h / 2);
+        press(m, at.0, at.1);
+        until(m, "the model picker", |v| v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Option { .. })));
+        at
+    };
+
+    let at = open(&mut m);
+    let opts = options(&mut m);
+    let (name, r) = opts.iter().find(|(t, _)| t.starts_with("gemma-local/")).cloned().unwrap_or_else(|| panic!("a local model among {opts:?}"));
+    let target = (r.x + r.w / 2, r.y + r.h / 2);
+    moves(&mut m, at, target);
+    assert!(!options(&mut m).is_empty(), "moving the pointer onto a model keeps the picker open");
+    press(&mut m, target.0, target.1);
+    until(&mut m, "the picked model in the header", |v| {
+        v.dock.iter().flat_map(|d| &d.items).any(|i| i.text.contains(&format!("model: {name}")))
+            && !v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Option { .. }))
+    });
+    assert_eq!(mouser_core::models::prefs().default.as_deref(), Some(name.as_str()), "the click set the default model");
+
+    // A press outside the picker (on the empty transcript) closes it.
+    let at = open(&mut m);
+    let d = layout(&mut m).dock.unwrap().panel.rect;
+    let below = (d.x + d.w - 20, d.y + d.h - 40);
+    moves(&mut m, at, below);
+    assert!(!options(&mut m).is_empty());
+    press(&mut m, below.0, below.1);
+    until(&mut m, "the picker closed by a press outside it", |v| {
+        !v.dock.iter().flat_map(|d| &d.items).any(|i| matches!(i.style, PanelStyle::Option { .. }))
+    });
+    drop(m);
+}
