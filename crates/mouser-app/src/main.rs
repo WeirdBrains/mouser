@@ -122,9 +122,29 @@ enum Command {
     /// `eval "$(mouser shell-integration zsh)"`, `eval "$(mouser shell-integration bash)"`,
     /// `mouser shell-integration fish | source`, or in PowerShell's $PROFILE
     /// `mouser shell-integration pwsh | Out-String | Invoke-Expression`.
+    /// Or let Mouser add that: `mouser shell-integration --install` (the shell
+    /// from $SHELL) writes a marked block to ~/.zshrc, ~/.bashrc,
+    /// fish/conf.d/mouser.fish or $PROFILE, keeping a .mouser-bak backup;
+    /// `--uninstall` takes it out again (docs/cli.md §Shell integration).
+    #[command(group(clap::ArgGroup::new("op").args(["install", "uninstall"])))]
     ShellIntegration {
-        /// zsh, bash, fish or pwsh (powershell).
-        shell: String,
+        /// zsh, bash, fish or pwsh (powershell). With --install / --uninstall,
+        /// defaults to the shell in $SHELL (PowerShell on Windows).
+        #[arg(required_unless_present_any = ["install", "uninstall"])]
+        shell: Option<String>,
+        /// Add the block that loads the integration to the shell's startup file
+        /// (again: nothing changes; an older block is updated).
+        #[arg(long, conflicts_with = "uninstall")]
+        install: bool,
+        /// Remove the block --install added (a line you wrote yourself is left alone).
+        #[arg(long)]
+        uninstall: bool,
+        /// Edit this file instead of the shell's usual startup file.
+        #[arg(long, value_name = "FILE", requires = "op")]
+        rc: Option<PathBuf>,
+        /// Show what would change without writing anything.
+        #[arg(long, requires = "op")]
+        dry_run: bool,
     },
     /// ssh, with TERM=mouser kept where the host knows it and xterm-256color
     /// where it does not (the same as the `ssh` Mouser puts on its tabs' PATH);
@@ -1077,7 +1097,13 @@ fn main() -> Result<()> {
         println!("wrote {n} man pages to {}", out.display());
         return Ok(());
     }
-    if let Some(Command::ShellIntegration { shell }) = &cli.command {
+    if let Some(Command::ShellIntegration { shell, install, uninstall, rc, dry_run }) = &cli.command {
+        use mouser_app::shell_install::{Op, run};
+        if *install || *uninstall {
+            let op = if *install { Op::Install } else { Op::Uninstall };
+            return run(op, shell.as_deref(), rc.clone(), *dry_run, &mut std::io::stdout());
+        }
+        let shell = shell.as_deref().unwrap_or_default();
         match mouser_core::shell_integration::script(shell) {
             Some(t) => {
                 print!("{t}");

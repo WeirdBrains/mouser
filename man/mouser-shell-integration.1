@@ -4,24 +4,36 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH NAME
-mouser\-shell\-integration \- Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
+mouser\-shell\-integration \- Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`. Or let Mouser add that: `mouser shell\-integration \-\-install` (the shell from $SHELL) writes a marked block to ~/.zshrc, ~/.bashrc, fish/conf.d/mouser.fish or $PROFILE, keeping a .mouser\-bak backup; `\-\-uninstall` takes it out again (docs/cli.md §Shell integration)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
-\fBmouser shell\-integration\fR [\fB\-h\fR|\fB\-\-help\fR] <\fISHELL\fR> 
+\fBmouser shell\-integration\fR [\fB\-\-install\fR] [\fB\-\-uninstall\fR] [\fB\-\-rc\fR] [\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fISHELL\fR] 
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
-Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`
+Print the shell integration for zsh, bash, fish or PowerShell (directory reports and the silent cd behind commander\*(Aqs sync (`s` while it has the keyboard): nothing typed, nothing in the history; fuzzball docs/shell.md). Load it from your rc file: `eval "$(mouser shell\-integration zsh)"`, `eval "$(mouser shell\-integration bash)"`, `mouser shell\-integration fish | source`, or in PowerShell\*(Aqs $PROFILE `mouser shell\-integration pwsh | Out\-String | Invoke\-Expression`. Or let Mouser add that: `mouser shell\-integration \-\-install` (the shell from $SHELL) writes a marked block to ~/.zshrc, ~/.bashrc, fish/conf.d/mouser.fish or $PROFILE, keeping a .mouser\-bak backup; `\-\-uninstall` takes it out again (docs/cli.md §Shell integration)
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
 .TP
+\fB\-\-install\fR
+Add the block that loads the integration to the shell\*(Aqs startup file (again: nothing changes; an older block is updated)
+.TP
+\fB\-\-uninstall\fR
+Remove the block \-\-install added (a line you wrote yourself is left alone)
+.TP
+\fB\-\-rc\fR \fI<FILE>\fR
+Edit this file instead of the shell\*(Aqs usual startup file
+.TP
+\fB\-\-dry\-run\fR
+Show what would change without writing anything
+.TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
 .TP
-<\fISHELL\fR>
-zsh, bash, fish or pwsh (powershell)
+[\fISHELL\fR]
+zsh, bash, fish or pwsh (powershell). With \-\-install / \-\-uninstall, defaults to the shell in $SHELL (PowerShell on Windows)
 .SH SEE ALSO
 \fBmouser\fR(1)
 .ie \n(.g .ds Aq \(aq
