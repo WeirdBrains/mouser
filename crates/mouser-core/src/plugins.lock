@@ -48,42 +48,42 @@ pCmRGr68OkfbRJXUDMTDytdRZN9ayNs2Ls8BfyKOkM1wcs3RI/TZXAws6baqODifTXJDfrOF85PLBGjB
 [[item]]
 name = "chat"
 kind = "plugin"
-version = "0.1.4"
+version = "0.1.5"
 [item.assets.aarch64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.4/mouser-chat-0.1.4-aarch64-apple-darwin.tar.gz"
-sha256 = "1dbff8a4af9b6cec2e7705053ffeee3ec5c455f9fb44fc1814cb88dfef77fdf5"
-size = 1396768
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.5/mouser-chat-0.1.5-aarch64-apple-darwin.tar.gz"
+sha256 = "2f269eb5084b7f9165b8fa15fa3a0776f5f834823964a5f66979a4f5d3c6cb05"
+size = 1396819
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YZ9vQe5m8r5NIuebxTHDYCaF62bysK5Nuki03GtwzUR2R5K+H8tNzZGDVP9cnTLfeJzek7xL34/wPOaC9vCI0QA=
-trusted comment: mouser-chat-0.1.4-aarch64-apple-darwin.tar.gz mouser-chat v0.1.4
-h+oDH3nfTxoPamnvZXTyPXMkA7ncbAbYvBNGku09D7bxdXn8XM8TE2lIVAJoTF6AS1EKNf2wDrulzoBvvtRZAA==
+RURGkX90IBe6YcCUnpoTiWLtJHYNarnyThnzpZMn6/HYA55BYgRBFvuR77LlA6Talegt2McG619crtUdNsIpXk439cRy/RCNOQE=
+trusted comment: mouser-chat-0.1.5-aarch64-apple-darwin.tar.gz mouser-chat v0.1.5
+eTUjSdtSbCxgiS7BHovdvNRL8/turS4eH7+wb9IkXe3gdv7d232VZLauT/bNtpl9PKBZSsh4I043O7J+u1fEDg==
 '''
 [item.assets.x86_64-apple-darwin]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.4/mouser-chat-0.1.4-x86_64-apple-darwin.tar.gz"
-sha256 = "650af51ae01467a0e6375f05809a9ebb8b94adc477fae79bc6e8e87d1545c2ba"
-size = 1421698
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.5/mouser-chat-0.1.5-x86_64-apple-darwin.tar.gz"
+sha256 = "99c056ddfa5e5bdeb72dc26fbad6f554c3f306d74876c32c92f31eb28bc88caf"
+size = 1421827
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YfgeyX+XAnsjghNly/TIey+Q1YPI3CMD271eHVIOQ72agDfTnYOwpZDxC6I4Jq48mPW6pKb9WTUXFkKAjX0qBQU=
-trusted comment: mouser-chat-0.1.4-x86_64-apple-darwin.tar.gz mouser-chat v0.1.4
-q+im6wm9lWz1CB3z6sflBhkf+igEiidcC57X6DE4TFlxdNwRMR0MG1QxosbQ83N27nKB9t8HAM4kbrr5hQYoBQ==
+RURGkX90IBe6YcEDuOoOvi/5A6lB8DO3PYhlqIhFq/+eukL+RiavodPc/xSQSbahmrZXOh8ONeyQzlUIMaHM5bK24RW2xFywLA8=
+trusted comment: mouser-chat-0.1.5-x86_64-apple-darwin.tar.gz mouser-chat v0.1.5
+R4AMmPQEgyfKbCm+hmHg4Qq1yCKomPIrg+u2J9lA4hYD2Gds8tez1zXpvNisp2n2mriJPeXoI6iQPmt1dkUIBw==
 '''
 [item.assets.x86_64-pc-windows-msvc]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.4/mouser-chat-0.1.4-x86_64-pc-windows-msvc.tar.gz"
-sha256 = "ab8bac1f0184d644ebc459bfccded511bb880455859598a15f240fd2e7b06c06"
-size = 1273216
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.5/mouser-chat-0.1.5-x86_64-pc-windows-msvc.tar.gz"
+sha256 = "c21f181c2de32281e5ce6c142d8e858f932a15585194d26b448bfd903495c7ec"
+size = 1273020
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YV9MIyLbKyufug/uh/UlQipnpVgEdyz9wUNLgISyZDtIlfZ7g5DsvDP7mWTDlEc2gko/7BLpg143EGhF6ShAHAc=
-trusted comment: mouser-chat-0.1.4-x86_64-pc-windows-msvc.tar.gz mouser-chat v0.1.4
-G5/D34T5jDpz9Ua87qUwwrkOxP/kibaQxmB3GDRdXHvLxh1zI+O0+/G/1qnofDblAfl2SowNr3ByPxOV6y9nBg==
+RURGkX90IBe6YRIpW3hjClAwUE5kX81l62bsYNvkLA7fz7w2q09rpHdtyofbVGvwek3LXVql0dcGG/niPtQ5veUBpycVY4+R/wk=
+trusted comment: mouser-chat-0.1.5-x86_64-pc-windows-msvc.tar.gz mouser-chat v0.1.5
+ZEHAF7zW2aZRGw97ugXwxWX9eFmJgnuHQT8VE6xlrvp4P7bArZS79FbrK3u+eu7pBY038ItqQAvwkCzABVG6Dg==
 '''
 [item.assets.x86_64-unknown-linux-gnu]
-url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.4/mouser-chat-0.1.4-x86_64-unknown-linux-gnu.tar.gz"
-sha256 = "fce11307599eea1fb21cbeb2cdc2bbc1d6ac35008a0182711922997e40725c34"
-size = 1587764
+url = "https://github.com/WeirdBrains/mouser-chat/releases/download/v0.1.5/mouser-chat-0.1.5-x86_64-unknown-linux-gnu.tar.gz"
+sha256 = "e7c73ab594f4e564bd7f37222002993dd909a85cff7aebd1b070f190869534b3"
+size = 1587817
 minisig = '''untrusted comment: signature from minisign secret key
-RURGkX90IBe6YZjcbSVhv/8HG4r+3CL7Q3+IMvq6UvaKXwzqJnaxZ6kJBDPvonSbc2JdH90MtlgORbj2R+fu7cpu5+RVnt+HwQM=
-trusted comment: mouser-chat-0.1.4-x86_64-unknown-linux-gnu.tar.gz mouser-chat v0.1.4
-1d6BfLLsA8o4I6mv9U6FWHuJ1gO+quhTWiiHwXC8snufXZsmB6SC+IXCbd0BJwRzMPcidZ35Htkpl7gw4IPSAw==
+RURGkX90IBe6YS2VyKrH+K4UJ8UxL8JaosTBpZuj4YubQ4xKNMZLFeQlv/jMfjLl6+2siO+lRp0/XRQf0UZnS6m3UBOEbgFkYA8=
+trusted comment: mouser-chat-0.1.5-x86_64-unknown-linux-gnu.tar.gz mouser-chat v0.1.5
+aa7LvDQFGXpohJFLXXMNRrd14Unf7OcjcAGu8WIEyTawdmS3cX+X8JyJetbJ2ZhW/M3+mMwoeianJhfsBdhmDg==
 '''
 
 [[item]]
