@@ -502,7 +502,8 @@ mod tests {
     #[test]
     fn paths_with_spaces_and_quotes_work() {
         let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("my \"dot\" files $HOME 'x'");
+        // `"` can't be in a Windows file name; spaces, `$` and `'` can.
+        let sub = dir.path().join(if cfg!(windows) { "my dot files $HOME 'x'" } else { "my \"dot\" files $HOME 'x'" });
         std::fs::create_dir(&sub).unwrap();
         let rc = sub.join(".zshrc");
         std::fs::write(&rc, "x\n").unwrap();
@@ -555,6 +556,7 @@ mod tests {
         assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o640);
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_installed_line_loads_the_integration_in_a_real_shell() {
         // bash and zsh, when present: the block evals `mouser shell-integration`
