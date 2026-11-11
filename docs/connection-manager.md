@@ -14,7 +14,8 @@ UI
   and restored at startup (fresh install: collapsed strip). `MOUSER_OPEN_SIDEBAR=1` forces it
   open for one run without overwriting the saved state.
 - Each category has an Add action (command-mode: `:add-ssh`, `:add-waypipe`, `:add-tunnel`, `:add-x11`).
-- Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`).
+- Saved connections can be launched (`:connect <name>`), edited (`:edit-conn <name>`) and deleted (`:del-conn <name>`). The delete question defaults to yes: Enter (or `:yes`)
+  deletes, Esc (or `:no`) cancels.
 
 SSH hosts come from `~/.ssh/config`
 - The SSH category lists every concrete `Host` alias in `~/.ssh/config` and the files it `Include`s

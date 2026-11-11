@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed
+
+- Yes/no questions default to yes (`[Y/n]`): `mouser plugin` / `mouser engine` `install` and `update` (`Install?`), `mouser model local download` and `mouser model hf install` (`Download it?`), and deleting a saved connection (Enter in its dialog, or Enter / `:yes` after `:del-conn`). `n` or `no` says no; end of input, a read error or no terminal still says no (`--yes` for scripts). Approvals with more choices (allow once / always / deny) are unchanged. See docs/cli.md §Questions.
+
 ### Fixed
 
 - Pressing Shift (or Ctrl, Alt, Super, or a lock key) on its own no longer scrolls a scrolled-back terminal to the bottom, so you can hold Shift to extend a selection or start Ctrl+Shift+C without losing your place; typing still goes to the bottom.

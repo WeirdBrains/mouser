@@ -36,6 +36,13 @@ command and environment variable is also in the man pages (`man mouser`,
 `mouser help COMMAND` (for example `mouser help model add`) prints that command's
 usage when no guide has that name; `mouser COMMAND --help` always does.
 
+## Questions
+
+A yes/no question on the terminal ends in `[Y/n]`: Enter, `y` or `yes` is yes; `n`,
+`no` or anything else is no. No answer is never yes: end of input, a read error or
+no terminal at all cancels (pass `--yes` to say yes from a script). Approvals that
+offer more than yes and no (allow once, always, deny) keep their own choices.
+
 ## Environment
 
 | Variable | What it does |

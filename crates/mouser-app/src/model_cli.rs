@@ -170,11 +170,7 @@ fn ask_yes(lines: &[String], out: &mut dyn Write) -> Result<bool> {
     if !std::io::stdin().is_terminal() {
         bail!("not downloading: confirm on a terminal, or pass --yes");
     }
-    write!(out, "Download it? [y/N] ")?;
-    out.flush()?;
-    let mut a = String::new();
-    std::io::stdin().read_line(&mut a)?;
-    Ok(matches!(a.trim(), "y" | "Y" | "yes" | "Yes"))
+    Ok(crate::ask::yes("Download it?", &mut std::io::stdin().lock(), out))
 }
 
 fn run_local(a: &LocalAction, out: &mut dyn Write) -> Result<()> {

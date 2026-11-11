@@ -1,4 +1,5 @@
 //! Library parts of the `mouser` binary that are tested on their own.
+pub mod ask;
 pub mod defterm_cli;
 pub mod engine_cli;
 pub mod help;

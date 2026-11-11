@@ -166,7 +166,7 @@ The chat picker's local rows (`esc :a`) do the same as `enable`.
 
 ```sh
 mouser model local                 # engine, server, models dir, what is downloaded
-mouser model local download        # shows the size and asks; --yes skips the question
+mouser model local download        # shows the size and asks [Y/n]; --yes skips the question
 mouser model local download gemma-4-e4b
 mouser model local delete gemma-4-e2b
 mouser model local dir /mnt/big/models   # or MOUSER_MODELS_DIR=…; --clear for the default
@@ -270,7 +270,8 @@ mouser model test gemma-local/Qwen2.5-0.5B-Instruct-Q4_K_M
   GGUF's chat template is rendered by minijinja, a sandboxed template engine.
 - **Consent:** `install` (and the chat's **Install**) shows the repository,
   quantization, size, source, folder and license and downloads only after you
-  agree; `--yes` skips the question. Gated models are refused (they need a
+  agree (`Download it? [Y/n]`: Enter or `y` downloads, `n` cancels; no
+  answer or no terminal cancels); `--yes` skips the question. Gated models are refused (they need a
   Hugging Face login, which Mouser doesn't support yet).
 - **Download:** to `<models dir>/hf/OWNER--NAME/`, resuming a `.part` file with
   HTTP ranges, cancellable (Ctrl+C, or **cancel** in the chat) and checked

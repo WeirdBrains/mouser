@@ -1298,9 +1298,18 @@ fn main() -> Result<()> {
                         }
                     } else if state.look.panel.is_some() {
                         state.look.key(&bytes);
-                    } else if bytes == b"\x1b" && (state.pending_edit.is_some() || state.pending_delete.is_some()) {
-                        state.pending_edit = None;
-                        state.pending_delete = None;
+                    } else if let Some(k) = delete_modal_key(state.pending_delete.is_some(), state.pending_edit.is_some(), &bytes) {
+                        match k {
+                            ModalKey::Confirm => {
+                                if let Some(name) = state.pending_delete.take() {
+                                    let _ = delete_connection(&name);
+                                }
+                            }
+                            ModalKey::Cancel => {
+                                state.pending_edit = None;
+                                state.pending_delete = None;
+                            }
+                        }
                     } else if mode_key(&mut state, &bytes, &parser, &writer, &app_state) {
                         // Taken by the mode system (esc :, the mode's keys).
                     } else if bytes == b"\x1b[21~" {
@@ -2512,8 +2521,26 @@ fn run_in_shell(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<Ap
     apply_mode_effect(&mut st, mouser_render::modes::Effect::Run(cmd.to_string()), writer);
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ModalKey {
+    Confirm,
+    Cancel,
+}
+
+/// A key while the connection modal is open. "Delete …?" defaults to yes:
+/// Enter deletes; Esc cancels it (and the edit form). Other keys pass on.
+fn delete_modal_key(deleting: bool, editing: bool, bytes: &[u8]) -> Option<ModalKey> {
+    match bytes {
+        b"\r" | b"\n" if deleting && !editing => Some(ModalKey::Confirm),
+        b"\x1b" if deleting || editing => Some(ModalKey::Cancel),
+        _ => None,
+    }
+}
+
 fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<AppState>>) {
     let trimmed = cmd.trim();
+    // A pending "delete …? [Y/n]" takes Enter as yes.
+    let trimmed = if trimmed.is_empty() && app_state.lock().unwrap().pending_delete.is_some() { "yes" } else { trimmed };
     if trimmed.is_empty() {
         return;
     }
@@ -2566,7 +2593,7 @@ fn handle_command(cmd: &str, writer: &tabs::ActiveWriter, app_state: &Arc<Mutex<
         st.pending_delete = Some(name.to_string());
         drop(st);
         let mut w = writer.clone();
-        let _ = w.write_all(format!("\r\n[mouser] confirm delete '{name}' with :yes or cancel with :no\r\n").as_bytes());
+        let _ = w.write_all(format!("\r\n[mouser] delete '{name}'? [Y/n] Enter or :yes deletes, :no cancels\r\n").as_bytes());
     } else if trimmed == "yes" || trimmed == ":yes" {
         let name_opt = app_state.lock().unwrap().pending_delete.take();
         if let Some(name) = name_opt {
@@ -3294,6 +3321,17 @@ fn mode_image_draw(m: &mouser_render::modes::ModeImage, top: i32) -> mouser_rend
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delete_confirmation_defaults_to_yes() {
+        assert_eq!(delete_modal_key(true, false, b"\r"), Some(ModalKey::Confirm), "Enter deletes");
+        assert_eq!(delete_modal_key(true, false, b"\n"), Some(ModalKey::Confirm));
+        assert_eq!(delete_modal_key(true, false, b"\x1b"), Some(ModalKey::Cancel), "Esc cancels");
+        assert_eq!(delete_modal_key(false, true, b"\x1b"), Some(ModalKey::Cancel));
+        assert_eq!(delete_modal_key(false, true, b"\r"), None, "Enter in the edit form is the form's");
+        assert_eq!(delete_modal_key(false, false, b"\r"), None, "nothing open: Enter goes to the shell");
+        assert_eq!(delete_modal_key(true, false, b"x"), None);
+    }
 
     #[test]
     fn esc_after_closing_the_viewer_is_not_held_for_the_shell() {

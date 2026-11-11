@@ -197,7 +197,8 @@ fn progress() -> impl FnMut(u64, Option<u64>) -> bool {
     }
 }
 
-/// The card on the terminal: `y` installs; without a terminal it needs --yes.
+/// The card on the terminal: Enter or `y` installs, `n` cancels; without a
+/// terminal it needs --yes.
 fn confirm<'a>(f: &'a Flags, out: &'a mut dyn Write) -> impl FnMut(&install::Card) -> bool + 'a {
     move |c: &install::Card| {
         if f.yes {
@@ -210,11 +211,7 @@ fn confirm<'a>(f: &'a Flags, out: &'a mut dyn Write) -> impl FnMut(&install::Car
             let _ = writeln!(out, "(not a terminal: add --yes to install)");
             return false;
         }
-        let _ = write!(out, "Install? [y/N] ");
-        let _ = out.flush();
-        let mut s = String::new();
-        let _ = std::io::stdin().read_line(&mut s);
-        s.trim().eq_ignore_ascii_case("y") || s.trim().eq_ignore_ascii_case("yes")
+        crate::ask::yes("Install?", &mut std::io::stdin().lock(), out)
     }
 }
 
