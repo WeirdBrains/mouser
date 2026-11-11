@@ -50,9 +50,11 @@ jobs:
 
       - name: Install Linux deps
         if: runner.os == 'Linux'
+        # a stuck apt fails the step instead of hanging the job (2026-11-11)
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libjack-jackd2-dev pkg-config cmake clang libclang-dev libvulkan-dev spirv-headers patchelf desktop-file-utils appstream libxml2-utils
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install -y libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libjack-jackd2-dev pkg-config cmake clang libclang-dev libvulkan-dev spirv-headers patchelf desktop-file-utils appstream libxml2-utils
 
       # Linux builds on Ubuntu 22.04 (glibc 2.35) so the binary runs on older
       # distributions. 22.04 has no glslc package and old Vulkan headers, so
