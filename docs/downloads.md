@@ -73,7 +73,8 @@ In this order; any failure stops that install and nothing else:
 
 Then a card shows the name, version, source, signer, the permissions it asks
 for and any warnings, with Install and Cancel (in a window it is a popup; on
-the CLI it is a `y/N` question, or `--yes`). Official items on first run
+the CLI it is `Install? [Y/n]`: Enter or `y` installs, `n` cancels, and no
+answer (end of input, no terminal) cancels; `--yes` skips it). Official items on first run
 don't ask. A local folder asks only when an update adds permissions. Every
 install, update and rollback goes to `$MOUSER_HOME/logs/plugins-audit.log`.
 
