@@ -920,7 +920,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     if let Some(on_event) = &hooks.on_key_event {
                         let legacy = key_bytes(&key_event, modifiers);
                         if let Some(input) = keys::kitty_input(&key_event, modifiers) {
-                            if key_event.state == ElementState::Pressed {
+                            // Shift (or Ctrl, Alt, Super) on its own leaves a
+                            // scrolled-back view and its selection alone.
+                            if key_event.state == ElementState::Pressed && keys::follows_bottom(&input) {
                                 scrolled_back = 0;
                             }
                             if legacy.is_some() {

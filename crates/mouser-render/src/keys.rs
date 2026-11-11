@@ -206,6 +206,14 @@ fn named(n: NamedKey, phys: Option<Phys>) -> Option<Func> {
 }
 
 /// Describe a winit key event for the kitty keyboard protocol.
+/// Whether a key press brings a scrolled-back view to the bottom (as typing
+/// does). Modifier and lock keys on their own don't: Shift held to extend a
+/// selection, or Ctrl before Ctrl+Shift+C, must leave the view and the
+/// selection where they are.
+pub fn follows_bottom(input: &KeyInput) -> bool {
+    !matches!(input.key, KeyCode::Func(Func::Modifier(_) | Func::CapsLock | Func::NumLock | Func::ScrollLock))
+}
+
 pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
     let phys = match ev.physical_key {
         PhysicalKey::Code(c) => Some(c),
@@ -325,6 +333,34 @@ pub fn text_for(text: Option<&str>, mods: u8) -> Option<String> {
         return None;
     }
     text.map(str::to_string).filter(|t| !t.is_empty() && !t.chars().any(char::is_control))
+}
+
+#[cfg(test)]
+mod bottom_tests {
+    use super::follows_bottom;
+    use mouser_core::kitty::{Func, KeyCode, KeyEventType, KeyInput, mods};
+
+    #[test]
+    fn modifier_and_lock_keys_alone_keep_the_view() {
+        // Left and right Shift, Ctrl, Alt, Super; Hyper, AltGr; press, repeat and release.
+        for code in [57441, 57447, 57442, 57448, 57443, 57449, 57444, 57450, 57445, 57453] {
+            for ev in [KeyEventType::Press, KeyEventType::Repeat, KeyEventType::Release] {
+                let k = KeyInput { event: ev, ..KeyInput::press(KeyCode::Func(Func::Modifier(code)), mods::SHIFT) };
+                assert!(!follows_bottom(&k), "{code} {ev:?}");
+            }
+        }
+        for f in [Func::CapsLock, Func::NumLock, Func::ScrollLock] {
+            assert!(!follows_bottom(&KeyInput::press(KeyCode::Func(f), 0)));
+        }
+    }
+
+    #[test]
+    fn typing_still_goes_to_the_bottom() {
+        assert!(follows_bottom(&KeyInput::press(KeyCode::Char('a'), 0)));
+        assert!(follows_bottom(&KeyInput::press(KeyCode::Char('a'), mods::SHIFT)));
+        assert!(follows_bottom(&KeyInput::press(KeyCode::Func(Func::Enter), 0)));
+        assert!(follows_bottom(&KeyInput::press(KeyCode::Char('c'), mods::CTRL)));
+    }
 }
 
 #[cfg(test)]
