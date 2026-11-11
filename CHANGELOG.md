@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-11
+
 ### Added
 
 - `mouser model hf search` shows each model's download size (smallest–largest quantization, split files summed, `unknown` when the Hub gives none), from file metadata only with bounded requests and time.
@@ -11,6 +13,7 @@
 - Chat 0.1.5 (pinned and installed by this Mouser; existing lock installs update on start) with the model picker fix below. Published: mouser-chat 0.1.5 on crates.io and as a signed release.
 - Arch: every release now publishes `mouser-bin` to TAUR (`pkg.taur.weirdbrains.com`, org WeirdBrains) with `taurctl`; the committed `.SRCINFO` now lists all of the PKGBUILD's dependencies.
 - Yes/no questions default to yes (`[Y/n]`): `mouser plugin` / `mouser engine` `install` and `update` (`Install?`), `mouser model local download` and `mouser model hf install` (`Download it?`), and deleting a saved connection (Enter in its dialog, or Enter / `:yes` after `:del-conn`). `n` or `no` says no; end of input, a read error or no terminal still says no (`--yes` for scripts). Approvals with more choices (allow once / always / deny) are unchanged. See docs/cli.md §Questions.
+- Official plugins: chat 0.1.5 (the model picker fix) on crates.io and as a signed release; commander 0.1.5 and preferences 0.1.2 unchanged.
 
 ### Fixed
 
