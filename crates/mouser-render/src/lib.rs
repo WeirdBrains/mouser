@@ -866,79 +866,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         }
                         return;
                     }
-                    if let (Some(delta), Some(on_act)) = (font_zoom_key(&key_event, modifiers), &hooks.on_ui_action) {
-                        (on_act)(ui::UiAction::FontSize(delta));
-                        return;
-                    }
-                    if let (Some(act), Some(on_act)) = (tab_key(&key_event, modifiers), &hooks.on_ui_action) {
-                        scrolled_back = 0;
-                        on_act(act);
-                        return;
-                    }
-                    // Ctrl+Shift+C/V, and Cmd+C/V on macOS.
-                    let clip_mods = (modifiers.control_key() && modifiers.shift_key())
-                        || (cfg!(target_os = "macos") && modifiers.super_key() && !modifiers.control_key());
-                    if key_event.state == ElementState::Pressed
-                        && clip_mods
-                        && let Key::Character(c) = &key_event.logical_key
-                    {
-                        if c.eq_ignore_ascii_case("v")
-                            && let Some(paste) = &hooks.on_paste
-                        {
-                            scrolled_back = 0;
-                            paste();
-                            return;
-                        }
-                        if c.eq_ignore_ascii_case("c")
-                            && let Some(copy) = &hooks.on_copy
-                        {
-                            copy();
-                            return;
-                        }
-                    }
-                    // Shift+Insert: the primary selection on Linux (like xterm, foot,
-                    // alacritty), the clipboard elsewhere.
-                    if key_event.state == ElementState::Pressed
-                        && modifiers.shift_key()
-                        && !modifiers.control_key()
-                        && key_event.logical_key == Key::Named(NamedKey::Insert)
-                    {
-                        let hook = if cfg!(target_os = "linux") { hooks.on_paste_primary.as_ref() } else { hooks.on_paste.as_ref() };
-                        if let Some(paste) = hook {
-                            scrolled_back = 0;
-                            paste();
-                            return;
-                        }
-                    }
-                    let clear_selection = || {
-                        if key_event.state == ElementState::Pressed
-                            && let Some(on_select) = &hooks.on_select
-                        {
-                            on_select(SelectEvent::Clear);
-                        }
-                    };
-                    if let Some(on_event) = &hooks.on_key_event {
-                        let legacy = key_bytes(&key_event, modifiers);
-                        if let Some(input) = keys::kitty_input(&key_event, modifiers) {
-                            // Shift (or Ctrl, Alt, Super) on its own leaves a
-                            // scrolled-back view and its selection alone.
-                            if key_event.state == ElementState::Pressed && keys::follows_bottom(&input) {
-                                scrolled_back = 0;
-                            }
-                            if legacy.is_some() {
-                                clear_selection();
-                            }
-                            on_event(legacy, input, keys::fuzzball_event(&key_event, modifiers));
-                        } else if let Some(seq) = legacy {
-                            scrolled_back = 0;
-                            clear_selection();
-                            (hooks.on_key_bytes)(seq);
-                        }
-                    } else if let Some(seq) = key_bytes(&key_event, modifiers) {
-                        scrolled_back = 0;
-                        clear_selection();
-                        (hooks.on_key_bytes)(seq);
-                    }
+                    route_key(&keys::Keystroke::of(&key_event), modifiers, &hooks, &mut scrolled_back);
                 }
                 WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                     scale = scale_factor;
@@ -1202,14 +1130,91 @@ fn winit_button(b: winit::event::MouseButton) -> Option<mouser_core::input::Mous
     }
 }
 
+/// A key the window got (after an engine drag): font zoom, tabs, clipboard,
+/// then the terminal. `scrolled_back` is the view's scroll position; keys
+/// that type something return it to the live screen, modifier keys alone
+/// (Shift to extend a selection, Ctrl+Shift for copy) leave it and the
+/// selection alone.
+pub fn route_key(key_event: &keys::Keystroke, modifiers: ModifiersState, hooks: &RenderHooks, scrolled_back: &mut usize) {
+    if let (Some(delta), Some(on_act)) = (font_zoom_key(key_event, modifiers), &hooks.on_ui_action) {
+        (on_act)(ui::UiAction::FontSize(delta));
+        return;
+    }
+    if let (Some(act), Some(on_act)) = (tab_key(key_event, modifiers), &hooks.on_ui_action) {
+        *scrolled_back = 0;
+        on_act(act);
+        return;
+    }
+    // Ctrl+Shift+C/V, and Cmd+C/V on macOS.
+    let clip_mods =
+        (modifiers.control_key() && modifiers.shift_key()) || (cfg!(target_os = "macos") && modifiers.super_key() && !modifiers.control_key());
+    if key_event.pressed()
+        && clip_mods
+        && let Key::Character(c) = &key_event.logical
+    {
+        if c.eq_ignore_ascii_case("v")
+            && let Some(paste) = &hooks.on_paste
+        {
+            *scrolled_back = 0;
+            paste();
+            return;
+        }
+        if c.eq_ignore_ascii_case("c")
+            && let Some(copy) = &hooks.on_copy
+        {
+            copy();
+            return;
+        }
+    }
+    // Shift+Insert: the primary selection on Linux (like xterm, foot,
+    // alacritty), the clipboard elsewhere.
+    if key_event.pressed() && modifiers.shift_key() && !modifiers.control_key() && key_event.logical == Key::Named(NamedKey::Insert) {
+        let hook = if cfg!(target_os = "linux") { hooks.on_paste_primary.as_ref() } else { hooks.on_paste.as_ref() };
+        if let Some(paste) = hook {
+            *scrolled_back = 0;
+            paste();
+            return;
+        }
+    }
+    let clear_selection = || {
+        if key_event.pressed()
+            && let Some(on_select) = &hooks.on_select
+        {
+            on_select(SelectEvent::Clear);
+        }
+    };
+    if let Some(on_event) = &hooks.on_key_event {
+        let legacy = key_bytes(key_event, modifiers);
+        if let Some(input) = keys::kitty_input(key_event, modifiers) {
+            // Shift (or Ctrl, Alt, Super) on its own leaves a
+            // scrolled-back view and its selection alone.
+            if key_event.pressed() && keys::follows_bottom(&input) {
+                *scrolled_back = 0;
+            }
+            if legacy.is_some() {
+                clear_selection();
+            }
+            on_event(legacy, input, keys::fuzzball_event(key_event, modifiers));
+        } else if let Some(seq) = legacy {
+            *scrolled_back = 0;
+            clear_selection();
+            (hooks.on_key_bytes)(seq);
+        }
+    } else if let Some(seq) = key_bytes(key_event, modifiers) {
+        *scrolled_back = 0;
+        clear_selection();
+        (hooks.on_key_bytes)(seq);
+    }
+}
+
 /// Tab shortcuts: Ctrl+Shift+T new, Ctrl+Shift+W close, Ctrl+Tab /
 /// Ctrl+Shift+Tab cycle, Alt+1..9 jump.
-pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiAction> {
+pub fn tab_key(ev: &keys::Keystroke, m: ModifiersState) -> Option<ui::UiAction> {
     if ev.state != ElementState::Pressed {
         return None;
     }
     let (ctrl, shift, alt) = (m.control_key(), m.shift_key(), m.alt_key());
-    match &ev.logical_key {
+    match &ev.logical {
         Key::Named(NamedKey::Tab) if ctrl && !alt => Some(ui::UiAction::CycleTab(if shift { -1 } else { 1 })),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("t") => Some(ui::UiAction::NewTab),
         Key::Character(c) if ctrl && shift && !alt && c.eq_ignore_ascii_case("w") => Some(ui::UiAction::CloseActiveTab),
@@ -1229,7 +1234,7 @@ pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiA
                 KeyCode::Digit8,
                 KeyCode::Digit9,
             ];
-            match ev.physical_key {
+            match ev.physical {
                 PhysicalKey::Code(k) => codes.iter().position(|c| *c == k).map(ui::UiAction::SelectTab),
                 _ => None,
             }
@@ -1239,11 +1244,11 @@ pub fn tab_key(ev: &winit::event::KeyEvent, m: ModifiersState) -> Option<ui::UiA
 }
 
 /// Ctrl+= / Ctrl++ (+1), Ctrl+- (-1), Ctrl+0 (reset).
-pub fn font_zoom_key(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Option<i8> {
+pub fn font_zoom_key(key_event: &keys::Keystroke, mods: ModifiersState) -> Option<i8> {
     if key_event.state != ElementState::Pressed || !mods.control_key() || mods.alt_key() {
         return None;
     }
-    match &key_event.logical_key {
+    match &key_event.logical {
         Key::Character(s) => zoom_for_char(s),
         _ => None,
     }
@@ -1260,11 +1265,11 @@ pub fn zoom_for_char(s: &str) -> Option<i8> {
 }
 
 /// Bytes to send to the PTY for a key press, xterm style.
-pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Option<Vec<u8>> {
+pub fn key_bytes(key_event: &keys::Keystroke, mods: ModifiersState) -> Option<Vec<u8>> {
     if key_event.state != ElementState::Pressed {
         return None;
     }
-    let seq: Vec<u8> = match &key_event.logical_key {
+    let seq: Vec<u8> = match &key_event.logical {
         Key::Named(NamedKey::Enter) => vec![b'\r'],
         Key::Named(NamedKey::Tab) if mods.shift_key() => b"\x1b[Z".to_vec(),
         Key::Named(NamedKey::Tab) => vec![b'\t'],
@@ -1299,7 +1304,7 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
         Key::Character(s) if !s.is_empty() => {
             // Kitty legacy text keys: Ctrl+Shift (or Super) combos have no
             // legacy form and go out as `CSI code ; mods u`.
-            let base = match winit::platform::modifier_supplement::KeyEventExtModifierSupplement::key_without_modifiers(key_event) {
+            let base = match key_event.unmodified.clone() {
                 Key::Character(b) => b.chars().next(),
                 _ => None,
             };
@@ -1327,7 +1332,7 @@ pub fn key_bytes(key_event: &winit::event::KeyEvent, mods: ModifiersState) -> Op
     if let Some(m) = modified_csi(&seq, mods) {
         return Some(m);
     }
-    if mods.alt_key() && !matches!(key_event.logical_key, Key::Named(NamedKey::Escape)) {
+    if mods.alt_key() && !matches!(key_event.logical, Key::Named(NamedKey::Escape)) {
         let mut v = vec![0x1b];
         v.extend(seq);
         return Some(v);
@@ -1392,5 +1397,170 @@ mod select_tests {
         assert_eq!(select_cell(PADDING as f64 + 15.0, PADDING as f64 + 45.0, cell, grid, PADDING), (1, 2, 0));
         assert_eq!(select_cell(5000.0, 0.0, cell, grid, PADDING + 30), (79, 0, -1));
         assert_eq!(select_cell(0.0, 9000.0, cell, grid, PADDING), (0, 23, 1));
+    }
+}
+
+#[cfg(test)]
+mod key_routing_tests {
+    //! The window's key routing (`route_key`, the same function the event loop
+    //! calls) against a scrolled-back view with a selection.
+    use super::*;
+    use std::sync::Mutex;
+    use winit::keyboard::{KeyCode as Phys, KeyLocation, PhysicalKey, SmolStr};
+
+    type Log = Arc<Mutex<Vec<String>>>;
+
+    fn hooks(log: &Log, kitty: bool) -> RenderHooks {
+        let l = log.clone();
+        let rec = move |s: String| l.lock().unwrap().push(s);
+        let (r1, r2, r3, r4, r5) = (rec.clone(), rec.clone(), rec.clone(), rec.clone(), rec.clone());
+        RenderHooks {
+            on_key_bytes: Arc::new(move |b| r1(format!("bytes {b:?}"))),
+            on_key_event: kitty
+                .then(|| -> KeyEventHook { Arc::new(move |legacy, k, _| r2(format!("key {:?} {:?} legacy={}", k.key, k.event, legacy.is_some()))) }),
+            get_images: None,
+            on_resize: Arc::new(|_, _, _, _| {}),
+            fetch_view: None,
+            get_cursor_shape: None,
+            on_mouse: None,
+            on_focus: None,
+            on_paste: Some(Arc::new(move || r3("paste".into()))),
+            on_select: Some(Arc::new(move |e| r4(format!("select {e:?}")))),
+            on_copy: Some(Arc::new(move || r5("copy".into()))),
+            on_paste_primary: None,
+            hold_frame: None,
+            get_title: None,
+            get_tabs: None,
+            fetch_lines: Arc::new(|_, _| (Vec::new(), 0)),
+            get_colors: Arc::new(|| Colors { bg: 0, fg: 0xffffff, cursor: None, accent: None }),
+            get_font: None,
+            get_cursor: None,
+            get_ui_model: None,
+            on_ui_action: None,
+            get_status: None,
+            should_exit: None,
+            set_waker: None,
+            on_engine: None,
+            on_window_size: None,
+        }
+    }
+
+    fn named(n: NamedKey, p: Phys, state: ElementState) -> keys::Keystroke {
+        let loc = if format!("{p:?}").ends_with("Right") { KeyLocation::Right } else { KeyLocation::Left };
+        keys::Keystroke {
+            logical: Key::Named(n),
+            unmodified: Key::Named(n),
+            physical: PhysicalKey::Code(p),
+            location: loc,
+            state,
+            repeat: false,
+            text: None,
+        }
+    }
+
+    fn ch(logical: &str, base: &str, p: Phys, text: Option<&str>) -> keys::Keystroke {
+        keys::Keystroke {
+            logical: Key::Character(SmolStr::new(logical)),
+            unmodified: Key::Character(SmolStr::new(base)),
+            physical: PhysicalKey::Code(p),
+            location: KeyLocation::Standard,
+            state: ElementState::Pressed,
+            repeat: false,
+            text: text.map(SmolStr::new),
+        }
+    }
+
+    const SCROLLED: usize = 40;
+
+    fn cleared(log: &Log) -> bool {
+        log.lock().unwrap().iter().any(|e| e == "select Clear")
+    }
+
+    #[test]
+    fn modifier_keys_alone_keep_the_scrolled_view_and_the_selection() {
+        use ElementState::{Pressed, Released};
+        let mods_for = |n: NamedKey, st: ElementState| -> ModifiersState {
+            if st == Released {
+                return ModifiersState::empty();
+            }
+            match n {
+                NamedKey::Shift => ModifiersState::SHIFT,
+                NamedKey::Control => ModifiersState::CONTROL,
+                NamedKey::Alt => ModifiersState::ALT,
+                _ => ModifiersState::SUPER,
+            }
+        };
+        let keys = [
+            (NamedKey::Shift, Phys::ShiftLeft),
+            (NamedKey::Shift, Phys::ShiftRight),
+            (NamedKey::Control, Phys::ControlLeft),
+            (NamedKey::Control, Phys::ControlRight),
+            (NamedKey::Alt, Phys::AltLeft),
+            (NamedKey::Alt, Phys::AltRight),
+            (NamedKey::Super, Phys::SuperLeft),
+            (NamedKey::Super, Phys::SuperRight),
+            (NamedKey::Meta, Phys::SuperLeft),
+        ];
+        for kitty in [true, false] {
+            for (n, p) in keys {
+                for st in [Pressed, Released] {
+                    let log = Log::default();
+                    let mut scrolled_back = SCROLLED;
+                    route_key(&named(n, p, st), mods_for(n, st), &hooks(&log, kitty), &mut scrolled_back);
+                    assert_eq!(scrolled_back, SCROLLED, "{n:?} {p:?} {st:?} kitty={kitty} scrolled the view");
+                    assert!(!cleared(&log), "{n:?} {p:?} {st:?} kitty={kitty} dropped the selection: {log:?}");
+                    if kitty {
+                        // The app still sees the modifier (kitty protocol reports it).
+                        assert_eq!(log.lock().unwrap().len(), 1, "{log:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ctrl_shift_c_copies_without_moving_the_view() {
+        for kitty in [true, false] {
+            let log = Log::default();
+            let h = hooks(&log, kitty);
+            let mut scrolled_back = SCROLLED;
+            let cs = ModifiersState::CONTROL | ModifiersState::SHIFT;
+            route_key(&named(NamedKey::Control, Phys::ControlLeft, ElementState::Pressed), ModifiersState::CONTROL, &h, &mut scrolled_back);
+            route_key(&named(NamedKey::Shift, Phys::ShiftLeft, ElementState::Pressed), cs, &h, &mut scrolled_back);
+            route_key(&ch("C", "c", Phys::KeyC, None), cs, &h, &mut scrolled_back);
+            route_key(&named(NamedKey::Shift, Phys::ShiftLeft, ElementState::Released), ModifiersState::CONTROL, &h, &mut scrolled_back);
+            route_key(&named(NamedKey::Control, Phys::ControlLeft, ElementState::Released), ModifiersState::empty(), &h, &mut scrolled_back);
+            assert_eq!(scrolled_back, SCROLLED, "kitty={kitty}");
+            let log = log.lock().unwrap();
+            assert!(log.iter().any(|e| e == "copy"), "{log:?}");
+            assert!(!log.iter().any(|e| e == "select Clear"), "{log:?}");
+        }
+    }
+
+    #[test]
+    fn typing_goes_back_to_the_bottom_and_drops_the_selection() {
+        for kitty in [true, false] {
+            for (k, m) in [
+                (ch("a", "a", Phys::KeyA, Some("a")), ModifiersState::empty()),
+                (ch("A", "a", Phys::KeyA, Some("A")), ModifiersState::SHIFT),
+                (named(NamedKey::Enter, Phys::Enter, ElementState::Pressed), ModifiersState::empty()),
+                (ch("c", "c", Phys::KeyC, None), ModifiersState::CONTROL),
+            ] {
+                let log = Log::default();
+                let mut scrolled_back = SCROLLED;
+                route_key(&k, m, &hooks(&log, kitty), &mut scrolled_back);
+                assert_eq!(scrolled_back, 0, "{k:?} kitty={kitty}");
+                assert!(cleared(&log), "{k:?} kitty={kitty}: {log:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn shift_insert_and_ctrl_shift_v_paste_at_the_bottom() {
+        let log = Log::default();
+        let mut scrolled_back = SCROLLED;
+        route_key(&ch("V", "v", Phys::KeyV, None), ModifiersState::CONTROL | ModifiersState::SHIFT, &hooks(&log, true), &mut scrolled_back);
+        assert_eq!(scrolled_back, 0);
+        assert_eq!(*log.lock().unwrap(), ["paste"]);
     }
 }

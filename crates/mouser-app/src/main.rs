@@ -1975,7 +1975,7 @@ fn connect_argv(ssh: &ssh_ui::SshUi, category: &ui::Category, name: &str) -> Opt
 /// Mouse over the terminal: report it when the app asked (Shift bypasses),
 /// open OSC 8 links on Ctrl+click, and turn the wheel into arrow keys on the
 /// alternate screen (xterm's alternateScroll).
-fn on_mouse(parser: &Mutex<tabs::Parser>, writer: &tabs::ActiveWriter, ev: mouser_core::input::MouseEvent) -> bool {
+fn on_mouse<W: Write + Clone>(parser: &Mutex<tabs::Parser>, writer: &W, ev: mouser_core::input::MouseEvent) -> bool {
     use mouser_core::input::{MouseButton, MouseKind};
     let pa = parser;
     let p = pa.lock().unwrap();
@@ -3347,6 +3347,35 @@ mod tests {
         assert_eq!(forced_shell("! theme dark"), Some("theme dark"));
         assert_eq!(forced_shell("!"), None);
         assert_eq!(forced_shell("theme dark"), None);
+    }
+
+    #[derive(Clone, Default)]
+    struct Sink(std::sync::Arc<Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn shift_drag_selects_even_when_the_app_takes_the_mouse() {
+        use mouser_core::input::{MouseButton, MouseEvent, MouseKind};
+        let sb = std::sync::Arc::new(mouser_core::scrollback::Scrollback::new(ScrollbackConfig::default()));
+        let mut p = tabs::Parser::new(Size { cols: 20, rows: 5 }, sb, SharedWriter(std::sync::Arc::new(Mutex::new(None))));
+        p.feed(b"\x1b[?1002h\x1b[?1006h"); // the app asks for button/drag reports (SGR)
+        let parser = Mutex::new(p);
+        let ev = |kind, shift| MouseEvent { kind, button: MouseButton::Left, col: 3, row: 1, px: 0, py: 0, shift, alt: false, ctrl: false };
+        let sink = Sink::default();
+        for kind in [MouseKind::Press, MouseKind::Motion, MouseKind::Release] {
+            assert!(!on_mouse(&parser, &sink, ev(kind, true)), "Shift+{kind:?} must reach the selection");
+        }
+        assert!(sink.0.lock().unwrap().is_empty(), "Shift+drag was reported to the app");
+        assert!(on_mouse(&parser, &sink, ev(MouseKind::Press, false)), "a plain press goes to the app");
+        assert!(!sink.0.lock().unwrap().is_empty());
     }
 
     #[test]

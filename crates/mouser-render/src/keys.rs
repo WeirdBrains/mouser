@@ -2,8 +2,41 @@
 
 use mouser_core::kitty::{Func, KeyCode, KeyEventType, KeyInput, mods};
 use winit::event::{ElementState, KeyEvent};
+use winit::keyboard::SmolStr;
 use winit::keyboard::{Key, KeyCode as Phys, KeyLocation, ModifiersState, NamedKey, PhysicalKey};
 use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+
+/// The parts of a winit key event the key routing reads. winit's `KeyEvent`
+/// can't be built outside winit, so tests drive the routing with this.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Keystroke {
+    pub logical: Key,
+    /// The key with no modifiers applied (`key_without_modifiers`).
+    pub unmodified: Key,
+    pub physical: PhysicalKey,
+    pub location: KeyLocation,
+    pub state: ElementState,
+    pub repeat: bool,
+    pub text: Option<SmolStr>,
+}
+
+impl Keystroke {
+    pub fn of(ev: &KeyEvent) -> Self {
+        Keystroke {
+            logical: ev.logical_key.clone(),
+            unmodified: ev.key_without_modifiers(),
+            physical: ev.physical_key,
+            location: ev.location,
+            state: ev.state,
+            repeat: ev.repeat,
+            text: ev.text.clone(),
+        }
+    }
+
+    pub fn pressed(&self) -> bool {
+        self.state == ElementState::Pressed
+    }
+}
 
 /// Protocol modifier bits for winit's modifier state.
 pub fn mod_bits(m: ModifiersState) -> u8 {
@@ -214,8 +247,8 @@ pub fn follows_bottom(input: &KeyInput) -> bool {
     !matches!(input.key, KeyCode::Func(Func::Modifier(_) | Func::CapsLock | Func::NumLock | Func::ScrollLock))
 }
 
-pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
-    let phys = match ev.physical_key {
+pub fn kitty_input(ev: &Keystroke, m: ModifiersState) -> Option<KeyInput> {
+    let phys = match ev.physical {
         PhysicalKey::Code(c) => Some(c),
         _ => None,
     };
@@ -226,11 +259,11 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
     };
     let mut bits = mod_bits(m);
     let key = if ev.location == KeyLocation::Numpad
-        && let Some(code) = keypad_nav_code(&ev.logical_key).or_else(|| phys.and_then(keypad_code))
+        && let Some(code) = keypad_nav_code(&ev.logical).or_else(|| phys.and_then(keypad_code))
     {
         KeyCode::Func(Func::Keypad(code))
     } else {
-        match &ev.logical_key {
+        match &ev.logical {
             Key::Named(NamedKey::Space) => KeyCode::Char(' '),
             Key::Named(n) => {
                 let f = named(*n, phys)?;
@@ -249,7 +282,7 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
                 KeyCode::Func(f)
             }
             Key::Character(_) => {
-                let base = match ev.key_without_modifiers() {
+                let base = match ev.unmodified.clone() {
                     Key::Character(s) => s.chars().next(),
                     _ => None,
                 }?;
@@ -260,7 +293,7 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
     };
     let (shifted, base) = match &key {
         KeyCode::Char(c) => {
-            let shifted = match &ev.logical_key {
+            let shifted = match &ev.logical {
                 Key::Character(s) if m.shift_key() => s.chars().next().filter(|s| s != c),
                 _ => None,
             };
@@ -275,9 +308,9 @@ pub fn kitty_input(ev: &KeyEvent, m: ModifiersState) -> Option<KeyInput> {
 }
 
 /// Describe a winit key event for Fuzzball keyboard mode (fuzzball docs/keyboard.md).
-pub fn fuzzball_event(ev: &KeyEvent, m: ModifiersState) -> Option<mouser_core::fuzzball::KeyEvent> {
+pub fn fuzzball_event(ev: &Keystroke, m: ModifiersState) -> Option<mouser_core::fuzzball::KeyEvent> {
     use mouser_core::fuzzball::{KeyAction, KeyName, mods as fm};
-    let PhysicalKey::Code(phys) = ev.physical_key else { return None };
+    let PhysicalKey::Code(phys) = ev.physical else { return None };
     // winit's physical key names are the W3C UI Events `code` values.
     let code = format!("{phys:?}");
     let action = match (ev.state, ev.repeat) {
@@ -298,7 +331,7 @@ pub fn fuzzball_event(ev: &KeyEvent, m: ModifiersState) -> Option<mouser_core::f
     if m.super_key() {
         bits |= fm::SUPER;
     }
-    let key = match ev.key_without_modifiers() {
+    let key = match ev.unmodified.clone() {
         Key::Character(s) => KeyName::Char(s.chars().next()?),
         Key::Named(NamedKey::Space) => KeyName::Char(' '),
         Key::Named(n) => {
