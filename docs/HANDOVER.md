@@ -68,6 +68,8 @@ Not yet done: IME events, lock-key state.
 2. Commit `release: vX.Y.Z`, create an annotated tag `vX.Y.Z`.
 3. `git push origin main --follow-tags`.
 4. Check CI with `gh run list` / `gh run watch`.
+5. After the Release workflow's `packaging:` commit: `git pull`, then
+   `python3 scripts/taur.py publish X.Y.Z` (required; uploads `mouser-bin` to TAUR).
 Releases happen only with the maintainer's explicit approval.
 
 ## Rules
@@ -93,8 +95,8 @@ Arch: `packaging/arch/mouser-git` (source) and `packaging/arch/mouser-bin` (rele
 binary) PKGBUILDs with `.SRCINFO`; details and AUR steps in `docs/release.md`. Both
 conflict with each other and replace older `mouser-bin` installs. The release workflow
 builds the `mouser-bin` `.pkg.tar.zst` and then commits real checksums via
-`packaging/arch/update-bin.sh`. AUR publishing waits: registration is closed and it needs
-the maintainer's account; the repo also needs a `LICENSE` file first (namcap error).
+`packaging/arch/update-bin.sh`. Each release uploads `mouser-bin` to TAUR
+(`scripts/taur.py publish`, docs/release.md §TAUR); the AUR itself is not used.
 All URLs now point at WeirdBrains/mouser; the app ID `io.github.m3talsmith.mouser`
 stays unless the maintainer decides otherwise.
 

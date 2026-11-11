@@ -53,6 +53,7 @@ Local steps (per AGENTS.md)
 
    It bumps the versions (docs-only: `--patch`; feature: default MINOR), folds `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section (America/New_York) with the message added, commits `release: vX.Y.Z` with the message as the body, creates the annotated tag `vX.Y.Z` and runs `git push origin main --follow-tags`. Pushing that tag is what starts the Release workflow.
 3. The Release workflow then pushes a `packaging:` commit: `Formula/mouser.rb` and `Casks/mouser.rb` from `scripts/packaging.py brew <ver> --assets dist`, and `packaging/arch/mouser-bin/` from `packaging/arch/update-bin.sh <ver>`. If that step fails, run the same by hand from the published release: `python3 scripts/packaging.py brew <ver> --release`, `packaging/arch/update-bin.sh <ver>`, commit `packaging: …`.
+4. **TAUR (required, every release).** When the `packaging:` commit is on `main`, on a machine with `taurctl` signed in: `git pull`, then `python3 scripts/taur.py publish <ver>` (try `--dry-run` first). It uploads `mouser-bin` to TAUR and checks TAUR now lists `<ver>-<pkgrel>`; see [TAUR](#taur). `release.py` prints this step after the push. A release isn't finished until it has run.
 
 Homebrew checksums (`scripts/packaging.py`)
 - `brew` hashes both macOS tarballs (formula) and both `.dmg`s (cask), checks each against its `.sha256`, and only then writes the two files. A missing asset, two different copies, or a mismatch exits 1 and writes nothing, so an empty `sha256 ""` can't be committed (1.4.x and 1.5.0 shipped empty ones: the workflow hashed `dist/<file>` while the artifacts sit in `dist/<artifact>/<file>`; fixed for 1.5.0 in a follow-up commit).
@@ -116,22 +117,55 @@ namcap PKGBUILD *.pkg.tar.zst
 Release workflow: the Arch job builds `mouser-bin` in an `archlinux:base-devel`
 container from this PKGBUILD with the freshly built binary and `git archive` of the tag.
 After the release is published, `packaging/arch/update-bin.sh <ver>` sets `pkgver` and
-real `sha256sums` (downloaded from the release) and rewrites `.SRCINFO`, and the bot
+real `sha256sums` (downloaded from the release) and regenerates `.SRCINFO` (`scripts/taur.py srcinfo`), and the bot
 commits it with the Homebrew update. Regenerate both `.SRCINFO` files on Arch with
 `packaging/arch/srcinfo.sh` after editing a PKGBUILD.
 
 Upgrading a machine after a release: download `mouser-bin-<ver>-1-x86_64.pkg.tar.zst` from the release with `curl -LO`, then `sudo pacman -U` the local file
 (same package name, so a plain upgrade).
 
-### Publishing to the AUR (not done yet)
-Needs the maintainer's personal AUR account (registration is closed at the moment):
-1. Add an SSH key to the AUR account, then
-   `git clone ssh://aur@aur.archlinux.org/mouser-git.git` (and `mouser-bin.git`).
-2. Copy `PKGBUILD` and `.SRCINFO` in, set the `# Maintainer:` line, commit, push.
-3. The repo's `LICENSE` (BSD-3-Clause) must ship in `/usr/share/licenses/<pkg>/`;
-   both PKGBUILDs install it.
-4. Per release, push the updated `mouser-bin` PKGBUILD/.SRCINFO to the AUR.
+### TAUR
 
+Every release publishes `packaging/arch/mouser-bin` to TAUR
+(`https://pkg.taur.weirdbrains.com`, org `WeirdBrains`) with `taurctl`:
+
+```bash
+git pull                                       # the Release workflow's packaging: commit
+python3 scripts/taur.py publish 1.7.0 --dry-run  # everything except the upload
+python3 scripts/taur.py publish 1.7.0
+```
+
+`publish` stops at the first failure, in this order:
+1. `check`: `pkgver` is the version, `pkgrel` a number, every `sha256sums` entry
+   a real sha256, the sources point at `v<ver>`, the `# Maintainer:` line is set,
+   and `.SRCINFO` is exactly what the PKGBUILD gives (also compared with
+   `makepkg --printsrcinfo` when makepkg is installed). TAUR rejects a stale `.SRCINFO`.
+2. Downloads the release tarballs and compares them with the `sha256sums`
+   (`--no-verify-release` skips this).
+3. Packs `mouser-bin-<ver>-taur.tar.gz` (`mouser-bin/PKGBUILD`, `mouser-bin/.SRCINFO`).
+4. `taurctl whoami` must succeed.
+5. `taurctl pkg upload ARCHIVE --org WeirdBrains --yes` (`--dry-run` prints it instead).
+6. `taurctl info mouser-bin --json` must report `<ver>-<pkgrel>`.
+
+Other commands: `taur.py check <ver>`, `taur.py srcinfo [DIR]` (what `update-bin.sh`
+uses, so CI on Ubuntu writes the same `.SRCINFO` as makepkg), `taur.py pack <ver>`.
+`--taurctl PATH` (or `TAURCTL`) picks another binary. Tests:
+`python3 scripts/test-taur.py` (a fake `taurctl`, no network; CI runs it).
+
+Auth and config (once per machine):
+- `taurctl config show` must show the server `https://pkg.taur.weirdbrains.com`
+  (`taurctl config set-server URL` otherwise).
+- `taurctl login m3talsmith`, a verified email, and membership of the
+  `WeirdBrains` org. `taurctl whoami` shows the account.
+- taurctl keeps the session token in `~/.config/taurctl/token` (mode 0600,
+  `TAURCTL_CONFIG_DIR` overrides). Never print, copy or commit it. The Release
+  workflow has no TAUR session, so the upload runs on the maintainer's machine;
+  the workflow runs `taur.py check` so the committed recipe is always uploadable.
+- The first upload creates `mouser-bin` on TAUR under `WeirdBrains`; later
+  uploads must use the same org and a maintainer of the package.
+
+`mouser-git` is not published. The repo's `LICENSE` (BSD-3-Clause) ships in
+`/usr/share/licenses/<pkg>/` from both PKGBUILDs.
 
 ## Linux build host
 

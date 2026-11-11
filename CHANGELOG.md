@@ -8,6 +8,7 @@
 
 ### Changed
 
+- Arch: every release now publishes `mouser-bin` to TAUR (`pkg.taur.weirdbrains.com`, org WeirdBrains) with `taurctl`; the committed `.SRCINFO` now lists all of the PKGBUILD's dependencies.
 - Yes/no questions default to yes (`[Y/n]`): `mouser plugin` / `mouser engine` `install` and `update` (`Install?`), `mouser model local download` and `mouser model hf install` (`Download it?`), and deleting a saved connection (Enter in its dialog, or Enter / `:yes` after `:del-conn`). `n` or `no` says no; end of input, a read error or no terminal still says no (`--yes` for scripts). Approvals with more choices (allow once / always / deny) are unchanged. See docs/cli.md §Questions.
 
 ### Fixed
