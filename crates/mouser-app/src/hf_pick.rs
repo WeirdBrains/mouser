@@ -601,7 +601,7 @@ mod term {
                         return Ok(vec![Key::Quit]);
                     }
                     for r in &recs[..got as usize] {
-                        if r.EventType as u32 != KEY_EVENT as u32 {
+                        if r.EventType as u32 != KEY_EVENT {
                             continue;
                         }
                         let k = r.Event.KeyEvent;
