@@ -1,8 +1,8 @@
 //! Decoration plugins (docs/plugins.md §Decoration plugins, docs/tabs.md).
 //!
-//! A decoration owns the window chrome (tab bar, title strip, borders) and
-//! may ask the host for several PTYs in that one window. The host draws
-//! [`Chrome`], forwards hits and tab keys, and applies [`PtyOp`]s. The
+//! A decoration draws window chrome (tab bar, title strip, borders) and may
+//! ask the host for PTYs in that window. Every enabled decoration runs.
+//! [`compose`] stacks their chrome and [`arbitrate`] merges PTY ops. The
 //! built-in `tabs` plugin is one decoration. Another program can speak the
 //! same newline-delimited JSON (`transport = "decoration"`).
 //!
@@ -140,11 +140,30 @@ pub struct Hit {
     pub w: i32,
     pub h: i32,
     pub id: String,
+    /// Decoration that owns this target. Empty before [`compose`] fills it in.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub owner: String,
 }
 
-/// Topmost hit containing (`x`, `y`).
-pub fn hit_test(chrome: &Chrome, x: i32, y: i32) -> Option<String> {
-    chrome.hits.iter().rev().find(|h| x >= h.x && y >= h.y && x < h.x.saturating_add(h.w) && y < h.y.saturating_add(h.h)).map(|h| h.id.clone())
+/// Topmost hit containing (`x`, `y`). Later hits win, so [`compose`] paints
+/// higher-priority decorations last.
+pub fn hit_test(chrome: &Chrome, x: i32, y: i32) -> Option<Hit> {
+    chrome.hits.iter().rev().find(|h| x >= h.x && y >= h.y && x < h.x.saturating_add(h.w) && y < h.y.saturating_add(h.h)).cloned()
+}
+
+const HIT_SEP: char = '\u{1f}';
+
+/// `owner` and the decoration's own hit id, for the render hook.
+pub fn pack_hit(owner: &str, id: &str) -> String {
+    format!("{owner}{HIT_SEP}{id}")
+}
+
+/// Inverse of [`pack_hit`]. A string with no separator has an empty owner.
+pub fn unpack_hit(packed: &str) -> (String, String) {
+    match packed.split_once(HIT_SEP) {
+        Some((owner, id)) => (owner.to_string(), id.to_string()),
+        None => (String::new(), packed.to_string()),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -181,8 +200,24 @@ pub enum PtyOp {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PtyNote {
-    Exited { id: u64, code: u32 },
-    Title { id: u64, title: String },
+    Exited {
+        id: u64,
+        code: u32,
+    },
+    Title {
+        id: u64,
+        title: String,
+    },
+    /// The focused PTY changed. Informational: decorations should not fight it.
+    Focused {
+        id: u64,
+    },
+    /// A chrome hit. Delivered to every decoration; only the owner also gets
+    /// [`DecorEvent::Hit`].
+    ChromeHit {
+        owner: String,
+        id: String,
+    },
 }
 
 /// In-process or out-of-process decoration. Called on the session thread.
@@ -312,13 +347,13 @@ pub fn tabs_chrome(ctx: &DecorCtx) -> Chrome {
             let color = if active { ctx.fg } else { mix(strip, ctx.fg, 0.65) };
             ops.push(DrawOp::Text { x: x + cw, y: (h - ctx.cell_h.max(1)) / 2, text, color });
             ops.push(DrawOp::Text { x: close_x + cw / 2, y: (h - ctx.cell_h.max(1)) / 2, text: "x".into(), color: mix(strip, ctx.fg, 0.55) });
-            hits.push(Hit { x, y: 0, w: close_x - x, h, id: format!("focus:{}", pty.id) });
-            hits.push(Hit { x: close_x, y: 0, w: close_w, h, id: format!("close:{}", pty.id) });
+            hits.push(Hit { x, y: 0, w: close_x - x, h, id: format!("focus:{}", pty.id), owner: String::new() });
+            hits.push(Hit { x: close_x, y: 0, w: close_w, h, id: format!("close:{}", pty.id), owner: String::new() });
         }
     }
     let plus_x = width - plus_w;
     ops.push(DrawOp::Text { x: plus_x + cw, y: (h - ctx.cell_h.max(1)) / 2, text: "+".into(), color: ctx.fg });
-    hits.push(Hit { x: plus_x, y: 0, w: plus_w, h, id: "new".into() });
+    hits.push(Hit { x: plus_x, y: 0, w: plus_w, h, id: "new".into(), owner: String::new() });
     Chrome { top: h, bottom: 0, left: 0, right: 0, ops, hits }
 }
 
@@ -359,7 +394,7 @@ pub fn tabs_event(config: &TabsConfig, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<P
             let exited = ctx.ptys.iter().any(|p| p.id == id && p.exited.is_some());
             if exited { vec![PtyOp::Close { id }] } else { Vec::new() }
         }
-        _ => Vec::new(),
+        DecorEvent::CloseTab { .. } | DecorEvent::Focus { .. } => Vec::new(),
     }
 }
 
@@ -391,6 +426,7 @@ pub fn tabs_note(note: &PtyNote, ctx: &DecorCtx) -> Vec<PtyOp> {
             ops.push(PtyOp::Close { id: *id });
             ops
         }
+        PtyNote::Focused { .. } | PtyNote::ChromeHit { .. } => Vec::new(),
     }
 }
 
@@ -545,6 +581,253 @@ impl Decoration for DecorationProc {
     }
 }
 
+/// One decoration's contribution, highest priority first in [`compose`] and
+/// [`arbitrate`]. Priority is the plugin registry order (`providers`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Edge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+fn op_origin(op: &DrawOp) -> (i32, i32, i32, i32) {
+    match op {
+        DrawOp::Fill { x, y, w, h, .. } => (*x, *y, *w, *h),
+        DrawOp::Text { x, y, .. } => (*x, *y, 1, 1),
+    }
+}
+
+fn intersect(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    if aw <= 0 || ah <= 0 || bw <= 0 || bh <= 0 {
+        return None;
+    }
+    let x0 = ax.max(bx);
+    let y0 = ay.max(by);
+    let x1 = ax.saturating_add(aw).min(bx.saturating_add(bw));
+    let y1 = ay.saturating_add(ah).min(by.saturating_add(bh));
+    (x1 > x0 && y1 > y0).then_some((x0, y0, x1 - x0, y1 - y0))
+}
+
+fn classify(chrome: &Chrome, width: i32, height: i32, x: i32, y: i32) -> Option<Edge> {
+    if chrome.top > 0 && y < chrome.top {
+        Some(Edge::Top)
+    } else if chrome.bottom > 0 && y >= height.saturating_sub(chrome.bottom) {
+        Some(Edge::Bottom)
+    } else if chrome.left > 0 && x < chrome.left {
+        Some(Edge::Left)
+    } else if chrome.right > 0 && x >= width.saturating_sub(chrome.right) {
+        Some(Edge::Right)
+    } else {
+        None
+    }
+}
+
+struct Shift {
+    dx: i32,
+    dy: i32,
+    band: (i32, i32, i32, i32),
+}
+
+/// Stack every decoration's chrome into disjoint bands.
+///
+/// `slots` is highest priority first (registry order). Each positive inset
+/// reserves a band on that edge: top bands grow downward from y = 0, bottom
+/// bands grow upward from the window bottom, left and right fill the middle
+/// between those. Higher priority is the outer band. Draw ops and hits are
+/// translated into that band and clipped to it, so a decoration cannot paint
+/// or receive clicks in another decoration's band or in the terminal grid.
+/// One slot is unmoved. No slots yield an empty chrome.
+pub fn compose(width: i32, height: i32, slots: &[(&str, &Chrome)]) -> Chrome {
+    let width = width.max(0);
+    let height = height.max(0);
+    let total_top: i32 = slots.iter().map(|(_, c)| c.top.max(0)).sum();
+    let total_bottom: i32 = slots.iter().map(|(_, c)| c.bottom.max(0)).sum();
+    let total_left: i32 = slots.iter().map(|(_, c)| c.left.max(0)).sum();
+    let total_right: i32 = slots.iter().map(|(_, c)| c.right.max(0)).sum();
+    let mut top_used = 0;
+    let mut bottom_used = 0;
+    let mut left_used = 0;
+    let mut right_used = 0;
+    let mut hits_out: Vec<(usize, Hit)> = Vec::new();
+    let mut ops_out: Vec<(usize, DrawOp)> = Vec::new();
+    for (index, (name, chrome)) in slots.iter().enumerate() {
+        let shifts = [
+            (Edge::Top, Shift { dx: 0, dy: top_used, band: (0, top_used, width, chrome.top.max(0)) }),
+            (Edge::Bottom, Shift { dx: 0, dy: -bottom_used, band: (0, height - bottom_used - chrome.bottom.max(0), width, chrome.bottom.max(0)) }),
+            (
+                Edge::Left,
+                Shift { dx: left_used, dy: 0, band: (left_used, total_top, chrome.left.max(0), (height - total_top - total_bottom).max(0)) },
+            ),
+            (
+                Edge::Right,
+                Shift {
+                    dx: -right_used,
+                    dy: 0,
+                    band: (width - right_used - chrome.right.max(0), total_top, chrome.right.max(0), (height - total_top - total_bottom).max(0)),
+                },
+            ),
+        ];
+        if chrome.top > 0 {
+            top_used += chrome.top;
+        }
+        if chrome.bottom > 0 {
+            bottom_used += chrome.bottom;
+        }
+        if chrome.left > 0 {
+            left_used += chrome.left;
+        }
+        if chrome.right > 0 {
+            right_used += chrome.right;
+        }
+        for op in &chrome.ops {
+            let (x, y, w, h) = op_origin(op);
+            let Some(edge) = classify(chrome, width, height, x, y) else { continue };
+            let Some((_, shift)) = shifts.iter().find(|(e, _)| *e == edge) else { continue };
+            let (nx, ny) = (x.saturating_add(shift.dx), y.saturating_add(shift.dy));
+            match op {
+                DrawOp::Fill { color, .. } => {
+                    if let Some((cx, cy, cw, ch)) = intersect((nx, ny, w, h), shift.band) {
+                        ops_out.push((index, DrawOp::Fill { x: cx, y: cy, w: cw, h: ch, color: *color }));
+                    }
+                }
+                DrawOp::Text { text, color, .. } => {
+                    if intersect((nx, ny, 1, 1), shift.band).is_some() {
+                        ops_out.push((index, DrawOp::Text { x: nx, y: ny, text: text.clone(), color: *color }));
+                    }
+                }
+            }
+        }
+        for hit in &chrome.hits {
+            let Some(edge) = classify(chrome, width, height, hit.x, hit.y) else { continue };
+            let Some((_, shift)) = shifts.iter().find(|(e, _)| *e == edge) else { continue };
+            let (nx, ny) = (hit.x.saturating_add(shift.dx), hit.y.saturating_add(shift.dy));
+            if let Some((cx, cy, cw, ch)) = intersect((nx, ny, hit.w, hit.h), shift.band) {
+                hits_out.push((index, Hit { x: cx, y: cy, w: cw, h: ch, id: hit.id.clone(), owner: (*name).to_string() }));
+            }
+        }
+    }
+    // Low priority first so a later (higher priority) hit wins `hit_test`.
+    ops_out.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
+    hits_out.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
+    Chrome {
+        top: total_top,
+        bottom: total_bottom,
+        left: total_left,
+        right: total_right,
+        ops: ops_out.into_iter().map(|(_, op)| op).collect(),
+        hits: hits_out.into_iter().map(|(_, hit)| hit).collect(),
+    }
+}
+
+/// Merge PTY ops. `parts` is highest priority first.
+///
+/// Every spawn is kept. Spawns from a lower priority are applied first, so
+/// the highest priority spawn is opened last and becomes the focused tab.
+/// For each PTY id, the highest priority decoration that mentioned it chooses
+/// Focus or Close (its own last op for that id). A lower priority cannot
+/// close an id the higher one focused, or focus an id the higher one closed.
+/// At most one Focus survives: the highest priority decoration's focus.
+pub fn arbitrate(parts: &[(&str, &[PtyOp])]) -> Vec<PtyOp> {
+    let mut spawns = Vec::new();
+    let mut chosen: Vec<(u64, bool)> = Vec::new();
+    let mut focus_owner: Option<usize> = None;
+    for (pi, (_, ops)) in parts.iter().enumerate() {
+        let mut local: Vec<(u64, bool)> = Vec::new();
+        for op in *ops {
+            match op {
+                PtyOp::Spawn { .. } => spawns.push((pi, op.clone())),
+                PtyOp::Focus { id } => upsert(&mut local, *id, true),
+                PtyOp::Close { id } => upsert(&mut local, *id, false),
+            }
+        }
+        for (id, is_focus) in local {
+            if chosen.iter().any(|(have, _)| *have == id) {
+                continue;
+            }
+            if is_focus {
+                if focus_owner.is_some() {
+                    continue;
+                }
+                focus_owner = Some(pi);
+            }
+            chosen.push((id, is_focus));
+        }
+    }
+    let mut out = Vec::new();
+    for (id, is_focus) in &chosen {
+        if !is_focus {
+            out.push(PtyOp::Close { id: *id });
+        }
+    }
+    let mut spawns: Vec<_> = spawns.into_iter().collect();
+    spawns.sort_by_key(|(pi, _)| std::cmp::Reverse(*pi));
+    out.extend(spawns.into_iter().map(|(_, op)| op));
+    for (id, is_focus) in &chosen {
+        if *is_focus {
+            out.push(PtyOp::Focus { id: *id });
+        }
+    }
+    out
+}
+
+fn upsert(local: &mut Vec<(u64, bool)>, id: u64, is_focus: bool) {
+    if let Some(slot) = local.iter_mut().find(|(have, _)| *have == id) {
+        slot.1 = is_focus;
+    } else {
+        local.push((id, is_focus));
+    }
+}
+
+/// What each decoration receives for one chrome click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fanout {
+    pub name: String,
+    /// `Hit` for the owner only. Empty when this decoration does not own it.
+    pub event: Option<DecorEvent>,
+    /// Broadcast, including to the owner.
+    pub note: PtyNote,
+}
+
+/// The owner is told about the hit. Every decoration, owner included, is
+/// told with [`PtyNote::ChromeHit`] so it can redraw without acting twice.
+pub fn fanout_hit(names: &[&str], owner: &str, id: &str) -> Vec<Fanout> {
+    let note = PtyNote::ChromeHit { owner: owner.to_string(), id: id.to_string() };
+    names
+        .iter()
+        .map(|name| Fanout { name: (*name).to_string(), event: (*name == owner).then(|| DecorEvent::Hit { id: id.to_string() }), note: note.clone() })
+        .collect()
+}
+
+/// Run `chrome`. A panic or [`Decoration::failed`] drops only this decoration.
+pub fn isolate_chrome(driver: &mut dyn Decoration, ctx: &DecorCtx) -> Option<Chrome> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.chrome(ctx)));
+    match result {
+        Ok(chrome) if !driver.failed() => Some(chrome),
+        _ => None,
+    }
+}
+
+/// Run `event`. A panic or [`Decoration::failed`] drops only this decoration.
+pub fn isolate_event(driver: &mut dyn Decoration, ev: &DecorEvent, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.event(ev, ctx)));
+    match result {
+        Ok(ops) if !driver.failed() => Some(ops),
+        _ => None,
+    }
+}
+
+/// Run `note`. A panic or [`Decoration::failed`] drops only this decoration.
+pub fn isolate_note(driver: &mut dyn Decoration, note: &PtyNote, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.note(note, ctx)));
+    match result {
+        Ok(ops) if !driver.failed() => Some(ops),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,12 +917,12 @@ mod tests {
         assert!(chrome.bottom == 0 && chrome.left == 0);
         assert!(chrome.active());
         let focus = hit_test(&chrome, 10, 4).unwrap();
-        assert_eq!(focus, "focus:3");
+        assert_eq!(focus.id, "focus:3");
         let new = hit_test(&chrome, c.width - 4, 4).unwrap();
-        assert_eq!(new, "new");
+        assert_eq!(new.id, "new");
         // The close control is the right edge of the first tab, above the tab body.
         let close = chrome.hits.iter().find(|h| h.id == "close:3").unwrap();
-        assert_eq!(hit_test(&chrome, close.x + 1, 4).as_deref(), Some("close:3"));
+        assert_eq!(hit_test(&chrome, close.x + 1, 4).unwrap().id, "close:3");
         let exited = {
             let mut p = pty(3, PtyKind::Shell, "zsh");
             p.exited = Some(1);
@@ -676,12 +959,114 @@ done
         let ctx = DecorCtx::default();
         let chrome = proc.chrome(&ctx);
         assert_eq!((chrome.top, chrome.bottom, chrome.left, chrome.right), (18, 1, 2, 3));
-        assert_eq!(hit_test(&chrome, 1, 2).as_deref(), Some("new"));
+        assert_eq!(hit_test(&chrome, 1, 2).unwrap().id, "new");
         assert!(!chrome.ops.is_empty());
         let ops = proc.event(&DecorEvent::NewTab { shell: None }, &ctx);
         assert_eq!(ops, vec![PtyOp::Spawn { shell: Some("/bin/zsh".into()), command: vec![], title: "zsh".into() }]);
         let ops = proc.note(&PtyNote::Exited { id: 4, code: 0 }, &ctx);
         assert_eq!(ops, vec![PtyOp::Close { id: 4 }]);
         assert!(!proc.failed());
+    }
+
+    fn fill(x: i32, y: i32, w: i32, h: i32, color: u32) -> DrawOp {
+        DrawOp::Fill { x, y, w, h, color }
+    }
+
+    fn hit(x: i32, y: i32, w: i32, h: i32, id: &str) -> Hit {
+        Hit { x, y, w, h, id: id.into(), owner: String::new() }
+    }
+
+    #[test]
+    fn higher_priority_top_band_is_the_outer_one() {
+        let high = Chrome { top: 10, ops: vec![fill(0, 0, 40, 10, 1)], hits: vec![hit(0, 0, 40, 10, "a")], ..Chrome::default() };
+        let low = Chrome { top: 8, ops: vec![fill(0, 0, 40, 8, 2)], hits: vec![hit(0, 0, 40, 8, "b")], ..Chrome::default() };
+        let chrome = compose(100, 80, &[("high", &high), ("low", &low)]);
+        assert_eq!((chrome.top, chrome.bottom, chrome.left, chrome.right), (18, 0, 0, 0));
+        assert_eq!(chrome.ops[0], fill(0, 10, 40, 8, 2));
+        assert_eq!(chrome.ops[1], fill(0, 0, 40, 10, 1));
+        assert_eq!(hit_test(&chrome, 2, 2).unwrap().owner, "high");
+        assert_eq!(hit_test(&chrome, 2, 12).unwrap().owner, "low");
+        let alone = compose(100, 80, &[("high", &high)]);
+        assert_eq!(alone.ops, vec![fill(0, 0, 40, 10, 1)]);
+        assert_eq!(alone.hits[0].id, "a");
+        assert!(compose(100, 80, &[]).ops.is_empty());
+    }
+
+    #[test]
+    fn lower_priority_chrome_cannot_paint_outside_its_band() {
+        let high = Chrome { top: 20, ops: vec![fill(0, 0, 50, 20, 1)], ..Chrome::default() };
+        let low = Chrome { top: 10, ops: vec![fill(0, 0, 50, 40, 2)], hits: vec![hit(0, 0, 50, 40, "spill")], ..Chrome::default() };
+        let chrome = compose(80, 60, &[("high", &high), ("low", &low)]);
+        let low_fill = chrome.ops.iter().find(|op| matches!(op, DrawOp::Fill { color: 2, .. })).unwrap();
+        assert_eq!(low_fill, &fill(0, 20, 50, 10, 2));
+        let high_fill = chrome.ops.iter().find(|op| matches!(op, DrawOp::Fill { color: 1, .. })).unwrap();
+        assert_eq!(high_fill, &fill(0, 0, 50, 20, 1));
+        assert!(hit_test(&chrome, 2, 5).is_none());
+        let spill = hit_test(&chrome, 2, 22).unwrap();
+        assert_eq!((spill.owner.as_str(), spill.id.as_str(), spill.h), ("low", "spill", 10));
+    }
+
+    #[test]
+    fn pty_ops_keep_every_spawn_and_the_highest_priority_focus() {
+        let spawn = |title: &str| PtyOp::Spawn { shell: Some(title.into()), command: vec![], title: title.into() };
+        let high = [PtyOp::Focus { id: 1 }, spawn("high")];
+        let low = [PtyOp::Focus { id: 2 }, PtyOp::Close { id: 1 }, PtyOp::Close { id: 3 }, spawn("low")];
+        let ops = arbitrate(&[("high", &high), ("low", &low)]);
+        assert_eq!(ops, vec![PtyOp::Close { id: 3 }, spawn("low"), spawn("high"), PtyOp::Focus { id: 1 }]);
+        let both_close = [PtyOp::Close { id: 4 }, PtyOp::Focus { id: 4 }];
+        let ops = arbitrate(&[("high", &both_close), ("low", &[PtyOp::Close { id: 4 }])]);
+        assert_eq!(ops, vec![PtyOp::Focus { id: 4 }]);
+    }
+
+    #[test]
+    fn a_hit_goes_to_its_owner_and_a_note_goes_to_everyone() {
+        let fan = fanout_hit(&["tabs", "status"], "tabs", "focus:1");
+        assert_eq!(fan[0].event, Some(DecorEvent::Hit { id: "focus:1".into() }));
+        assert_eq!(fan[1].event, None);
+        assert_eq!(fan[0].note, PtyNote::ChromeHit { owner: "tabs".into(), id: "focus:1".into() });
+        assert_eq!(fan[1].note, fan[0].note);
+        assert_eq!(pack_hit("tabs", "focus:1").split('\u{1f}').collect::<Vec<_>>(), vec!["tabs", "focus:1"]);
+        assert_eq!(unpack_hit(&pack_hit("tabs", "close:2")), ("tabs".into(), "close:2".into()));
+    }
+
+    struct Boom;
+
+    impl Decoration for Boom {
+        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+            panic!("boom");
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+            panic!("boom");
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+            panic!("boom");
+        }
+    }
+
+    struct Quiet;
+
+    impl Decoration for Quiet {
+        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+            Chrome { top: 4, ..Chrome::default() }
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+            vec![PtyOp::Focus { id: 9 }]
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_panicking_decoration_is_isolated() {
+        let ctx = DecorCtx::default();
+        let mut bad = Boom;
+        let mut good = Quiet;
+        assert!(isolate_chrome(&mut bad, &ctx).is_none());
+        assert_eq!(isolate_chrome(&mut good, &ctx).unwrap().top, 4);
+        assert!(isolate_event(&mut bad, &DecorEvent::KeyOnExited, &ctx).is_none());
+        assert_eq!(isolate_event(&mut good, &DecorEvent::KeyOnExited, &ctx).unwrap(), vec![PtyOp::Focus { id: 9 }]);
+        assert!(isolate_note(&mut bad, &PtyNote::Focused { id: 1 }, &ctx).is_none());
+        assert!(isolate_note(&mut good, &PtyNote::Focused { id: 1 }, &ctx).unwrap().is_empty());
     }
 }

@@ -11,6 +11,11 @@ mouser plugin enable tabs
 
 `mouser plugin disable tabs` turns it off again. The next window picks it up.
 
+Other decorations can run in the same window. Registry order is priority:
+`tabs` is one participant, and its strip is its own band so another
+decoration's bar does not cover it (docs/plugins.md). With only `tabs`
+enabled, the window looks the same as before.
+
 ## The bar
 
 The strip sits at the top, including when there is one tab. Each tab shows its

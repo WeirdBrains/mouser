@@ -28,10 +28,10 @@ C ABI is unchanged (docs/engines.md).
 
 ## Decoration plugins
 
-A decoration replaces the window chrome and decides which PTYs that window
-holds. One runs per window: the first enabled one in registry order. With none,
-Mouser keeps its built-in tab bar (shown once there are two tabs) and one shell
-per tab.
+A decoration draws window chrome and can ask for PTYs in that window. Every
+enabled decoration runs together. Registry order is priority: the first is
+the highest. With none, Mouser keeps its built-in tab bar (shown once there
+are two tabs) and one shell per tab.
 
 The built-in `tabs` decoration is off until `mouser plugin enable tabs`. It
 draws a tab strip (including the one-tab case), and each tab can run its own
@@ -43,7 +43,9 @@ it never starts and the window stays on the built-in behaviour. The environment
 is scrubbed the same way as a command plugin.
 
 The process speaks newline-delimited JSON. Mouser sends one object and waits
-for one object (500 ms, then the process is killed and the window falls back).
+for one object (500 ms). A timeout, a bad reply or a crash drops that
+decoration only. The others keep running. If none remain, the window uses the
+built-in sessions.
 
 Mouser to the plugin:
 
@@ -52,7 +54,7 @@ Mouser to the plugin:
 | `hello` | once, at start |
 | `chrome` | each frame (`width`, `height`, `cell_w`, `cell_h`, `pty`) |
 | `event` | a key action or a hit id (`action`, `id`, `pty`) |
-| `note` | a PTY exited (`id`, `code`, `pty`) |
+| `note` | a PTY exited (`exited`), the focus moved (`focused`), or any decoration's chrome was clicked (`chrome-hit`: `owner`, `id`) |
 
 `pty` is `{ "focused", "list": [ { "id", "title", "alive", "kind", "program" } ] }`.
 
@@ -69,6 +71,30 @@ The host owns the PTY; the plugin only asks.
 
 In Rust the same contract is `mouser_core::decoration::{Decoration, DecorEvent, Chrome, PtyOp}`.
 `mouser_core::decoration::TabsDecoration` is the built-in.
+
+### Several decorations
+
+The scheduler (`compose`, `arbitrate`, `fanout_hit`) sits between the host and
+every enabled decoration.
+
+- **Chrome.** Each positive inset reserves a band. Top bands stack down from
+  the top of the window, bottom bands stack up from the bottom, and left and
+  right fill the middle. Higher priority is the outer band. Ops and hits are
+  moved into that band and clipped to it, so one decoration cannot paint or
+  catch clicks in another's band or in the terminal grid. One decoration is
+  drawn where it drew.
+- **Hits.** The click goes to the owner as an `event` with its id. Every
+  decoration, including the owner, also gets a `chrome-hit` note.
+- **PTY ops.** Collected in priority order. Every spawn is kept; a lower
+  priority spawn is applied first, so the highest priority spawn is the tab
+  left in front. For one PTY id, the highest priority decoration that named it
+  chooses focus or close. A lower one cannot override that. Only that
+  decoration's focus is kept when several want different tabs.
+- **Keys, resize, exit, focus.** Tab keys and `KeyOnExited` go to every
+  decoration. Each frame's `chrome` call carries the window size. A PTY exit
+  and a focus change are notes to every decoration.
+- **Faults.** Each call is isolated. A panic, a failed flag, or a 500 ms
+  timeout removes that decoration and leaves the rest.
 
 ## The manifest: `plugin.toml`
 
