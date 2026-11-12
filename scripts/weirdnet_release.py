@@ -47,7 +47,7 @@ try:
 except ImportError:  # Python < 3.11 (e.g. Ubuntu 22.04 runners): mini_toml() below
     tomllib = None
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 CONFIG = "release.toml"
 ORDER = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
@@ -975,12 +975,13 @@ def publish_crates_preview(root, cfg, prev_tag):
 
 # ---- TAUR ----------------------------------------------------------------------------------
 
+# makepkg's srcinfo.sh order (srcinfo_write_global and multivalued_arch_attrs).
+_SUMS = ["cksums", "md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"]
 BASE_FIELDS = ["pkgdesc", "pkgver", "pkgrel", "epoch", "url", "install", "changelog", "arch", "groups", "license",
-               "checkdepends", "makedepends", "depends", "optdepends", "provides", "conflicts", "replaces", "backup",
-               "options", "source", "validpgpkeys", "noextract", "cksums", "md5sums", "sha1sums", "sha224sums",
-               "sha256sums", "sha384sums", "sha512sums", "b2sums"]
-ARCH_FIELDS = ["source", "checkdepends", "makedepends", "depends", "optdepends", "provides", "conflicts", "replaces",
-               "cksums", "md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums"]
+               "checkdepends", "makedepends", "depends", "optdepends", "provides", "conflicts", "replaces",
+               "noextract", "options", "backup", "source", "validpgpkeys"] + _SUMS
+ARCH_FIELDS = ["source", "provides", "conflicts", "depends", "replaces", "optdepends", "makedepends",
+               "checkdepends"] + _SUMS
 
 
 def _words(s):
@@ -1478,7 +1479,8 @@ def main(argv=None):
                 print(f"taur: {e}", file=sys.stderr)
             if errs:
                 return 1
-            out(f"{d.name} {a.version}: ready for TAUR")
+            name = parse_pkgbuild((d / "PKGBUILD").read_text(encoding="utf-8")).get("pkgname", d.name)
+            out(f"{name} {a.version}: ready for TAUR")
             return 0
         if a.cmd == "taur":
             return taur(a, root)
