@@ -1,5 +1,5 @@
 # Mouser release config for weirdnet-project-helpers (scripts/weirdnet_release.py).
-helpers = "0.1.0"
+helpers = "0.1.1"
 project = "mouser"
 require_message = true          # the message is the changelog bullet and the commit body
 ignore_untracked = true         # Cargo.lock is gitignored; untracked scratch files don't block a release
