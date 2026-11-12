@@ -18,11 +18,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: release.py and packaging.py tests
+      - name: release config and packaging.py tests
         run: |
-          python3 scripts/test-release.py
+          python3 scripts/weirdnet_release.py validate
+          python3 scripts/weirdnet_release.py taur-check "$(sed -n 's/^pkgver=//p' packaging/arch/mouser-bin/PKGBUILD)"
           python3 scripts/test-packaging.py
-          python3 scripts/test-taur.py
           python3 scripts/packaging.py check
       - name: Homebrew formula and cask from a local tap (macOS)
         if: runner.os == 'macOS'

@@ -27,10 +27,13 @@ These rules are adapted from the owner's Muninn project for this repository.
   (if displayed), add a summary-level `CHANGELOG.md` entry, commit as `release: vX.Y.Z`,
   create an annotated tag `vX.Y.Z`, then push `main` with the tag:  
   `git push origin main --follow-tags`.
-- `scripts/release.py [--major|--patch] "message"` does all of this (MINOR by default);
-  the `v*` tag push is what starts the Release workflow. See `docs/release.md`.
+- Releases use the shared WeirdBrains release script (weirdnet-project-helpers), vendored as
+  `scripts/weirdnet_release.py` and configured by `release.toml`:
+  `python3 scripts/weirdnet_release.py [--major|--patch] "message"` does all of this (MINOR by
+  default); the `v*` tag push is what starts the Release workflow. See `docs/release.md`. Don't
+  edit the vendored copy; change weirdnet-project-helpers and re-vendor it.
 - Every release ends with the TAUR upload: after the Release workflow's `packaging:`
-  commit, `git pull` and `python3 scripts/taur.py publish X.Y.Z` (taurctl signed in).
+  commit, `git pull` and `python3 scripts/weirdnet_release.py taur X.Y.Z` (taurctl signed in).
 - `CHANGELOG.md` (Keep a Changelog format) stays summary level: a few short one-line
   bullets per release naming the feature. No implementation details or file lists.
 

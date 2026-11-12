@@ -16,6 +16,6 @@ sed -i -e "s/^pkgver=.*/pkgver=$ver/" -e "s/^pkgrel=.*/pkgrel=1/" \
   -e "s/^sha256sums=.*/sha256sums=('$src_sum')/" \
   -e "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('$bin_sum')/" PKGBUILD
 # .SRCINFO from the PKGBUILD itself (CI runs on Ubuntu, no makepkg); the same
-# text makepkg --printsrcinfo prints (scripts/test-taur.py checks that on Arch).
-python3 ../../../scripts/taur.py srcinfo .
+# text makepkg --printsrcinfo prints (weirdnet-project-helpers tests the generator).
+python3 ../../../scripts/weirdnet_release.py taur-srcinfo .
 echo "mouser-bin -> $ver (src $src_sum, bin $bin_sum)"

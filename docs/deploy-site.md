@@ -16,7 +16,7 @@ GitHub Pages.
 - The Fuzzball crate page is `site_jaspr/lib/pages/fuzzball.dart` (URL
   `/fuzzball/`); the crate's own spec site is
   https://weirdbrains.github.io/fuzzball/.
-- `scripts/release.py` bumps the version and download links in
+- `scripts/weirdnet_release.py` (the `release.toml` `replace` entry) bumps the version and download links in
   `site_jaspr/lib/pages/home.dart` in the same `release: vX.Y.Z` commit as the
   crate version. The version appears in the hero's release
   link and in every install card that downloads a release asset: Arch
