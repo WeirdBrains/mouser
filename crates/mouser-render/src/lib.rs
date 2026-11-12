@@ -798,14 +798,15 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         return;
                     }
                     if let (Some(on_chrome), Some(pos)) = (&hooks.on_chrome, cursor_pos)
-                        && let Some(id) = mouser_core::decoration::hit_test(&chrome, pos.x as i32, pos.y as i32)
+                        && let Some(hit) = mouser_core::decoration::hit_test(&chrome, pos.x as i32, pos.y as i32)
                     {
-                        let id = if button == winit::event::MouseButton::Middle {
-                            id.strip_prefix("focus:").map(|n| format!("close:{n}")).unwrap_or(id)
-                        } else {
-                            id
-                        };
-                        on_chrome(id);
+                        let mut id = hit.id;
+                        if button == winit::event::MouseButton::Middle
+                            && let Some(n) = id.strip_prefix("focus:")
+                        {
+                            id = format!("close:{n}");
+                        }
+                        on_chrome(mouser_core::decoration::pack_hit(&hit.owner, &id));
                         scrolled_back = 0;
                         dirty = true;
                         return;

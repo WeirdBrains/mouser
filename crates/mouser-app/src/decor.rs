@@ -1,7 +1,7 @@
-//! Host side of a decoration plugin (docs/tabs.md). One decoration runs per
-//! window: the first enabled one in plugin order. It draws the chrome and
-//! decides which PTYs exist. With none enabled, the built-in sessions are
-//! unchanged.
+//! Host side of decoration plugins (docs/plugins.md, docs/tabs.md). Every
+//! enabled decoration runs. The scheduler in `mouser_core::decoration`
+//! stacks their chrome and merges PTY ops. With none enabled, the built-in
+//! sessions are unchanged.
 
 use crate::tabs::{self, Tabs};
 use crate::wake;
@@ -13,9 +13,14 @@ use mouser_core::types::Size;
 use mouser_render::ui::UiAction;
 use std::sync::Arc;
 
+struct Slot {
+    name: String,
+    driver: Box<dyn Decoration>,
+}
+
 pub struct Decor {
     pub on: bool,
-    driver: Option<Box<dyn Decoration>>,
+    slots: Vec<Slot>,
     plan: StartupPlan,
     extras_done: bool,
     /// PTY ids already reported with [`PtyNote::Exited`].
@@ -27,32 +32,38 @@ impl Decor {
     pub fn load(cli_default_shell: bool) -> Self {
         let config = decoration::tabs_config();
         let reg = Registry::load();
-        let Some(entry) = reg.providers(Kind::Decoration).into_iter().next() else {
+        let listed: Vec<_> = reg.providers(Kind::Decoration).iter().map(|e| (e.name.clone(), e.dir.is_none(), e.transport)).collect();
+        let mut slots = Vec::new();
+        let mut tabs_plugin = false;
+        for (name, builtin, transport) in listed {
+            let is_tabs = name == decoration::TABS_PLUGIN && builtin;
+            let driver = if is_tabs {
+                tabs_plugin = true;
+                Some(Box::new(TabsDecoration::default()) as Box<dyn Decoration>)
+            } else if transport == Transport::Decoration {
+                open_process(&name)
+            } else {
+                log::warn!("decoration {name} has no host driver");
+                None
+            };
+            if let Some(driver) = driver {
+                slots.push(Slot { name, driver });
+            }
+        }
+        if slots.is_empty() {
             return Self::off();
-        };
-        let tabs_plugin = entry.name == decoration::TABS_PLUGIN && entry.dir.is_none();
-        let driver = if tabs_plugin {
-            Some(Box::new(TabsDecoration::default()) as Box<dyn Decoration>)
-        } else if entry.transport == Transport::Decoration {
-            open_process(&entry.name)
-        } else {
-            log::warn!("decoration {} has no host driver", entry.name);
-            None
-        };
-        match driver {
-            Some(driver) => Self {
-                on: true,
-                driver: Some(driver),
-                plan: if tabs_plugin { decoration::startup_plan(&config, cli_default_shell) } else { StartupPlan::default() },
-                extras_done: false,
-                told: Vec::new(),
-            },
-            None => Self::off(),
+        }
+        Self {
+            on: true,
+            slots,
+            plan: if tabs_plugin { decoration::startup_plan(&config, cli_default_shell) } else { StartupPlan::default() },
+            extras_done: false,
+            told: Vec::new(),
         }
     }
 
     fn off() -> Self {
-        Self { on: false, driver: None, plan: StartupPlan::default(), extras_done: true, told: Vec::new() }
+        Self { on: false, slots: Vec::new(), plan: StartupPlan::default(), extras_done: true, told: Vec::new() }
     }
 
     pub fn plan(&self) -> &StartupPlan {
@@ -60,25 +71,67 @@ impl Decor {
     }
 
     pub fn chrome(&mut self, ctx: &DecorCtx) -> Chrome {
-        let Some(driver) = self.driver.as_mut() else { return Chrome::default() };
-        let chrome = driver.chrome(ctx);
-        if driver.failed() {
-            log::warn!("decoration stopped; this window keeps the built-in sessions");
-            self.on = false;
-            self.driver = None;
+        let parts = self.gather(|slot| decoration::isolate_chrome(slot.driver.as_mut(), ctx));
+        if !self.on {
             return Chrome::default();
         }
-        chrome
+        let refs: Vec<(&str, &Chrome)> = parts.iter().map(|(name, chrome)| (name.as_str(), chrome)).collect();
+        decoration::compose(ctx.width, ctx.height, &refs)
     }
 
     fn ops(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp> {
-        let Some(driver) = self.driver.as_mut() else { return Vec::new() };
-        let ops = driver.event(ev, ctx);
-        if driver.failed() {
-            self.on = false;
-            self.driver = None;
+        let parts = self.gather(|slot| decoration::isolate_event(slot.driver.as_mut(), ev, ctx));
+        let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
+        decoration::arbitrate(&refs)
+    }
+
+    fn dispatch_hit(&mut self, owner: &str, id: &str, ctx: &DecorCtx) -> Vec<PtyOp> {
+        let owner = if owner.is_empty() && self.slots.len() == 1 { self.slots[0].name.clone() } else { owner.to_string() };
+        let note = decoration::PtyNote::ChromeHit { owner: owner.clone(), id: id.to_string() };
+        let mut parts = Vec::new();
+        let mut i = 0;
+        while i < self.slots.len() {
+            let name = self.slots[i].name.clone();
+            let event = (name == owner).then(|| DecorEvent::Hit { id: id.to_string() });
+            let ev_ops = match &event {
+                Some(ev) => decoration::isolate_event(self.slots[i].driver.as_mut(), ev, ctx),
+                None => Some(Vec::new()),
+            };
+            let note_ops = decoration::isolate_note(self.slots[i].driver.as_mut(), &note, ctx);
+            match (ev_ops, note_ops) {
+                (Some(mut ops), Some(more)) => {
+                    ops.extend(more);
+                    parts.push((name, ops));
+                    i += 1;
+                }
+                _ => self.drop_slot(i),
+            }
         }
-        ops
+        self.on = !self.slots.is_empty();
+        let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
+        decoration::arbitrate(&refs)
+    }
+
+    fn gather<T>(&mut self, mut call: impl FnMut(&mut Slot) -> Option<T>) -> Vec<(String, T)> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.slots.len() {
+            match call(&mut self.slots[i]) {
+                Some(value) => {
+                    out.push((self.slots[i].name.clone(), value));
+                    i += 1;
+                }
+                None => self.drop_slot(i),
+            }
+        }
+        self.on = !self.slots.is_empty();
+        out
+    }
+
+    fn drop_slot(&mut self, index: usize) {
+        let name = self.slots[index].name.clone();
+        log::warn!("decoration {name} stopped; the others keep running");
+        self.slots.remove(index);
     }
 
     /// PTYs configured as extra tabs. Once per window, after the grid size is known.
@@ -178,22 +231,40 @@ pub fn on_action(decor: &mut Decor, tabs: &mut Tabs, act: &UiAction, sb: &Scroll
         UiAction::CycleTab(d) => DecorEvent::Cycle { delta: *d },
         _ => return false,
     };
+    let before = focused_id(tabs);
     let ctx = pty_ctx(tabs);
     let ops = decor.ops(&ev, &ctx);
     for op in ops {
         apply(tabs, op, sb, wake);
     }
+    note_focus(decor, tabs, before, sb);
     true
 }
 
-pub fn on_hit(decor: &mut Decor, tabs: &mut Tabs, id: &str, sb: &ScrollbackConfig) {
+pub fn on_hit(decor: &mut Decor, tabs: &mut Tabs, packed: &str, sb: &ScrollbackConfig) {
     if !decor.on {
         return;
     }
+    let before = focused_id(tabs);
+    let (owner, id) = decoration::unpack_hit(packed);
     let ctx = pty_ctx(tabs);
-    let ops = decor.ops(&DecorEvent::Hit { id: id.to_string() }, &ctx);
+    let ops = decor.dispatch_hit(&owner, &id, &ctx);
     for op in ops {
         apply(tabs, op, sb, wake);
+    }
+    note_focus(decor, tabs, before, sb);
+}
+
+fn focused_id(tabs: &Tabs) -> Option<u64> {
+    tabs.active().map(|s| s.id)
+}
+
+fn note_focus(decor: &mut Decor, tabs: &mut Tabs, before: Option<u64>, sb: &ScrollbackConfig) {
+    let now = focused_id(tabs);
+    if now != before
+        && let Some(id) = now
+    {
+        on_note(decor, tabs, &decoration::PtyNote::Focused { id }, sb);
     }
 }
 
@@ -230,15 +301,15 @@ pub fn on_note(decor: &mut Decor, tabs: &mut Tabs, note: &decoration::PtyNote, s
     if !decor.on {
         return;
     }
+    let before = focused_id(tabs);
     let ctx = pty_ctx(tabs);
-    let Some(driver) = decor.driver.as_mut() else { return };
-    let ops = driver.note(note, &ctx);
-    if driver.failed() {
-        decor.on = false;
-        decor.driver = None;
-    }
-    for op in ops {
+    let parts = decor.gather(|slot| decoration::isolate_note(slot.driver.as_mut(), note, &ctx));
+    let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
+    for op in decoration::arbitrate(&refs) {
         apply(tabs, op, sb, wake);
+    }
+    if !matches!(note, decoration::PtyNote::Focused { .. }) {
+        note_focus(decor, tabs, before, sb);
     }
 }
 
@@ -262,7 +333,7 @@ mod tests {
     fn decor_on(config: TabsConfig, cli_shell: bool) -> Decor {
         Decor {
             on: true,
-            driver: Some(Box::new(TabsDecoration { pinned: Some(config.clone()) })),
+            slots: vec![Slot { name: decoration::TABS_PLUGIN.into(), driver: Box::new(TabsDecoration { pinned: Some(config.clone()) }) }],
             plan: decoration::startup_plan(&config, cli_shell),
             extras_done: false,
             told: Vec::new(),
@@ -336,5 +407,55 @@ mod tests {
             apply(&mut tabs, op, &sb, || {});
         }
         assert!(tabs.list.iter().all(|s| s.id != id));
+    }
+
+    struct Boom;
+
+    impl Decoration for Boom {
+        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+            panic!("boom");
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+            panic!("boom");
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+            panic!("boom");
+        }
+    }
+
+    struct SpawnBand;
+
+    impl Decoration for SpawnBand {
+        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+            Chrome { bottom: 6, ..Chrome::default() }
+        }
+        fn event(&mut self, ev: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+            match ev {
+                DecorEvent::NewTab { .. } => vec![PtyOp::Spawn { shell: None, command: vec!["sleep".into(), "30".into()], title: "nap".into() }],
+                _ => Vec::new(),
+            }
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_crashing_decoration_is_dropped_and_the_other_still_runs() {
+        let mut decor = Decor {
+            on: true,
+            slots: vec![Slot { name: "boom".into(), driver: Box::new(Boom) }, Slot { name: "band".into(), driver: Box::new(SpawnBand) }],
+            plan: StartupPlan::default(),
+            extras_done: true,
+            told: Vec::new(),
+        };
+        let chrome = decor.chrome(&DecorCtx::default());
+        assert!(decor.on);
+        assert_eq!(decor.slots.len(), 1);
+        assert_eq!(chrome.bottom, 6);
+        let mut tabs = Tabs::default();
+        assert!(on_action(&mut decor, &mut tabs, &UiAction::NewTab, &ScrollbackConfig::default()));
+        assert_eq!(tabs.list.len(), 1);
+        assert_eq!(tabs.list[0].title(), "nap");
     }
 }

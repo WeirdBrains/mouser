@@ -68,15 +68,20 @@ the collective release rules:
   `$MOUSER_HOME/plugins/state.toml`. API version is 1. Official modes are out
   of process. Engines are native libraries. The contract is `docs/plugins.md`.
 - A decoration draws the window chrome (draw ops and hit targets) and asks the
-  host to spawn, close or focus PTYs. The host owns the OS PTY. One decoration
-  runs per window: the first enabled one. `tabs` is built in and off until
-  `mouser plugin enable tabs`. With it off, the built-in tab bar (shown from
-  the second tab) and one login shell per tab stay as they are.
+  host to spawn, close or focus PTYs. The host owns the OS PTY. Every enabled
+  decoration runs. Registry order is priority (first is highest). The
+  scheduler stacks chrome into disjoint bands and merges PTY ops: spawns all
+  apply, and the highest priority wins a focus/close conflict. `tabs` is
+  built in and off until `mouser plugin enable tabs`. With it off, and with
+  no other decoration, the built-in tab bar (shown from the second tab) and
+  one login shell per tab stay as they are. With only `tabs` on, behavior
+  matches that one decoration.
 - External decorations use `transport = "decoration"` and newline JSON
   (`hello` / `chrome` / `event` / `note`, reply `{chrome, ops}`). They need
-  `run` allowed. A reply over 500 ms kills the process and that window falls
-  back to the built-in sessions. The Rust trait is
-  `mouser_core::decoration::Decoration`.
+  `run` allowed. A reply over 500 ms, a bad reply, or a panic drops that
+  decoration only. If none remain, the window uses the built-in sessions.
+  The Rust trait is `mouser_core::decoration::Decoration`. `compose`,
+  `arbitrate` and `fanout_hit` are the scheduler.
 - Host glue is `mouser-app` (`decor.rs`, `tabs.rs`). Chrome insets shrink the
   grid. Only the active PTY is resized, and a newly focused PTY is resized to
   the stored size. On Unix the session server forwards chrome over the split
