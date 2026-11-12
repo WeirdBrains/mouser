@@ -451,8 +451,8 @@ jobs:
           packaging/arch/update-bin.sh "${VER}"
           # The TAUR recipe must be uploadable as committed: version, real sums,
           # Maintainer, .SRCINFO == PKGBUILD. The upload itself is the maintainer's
-          # `scripts/taur.py publish` step (docs/release.md §TAUR).
-          python3 scripts/taur.py check "${VER}"
+          # `scripts/weirdnet_release.py taur` step (docs/release.md §TAUR).
+          python3 scripts/weirdnet_release.py taur-check "${VER}"
           git add Formula/mouser.rb Casks/mouser.rb packaging/arch/mouser-bin/PKGBUILD packaging/arch/mouser-bin/.SRCINFO
           git diff --cached --quiet || git commit -m "packaging: update brew formula, cask and mouser-bin PKGBUILD for v${VER}"
           git push origin HEAD:main

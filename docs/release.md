@@ -42,29 +42,30 @@ What starts a release
 
 Local steps (per AGENTS.md)
 1. Ensure quality bar passes locally: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `timeout 120 cargo test --workspace`.
-2. On a clean, up-to-date `main`, run `scripts/release.py`:
+2. On a clean, up-to-date `main`, run the shared release script (`scripts/weirdnet_release.py`, configured by `release.toml`):
 
    ```bash
-   scripts/release.py "Tab completion in every text field"   # MINOR: 1.4.5 -> 1.5.0
-   scripts/release.py --patch "Commander no longer crashes on start"   # 1.4.6
-   scripts/release.py --major "New plugin protocol"   # 2.0.0
-   scripts/release.py --dry-run "..."   # print every step and the diffs, change nothing
+   python3 scripts/weirdnet_release.py "Tab completion in every text field"   # MINOR: 1.4.5 -> 1.5.0
+   python3 scripts/weirdnet_release.py --patch "Commander no longer crashes on start"   # 1.4.6
+   python3 scripts/weirdnet_release.py --major "New plugin protocol"   # 2.0.0
+   python3 scripts/weirdnet_release.py --dry-run "..."   # print every step and the diffs, change nothing
    ```
 
-   It bumps the versions (docs-only: `--patch`; feature: default MINOR), folds `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section (America/New_York) with the message added, commits `release: vX.Y.Z` with the message as the body, creates the annotated tag `vX.Y.Z` and runs `git push origin main --follow-tags`. Pushing that tag is what starts the Release workflow.
+   It bumps the versions (docs-only: `--patch`; feature: default MINOR), folds `## [Unreleased]` into a new `## [X.Y.Z] - YYYY-MM-DD` section (America/New_York) with the message added, commits `release: vX.Y.Z` with the message as the body, creates the annotated tag `vX.Y.Z` and pushes `main` and that tag in one atomic push (`git push --atomic origin HEAD:refs/heads/main refs/tags/vX.Y.Z`). It then publishes the public crates in `release.toml` (`mouser-engine-abi`, `mouser-views`, `mouser-media`) whose version isn't on crates.io yet, asking first. Pushing that tag is what starts the Release workflow.
 3. The Release workflow then pushes a `packaging:` commit: `Formula/mouser.rb` and `Casks/mouser.rb` from `scripts/packaging.py brew <ver> --assets dist`, and `packaging/arch/mouser-bin/` from `packaging/arch/update-bin.sh <ver>`. If that step fails, run the same by hand from the published release: `python3 scripts/packaging.py brew <ver> --release`, `packaging/arch/update-bin.sh <ver>`, commit `packaging: …`.
-4. **TAUR (required, every release).** When the `packaging:` commit is on `main`, on a machine with `taurctl` signed in: `git pull`, then `python3 scripts/taur.py publish <ver>` (try `--dry-run` first). It uploads `mouser-bin` to TAUR and checks TAUR now lists `<ver>-<pkgrel>`; see [TAUR](#taur). `release.py` prints this step after the push. A release isn't finished until it has run.
+4. **TAUR (required, every release).** When the `packaging:` commit is on `main`, on a machine with `taurctl` signed in: `git pull`, then `python3 scripts/weirdnet_release.py taur <ver>` (try `--dry-run` first). It uploads `mouser-bin` to TAUR and checks TAUR now lists `<ver>-<pkgrel>`; see [TAUR](#taur). The release script prints this step after the push. A release isn't finished until it has run.
 
 Homebrew checksums (`scripts/packaging.py`)
 - `brew` hashes both macOS tarballs (formula) and both `.dmg`s (cask), checks each against its `.sha256`, and only then writes the two files. A missing asset, two different copies, or a mismatch exits 1 and writes nothing, so an empty `sha256 ""` can't be committed (1.4.x and 1.5.0 shipped empty ones: the workflow hashed `dist/<file>` while the artifacts sit in `dist/<artifact>/<file>`; fixed for 1.5.0 in a follow-up commit).
-- `check` fails on an empty or malformed sha256, a url for another version, or a missing architecture. CI runs it with `scripts/test-packaging.py` and `scripts/test-release.py`, and on macOS installs the committed formula from a local tap: `brew fetch` for both architectures (formula and cask), each download checked against its sha256, then `brew install` and `mouser --version`.
+- `check` fails on an empty or malformed sha256, a url for another version, or a missing architecture. CI runs it with `scripts/test-packaging.py`, and on macOS installs the committed formula from a local tap: `brew fetch` for both architectures (formula and cask), each download checked against its sha256, then `brew install` and `mouser --version`.
 
-`scripts/release.py`
-- Message: one sentence becomes one bullet under `### Added` (`### Fixed` with `--patch`; `--section Changed` etc. to choose); `- ` bullets and `### Heading` blocks are used as written. Keep it summary level, like the rest of `CHANGELOG.md`.
-- Bumps what earlier `release:` commits bumped: `[workspace.package] version` in `Cargo.toml`, `crates/mouser-llm/Cargo.toml` (and any member pinned to the workspace version), `Cargo.lock` if present (gitignored, so not committed), the version lines in `man/*.1` (the man tests compare them with the generated pages), whatever version they carry, and `Current release` in `docs/HANDOVER.md`. The Homebrew files and `mouser-bin` PKGBUILD need the release checksums, so they stay a step 3 follow-up.
-- Refuses (exit 1, nothing written) when not on `main`, with uncommitted tracked changes, when `main` is behind or diverged from `origin/main`, when the tag exists locally or on `origin`, or when HEAD is not `--expect-head SHA`. If the commit fails, the files are put back.
-- `--no-push` commits and tags without pushing (push later with `git push origin main --follow-tags`); `--no-fetch` skips the `origin` checks; `--date YYYY-MM-DD` overrides the date.
-- Tests: `python3 scripts/test-release.py` (temporary repos with a local bare `origin`; no network).
+`scripts/weirdnet_release.py` (shared; `release.toml`)
+- The shared WeirdBrains release script, vendored from the private `weirdnet-project-helpers` repo so CI can run it. Don't edit it here: change it there and re-vendor (`vendor.py`). Its README documents every flag and the `release.toml` format.
+- Message: one sentence becomes one bullet under `### Added` (`### Fixed` with `--patch`; `--section Changed` or a `Fixed: ` prefix to choose); `- ` bullets and `### Heading` blocks are used as written. Keep it summary level, like the rest of `CHANGELOG.md`.
+- `release.toml` bumps what earlier `release:` commits bumped: `[workspace.package] version` in `Cargo.toml`, `crates/mouser-llm/Cargo.toml` (and any member pinned to the workspace version), `Cargo.lock` if present (gitignored, so not committed), the version lines in `man/*.1`, `Current release` in `docs/HANDOVER.md` and the homepage version in `site_jaspr/lib/pages/home.dart`. The Homebrew files and `mouser-bin` PKGBUILD need the release checksums, so they stay a step 3 follow-up.
+- Refuses (exit 1, nothing written) when not on `main`, with uncommitted tracked changes, when `main` is behind or diverged from `origin/main`, when the tag exists locally or on `origin`, or when HEAD is not `--expect-head SHA`. If anything fails before the commit, the tree is put back.
+- `--no-push` commits and tags without pushing; `--no-fetch` skips the `origin` checks; `--date YYYY-MM-DD` overrides the date; `--yes` skips the confirmation; `--skip-crates` leaves crates.io for later (`weirdnet_release.py crates`).
+- `python3 scripts/weirdnet_release.py validate` checks `release.toml` (CI runs it); `assets <ver>` checks the GitHub release has every platform file.
 
 Notes
 - Waypipe and X11 are Linux features; on macOS and Windows they are disabled in UI with an explanation (XQuartz/VcXsrv hints).
@@ -117,7 +118,7 @@ namcap PKGBUILD *.pkg.tar.zst
 Release workflow: the Arch job builds `mouser-bin` in an `archlinux:base-devel`
 container from this PKGBUILD with the freshly built binary and `git archive` of the tag.
 After the release is published, `packaging/arch/update-bin.sh <ver>` sets `pkgver` and
-real `sha256sums` (downloaded from the release) and regenerates `.SRCINFO` (`scripts/taur.py srcinfo`), and the bot
+real `sha256sums` (downloaded from the release) and regenerates `.SRCINFO` (`scripts/weirdnet_release.py taur-srcinfo`), and the bot
 commits it with the Homebrew update. Regenerate both `.SRCINFO` files on Arch with
 `packaging/arch/srcinfo.sh` after editing a PKGBUILD.
 
@@ -131,26 +132,24 @@ Every release publishes `packaging/arch/mouser-bin` to TAUR
 
 ```bash
 git pull                                       # the Release workflow's packaging: commit
-python3 scripts/taur.py publish 1.7.0 --dry-run  # everything except the upload
-python3 scripts/taur.py publish 1.7.0
+python3 scripts/weirdnet_release.py taur 1.7.0 --dry-run  # everything except the upload
+python3 scripts/weirdnet_release.py taur 1.7.0
 ```
 
-`publish` stops at the first failure, in this order:
+`taur` stops at the first failure, in this order (it first confirms with `gh` that the repository is public):
 1. `check`: `pkgver` is the version, `pkgrel` a number, every `sha256sums` entry
    a real sha256, the sources point at `v<ver>`, the `# Maintainer:` line is set,
-   and `.SRCINFO` is exactly what the PKGBUILD gives (also compared with
-   `makepkg --printsrcinfo` when makepkg is installed). TAUR rejects a stale `.SRCINFO`.
+   and `.SRCINFO` is exactly what the PKGBUILD gives. TAUR rejects a stale `.SRCINFO`.
 2. Downloads the release tarballs and compares them with the `sha256sums`
-   (`--no-verify-release` skips this).
+   (`--no-verify-sources` skips this).
 3. Packs `mouser-bin-<ver>-taur.tar.gz` (`mouser-bin/PKGBUILD`, `mouser-bin/.SRCINFO`).
 4. `taurctl whoami` must succeed.
-5. `taurctl pkg upload ARCHIVE --org WeirdBrains --yes` (`--dry-run` prints it instead).
+5. `taurctl pkg upload ARCHIVE --org WeirdBrains --yes` (`--dry-run` prints it instead; a version TAUR already has is not uploaded again).
 6. `taurctl info mouser-bin --json` must report `<ver>-<pkgrel>`.
 
-Other commands: `taur.py check <ver>`, `taur.py srcinfo [DIR]` (what `update-bin.sh`
-uses, so CI on Ubuntu writes the same `.SRCINFO` as makepkg), `taur.py pack <ver>`.
-`--taurctl PATH` (or `TAURCTL`) picks another binary. Tests:
-`python3 scripts/test-taur.py` (a fake `taurctl`, no network; CI runs it).
+Other commands: `weirdnet_release.py taur-check <ver>`, `weirdnet_release.py taur-srcinfo [DIR]` (what
+`update-bin.sh` uses, so CI on Ubuntu writes the same `.SRCINFO` as makepkg). `--taurctl PATH` (or
+`TAURCTL`) picks another binary. The script's tests (fake `taurctl`, no network) live in weirdnet-project-helpers.
 
 Auth and config (once per machine):
 - `taurctl config show` must show the server `https://pkg.taur.weirdbrains.com`
@@ -160,7 +159,7 @@ Auth and config (once per machine):
 - taurctl keeps the session token in `~/.config/taurctl/token` (mode 0600,
   `TAURCTL_CONFIG_DIR` overrides). Never print, copy or commit it. The Release
   workflow has no TAUR session, so the upload runs on the maintainer's machine;
-  the workflow runs `taur.py check` so the committed recipe is always uploadable.
+  the workflow runs `weirdnet_release.py taur-check` so the committed recipe is always uploadable.
 - The first upload creates `mouser-bin` on TAUR under `WeirdBrains`; later
   uploads must use the same org and a maintainer of the package.
 

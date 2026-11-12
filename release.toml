@@ -1,0 +1,96 @@
+# Mouser release config for weirdnet-project-helpers (scripts/weirdnet_release.py).
+helpers = "0.1.0"
+project = "mouser"
+require_message = true          # the message is the changelog bullet and the commit body
+ignore_untracked = true         # Cargo.lock is gitignored; untracked scratch files don't block a release
+next = [
+  "the v* tag starts the Release workflow; it pushes a `packaging:` commit (Homebrew, mouser-bin PKGBUILD)",
+  "then (required): git pull && python3 scripts/weirdnet_release.py taur {version} --dry-run, then without --dry-run",
+  "python3 scripts/weirdnet_release.py assets {version}   # every platform file is on the release",
+]
+
+[env]
+CARGO_TARGET_DIR = "/mnt/ext1/cargo-target"
+
+[[files]]                       # [workspace.package] version, members on the workspace version,
+kind = "cargo-workspace"        # members pinned to the old version, and mouser-llm even if it drifted
+path = "Cargo.toml"
+primary = true
+follow = ["crates/mouser-llm"]
+
+[[files]]                       # gitignored: written, not committed
+kind = "cargo-lock"
+path = "Cargo.lock"
+optional = true
+
+[[files]]                       # .TH title and the vX.Y.Z line under .SH VERSION, whatever they carry
+kind = "regex"
+path = "man/*.1"
+pattern = '^(\.TH .*"\S+ )\d+\.\d+\.\d+"'
+replace = '\g<1>{version}"'
+count = 0
+optional = true
+
+[[files]]
+kind = "regex"
+path = "man/*.1"
+pattern = '(^\.SH VERSION\n(?:\..*\n)*)v\d+\.\d+\.\d+$'
+replace = '\g<1>v{version}'
+count = 0
+optional = true
+
+[[files]]
+kind = "regex"
+path = "docs/HANDOVER.md"
+pattern = 'Current release: v[0-9][0-9A-Za-z.\-]* \(\d{4}-\d{2}-\d{2}\)'
+replace = 'Current release: v{version} ({date})'
+
+[[files]]                       # homepage hero link and install URLs follow the release
+kind = "replace"
+path = "site_jaspr/lib/pages/home.dart"
+detect = 'releases/tag/v(?P<v>\d+\.\d+\.\d+)'
+
+[changelog]
+path = "CHANGELOG.md"           # Keep a Changelog; [Unreleased] folds into the new section
+
+[crates]                        # public crates published from this repo, dependency order
+publish = ["crates/mouser-engine-abi", "crates/mouser-views", "crates/mouser-media"]
+
+[taur]
+org = "WeirdBrains"
+
+[[taur.packages]]               # committed recipe, updated by the Release workflow's packaging commit
+name = "mouser-bin"
+dir = "packaging/arch/mouser-bin"
+srcinfo_tool = "builtin"        # CI on Ubuntu has no makepkg; the generator matches makepkg
+
+[[platforms]]
+os = "linux"
+arch = ["x86_64"]
+arch_note = "aarch64 Linux builds not set up yet"
+formats = ["tar.gz", "deb", "rpm", "pkg.tar.zst"]
+channels = ["github", "taur"]
+assets = ["mouser-x86_64-unknown-linux-gnu.tar.gz", "mouser_{version}_amd64.deb", "mouser-{version}-1.x86_64.rpm", "mouser-bin-{version}-1-x86_64.pkg.tar.zst"]
+
+[[platforms]]
+os = "macos"
+arch = ["x86_64", "aarch64"]
+formats = ["tar.gz", "dmg", "app", "brew-formula", "brew-cask"]
+channels = ["github", "homebrew"]
+assets = ["mouser-*-apple-darwin.tar.gz", "*.dmg"]
+
+[[platforms]]
+os = "windows"
+arch = ["x86_64"]
+arch_note = "no ARM64 Windows build yet"
+formats = ["zip", "exe"]
+channels = ["github"]
+assets = ["*windows*.zip", "MouserSetup-{version}.exe"]
+
+[[platforms]]
+os = "android"
+opt_out = "desktop terminal; no mobile build planned yet"
+
+[[platforms]]
+os = "ios"
+opt_out = "desktop terminal; no mobile build planned yet"
