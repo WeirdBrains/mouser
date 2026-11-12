@@ -189,6 +189,7 @@ fn drag_draws_a_ghost_and_an_insertion_line() {
             styles: &[],
             cursor_shape: Default::default(),
             tabs: None,
+            chrome: None,
         };
         render_frame(&mut Canvas::new(&mut buf, w, h), &mut fonts, &frame);
         buf

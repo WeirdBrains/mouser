@@ -71,6 +71,10 @@ pub struct Preferences {
     /// `[appearance]`: extra visual settings (docs/preferences.md).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub appearance: Option<AppearancePrefs>,
+    /// `[tabs]`: default shell and per-tab shells for the tabs decoration
+    /// (docs/tabs.md). Ignored while that plugin is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<crate::decoration::TabsConfig>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]

@@ -31,6 +31,7 @@ fn render(text: &str, fonts: &mut FontStack) -> (Vec<u32>, usize, usize) {
             styles: &[],
             cursor_shape: Default::default(),
             tabs: None,
+            chrome: None,
         },
     );
     (buf, w, h)
@@ -190,6 +191,7 @@ fn sidebar_labels_are_clean_and_buttons_fit() {
             styles: &[],
             cursor_shape: Default::default(),
             tabs: None,
+            chrome: None,
         },
     );
     // No pixel inside the sidebar may show the terminal background (the old

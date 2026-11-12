@@ -8,6 +8,7 @@ mod appearance_ui;
 mod approval_ui;
 mod chat_host;
 mod color_dropper;
+mod decor;
 mod mcp_tools;
 mod remote_list;
 mod select;
@@ -243,9 +244,9 @@ enum Command {
         #[arg(long, value_name = "DIR", default_value = "man")]
         out: PathBuf,
     },
-    /// Manage plugins (mode, model-provider, tool-provider, command; engines too); see docs/plugins.md.
+    /// Manage plugins (mode, decoration, model-provider, tool-provider, command; engines too); see docs/plugins.md.
     Plugin {
-        /// Only this kind: mode, engine, model-provider, tool-provider, command.
+        /// Only this kind: mode, decoration, engine, model-provider, tool-provider, command.
         /// With `engine` this is `mouser engine …`.
         #[arg(long, global = true)]
         kind: Option<String>,
@@ -1193,6 +1194,8 @@ fn main() -> Result<()> {
     // size is known, so its first prompt is drawn for the right width.
     let size = Size { cols: 100, rows: 30 };
     let tabs = Arc::new(Mutex::new(tabs::Tabs::default()));
+    // Decoration plugins are opt-in. Off: this window keeps the built-in sessions.
+    let decor = decor::Shared::new(Mutex::new(decor::Decor::load(handoff.is_none() && cli.exec.is_empty() && cli.trailing.is_empty())));
     // The ssh shim on the tabs' PATH (docs/ssh.md).
     #[cfg(unix)]
     if let Ok(exe) = std::env::current_exe() {
@@ -1210,8 +1213,30 @@ fn main() -> Result<()> {
             tabs::Session::handed_off(if h.title.trim().is_empty() { "console".to_string() } else { h.title }, h.handles, size, sb_cfg.clone())
         }
         None => {
-            let first = first_tab(&cli);
-            tabs::Session::new_in(first.name, first.launch, first.cwd, size, sb_cfg.clone())
+            let mut first = first_tab(&cli);
+            let plan = decor.lock().unwrap().plan().clone();
+            let shell = if matches!(first.launch, tabs::Launch::Shell) {
+                if let Some((title, command)) = decor::first_command(&plan) {
+                    if cli.title.is_none() {
+                        first.name = title;
+                    }
+                    first.launch = tabs::Launch::Command(command);
+                    None
+                } else {
+                    let shell = decor::first_shell(&plan);
+                    if shell.is_some() && cli.title.is_none() {
+                        first.name = plan.first.as_ref().map(|f| f.title.clone()).unwrap_or(first.name);
+                    }
+                    shell
+                }
+            } else {
+                None
+            };
+            let session = tabs::Session::new_in(first.name, first.launch, first.cwd, size, sb_cfg.clone());
+            if let Some(program) = shell {
+                *session.shell_program.lock().unwrap() = Some(program);
+            }
+            session
         }
     };
     tabs.lock().unwrap().open(first_session, wake);
@@ -1413,15 +1438,33 @@ fn main() -> Result<()> {
         Arc::new(move || app_state.lock().unwrap().look.font())
     };
     let on_resize = {
-        let tabs = tabs.clone();
-        Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| tabs.lock().unwrap().resize(cols, rows, pw, ph, wake))
+        let (tabs, decor, sb_cfg) = (tabs.clone(), decor.clone(), sb_cfg.clone());
+        Arc::new(move |cols: u16, rows: u16, pw: u16, ph: u16| {
+            let (extras, on) = {
+                let mut d = decor.lock().unwrap();
+                let extras = d.take_extras();
+                (extras, d.on)
+            };
+            let mut t = tabs.lock().unwrap();
+            for op in extras {
+                decor::apply(&mut t, op, &sb_cfg, wake);
+            }
+            if on { t.resize_active(cols, rows, pw, ph, wake) } else { t.resize(cols, rows, pw, ph, wake) }
+        })
     };
     let get_ui_model = {
-        let (app_state, tabs, writer) = (app_state.clone(), tabs.clone(), shared_writer.clone());
+        let (app_state, tabs, writer, decor) = (app_state.clone(), tabs.clone(), shared_writer.clone(), decor.clone());
         Arc::new(move |vp: mouser_render::UiViewport| -> Option<ui::UiLayout> {
             let (session, tab_h) = {
                 let t = tabs.lock().unwrap();
-                (t.active(), if t.bar().titles.len() > 1 { ui::tab_bar_height(vp.cell_h) } else { 0 })
+                let bar = if decor.lock().unwrap().on {
+                    mouser_core::decoration::bar_height(vp.cell_h)
+                } else if t.bar().titles.len() > 1 {
+                    ui::tab_bar_height(vp.cell_h)
+                } else {
+                    0
+                };
+                (t.active(), bar)
             };
             let alt = session.as_ref().is_some_and(|s| s.parser.lock().unwrap().screen.in_alt_screen());
             let place = session.as_ref().and_then(|s| s.place());
@@ -1498,7 +1541,7 @@ fn main() -> Result<()> {
     }
     let on_ui_action = {
         let app_state = app_state.clone();
-        let (tabs_ui, sb_cfg, writer_ui) = (tabs.clone(), sb_cfg.clone(), shared_writer.clone());
+        let (tabs_ui, sb_cfg, writer_ui, decor_ui) = (tabs.clone(), sb_cfg.clone(), shared_writer.clone(), decor.clone());
         Arc::new(move |act: ui::UiAction| match act.clone() {
             ui::UiAction::Approve(i) => {
                 let mut st = app_state.lock().unwrap();
@@ -1529,17 +1572,29 @@ fn main() -> Result<()> {
                     None => app_state.lock().unwrap().look.say(format!("No connection named {name}")),
                 }
             }
-            ui::UiAction::NewTab => {
-                let s = tabs::Session::new("shell", tabs::Launch::Shell, Size { cols: 100, rows: 30 }, sb_cfg.clone());
-                tabs_ui.lock().unwrap().open(s, wake);
-            }
-            ui::UiAction::SelectTab(i) => tabs_ui.lock().unwrap().select(i),
-            ui::UiAction::CycleTab(d) => tabs_ui.lock().unwrap().cycle(d),
-            ui::UiAction::CloseTab(i) => tabs_ui.lock().unwrap().close(i),
-            ui::UiAction::CloseActiveTab => {
+            ui::UiAction::NewTab
+            | ui::UiAction::SelectTab(_)
+            | ui::UiAction::CycleTab(_)
+            | ui::UiAction::CloseTab(_)
+            | ui::UiAction::CloseActiveTab => {
                 let mut t = tabs_ui.lock().unwrap();
-                let i = t.active;
-                t.close(i);
+                let mut d = decor_ui.lock().unwrap();
+                if !decor::on_action(&mut d, &mut t, &act, &sb_cfg) {
+                    match &act {
+                        ui::UiAction::NewTab => {
+                            let s = tabs::Session::new("shell", tabs::Launch::Shell, Size { cols: 100, rows: 30 }, sb_cfg.clone());
+                            t.open(s, wake);
+                        }
+                        ui::UiAction::SelectTab(i) => t.select(*i),
+                        ui::UiAction::CycleTab(delta) => t.cycle(*delta),
+                        ui::UiAction::CloseTab(i) => t.close(*i),
+                        ui::UiAction::CloseActiveTab => {
+                            let i = t.active;
+                            t.close(i);
+                        }
+                        _ => {}
+                    }
+                }
             }
             ui::UiAction::OpenAdd(cat) => {
                 let mut st = app_state.lock().unwrap();
@@ -1828,12 +1883,49 @@ fn main() -> Result<()> {
         on_window_size: None,
         // The window closes when the last tab's process has exited.
         should_exit: Some({
-            let tabs = tabs.clone();
-            Arc::new(move || tabs.lock().unwrap().reap())
+            let (tabs, decor, sb_cfg) = (tabs.clone(), decor.clone(), sb_cfg.clone());
+            Arc::new(move || {
+                let mut t = tabs.lock().unwrap();
+                let mut d = decor.lock().unwrap();
+                decor::reap_window(&mut t, &mut d, &sb_cfg)
+            })
         }),
         get_tabs: Some({
-            let tabs = tabs.clone();
-            Arc::new(move || tabs.lock().unwrap().bar())
+            let (tabs, decor) = (tabs.clone(), decor.clone());
+            Arc::new(move || {
+                // The decoration paints its own strip, including a single tab.
+                if decor.lock().unwrap().on { mouser_render::ui::TabBar::default() } else { tabs.lock().unwrap().bar() }
+            })
+        }),
+        get_chrome: Some({
+            let (tabs, decor, app_state) = (tabs.clone(), decor.clone(), app_state.clone());
+            Arc::new(move |width, height, cell_w, cell_h| {
+                let mut ctx = {
+                    let t = tabs.lock().unwrap();
+                    decor::pty_ctx(&t)
+                };
+                let colors = app_state.lock().unwrap().look.colors();
+                ctx.width = width;
+                ctx.height = height;
+                ctx.cell_w = cell_w;
+                ctx.cell_h = cell_h;
+                ctx.bg = colors.bg;
+                ctx.fg = colors.fg;
+                ctx.accent = colors.accent.unwrap_or(0x2fd8e5);
+                let mut d = decor.lock().unwrap();
+                if !d.on {
+                    return mouser_core::decoration::Chrome::default();
+                }
+                d.chrome(&ctx)
+            })
+        }),
+        on_chrome: Some({
+            let (tabs, decor, sb_cfg) = (tabs.clone(), decor.clone(), sb_cfg.clone());
+            Arc::new(move |id: String| {
+                let mut t = tabs.lock().unwrap();
+                let mut d = decor.lock().unwrap();
+                decor::on_hit(&mut d, &mut t, &id, &sb_cfg);
+            })
         }),
         get_status: Some({
             let app_state = app_state.clone();

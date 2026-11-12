@@ -20,10 +20,55 @@ the same registry.
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 | `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
-| `builtin` | compiled into Mouser (commander, chat, preferences, the model adapters); reserved | always there | part of Mouser |
+| `decoration` | a program that draws the window chrome and decides which PTYs exist (newline JSON, below) | one process for the window; killed if a reply takes over 500 ms | installed: asks (`run`), then remembers |
+| `builtin` | compiled into Mouser (commander, chat, preferences, the model adapters, the tabs decoration); reserved | always there | part of Mouser |
 
 Native libraries are only for engines (kind `engine`, transport `library`); their
 C ABI is unchanged (docs/engines.md).
+
+## Decoration plugins
+
+A decoration replaces the window chrome and decides which PTYs that window
+holds. One runs per window: the first enabled one in registry order. With none,
+Mouser keeps its built-in tab bar (shown once there are two tabs) and one shell
+per tab.
+
+The built-in `tabs` decoration is off until `mouser plugin enable tabs`. It
+draws a tab strip (including the one-tab case), and each tab can run its own
+shell or command from `[tabs]` in `preferences.toml` (docs/tabs.md).
+
+An external one is `kind = "decoration"` and `transport = "decoration"`, with
+`run.command` required. The name `tabs` is reserved. It needs `run` allowed or
+it never starts and the window stays on the built-in behaviour. The environment
+is scrubbed the same way as a command plugin.
+
+The process speaks newline-delimited JSON. Mouser sends one object and waits
+for one object (500 ms, then the process is killed and the window falls back).
+
+Mouser to the plugin:
+
+| `op` | when |
+|---|---|
+| `hello` | once, at start |
+| `chrome` | each frame (`width`, `height`, `cell_w`, `cell_h`, `pty`) |
+| `event` | a key action or a hit id (`action`, `id`, `pty`) |
+| `note` | a PTY exited (`id`, `code`, `pty`) |
+
+`pty` is `{ "focused", "list": [ { "id", "title", "alive", "kind", "program" } ] }`.
+
+The plugin replies:
+
+```json
+{"chrome":{"top":32,"bottom":0,"left":0,"right":0,"ops":[{"text":{"x":8,"y":4,"text":"1 sh","color":"#c0caf5"}}],"hits":[{"id":"focus:1","x":0,"y":0,"w":80,"h":32}]},"ops":[{"focus":1}]}
+```
+
+`ops` is `fill` or `text` (pixel rects, colours `#rrggbb`). `hits` are pixel
+rects; a click sends that `id` back as an event. PTY ops are `{"spawn":{"kind":"shell","program":"/bin/zsh"}}`,
+`{"spawn":{"kind":"command","program":"top","argv":[]}}`, `{"close":1}`, `{"focus":1}`.
+The host owns the PTY; the plugin only asks.
+
+In Rust the same contract is `mouser_core::decoration::{Decoration, DecorEvent, Chrome, PtyOp}`.
+`mouser_core::decoration::TabsDecoration` is the built-in.
 
 ## The manifest: `plugin.toml`
 
@@ -35,7 +80,7 @@ description = "says hello from the [mouser] line"
 permissions = ["run", "notify"] # what it may ask for (below)
 
 [[provides]]                    # one or more
-kind = "command"                # mode | engine | model-provider | tool-provider | command
+kind = "command"                # mode | engine | model-provider | tool-provider | command | decoration
 id = "hello"                    # optional; defaults to the name
 
 [run]

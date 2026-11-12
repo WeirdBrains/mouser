@@ -78,6 +78,7 @@ pub fn schema() -> Vec<Field> {
         f("Audio", "audio.output_device", "Output device", Kind::Choice(devices), "default", false),
         f("Audio", "audio.active_host", "Active host", Kind::ReadOnly("set Audio host"), crate::audio::active_host(host), false),
         f("Plugins", "plugins.max_restarts", "Crash restarts (within 30 s)", Kind::Int { min: 0, max: 100 }, "3", true),
+        f("Tabs", "tabs.shell", "Default shell for a new tab", Kind::Text { url: false }, "$SHELL", true),
         f("Chat", "chat.transcripts", "Keep transcripts", Kind::Bool, "true", true),
         f("Models", "models.default", "Default model", Kind::Text { url: false }, "(none)", true),
         f("Local model", "models.local.disabled", "Disabled", Kind::Bool, "false", true),

@@ -1,78 +1,99 @@
-# AGENTS.md — rules for agents working on Mouser
+# Mouser
 
-These rules are adapted from the owner's Muninn project for this repository.
+This file adds Mouser-specific rules on top of the collective
+`WeirdBrains/weirdnet-agents` `AGENTS.md`
+(<https://github.com/WeirdBrains/weirdnet-agents>). That file is mandatory.
+If the two conflict, the collective file wins unless this file explicitly
+overrides a rule and gives a reason.
+
+Shared rules live only there: straight to `main` with no pull requests, the
+quality bar, secrets, temp homes (`MOUSER_HOME`), virtual-display GUI tests on
+alien-blue, the release script, and changelog style. Do not copy them here.
 
 ## Where to work
-- Always work directly on the owner's machine (alien-blue), in this repository folder:
-  `~/Projects/WeirdBrains/mouser`. No cloud agents, no clones elsewhere. Work on `main` directly; no PRs or branches.
-- Toolchain: Rust >= 1.99 (edition 2024), cargo on this machine. Prefer bundled/vendored
-  crate features over installing system packages; ask before installing anything.
 
-## Source of truth
-- Front ends are thin layers over the library; no business logic in them. Menus,
-  keybindings and help dispatch the same named actions. If Mouser grows a CLI or help
-  view, they remain thin adapters over the core library.
-
-## Safety
-- Never touch the user's real Mouser home for tests or manual runs. Use a temp
-  directory (set `MOUSER_HOME` or pass `--config-dir`) for all non-release runs.
-- Never edit files outside this project folder (cargo caches excepted).
-- Git: commit locally in logical steps. Work on `main` directly. Never force-push, rewrite
-  published history, or skip hooks.
-- Secrets (keys, tokens, passwords) are never logged, printed in `-v` output, or committed.
-
-## Versioning and releases
-- Semantic versioning. Pre-1.0: MINOR bump per new feature, PATCH for fixes/docs-only.
-- Each release: bump `Cargo.toml` (+ `Cargo.lock`), update the version shown in the app
-  (if displayed), add a summary-level `CHANGELOG.md` entry, commit as `release: vX.Y.Z`,
-  create an annotated tag `vX.Y.Z`, then push `main` with the tag:  
-  `git push origin main --follow-tags`.
-- Releases use the shared WeirdBrains release script (weirdnet-project-helpers), vendored as
-  `scripts/weirdnet_release.py` and configured by `release.toml`:
-  `python3 scripts/weirdnet_release.py [--major|--patch] "message"` does all of this (MINOR by
-  default); the `v*` tag push is what starts the Release workflow. See `docs/release.md`. Don't
-  edit the vendored copy; change weirdnet-project-helpers and re-vendor it.
-- Every release ends with the TAUR upload: after the Release workflow's `packaging:`
-  commit, `git pull` and `python3 scripts/weirdnet_release.py taur X.Y.Z` (taurctl signed in).
-- `CHANGELOG.md` (Keep a Changelog format) stays summary level: a few short one-line
-  bullets per release naming the feature. No implementation details or file lists.
+- This checkout is `~/Projects/WeirdBrains/mouser` on alien-blue.
 
 ## Documentation
-- Every feature is documented in `docs/` (one Markdown file per feature, indexed in
-  `docs/README.md`). Update docs in the same change as the code.
-- In-app help (if present) is built from `docs/` (single source). Topics should be
-  searchable and cross-linked.
-- Every **public** Markdown doc in `docs/` must have a matching page on the website, in
-  the right section (User Guides, Developer Guides, MCP Guides or API Guides), updated in
-  the same change. Map each new doc in `docs/sections.toml` to `user`, `developer`, `mcp`,
-  `api`, or `internal`. Internal docs (maintainer/agent notes such as deploy-site, the
-  release process and HANDOVER) stay in the repo and are not published to the site. CI
-  (`scripts/check-doc-sections.py`) fails on an unmapped doc, and the Docs site workflow
-  rebuilds the site's pages from `docs/` on a `v*` tag or a `main` push that touches the
-  site or docs (skipping `internal`; also runnable by hand).
-- If Mouser exposes a CLI, generate man pages from clap definitions (clap_mangen) into
-  `man/`, with additional FILES / ENVIRONMENT / EXIT STATUS / SECURITY / EXAMPLES sections.
 
-## Quality bar (before every commit)
-- `cargo fmt --check`, `cargo build`, `cargo clippy --all-targets` (no warnings),
-  and `cargo test` all pass.
-- New behaviour ships with tests.
-
-## Fixed design decisions for Mouser
-- Scrollback compression: idle lines are compressed into chunked blocks (zstd or lz4).
-- Decompression on demand: scrolling or search transparently decompresses needed chunks,
-  with prefetch around the viewport; chunks re-compress after going idle again.
-- Full Kitty protocol support is a long-term goal (keyboard, graphics, and common
-  extensions). Track status in `docs/kitty-compliance.md`.
-- Configuration is TOML-based (font, colors, scrollback, compression settings).
-- Storage lives in `~/.mouser` by default with `MOUSER_HOME` override. Built-in themes are
-  provided and written on first run or copied on edit.
+- One Markdown file per feature in `docs/`, indexed in `docs/README.md`. In-app
+  help is built from those files.
+- Map each public doc in `docs/sections.toml` to `user`, `developer`, `mcp`,
+  `api`, or `internal`. Internal docs (deploy-site, the release process,
+  HANDOVER) stay in the repo. `scripts/check-doc-sections.py` fails on an
+  unmapped doc. The Docs site workflow rebuilds public pages on a `v*` tag or
+  a `main` push that touches the site or `docs/`.
+- Man pages are generated from clap (`mouser man --out man`), with FILES,
+  ENVIRONMENT, EXIT STATUS, SECURITY and EXAMPLES on `mouser(1)`.
 
 ## Releases
-- For each tested change: bump versions (docs-only: PATCH; feature: MINOR), update `CHANGELOG.md`,
-  commit as `release: vX.Y.Z`, create an annotated tag `vX.Y.Z`, then push:
-  `git push origin main --follow-tags`. Packaging ships prebuilt binaries; installing must not require Rust.
 
-## Communication style
-- Keep summaries, changelog entries and commit messages concise.
+Do not cut a release or create a tag unless the owner asks. Record the change
+under `## [Unreleased]` and leave the version alone.
 
+What this repo does (`docs/release.md`, `release.toml`, helpers 0.1.1), beyond
+the collective release rules:
+
+- The script bumps `[workspace.package] version` and the members `release.toml`
+  follows, writes `Cargo.lock` when present (gitignored, so not committed), the
+  version lines in `man/*.1`, `Current release` in `docs/HANDOVER.md`, and the
+  homepage version in `site_jaspr/lib/pages/home.dart`. It commits
+  `release: vX.Y.Z`, tags `vX.Y.Z`, and pushes `main` and that tag atomically.
+  It then publishes `mouser-engine-abi`, `mouser-views` and `mouser-media` when
+  that version is not on crates.io yet, asking first.
+- A push to `main` starts neither `.github/workflows/release.yml` nor `ci.yml`.
+  Only the `v*` tag does. `workflow_dispatch` on the Release workflow builds
+  and publishes nothing. The publish job runs only on a `v*` tag.
+- The workflow builds Linux x86_64, macOS x86_64 and arm64, and Windows
+  x86_64. Packages: `.deb` and `.rpm` (nfpm), Arch `mouser-bin`
+  `.pkg.tar.zst`, macOS `Mouser.app` and `.dmg`, Windows `.zip` and
+  `MouserSetup-<ver>.exe` (Inno Setup; not WiX). Engines ship beside the
+  binary (`mouser engine bundle`). Linux desktop files are validated.
+- After the release is published the workflow pushes a `packaging:` commit:
+  `Formula/mouser.rb`, `Casks/mouser.rb`, and `packaging/arch/mouser-bin/`.
+- TAUR is required and is not in the workflow. After that commit is on `main`,
+  on a machine with `taurctl` signed in: `git pull`, then
+  `python3 scripts/weirdnet_release.py taur X.Y.Z` (org WeirdBrains, package
+  `mouser-bin`). A release is not finished until that has run.
+- Gaps, as the repo stands: minisign is set (`OFFICIAL_KEY`); macOS and Windows
+  certificate secrets are not, so those builds stay unsigned. `-full` offline
+  bundles are not built (`plugins.lock` is empty). aarch64 Linux is not set
+  up. There is no ARM64 Windows build. Android and iOS are opted out. AUR
+  `yay` install is still planned.
+
+## Plugins, PTYs and the tabs decoration
+
+- Plugin kinds: mode, engine, model-provider, tool-provider, command,
+  decoration. Manifests are `plugin.toml`. State is
+  `$MOUSER_HOME/plugins/state.toml`. API version is 1. Official modes are out
+  of process. Engines are native libraries. The contract is `docs/plugins.md`.
+- A decoration draws the window chrome (draw ops and hit targets) and asks the
+  host to spawn, close or focus PTYs. The host owns the OS PTY. One decoration
+  runs per window: the first enabled one. `tabs` is built in and off until
+  `mouser plugin enable tabs`. With it off, the built-in tab bar (shown from
+  the second tab) and one login shell per tab stay as they are.
+- External decorations use `transport = "decoration"` and newline JSON
+  (`hello` / `chrome` / `event` / `note`, reply `{chrome, ops}`). They need
+  `run` allowed. A reply over 500 ms kills the process and that window falls
+  back to the built-in sessions. The Rust trait is
+  `mouser_core::decoration::Decoration`.
+- Host glue is `mouser-app` (`decor.rs`, `tabs.rs`). Chrome insets shrink the
+  grid. Only the active PTY is resized, and a newly focused PTY is resized to
+  the stored size. On Unix the session server forwards chrome over the split
+  protocol (`mouser-render` `split.rs`, protocol 2). Lock tabs, then the
+  decoration.
+- `[tabs] shell` is the default for a new tab. `[[tabs.tab]]` is file-only
+  (shell or command per tab). See `docs/tabs.md`.
+- Tests that do not need a window: `cargo test -p mouser-core decoration`,
+  `cargo test -p mouser-app decor`, `cargo test -p mouser-pty`. Kill any shell
+  a PTY test spawned. `MOUSER_UI=headless` runs the session server with no
+  window. A winit window follows the collective virtual-display rule.
+
+## Fixed design
+
+- Idle scrollback lines are compressed into chunked blocks (zstd or lz4) and
+  decompressed on demand, with prefetch around the viewport.
+- Full Kitty protocol support is a long-term goal (keyboard, graphics, and
+  common extensions). Status is `docs/kitty-compliance.md`.
+- Configuration is TOML. Storage defaults to `~/.mouser`, overridable with
+  `MOUSER_HOME`. Built-in themes are written on first run or copied on edit.

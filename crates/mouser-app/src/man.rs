@@ -72,7 +72,7 @@ Mode keys: the focus toggle ([focus] key, default ctrl+alt+k), each mode's keys 
 Built-in themes, written on first run or copied on edit.
 .TP
 .I ~/.mouser/plugins/
-Installed plugins (modes, engines, model and tool providers, commands).
+Installed plugins (modes, engines, decorations, model and tool providers, commands).
 .TP
 .I ~/.mouser/models/
 Local model weights (see MOUSER_MODELS_DIR).

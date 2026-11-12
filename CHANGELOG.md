@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Decoration plugins, and the built-in `tabs` decoration: a tab bar in one window, each tab its own shell or command (`mouser plugin enable tabs`; docs/tabs.md, docs/plugins.md).
+
 ## [1.7.0] - 2026-11-11
 
 ### Added

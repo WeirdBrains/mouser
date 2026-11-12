@@ -22,6 +22,7 @@
 "models.md" = "user"
 "downloads.md" = "user"
 "windows.md" = "user"
+"tabs.md" = "user"
 "kitty-compliance.md" = "user"
 "plugins.md" = "developer"
 "mode-protocol.md" = "developer"

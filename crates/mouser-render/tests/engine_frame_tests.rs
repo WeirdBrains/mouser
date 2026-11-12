@@ -44,6 +44,7 @@ fn abi_frame_matches_cpu_reference() {
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let mut fonts = FontStack::embedded(15.0);
     let mut list = DisplayList::new(w, h);

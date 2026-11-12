@@ -25,6 +25,9 @@ doesn't parse is never overwritten; the mode says so instead.
 
 Theme, light/dark, the Esc wait, chat and model settings apply at once; rows
 marked "new windows" (font, sidebar, MCP server) apply to windows opened later.
+`tabs.shell` (default `$SHELL`) is the shell a new tab runs once the `tabs`
+decoration is enabled; it applies to the next new tab. Per-tab shells are
+`[[tabs.tab]]` in the same file (docs/tabs.md).
 
 ## Appearance
 

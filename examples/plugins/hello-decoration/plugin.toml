@@ -1,0 +1,14 @@
+name = "hello-decoration"
+version = "0.1.0"
+api = 1
+description = "a one-tab chrome strip that echoes the focused PTY"
+permissions = ["run"]
+
+[[provides]]
+kind = "decoration"
+id = "hello-decoration"
+
+[run]
+command = "sh"
+args = ["run.sh"]
+transport = "decoration"
