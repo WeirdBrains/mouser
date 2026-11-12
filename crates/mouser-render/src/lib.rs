@@ -39,6 +39,8 @@ pub type ViewHook = Arc<dyn Fn(usize, usize) -> (Vec<String>, Vec<Vec<CellPaint>
 /// (reported to the app or a link opened) so the renderer does not scroll.
 pub type MouseHook = Arc<dyn Fn(mouser_core::input::MouseEvent) -> bool + Send + Sync>;
 pub type UiModelHook = Arc<dyn Fn(UiViewport) -> Option<ui::UiLayout> + Send + Sync>;
+pub type ChromeHook = Arc<dyn Fn(i32, i32, i32, i32) -> mouser_core::decoration::Chrome + Send + Sync>;
+pub type ChromeHitHook = Arc<dyn Fn(String) + Send + Sync>;
 
 pub struct RenderHooks {
     pub on_key_bytes: Arc<dyn Fn(Vec<u8>) + Send + Sync>,
@@ -67,8 +69,13 @@ pub struct RenderHooks {
     pub hold_frame: Option<ExitHook>,
     /// Window title (OSC 0/2).
     pub get_title: Option<StatusHook>,
-    /// Tab strip; drawn when there are 2+ tabs.
+    /// Tab strip; drawn when there are 2+ tabs and no decoration chrome.
     pub get_tabs: Option<Arc<dyn Fn() -> ui::TabBar + Send + Sync>>,
+    /// Decoration chrome for the terminal area (`width`, `height`, cell size).
+    /// An empty chrome leaves the built-in tab strip in place.
+    pub get_chrome: Option<ChromeHook>,
+    /// A click on a decoration hit target (its id).
+    pub on_chrome: Option<ChromeHitHook>,
     /// `(scrolled_back, rows)` -> (lines to show, clamped scrolled_back).
     /// `scrolled_back` counts lines above the live screen; 0 is the live view.
     pub fetch_lines: Arc<dyn Fn(usize, usize) -> (Vec<String>, usize) + Send + Sync>,
@@ -152,8 +159,8 @@ impl ClickCounter {
 
 /// View cell under a window position for selection, clamped to the grid, and
 /// whether the pointer is above (-1) or below (1) it.
-pub fn select_cell(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), top: i32) -> (usize, usize, i8) {
-    let (x, y) = (px as i32 - PADDING, py as i32 - top);
+pub fn select_cell(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), origin_x: i32, top: i32) -> (usize, usize, i8) {
+    let (x, y) = (px as i32 - origin_x, py as i32 - top);
     let cols = grid.0.max(1);
     let rows = grid.1.max(1);
     let col = if x < 0 { 0 } else { ((x / cell.0.max(1)) as usize).min(cols - 1) };
@@ -595,7 +602,9 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
     let mut title = String::new();
     let default_title = renderer.title.clone().unwrap_or_else(|| "Mouser".into());
     let mut grid_top = PADDING;
+    let mut grid_x = PADDING;
     let mut tab_bar = ui::TabBar::default();
+    let mut chrome = mouser_core::decoration::Chrome::default();
     let mut selecting = false;
     let mut clicks = ClickCounter::default();
     let mut last_autoscroll = Instant::now();
@@ -685,14 +694,14 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         dirty = true;
                     }
                     if selecting && let Some(on_select) = &hooks.on_select {
-                        let (col, row, _) = select_cell(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                        let (col, row, _) = select_cell(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, grid_x, grid_top);
                         on_select(SelectEvent::Drag { col, row, scrolled_back });
                         dirty = true;
                     }
                     if !dragging
                         && !selecting
                         && let (Some(on_mouse), Some(hit)) =
-                            (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top))
+                            (&hooks.on_mouse, grid_hit(position.x, position.y, (fonts.cell_w, fonts.cell_h), grid, text_w - chrome.right, grid_x, grid_top))
                     {
                         let b = mouse_down.unwrap_or(mouser_core::input::MouseButton::None);
                         on_mouse(mouse_event(mouser_core::input::MouseKind::Motion, b, hit, modifiers));
@@ -746,7 +755,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     }
                     if !dragging
                         && let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w - chrome.right, grid_x, grid_top)
                     {
                         on_mouse(mouse_event(mouser_core::input::MouseKind::Release, b, hit, modifiers));
                     }
@@ -788,6 +797,19 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         dirty = true;
                         return;
                     }
+                    if let (Some(on_chrome), Some(pos)) = (&hooks.on_chrome, cursor_pos)
+                        && let Some(id) = mouser_core::decoration::hit_test(&chrome, pos.x as i32, pos.y as i32)
+                    {
+                        let id = if button == winit::event::MouseButton::Middle {
+                            id.strip_prefix("focus:").map(|n| format!("close:{n}")).unwrap_or(id)
+                        } else {
+                            id
+                        };
+                        on_chrome(id);
+                        scrolled_back = 0;
+                        dirty = true;
+                        return;
+                    }
                     if let (Some(on_act), Some(pos)) = (&hooks.on_ui_action, cursor_pos)
                         && let Some(act) = ui::tab_hit(
                             &tab_bar,
@@ -805,7 +827,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         return;
                     }
                     if let (Some(on_mouse), Some(pos), Some(b)) = (&hooks.on_mouse, cursor_pos, winit_button(button))
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w - chrome.right, grid_x, grid_top)
                         && last_ui.as_ref().is_none_or(|l| l.panel.is_none())
                     {
                         mouse_down = Some(b);
@@ -907,7 +929,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                         return;
                     }
                     if let (Some(on_mouse), Some(pos)) = (&hooks.on_mouse, cursor_pos)
-                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w, grid_top)
+                        && let Some(hit) = grid_hit(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, text_w - chrome.right, grid_x, grid_top)
                         && lines != 0
                         && scrolled_back == 0
                     {
@@ -933,7 +955,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 // Dragging a selection past the top or bottom edge scrolls the view.
                 let mut autoscroll_next = None;
                 if selecting && let (Some(on_select), Some(pos)) = (&hooks.on_select, cursor_pos) {
-                    let (col, row, edge) = select_cell(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, grid_top);
+                    let (col, row, edge) = select_cell(pos.x, pos.y, (fonts.cell_w, fonts.cell_h), grid, grid_x, grid_top);
                     if edge != 0 {
                         autoscroll_next = Some(last_autoscroll + AUTOSCROLL_EVERY);
                         if last_autoscroll.elapsed() >= AUTOSCROLL_EVERY {
@@ -1008,14 +1030,33 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                 if !fullscreen {
                     text_w = layout.as_ref().map(|l| l.sidebar_rect.x).unwrap_or(width as i32);
                 }
-                if let Some(f) = &hooks.get_tabs {
+                if let Some(f) = &hooks.get_chrome {
+                    chrome = f(text_w, height as i32, fonts.cell_w, fonts.cell_h);
+                }
+                let chrome_on = chrome.top > 0 || chrome.bottom > 0 || chrome.left > 0 || chrome.right > 0;
+                if !chrome_on
+                    && let Some(f) = &hooks.get_tabs
+                {
                     tab_bar = f();
                 }
-                let tab_h = if tab_bar.titles.len() > 1 { ui::tab_bar_height(fonts.cell_h) } else { 0 };
+                if chrome_on {
+                    tab_bar = ui::TabBar::default();
+                }
+                let bar = if chrome_on {
+                    chrome.top
+                } else if tab_bar.titles.len() > 1 {
+                    ui::tab_bar_height(fonts.cell_h)
+                } else {
+                    0
+                };
+                let bot = if chrome_on { chrome.bottom } else { 0 };
+                let left = if chrome_on { chrome.left } else { 0 };
+                let right = if chrome_on { chrome.right } else { 0 };
                 // A mode's view docked above the prompt pushes the grid down.
                 let inset = layout.as_ref().and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset);
-                grid_top = PADDING + tab_h + inset;
-                let new_grid = if fullscreen { grid } else { grid_size(&fonts, text_w, height as i32 - tab_h - inset) };
+                grid_x = PADDING + left;
+                grid_top = PADDING + bar + inset;
+                let new_grid = if fullscreen { grid } else { grid_size(&fonts, text_w - left - right, height as i32 - bar - bot - inset) };
                 if new_grid != grid {
                     grid = new_grid;
                     renderer.cols = grid.0;
@@ -1055,6 +1096,7 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
                     images: &images,
                     styles: &styles,
                     tabs: Some(&tab_bar),
+                    chrome: Some(&chrome),
                     cursor_shape: hooks.get_cursor_shape.as_ref().map(|f| f()).unwrap_or_default(),
                 };
                 last_ui = layout.clone();
@@ -1092,8 +1134,8 @@ pub fn run(mut renderer: Renderer, hooks: RenderHooks) -> Result<()> {
 }
 
 /// Grid cell and in-grid pixel under a window position, if it is over the terminal.
-pub fn grid_hit(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), text_w: i32, top: i32) -> Option<(usize, usize, u32, u32)> {
-    let (x, y) = (px as i32 - PADDING, py as i32 - top);
+pub fn grid_hit(px: f64, py: f64, cell: (i32, i32), grid: (usize, usize), text_w: i32, origin_x: i32, top: i32) -> Option<(usize, usize, u32, u32)> {
+    let (x, y) = (px as i32 - origin_x, py as i32 - top);
     if x < 0 || y < 0 || px as i32 >= text_w {
         return None;
     }
@@ -1394,9 +1436,9 @@ mod select_tests {
     fn select_cell_clamps_and_reports_edges() {
         let cell = (10, 20);
         let grid = (80, 24);
-        assert_eq!(select_cell(PADDING as f64 + 15.0, PADDING as f64 + 45.0, cell, grid, PADDING), (1, 2, 0));
-        assert_eq!(select_cell(5000.0, 0.0, cell, grid, PADDING + 30), (79, 0, -1));
-        assert_eq!(select_cell(0.0, 9000.0, cell, grid, PADDING), (0, 23, 1));
+        assert_eq!(select_cell(PADDING as f64 + 15.0, PADDING as f64 + 45.0, cell, grid, PADDING, PADDING), (1, 2, 0));
+        assert_eq!(select_cell(5000.0, 0.0, cell, grid, PADDING, PADDING + 30), (79, 0, -1));
+        assert_eq!(select_cell(0.0, 9000.0, cell, grid, PADDING, PADDING), (0, 23, 1));
     }
 }
 
@@ -1431,6 +1473,8 @@ mod key_routing_tests {
             hold_frame: None,
             get_title: None,
             get_tabs: None,
+            get_chrome: None,
+            on_chrome: None,
             fetch_lines: Arc::new(|_, _| (Vec::new(), 0)),
             get_colors: Arc::new(|| Colors { bg: 0, fg: 0xffffff, cursor: None, accent: None }),
             get_font: None,

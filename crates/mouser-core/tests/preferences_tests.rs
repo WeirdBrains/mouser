@@ -29,6 +29,7 @@ fn preferences_round_trip_including_sidebar() {
         plugins: None,
         audio: Some(mouser_core::storage::AudioPrefs { host: Some("alsa".into()), output_device: Some("pipewire".into()) }),
         appearance: Some(mouser_core::storage::AppearancePrefs { reduce_motion: Some(true) }),
+        tabs: None,
     };
     save_preferences(&p).unwrap();
     let text = std::fs::read_to_string(tmp.path().join("preferences.toml")).unwrap();

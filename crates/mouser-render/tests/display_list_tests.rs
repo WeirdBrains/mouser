@@ -29,6 +29,7 @@ fn display_list_replay_matches_cpu_canvas() {
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let mut fonts = FontStack::embedded(15.0);
     let mut direct = vec![0u32; w * h];
@@ -77,6 +78,7 @@ fn images_draw_under_and_over_text_same_on_both_paths() {
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let mut fonts = FontStack::embedded(15.0);
     let mut direct = vec![0u32; w * h];

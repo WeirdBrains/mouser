@@ -59,6 +59,7 @@ fn scene(fonts: &mut FontStack, w: usize, h: usize, text: &str) -> DisplayList {
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let mut list = DisplayList::new(w, h);
     render_frame(&mut list, fonts, &frame);

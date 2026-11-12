@@ -16,6 +16,7 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 - [Themes](./themes.md)
 - [Preferences](./preferences.md)
 - [Storage](./storage.md): `~/.mouser` and `MOUSER_HOME`
+- [Tabs](./tabs.md): the tabs decoration, one shell or command per tab
 
 ## Rendering
 
@@ -26,7 +27,7 @@ One guide per feature. The same guides are built into Mouser: `mouser help TOPIC
 
 ## Extending Mouser
 
-- [Plugins](./plugins.md): modes, engines, model and tool providers, commands
+- [Plugins](./plugins.md): modes, engines, model and tool providers, commands, decorations
 - [Downloads](./downloads.md): installing, updating and rolling back plugins and engines; signatures and checks
 - [Mode plugin protocol](./mode-protocol.md): how mode plugins talk to Mouser (stdio, MessagePack, shared-memory images, restarts)
 - [Building a mode plugin](./building-modes.md): first mode on `mouser-mode-api`, install and checklist

@@ -35,10 +35,12 @@ pub enum Kind {
     ModelProvider,
     ToolProvider,
     Command,
+    /// Window chrome and the PTYs inside one window (docs/plugins.md).
+    Decoration,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [Kind::Mode, Kind::Engine, Kind::ModelProvider, Kind::ToolProvider, Kind::Command];
+    pub const ALL: [Kind; 6] = [Kind::Mode, Kind::Engine, Kind::ModelProvider, Kind::ToolProvider, Kind::Command, Kind::Decoration];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -47,6 +49,7 @@ impl Kind {
             Kind::ModelProvider => "model-provider",
             Kind::ToolProvider => "tool-provider",
             Kind::Command => "command",
+            Kind::Decoration => "decoration",
         }
     }
 }
@@ -70,6 +73,9 @@ pub enum Transport {
     /// A mode plugin kept running, speaking the mode protocol over stdio
     /// (`mouser-mode-api`, docs/mode-protocol.md).
     Mode,
+    /// A decoration kept running: newline-delimited JSON on stdio
+    /// (docs/plugins.md §Decoration plugins).
+    Decoration,
 }
 
 impl Transport {
@@ -82,6 +88,7 @@ impl Transport {
             Transport::Http => "http",
             Transport::Library => "library",
             Transport::Mode => "mode",
+            Transport::Decoration => "decoration",
         }
     }
 }
@@ -242,6 +249,17 @@ impl Manifest {
         } else if self.mode.is_some() {
             bail!("[mode] is only for kind = \"mode\"");
         }
+        let is_decor = self.provides.iter().any(|p| p.kind == Kind::Decoration);
+        if is_decor {
+            if self.provides.iter().any(|p| p.kind != Kind::Decoration) {
+                bail!("a decoration plugin provides only kind = \"decoration\"");
+            }
+            if self.run.transport != Transport::Decoration {
+                bail!("a decoration plugin uses transport = \"decoration\"");
+            }
+        } else if self.run.transport == Transport::Decoration {
+            bail!("transport \"decoration\" is only for kind = \"decoration\"");
+        }
         for c in &self.permissions {
             if !known_capability(c) {
                 bail!("unknown permission {c:?}");
@@ -249,7 +267,7 @@ impl Manifest {
         }
         match self.run.transport {
             Transport::Builtin => bail!("transport \"builtin\" is reserved for plugins compiled into Mouser"),
-            Transport::Mcp | Transport::Command | Transport::Mode if self.run.command.is_empty() => {
+            Transport::Mcp | Transport::Command | Transport::Mode | Transport::Decoration if self.run.command.is_empty() => {
                 bail!("run.command is required for transport {:?}", self.run.transport.name())
             }
             Transport::Fuzzball if !self.run.command.is_empty() => bail!("a Fuzzball plugin runs in the terminal; it has no run.command"),
@@ -383,9 +401,9 @@ pub fn can_disable(name: &str) -> bool {
     name != crate::engines::DEFAULT
 }
 
-/// Built-in providers (model providers only; every mode and engine is a
-/// plugin), in their default order.
-pub const BUILTINS: [(&str, Kind, &str); 7] = [
+/// Built-in providers, in their default order. Modes and engines are plugins.
+/// `tabs` is a decoration and stays off until enabled (docs/tabs.md).
+pub const BUILTINS: [(&str, Kind, &str); 8] = [
     ("openai", Kind::ModelProvider, "OpenAI (built in; mouser model add openai)"),
     ("xai", Kind::ModelProvider, "xAI Grok (built in, OpenAI-compatible)"),
     ("openrouter", Kind::ModelProvider, "OpenRouter (built in, OpenAI-compatible)"),
@@ -393,7 +411,25 @@ pub const BUILTINS: [(&str, Kind, &str); 7] = [
     ("anthropic", Kind::ModelProvider, "Anthropic Messages (built in)"),
     ("google", Kind::ModelProvider, "Google Gemini (built in)"),
     ("gemma-local", Kind::ModelProvider, "Gemma 4 E2B/E4B on llama.cpp (stub; P4b)"),
+    ("tabs", Kind::Decoration, "Tab bar and one PTY per tab (off until mouser plugin enable tabs)"),
 ];
+
+/// `tabs` is present but does nothing until the user turns it on.
+pub fn default_enabled(name: &str) -> bool {
+    name != crate::decoration::TABS_PLUGIN
+}
+
+/// Enabled, given saved state. `disabled` wins. `tabs` is on only after an
+/// explicit enable (it is not on just because it is missing from `disabled`).
+pub fn entry_enabled(st: &State, name: &str) -> bool {
+    if st.disabled.iter().any(|n| n == name) {
+        return false;
+    }
+    if !default_enabled(name) {
+        return st.enabled.iter().any(|n| n == name);
+    }
+    true
+}
 
 pub fn dir() -> PathBuf {
     storage::resolve_home().join("plugins")
@@ -642,6 +678,9 @@ pub struct State {
     pub priority: Vec<String>,
     #[serde(default)]
     pub disabled: Vec<String>,
+    /// Plugins that are off by default (`tabs`) and have been turned on.
+    #[serde(default)]
+    pub enabled: Vec<String>,
 }
 
 impl State {
@@ -683,14 +722,19 @@ pub fn set_enabled(name: &str, on: bool) -> Result<()> {
     }
     let mut st = State::load();
     st.disabled.retain(|n| n != name);
-    if !on {
+    st.enabled.retain(|n| n != name);
+    if on {
+        if !default_enabled(name) {
+            st.enabled.push(name.to_string());
+        }
+    } else {
         st.disabled.push(name.to_string());
     }
     st.save()
 }
 
 pub fn is_enabled(name: &str) -> bool {
-    !State::load().disabled.iter().any(|n| n == name)
+    entry_enabled(&State::load(), name)
 }
 
 /// Every known plugin name in priority order (saved order first, then the rest by name).
@@ -772,7 +816,7 @@ pub struct Registry {
 impl Registry {
     pub fn load() -> Self {
         let st = State::load();
-        let on = |n: &str| !st.disabled.iter().any(|d| d == n);
+        let on = |n: &str| entry_enabled(&st, n);
         let mut entries = Vec::new();
         for (n, k, d) in BUILTINS {
             entries.push(Entry {
@@ -977,6 +1021,30 @@ commands = ["hello"]
         assert!(Manifest::parse(&CMD.replace("kind = \"command\"", "kind = \"engine\"")).is_err());
         assert!(Manifest::parse(&CMD.replace("transport = \"command\"", "transport = \"builtin\"")).is_err());
         assert!(Manifest::parse(&CMD.replace("name = \"hello\"", "name = \"openai\"")).is_err());
+        let decor = r#"
+name = "chrome"
+version = "0.1.0"
+description = "a border"
+[[provides]]
+kind = "decoration"
+[run]
+transport = "decoration"
+command = ["./chrome"]
+"#;
+        let d = Manifest::parse(decor).unwrap();
+        assert_eq!(d.kinds(), vec![Kind::Decoration]);
+        assert_eq!(d.run.transport, Transport::Decoration);
+        assert!(Manifest::parse(&decor.replace("transport = \"decoration\"", "transport = \"command\"\ncommands = [\"chrome\"]")).is_err());
+        assert!(
+            Manifest::parse(
+                &decor
+                    .replace("kind = \"decoration\"", "kind = \"command\"\ncommands = [\"chrome\"]")
+                    .replace("transport = \"decoration\"", "transport = \"command\"")
+            )
+            .is_err()
+                || Manifest::parse(&decor.replace("transport = \"decoration\"\n", "transport = \"command\"\ncommands = [\"nope\"]\n")).is_err()
+        );
+        assert!(Manifest::parse(&decor.replace("command = [\"./chrome\"]\n", "")).unwrap_err().to_string().contains("run.command"));
         let mp =
             "name = \"m\"\nversion = \"1\"\n[[provides]]\nkind = \"model-provider\"\nid = \"gemma\"\n[run]\ntransport = \"mcp\"\ncommand = [\"x\"]\n";
         assert_eq!(Manifest::parse(mp).unwrap().kinds(), vec![Kind::ModelProvider]);
@@ -1225,6 +1293,23 @@ library = "libfancy.so"
         let p: Vec<_> = r.entries.iter().filter(|e| e.name == "preferences").collect();
         assert_eq!((p.len(), p[0].version.as_str()), (1, "9.0.0"));
         unsafe { std::env::remove_var("MOUSER_PLUGIN_DIRS") };
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn tabs_decoration_is_off_until_enabled() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        assert!(!is_enabled("tabs"));
+        assert!(Registry::load().providers(Kind::Decoration).is_empty());
+        assert!(Registry::load().entries.iter().any(|e| e.name == "tabs" && !e.enabled && e.kinds == vec![Kind::Decoration]));
+        set_enabled("tabs", true).unwrap();
+        assert!(is_enabled("tabs"));
+        assert_eq!(Registry::load().providers(Kind::Decoration).len(), 1);
+        set_enabled("tabs", false).unwrap();
+        assert!(!is_enabled("tabs"));
+        assert!(Registry::load().providers(Kind::Decoration).is_empty());
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 }

@@ -4,6 +4,7 @@ pub mod audio;
 pub mod commander;
 pub mod compression;
 pub mod connections;
+pub mod decoration;
 pub mod downloads;
 pub mod engines;
 pub mod exec;

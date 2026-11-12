@@ -26,7 +26,19 @@ pub fn spawn_shell(cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) ->
 
 /// The login shell, started in `cwd` (default: `$HOME`).
 pub fn spawn_shell_in(cwd: Option<&Path>, cols: u16, rows: u16, pixel_width: u16, pixel_height: u16) -> Result<PtyHandles> {
-    let mut cmd = shell_command();
+    spawn_shell_program(None, cwd, cols, rows, pixel_width, pixel_height)
+}
+
+/// A login shell. `program` overrides `$SHELL` (and the platform default).
+pub fn spawn_shell_program(
+    program: Option<&str>,
+    cwd: Option<&Path>,
+    cols: u16,
+    rows: u16,
+    pixel_width: u16,
+    pixel_height: u16,
+) -> Result<PtyHandles> {
+    let mut cmd = login_command(program);
     if let Some(d) = cwd {
         cmd.cwd(d);
     }
@@ -105,7 +117,17 @@ pub fn set_master_winsize(master: &mut (dyn MasterPty + Send), cols: u16, rows: 
 
 /// The user's login shell, started as a login shell in their home directory.
 pub fn shell_command() -> CommandBuilder {
-    let shell = env::var("SHELL").ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(default_shell);
+    login_command(None)
+}
+
+/// `program`, or `$SHELL`, or the platform default, as a login shell.
+pub fn login_command(program: Option<&str>) -> CommandBuilder {
+    let shell = program
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| env::var("SHELL").ok().filter(|s| !s.trim().is_empty()))
+        .unwrap_or_else(default_shell);
     let mut cmd = CommandBuilder::new(&shell);
     #[cfg(unix)]
     cmd.arg("-l");

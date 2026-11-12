@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 /// Bumped whenever a message changes. Both ends are the same binary
 /// (`/proc/self/exe`), so a mismatch means a broken install.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 /// UI exit code for "protocol mismatch, run in-process instead".
 const EXIT_MISMATCH: i32 = 3;
 /// More crashes than this within [`CRASH_WINDOW`] -> the CPU renderer.
@@ -46,6 +46,8 @@ enum Call {
     HoldFrame,
     Title,
     Tabs,
+    Chrome(i32, i32, i32, i32),
+    ChromeHit(String),
     Lines(usize, usize),
     Colors,
     Font,
@@ -74,6 +76,8 @@ struct Has {
     hold_frame: bool,
     title: bool,
     tabs: bool,
+    chrome: bool,
+    chrome_hit: bool,
     font: bool,
     cursor: bool,
     ui_model: bool,
@@ -190,6 +194,8 @@ fn has(h: &RenderHooks) -> Has {
         hold_frame: h.hold_frame.is_some(),
         title: h.get_title.is_some(),
         tabs: h.get_tabs.is_some(),
+        chrome: h.get_chrome.is_some(),
+        chrome_hit: h.on_chrome.is_some(),
         font: h.get_font.is_some(),
         cursor: h.get_cursor.is_some(),
         ui_model: h.get_ui_model.is_some(),
@@ -249,6 +255,8 @@ fn dispatch(h: &RenderHooks, c: Call, sent: &mut HashSet<u64>, sh: &Shared, hell
         Call::HoldFrame => ser(&h.hold_frame.as_ref().is_some_and(|x| x())),
         Call::Title => ser(&h.get_title.as_ref().and_then(|x| x())),
         Call::Tabs => ser(&h.get_tabs.as_ref().map(|x| x()).unwrap_or_default()),
+        Call::Chrome(w, hgt, cw, ch) => ser(&h.get_chrome.as_ref().map(|x| x(w, hgt, cw, ch)).unwrap_or_default()),
+        Call::ChromeHit(id) => ser(&h.on_chrome.as_ref().map(|x| x(id))),
         Call::Lines(a, b) => ser(&(h.fetch_lines)(a, b)),
         Call::Colors => ser(&(h.get_colors)()),
         Call::Font => ser(&h.get_font.as_ref().map(|x| x()).unwrap_or((15.0, None))),
@@ -640,6 +648,8 @@ fn client_hooks(c: &Arc<Client>, has: Has, waker: Arc<OnceLock<crate::Waker>>) -
         hold_frame: opt!(has.hold_frame, c, move || c.call::<bool>(Call::HoldFrame)),
         get_title: opt!(has.title, c, move || c.call::<Option<String>>(Call::Title)),
         get_tabs: opt!(has.tabs, c, move || c.call::<ui::TabBar>(Call::Tabs)),
+        get_chrome: opt!(has.chrome, c, move |w, h, cw, ch| c.call(Call::Chrome(w, h, cw, ch))),
+        on_chrome: opt!(has.chrome_hit, c, move |id| c.call::<Option<()>>(Call::ChromeHit(id)).unwrap_or(())),
         fetch_lines: {
             let c = c.clone();
             Arc::new(move |a, b| c.call(Call::Lines(a, b)))

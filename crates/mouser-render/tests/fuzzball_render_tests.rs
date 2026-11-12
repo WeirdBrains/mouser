@@ -51,6 +51,7 @@ fn render_after(place: &str, after: &str) -> (Vec<u32>, DisplayList, usize, (i32
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let (w, h) = ((cw * 12 + 2 * PADDING) as usize, (ch * 4 + 2 * PADDING) as usize);
     let mut cpu = vec![0u32; w * h];
@@ -170,6 +171,7 @@ fn downscaled_image_is_area_averaged_on_cpu_and_gpu_paths() {
         styles: &[],
         cursor_shape: Default::default(),
         tabs: None,
+        chrome: None,
     };
     let (w, h) = ((cw * 10 + 2 * PADDING) as usize, (ch * 4 + 2 * PADDING) as usize);
     let mut cpu = vec![0u32; w * h];

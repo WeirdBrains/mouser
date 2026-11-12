@@ -35,6 +35,8 @@ pub struct Session {
     pub launch: Launch,
     /// Working directory for the process (default: `$HOME`).
     pub cwd: Option<std::path::PathBuf>,
+    /// Login shell program when `launch` is [`Launch::Shell`]. Unset: `$SHELL`.
+    pub shell_program: Mutex<Option<String>>,
     master: Mutex<Option<Box<dyn mouser_pty::MasterPty + Send>>>,
     child: Mutex<Option<Box<dyn mouser_pty::Child + Send>>>,
     /// `Launch::Handoff`: the handed-off console, taken by `start`.
@@ -88,6 +90,7 @@ impl Session {
             name: name.into(),
             launch,
             cwd,
+            shell_program: Mutex::new(None),
             master: Mutex::new(None),
             child: Mutex::new(None),
             preset: Mutex::new(None),
@@ -207,7 +210,10 @@ impl Session {
     /// Spawn the process at the given size; output is fed on a reader thread.
     pub fn start(self: &Arc<Self>, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
         let spawned = match &self.launch {
-            Launch::Shell => mouser_pty::spawn_shell_in(self.cwd.as_deref(), cols, rows, pw, ph),
+            Launch::Shell => {
+                let program = self.shell_program.lock().unwrap().clone();
+                mouser_pty::spawn_shell_program(program.as_deref(), self.cwd.as_deref(), cols, rows, pw, ph)
+            }
             Launch::Command(argv) | Launch::Exec { argv, .. } => mouser_pty::spawn_argv_in(argv, self.cwd.as_deref(), cols, rows, pw, ph),
             Launch::Handoff => match self.preset.lock().unwrap().take() {
                 // Tell the console the tab's real size before anything is drawn.
@@ -421,13 +427,42 @@ impl Tabs {
 
     pub fn resize(&mut self, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
         self.size = Some((cols, rows, pw, ph));
-        for s in &self.list {
-            if s.started() || s.exited.lock().unwrap().is_some() {
-                s.resize(cols, rows, pw, ph);
-            } else {
-                s.parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
-                s.start(cols, rows, pw, ph, wake);
+        for s in self.list.clone() {
+            self.fit(&s, cols, rows, pw, ph, wake);
+        }
+    }
+
+    /// Resize and (if needed) start only the active PTY. Background PTYs keep
+    /// their last size until [`Tabs::focus`].
+    pub fn resize_active(&mut self, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
+        self.size = Some((cols, rows, pw, ph));
+        if let Some(s) = self.active() {
+            self.fit(&s, cols, rows, pw, ph, wake);
+        }
+    }
+
+    /// Select `i` and give it the stored grid size.
+    pub fn focus(&mut self, i: usize, wake: fn()) {
+        if i >= self.list.len() {
+            return;
+        }
+        self.active = i;
+        if let Some((c, r, pw, ph)) = self.size {
+            let s = self.list[i].clone();
+            let size = s.parser.lock().unwrap().screen.size;
+            let stale = size.cols != c as usize || size.rows != r as usize;
+            if stale || !s.started() {
+                self.fit(&s, c, r, pw, ph, wake);
             }
+        }
+    }
+
+    fn fit(&self, s: &Arc<Session>, cols: u16, rows: u16, pw: u16, ph: u16, wake: fn()) {
+        if s.started() || s.exited.lock().unwrap().is_some() {
+            s.resize(cols, rows, pw, ph);
+        } else {
+            s.parser.lock().unwrap().resize(Size { cols: cols as usize, rows: rows as usize });
+            s.start(cols, rows, pw, ph, wake);
         }
     }
 
@@ -450,5 +485,79 @@ impl Write for ActiveWriter {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mouser_core::scrollback::ScrollbackConfig;
+    use std::path::Path;
+
+    fn wait_until(mut pred: impl FnMut() -> bool) -> bool {
+        for _ in 0..50 {
+            if pred() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn each_tab_runs_its_own_program_and_only_the_active_pty_resizes() {
+        let sh = "/bin/sh";
+        if !Path::new(sh).is_file() {
+            return;
+        }
+        let sleep = ["/bin/sleep", "/usr/bin/sleep"].into_iter().find(|p| Path::new(p).is_file()).unwrap_or("sleep");
+        let mut tabs = Tabs::default();
+        let a = Session::new("a", Launch::Shell, Size { cols: 10, rows: 5 }, ScrollbackConfig::default());
+        *a.shell_program.lock().unwrap() = Some(sh.into());
+        let b = Session::new("b", Launch::Command(vec![sleep.into(), "30".into()]), Size { cols: 10, rows: 5 }, ScrollbackConfig::default());
+        tabs.open(a, || {});
+        tabs.open(b, || {});
+        tabs.resize_active(40, 12, 320, 240, || {});
+        let active = tabs.active().unwrap();
+        assert!(wait_until(|| active.pid.load(Ordering::Relaxed) != 0), "active pty did not start");
+        assert_eq!(active.parser.lock().unwrap().screen.size, Size { cols: 40, rows: 12 });
+        let hidden = tabs.list[0].clone();
+        assert!(!hidden.started(), "the background pty must not start on an active-only resize");
+        assert_eq!(hidden.parser.lock().unwrap().screen.size, Size { cols: 10, rows: 5 });
+        tabs.focus(0, || {});
+        assert!(wait_until(|| hidden.pid.load(Ordering::Relaxed) != 0), "focused pty did not start");
+        assert_eq!(hidden.parser.lock().unwrap().screen.size, Size { cols: 40, rows: 12 });
+        assert_eq!(tabs.active, 0);
+        let pid = hidden.pid.load(Ordering::Relaxed);
+        assert!(wait_until(|| !std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default().is_empty()), "shell cmdline never appeared");
+        let shown = String::from_utf8_lossy(&std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default()).replace('\0', " ");
+        assert!(shown.contains("sh"), "program={:?} argv={shown:?}", hidden.shell_program.lock().unwrap());
+        let other_pid = tabs.list[1].pid.load(Ordering::Relaxed);
+        if other_pid != 0 {
+            assert!(wait_until(|| !std::fs::read(format!("/proc/{other_pid}/cmdline")).unwrap_or_default().is_empty()));
+            let shown = String::from_utf8_lossy(&std::fs::read(format!("/proc/{other_pid}/cmdline")).unwrap_or_default()).replace('\0', " ");
+            assert!(shown.contains("sleep"), "{shown}");
+        }
+        for s in &tabs.list {
+            s.kill();
+        }
+    }
+
+    #[test]
+    fn a_shell_exit_closes_and_a_failed_command_stays() {
+        let shell = Session::new("s", Launch::Shell, Size { cols: 8, rows: 4 }, ScrollbackConfig::default());
+        shell.finish(0);
+        assert!(shell.closed.load(Ordering::SeqCst));
+        let cmd = Session::new("c", Launch::Command(vec!["false".into()]), Size { cols: 8, rows: 4 }, ScrollbackConfig::default());
+        cmd.finish(1);
+        assert!(!cmd.closed.load(Ordering::SeqCst));
+        assert_eq!(*cmd.exited.lock().unwrap(), Some(1));
+        let mut tabs = Tabs { list: vec![shell, cmd.clone()], active: 0, ..Default::default() };
+        assert!(!tabs.reap());
+        assert_eq!(tabs.list.len(), 1);
+        assert_eq!(tabs.list[0].id, cmd.id);
+        tabs.list[0].closed.store(true, Ordering::SeqCst);
+        assert!(tabs.reap());
     }
 }

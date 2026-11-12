@@ -29,14 +29,23 @@ pub struct Frame<'a> {
     pub cursor_shape: CursorShape,
     /// Tab strip (drawn above the grid when it has 2+ tabs).
     pub tabs: Option<&'a ui::TabBar>,
+    /// Decoration chrome. When `top` is set, it replaces the built-in tab strip.
+    pub chrome: Option<&'a mouser_core::decoration::Chrome>,
 }
 
 impl Frame<'_> {
     /// Pixels above the first grid row.
     pub fn top(&self, cell_h: i32) -> i32 {
-        PADDING
-            + self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h))
-            + self.ui.and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset)
+        let bar = match self.chrome {
+            Some(c) if c.top > 0 => c.top,
+            _ => self.tabs.filter(|t| t.titles.len() > 1).map_or(0, |_| ui::tab_bar_height(cell_h)),
+        };
+        PADDING + bar + self.ui.and_then(|l| l.dock.as_ref()).map_or(0, |d| d.inset)
+    }
+
+    /// Left edge of the grid (window padding plus a decoration's left inset).
+    pub fn grid_x(&self) -> i32 {
+        PADDING + self.chrome.map(|c| c.left).unwrap_or(0)
     }
 }
 
@@ -133,11 +142,11 @@ fn draw_underline(canvas: &mut dyn Draw, x: i32, y: i32, w: i32, style: u8, colo
 /// any text so wide glyphs and italics overhang cleanly, and so Kitty images
 /// with `z < KITTY_BELOW_BG` can sit under them and other negative z between
 /// them and the text.
-fn draw_row_bgs(canvas: &mut dyn Draw, fonts: &FontStack, top: i32, styles: &[CellPaint]) {
+fn draw_row_bgs(canvas: &mut dyn Draw, fonts: &FontStack, x0: i32, top: i32, styles: &[CellPaint]) {
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     for (col, p) in styles.iter().enumerate() {
         if let Some(bg) = p.bg {
-            canvas.fill_rect(PADDING + col as i32 * cw, top, cw, ch, bg);
+            canvas.fill_rect(x0 + col as i32 * cw, top, cw, ch, bg);
         }
     }
 }
@@ -153,11 +162,11 @@ fn wants_emoji(c: char, p: &CellPaint) -> bool {
     mouser_core::grid::emoji_capable(c) && (wide || decorated) || wide && mouser_core::grid::is_regional(c)
 }
 
-fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
+fn draw_styled_row(canvas: &mut dyn Draw, fonts: &mut FontStack, x0: i32, top: i32, line: &str, styles: &[CellPaint], default_fg: u32) {
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let under_y = top + (fonts.ascent + 2).min(ch - 3);
     for (col, c) in line.chars().enumerate() {
-        let x = PADDING + col as i32 * cw;
+        let x = x0 + col as i32 * cw;
         let p = styles.get(col).copied().unwrap_or(CellPaint::plain(default_fg));
         let w = if p.flags & paint::WIDE != 0 { 2 * cw } else { cw };
         let emoji = (p.flags & paint::NO_GLYPH == 0 && c != PLACEHOLDER && wants_emoji(c, &p))
@@ -265,9 +274,9 @@ pub fn layered_image_draws(
 /// Kitty images with a z-index below this draw under cell backgrounds.
 pub const KITTY_BELOW_BG: i32 = -1_073_741_824;
 
-fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], z: std::ops::Range<i64>, top: i32) {
+fn draw_images(canvas: &mut dyn Draw, fonts: &FontStack, images: &[ImageDraw], z: std::ops::Range<i64>, x0: i32, top: i32) {
     for img in images.iter().filter(|i| z.contains(&(i.z as i64))) {
-        let x = PADDING + img.col * fonts.cell_w + img.x_off;
+        let x = x0 + img.col * fonts.cell_w + img.x_off;
         let y = top + img.row * fonts.cell_h + img.y_off;
         canvas.draw_image(img, x, y);
     }
@@ -295,7 +304,7 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
         canvas.fill_rect(0, 0, canvas.width() as i32, canvas.height() as i32, panel);
         let flat = ui::Panel { rect: ui::Rect { x: 0, y: 0, w: 0, h: 0 }, items: d.panel.items.clone() };
         draw_panel(canvas, fonts, &flat, bg, fg, panel, mix(bg, fg, 0.25), mix(panel, fg, 0.65), accent);
-        draw_images(canvas, fonts, frame.images, i64::MIN..i64::MAX, frame.top(fonts.cell_h));
+        draw_images(canvas, fonts, frame.images, i64::MIN..i64::MAX, frame.grid_x(), frame.top(fonts.cell_h));
         draw_floats(canvas, fonts, &flat, bg, fg);
         if let Some(layout) = frame.ui
             && let Some(p) = &layout.panel
@@ -315,26 +324,27 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
     }
     let (cw, ch) = (fonts.cell_w, fonts.cell_h);
     let top0 = frame.top(ch);
+    let x0 = frame.grid_x();
     let (lo, below_bg) = (i64::MIN, KITTY_BELOW_BG as i64);
-    draw_images(canvas, fonts, frame.images, lo..below_bg, top0);
+    draw_images(canvas, fonts, frame.images, lo..below_bg, x0, top0);
     for (row, st) in frame.styles.iter().enumerate().take(frame.lines.len()) {
-        draw_row_bgs(canvas, fonts, top0 + row as i32 * ch, st);
+        draw_row_bgs(canvas, fonts, x0, top0 + row as i32 * ch, st);
     }
-    draw_images(canvas, fonts, frame.images, below_bg..0, top0);
+    draw_images(canvas, fonts, frame.images, below_bg..0, x0, top0);
     for (row, line) in frame.lines.iter().enumerate() {
         let top = top0 + row as i32 * ch;
         match frame.styles.get(row) {
-            Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, top, line, st, frame.fg),
-            _ if line.contains(PLACEHOLDER) => canvas.draw_text(fonts, PADDING, top, &line.replace(PLACEHOLDER, " "), frame.fg),
-            _ => canvas.draw_text(fonts, PADDING, top, line, frame.fg),
+            Some(st) if !st.is_empty() => draw_styled_row(canvas, fonts, x0, top, line, st, frame.fg),
+            _ if line.contains(PLACEHOLDER) => canvas.draw_text(fonts, x0, top, &line.replace(PLACEHOLDER, " "), frame.fg),
+            _ => canvas.draw_text(fonts, x0, top, line, frame.fg),
         }
     }
-    draw_images(canvas, fonts, frame.images, 0..i64::MAX, top0);
+    draw_images(canvas, fonts, frame.images, 0..i64::MAX, x0, top0);
     if let Some(d) = frame.ui.and_then(|l| l.dock.as_ref()) {
         draw_floats(canvas, fonts, &d.panel, frame.bg, frame.fg);
     }
     if let Some((cx, cy)) = frame.cursor {
-        let x = PADDING + cx as i32 * cw;
+        let x = x0 + cx as i32 * cw;
         let y = top0 + cy as i32 * ch;
         let color = frame.cursor_color.unwrap_or(mix(frame.bg, frame.fg, 0.85));
         let wide = frame.styles.get(cy).and_then(|r| r.get(cx)).is_some_and(|p| p.flags & paint::WIDE != 0);
@@ -350,9 +360,18 @@ pub fn render_frame(canvas: &mut dyn Draw, fonts: &mut FontStack, frame: &Frame)
             CursorShape::Bar => canvas.fill_rect(x, y, 2, ch, color),
         }
     }
-    if let Some(bar) = frame.tabs.filter(|t| t.titles.len() > 1) {
+    let chrome_top = frame.chrome.is_some_and(|c| c.top > 0);
+    if !chrome_top && let Some(bar) = frame.tabs.filter(|t| t.titles.len() > 1) {
         let w = frame.ui.map(|l| l.sidebar_rect.x).unwrap_or(canvas.width() as i32);
         draw_tabs(canvas, fonts, bar, w, frame.bg, frame.fg, frame.accent.unwrap_or(accent_for(frame.bg)));
+    }
+    if let Some(chrome) = frame.chrome {
+        for op in &chrome.ops {
+            match op {
+                mouser_core::decoration::DrawOp::Fill { x, y, w, h, color } => canvas.fill_rect(*x, *y, *w, *h, *color),
+                mouser_core::decoration::DrawOp::Text { x, y, text, color } => canvas.draw_text(fonts, *x, *y, text, *color),
+            }
+        }
     }
     if let Some(layout) = frame.ui {
         let accent = frame.accent.unwrap_or(accent_for(frame.bg));

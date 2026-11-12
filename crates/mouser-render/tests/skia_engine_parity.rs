@@ -79,6 +79,7 @@ fn scene(fonts: &mut FontStack) -> DisplayList {
         styles: &styles,
         cursor_shape: CursorShape::Block,
         tabs: Some(&tabs),
+        chrome: None,
     };
     let mut list = DisplayList::new(W as usize, H as usize);
     render_frame(&mut list, fonts, &frame);
