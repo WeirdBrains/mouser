@@ -43,9 +43,14 @@ it never starts and the window stays on the built-in behaviour. The environment
 is scrubbed the same way as a command plugin.
 
 The process speaks newline-delimited JSON. Each call is sent to every live
-decoration at once. Mouser waits for the slowest reply, and no longer than
-120 ms. A timeout, a bad reply or a crash drops that decoration only. Replies
-that arrived are still applied, in registry order. If none remain, the window
+decoration at once, with an `id`. Mouser waits for the slowest reply, and no
+longer than 120 ms. It then sends `{"op":"kill","id":N}` to anyone still
+working on that call. The plugin must stop and reply `{"cancelled":true}`
+(no chrome or ops for that call). A chrome or ops line after the kill is
+discarded. Silence for 80 ms after the kill ends the process and drops that
+decoration for this session. A panic or a bad reply drops it too. A kill that
+the plugin honours is only a miss: it stays loaded. Replies that made the
+deadline are still applied, in registry order. If none remain, the window
 uses the built-in sessions.
 
 Mouser to the plugin:
@@ -53,7 +58,8 @@ Mouser to the plugin:
 | `op` | when |
 |---|---|
 | `hello` | once, at start |
-| `chrome` | each frame (`width`, `height`, `cell_w`, `cell_h`, `pty`) |
+| `kill` | the 120 ms deadline passed for `id`; stop that call |
+| `chrome` | each frame (`id`, `width`, `height`, `cell_w`, `cell_h`, `pty`) |
 | `event` | a key action or a hit id (`action`, `id`, `pty`) |
 | `note` | a PTY exited (`exited`), the focus moved (`focused`), or any decoration's chrome was clicked (`chrome-hit`: `owner`, `id`) |
 
@@ -77,9 +83,13 @@ In Rust the same contract is `mouser_core::decoration::{Decoration, DecorEvent, 
 
 The scheduler (`compose`, `arbitrate`, `fanout_hit`) sits between the host and
 every enabled decoration. Each decoration is `Send` and owned by a worker
-thread. A frame or event is sent to all of those workers at once. The wait is
-the slowest reply, capped at 120 ms, not the sum. After the replies are in,
-merge order is registry priority, not arrival order.
+thread. A frame or event is one call id, sent to all of those workers at
+once. The wait is the slowest reply, capped at 120 ms, not the sum. Whoever
+is still out gets a cancel for that id only. A later call has a new id, so
+the old cancel cannot hit it. In-process code polls `Cancel::is_cancelled`
+and returns. An external process gets `kill` and should answer
+`{"cancelled":true}`. After the replies are in, merge order is registry
+priority, not arrival order.
 
 - **Chrome.** Each positive inset reserves a band. Top bands stack down from
   the top of the window, bottom bands stack up from the bottom, and left and
@@ -97,9 +107,15 @@ merge order is registry priority, not arrival order.
 - **Keys, resize, exit, focus.** Tab keys and `KeyOnExited` go to every
   decoration. Each frame's `chrome` call carries the window size. A PTY exit
   and a focus change are notes to every decoration.
-- **Faults.** Each call is isolated. A panic, a failed flag, or a miss of the
-  120 ms deadline removes that decoration. Replies that made the deadline
-  still apply. The frame does not wait past the deadline.
+- **Faults.** A panic or a bad reply removes that decoration. A deadline miss
+  does not: it stays loaded and the miss is counted. An on-time reply resets
+  the count. The first miss and three retries are four misses; the fourth
+  quarantines it (`timeout`). `mouser plugin quarantine NAME` does the same
+  with reason `manual`. `mouser plugin list` shows which. `mouser plugin
+  unquarantine NAME` clears it and the miss count; the plugin loads on the
+  next start. Quarantine in a running window drops that decoration on the
+  next call. Replies that made the deadline still apply. The frame does not
+  wait past the deadline plus the 80 ms grace.
 
 ## The manifest: `plugin.toml`
 

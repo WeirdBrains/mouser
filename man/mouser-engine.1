@@ -59,6 +59,12 @@ Turn a plugin or engine on (built\-ins included)
 mouser\-engine\-disable(1)
 Turn a plugin or engine off without removing it (not the mouser engine)
 .TP
+mouser\-engine\-quarantine(1)
+Keep a plugin from loading until `mouser plugin unquarantine`
+.TP
+mouser\-engine\-unquarantine(1)
+Clear a quarantine and its miss count so the plugin loads on the next start
+.TP
 mouser\-engine\-use(1)
 Engines: put this engine first in the priority order (and unskip it)
 .TP

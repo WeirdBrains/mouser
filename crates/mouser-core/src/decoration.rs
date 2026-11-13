@@ -16,8 +16,9 @@ use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
 
 /// Built-in decoration. Off until `mouser plugin enable tabs`.
 pub const TABS_PLUGIN: &str = "tabs";
@@ -110,6 +111,7 @@ impl Default for DecorCtx {
 
 /// Chrome the host reserves and paints. Coordinates are window pixels.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Chrome {
     pub top: i32,
     pub bottom: i32,
@@ -220,24 +222,89 @@ pub enum PtyNote {
     },
 }
 
-/// How long one fan-out waits for the slowest decoration. The same cap as a
-/// JSON decoration's reply. Calls run together, so a frame takes this long
-/// at most, not this long times the number of decorations.
+/// How long one fan-out waits for the slowest decoration. Calls run together,
+/// so a frame takes this long at most, not this long times the number of
+/// decorations. Whoever has not replied is then cancelled.
 pub const REPLY_TIMEOUT: Duration = Duration::from_millis(120);
+
+/// After [`REPLY_TIMEOUT`], how long a decoration has to stop the cancelled
+/// call. Silence past this kills an external process and drops it.
+pub const KILL_GRACE: Duration = Duration::from_millis(80);
+
+/// Consecutive deadline misses allowed before quarantine. The first miss and
+/// three retries are four misses; the decoration is quarantined when the
+/// count exceeds this (the 3rd retry also missed).
+pub const DEADLINE_RETRIES: u32 = 3;
+
+/// Shared cancel flag for one broadcast. A later call gets a new token, so a
+/// kill for this id cannot cancel that later call.
+#[derive(Clone, Debug)]
+pub struct Cancel {
+    id: u64,
+    flag: Arc<AtomicBool>,
+}
+
+impl Cancel {
+    pub fn new(id: u64) -> Self {
+        Self { id, flag: Arc::new(AtomicBool::new(false)) }
+    }
+
+    /// Never signals. Used for the startup handshake.
+    pub fn never() -> Self {
+        Self::new(0)
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+
+    pub fn cancel(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// What one decoration's worker returned for a call.
+#[derive(Debug)]
+pub enum Outcome<T> {
+    /// Replied before the deadline. Applied in priority order.
+    Done(T),
+    /// Stopped after cancel. The call is a miss; the decoration stays loaded.
+    Cancelled,
+    /// Still running after [`KILL_GRACE`]. Dropped for this session.
+    Ignored,
+    /// Panic or a broken reply. Dropped for this session.
+    Failed,
+}
 
 /// In-process or out-of-process decoration.
 ///
 /// `Send` because each decoration is owned by its own worker thread. The host
-/// fans one call out to every worker at once and waits until the slowest
-/// reply or [`REPLY_TIMEOUT`]. A decoration is not called re-entrantly. A
-/// panic, a failed flag, or a missed deadline drops only that worker.
+/// fans one call out to every worker at once. Poll [`Cancel::is_cancelled`]
+/// and return promptly when it is set; do not finish the cancelled call.
+/// A decoration is not called re-entrantly. A panic or a broken reply drops
+/// only that worker. A deadline miss does not, until it ignores the cancel
+/// or misses [`DEADLINE_RETRIES`] retries in a row.
 pub trait Decoration: Send {
-    fn chrome(&mut self, ctx: &DecorCtx) -> Chrome;
-    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp>;
-    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx) -> Vec<PtyOp>;
+    fn chrome(&mut self, ctx: &DecorCtx, cancel: &Cancel) -> Chrome;
+    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp>;
+    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp>;
     fn failed(&self) -> bool {
         false
     }
+    /// Stopped because [`Cancel`] was set. Not a failure.
+    fn cancelled(&self) -> bool {
+        false
+    }
+    /// Left the cancelled call running past [`KILL_GRACE`].
+    fn ignored(&self) -> bool {
+        false
+    }
+    /// Release anything a dropped worker still holds (an external process).
+    fn shutdown(&mut self) {}
 }
 
 /// The built-in tabs decoration. Shell choice is read from preferences on
@@ -249,16 +316,25 @@ pub struct TabsDecoration {
 }
 
 impl Decoration for TabsDecoration {
-    fn chrome(&mut self, ctx: &DecorCtx) -> Chrome {
+    fn chrome(&mut self, ctx: &DecorCtx, cancel: &Cancel) -> Chrome {
+        if cancel.is_cancelled() {
+            return Chrome::default();
+        }
         tabs_chrome(ctx)
     }
 
-    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp> {
+    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp> {
+        if cancel.is_cancelled() {
+            return Vec::new();
+        }
         let config = self.pinned.clone().unwrap_or_else(tabs_config);
         tabs_event(&config, ev, ctx)
     }
 
-    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx) -> Vec<PtyOp> {
+    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp> {
+        if cancel.is_cancelled() {
+            return Vec::new();
+        }
         tabs_note(note, ctx)
     }
 }
@@ -445,6 +521,8 @@ pub fn tabs_note(note: &PtyNote, ctx: &DecorCtx) -> Vec<PtyOp> {
 struct Request<'a> {
     api: u32,
     op: &'static str,
+    /// Broadcast id. A later `kill` names the same id.
+    id: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     ctx: Option<&'a DecorCtx>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -459,6 +537,22 @@ struct Reply {
     chrome: Chrome,
     #[serde(default)]
     ops: Vec<PtyOp>,
+    /// The plugin stopped the call named by `kill` and has no chrome or ops.
+    #[serde(default)]
+    cancelled: bool,
+}
+
+enum ProcEnd {
+    Cancelled,
+    Ignored,
+    Failed(anyhow::Error),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Clear,
+    Cancelled,
+    Ignored,
 }
 
 /// A `transport = "decoration"` program. The environment is scrubbed the same
@@ -469,6 +563,7 @@ pub struct DecorationProc {
     stdin: Option<ChildStdin>,
     lines: Option<mpsc::Receiver<std::io::Result<String>>>,
     failed: bool,
+    mark: Mark,
 }
 
 impl DecorationProc {
@@ -505,35 +600,99 @@ impl DecorationProc {
                 }
             }
         });
-        let mut proc = Self { child, stdin: Some(stdin), lines: Some(rx), failed: false };
+        let mut proc = Self { child, stdin: Some(stdin), lines: Some(rx), failed: false, mark: Mark::Clear };
         // Handshake: the program must answer once so a dead command fails at start.
-        proc.rpc(&Request { api: API, op: "hello", ctx: None, event: None, note: None })?;
-        Ok(proc)
+        match proc.rpc(&Request { api: API, op: "hello", id: 0, ctx: None, event: None, note: None }, None) {
+            Ok(_) => Ok(proc),
+            Err(ProcEnd::Failed(e)) => Err(e),
+            Err(ProcEnd::Cancelled) => bail!("decoration cancelled during hello"),
+            Err(ProcEnd::Ignored) => bail!("decoration ignored hello"),
+        }
     }
 
-    fn rpc(&mut self, req: &Request) -> Result<Reply> {
+    /// `cancel` is set by the scheduler at [`REPLY_TIMEOUT`]. `None` is the
+    /// handshake, which fails on its own if it takes longer than that.
+    fn rpc(&mut self, req: &Request, cancel: Option<&Cancel>) -> Result<Reply, ProcEnd> {
         if self.failed {
-            bail!("decoration stopped");
+            return Err(ProcEnd::Failed(anyhow::anyhow!("decoration stopped")));
         }
-        let mut body = serde_json::to_vec(req)?;
+        self.mark = Mark::Clear;
+        let mut body = match serde_json::to_vec(req) {
+            Ok(b) => b,
+            Err(e) => return Err(ProcEnd::Failed(e.into())),
+        };
         body.push(b'\n');
-        let Some(stdin) = self.stdin.as_mut() else { bail!("decoration stdin closed") };
+        let Some(stdin) = self.stdin.as_mut() else { return Err(ProcEnd::Failed(anyhow::anyhow!("decoration stdin closed"))) };
         if stdin.write_all(&body).and_then(|()| stdin.flush()).is_err() {
             self.fail();
-            bail!("decoration stopped writing");
+            return Err(ProcEnd::Failed(anyhow::anyhow!("decoration stopped writing")));
         }
-        let Some(rx) = self.lines.as_ref() else { bail!("decoration stopped") };
-        match rx.recv_timeout(REPLY_TIMEOUT) {
-            Ok(Ok(line)) => serde_json::from_str(line.trim()).context("decoration reply was not JSON"),
-            Ok(Err(e)) => {
-                self.fail();
-                Err(e).context("reading decoration")
-            }
-            Err(_) => {
-                self.fail();
-                bail!("decoration did not answer within {}ms", REPLY_TIMEOUT.as_millis())
+        let started = Instant::now();
+        let mut kill_sent = false;
+        let mut grace_at: Option<Instant> = None;
+        loop {
+            let msg = {
+                let Some(rx) = self.lines.as_ref() else { return Err(ProcEnd::Failed(anyhow::anyhow!("decoration stopped"))) };
+                rx.recv_timeout(Duration::from_millis(10))
+            };
+            match msg {
+                Ok(Ok(line)) => {
+                    let parsed = serde_json::from_str::<Reply>(line.trim());
+                    let late = kill_sent || cancel.is_some_and(|c| c.is_cancelled());
+                    match parsed {
+                        Ok(r) if late || r.cancelled => {
+                            self.mark = Mark::Cancelled;
+                            return Err(ProcEnd::Cancelled);
+                        }
+                        Ok(r) => return Ok(r),
+                        Err(e) => {
+                            self.fail();
+                            return Err(ProcEnd::Failed(e.into()));
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    self.fail();
+                    return Err(ProcEnd::Failed(e.into()));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let cancelled = cancel.is_some_and(|c| c.is_cancelled());
+                    if cancelled && !kill_sent {
+                        self.write_kill(req.id);
+                        kill_sent = true;
+                        grace_at = Some(Instant::now() + KILL_GRACE);
+                    } else if let Some(at) = grace_at
+                        && Instant::now() >= at
+                    {
+                        self.kill_ignored();
+                        return Err(ProcEnd::Ignored);
+                    } else if cancel.is_none() && started.elapsed() >= REPLY_TIMEOUT {
+                        self.fail();
+                        return Err(ProcEnd::Failed(anyhow::anyhow!("decoration did not answer within {}ms", REPLY_TIMEOUT.as_millis())));
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    self.fail();
+                    return Err(ProcEnd::Failed(anyhow::anyhow!("decoration stopped")));
+                }
             }
         }
+    }
+
+    fn write_kill(&mut self, id: u64) {
+        let line = format!("{{\"api\":{API},\"op\":\"kill\",\"id\":{id}}}\n");
+        let Some(stdin) = self.stdin.as_mut() else { return };
+        let _ = stdin.write_all(line.as_bytes()).and_then(|()| stdin.flush());
+    }
+
+    /// The plugin kept running after [`KILL_GRACE`]. The process is ended so
+    /// the worker is not stuck in the call.
+    fn kill_ignored(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        self.stdin.take();
+        self.lines.take();
+        self.mark = Mark::Ignored;
     }
 
     fn fail(&mut self) {
@@ -552,42 +711,60 @@ impl Drop for DecorationProc {
     }
 }
 
+impl DecorationProc {
+    fn finish<T: Default>(&mut self, end: ProcEnd, what: &str) -> T {
+        match end {
+            ProcEnd::Cancelled => self.mark = Mark::Cancelled,
+            ProcEnd::Ignored => {}
+            ProcEnd::Failed(e) => {
+                log::warn!("decoration {what}: {e:#}");
+                if !self.failed {
+                    self.fail();
+                }
+            }
+        }
+        T::default()
+    }
+}
+
 impl Decoration for DecorationProc {
-    fn chrome(&mut self, ctx: &DecorCtx) -> Chrome {
-        match self.rpc(&Request { api: API, op: "chrome", ctx: Some(ctx), event: None, note: None }) {
+    fn chrome(&mut self, ctx: &DecorCtx, cancel: &Cancel) -> Chrome {
+        match self.rpc(&Request { api: API, op: "chrome", id: cancel.id(), ctx: Some(ctx), event: None, note: None }, Some(cancel)) {
             Ok(r) => r.chrome,
-            Err(e) => {
-                log::warn!("decoration chrome: {e:#}");
-                self.failed = true;
-                Chrome::default()
-            }
+            Err(end) => self.finish(end, "chrome"),
         }
     }
 
-    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp> {
-        match self.rpc(&Request { api: API, op: "event", ctx: Some(ctx), event: Some(ev), note: None }) {
+    fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp> {
+        match self.rpc(&Request { api: API, op: "event", id: cancel.id(), ctx: Some(ctx), event: Some(ev), note: None }, Some(cancel)) {
             Ok(r) => r.ops,
-            Err(e) => {
-                log::warn!("decoration event: {e:#}");
-                self.failed = true;
-                Vec::new()
-            }
+            Err(end) => self.finish(end, "event"),
         }
     }
 
-    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx) -> Vec<PtyOp> {
-        match self.rpc(&Request { api: API, op: "note", ctx: Some(ctx), event: None, note: Some(note) }) {
+    fn note(&mut self, note: &PtyNote, ctx: &DecorCtx, cancel: &Cancel) -> Vec<PtyOp> {
+        match self.rpc(&Request { api: API, op: "note", id: cancel.id(), ctx: Some(ctx), event: None, note: Some(note) }, Some(cancel)) {
             Ok(r) => r.ops,
-            Err(e) => {
-                log::warn!("decoration note: {e:#}");
-                self.failed = true;
-                Vec::new()
-            }
+            Err(end) => self.finish(end, "note"),
         }
     }
 
     fn failed(&self) -> bool {
         self.failed
+    }
+
+    fn cancelled(&self) -> bool {
+        self.mark == Mark::Cancelled
+    }
+
+    fn ignored(&self) -> bool {
+        self.mark == Mark::Ignored
+    }
+
+    fn shutdown(&mut self) {
+        if !self.failed && self.mark != Mark::Ignored {
+            self.fail();
+        }
     }
 }
 
@@ -811,30 +988,42 @@ pub fn fanout_hit(names: &[&str], owner: &str, id: &str) -> Vec<Fanout> {
         .collect()
 }
 
-/// Run `chrome`. A panic or [`Decoration::failed`] drops only this decoration.
-pub fn isolate_chrome(driver: &mut dyn Decoration, ctx: &DecorCtx) -> Option<Chrome> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.chrome(ctx)));
-    match result {
-        Ok(chrome) if !driver.failed() => Some(chrome),
-        _ => None,
+fn classify_outcome<T>(driver: &dyn Decoration, value: T) -> Outcome<T> {
+    if driver.failed() {
+        Outcome::Failed
+    } else if driver.ignored() {
+        Outcome::Ignored
+    } else if driver.cancelled() {
+        Outcome::Cancelled
+    } else {
+        Outcome::Done(value)
     }
 }
 
-/// Run `event`. A panic or [`Decoration::failed`] drops only this decoration.
-pub fn isolate_event(driver: &mut dyn Decoration, ev: &DecorEvent, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.event(ev, ctx)));
+/// Run `chrome`. A panic is [`Outcome::Failed`].
+pub fn isolate_chrome(driver: &mut dyn Decoration, ctx: &DecorCtx, cancel: &Cancel) -> Outcome<Chrome> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.chrome(ctx, cancel)));
     match result {
-        Ok(ops) if !driver.failed() => Some(ops),
-        _ => None,
+        Ok(chrome) => classify_outcome(driver, chrome),
+        Err(_) => Outcome::Failed,
     }
 }
 
-/// Run `note`. A panic or [`Decoration::failed`] drops only this decoration.
-pub fn isolate_note(driver: &mut dyn Decoration, note: &PtyNote, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.note(note, ctx)));
+/// Run `event`. A panic is [`Outcome::Failed`].
+pub fn isolate_event(driver: &mut dyn Decoration, ev: &DecorEvent, ctx: &DecorCtx, cancel: &Cancel) -> Outcome<Vec<PtyOp>> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.event(ev, ctx, cancel)));
     match result {
-        Ok(ops) if !driver.failed() => Some(ops),
-        _ => None,
+        Ok(ops) => classify_outcome(driver, ops),
+        Err(_) => Outcome::Failed,
+    }
+}
+
+/// Run `note`. A panic is [`Outcome::Failed`].
+pub fn isolate_note(driver: &mut dyn Decoration, note: &PtyNote, ctx: &DecorCtx, cancel: &Cancel) -> Outcome<Vec<PtyOp>> {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| driver.note(note, ctx, cancel)));
+    match result {
+        Ok(ops) => classify_outcome(driver, ops),
+        Err(_) => Outcome::Failed,
     }
 }
 
@@ -967,13 +1156,13 @@ done
         std::fs::set_permissions(&run, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut proc = DecorationProc::spawn(&[run.display().to_string()], dir.path()).unwrap();
         let ctx = DecorCtx::default();
-        let chrome = proc.chrome(&ctx);
+        let chrome = proc.chrome(&ctx, &Cancel::never());
         assert_eq!((chrome.top, chrome.bottom, chrome.left, chrome.right), (18, 1, 2, 3));
         assert_eq!(hit_test(&chrome, 1, 2).unwrap().id, "new");
         assert!(!chrome.ops.is_empty());
-        let ops = proc.event(&DecorEvent::NewTab { shell: None }, &ctx);
+        let ops = proc.event(&DecorEvent::NewTab { shell: None }, &ctx, &Cancel::never());
         assert_eq!(ops, vec![PtyOp::Spawn { shell: Some("/bin/zsh".into()), command: vec![], title: "zsh".into() }]);
-        let ops = proc.note(&PtyNote::Exited { id: 4, code: 0 }, &ctx);
+        let ops = proc.note(&PtyNote::Exited { id: 4, code: 0 }, &ctx, &Cancel::never());
         assert_eq!(ops, vec![PtyOp::Close { id: 4 }]);
         assert!(!proc.failed());
     }
@@ -1042,13 +1231,13 @@ done
     struct Boom;
 
     impl Decoration for Boom {
-        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+        fn chrome(&mut self, _: &DecorCtx, _: &Cancel) -> Chrome {
             panic!("boom");
         }
-        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &Cancel) -> Vec<PtyOp> {
             panic!("boom");
         }
-        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &Cancel) -> Vec<PtyOp> {
             panic!("boom");
         }
     }
@@ -1056,13 +1245,13 @@ done
     struct Quiet;
 
     impl Decoration for Quiet {
-        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+        fn chrome(&mut self, _: &DecorCtx, _: &Cancel) -> Chrome {
             Chrome { top: 4, ..Chrome::default() }
         }
-        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &Cancel) -> Vec<PtyOp> {
             vec![PtyOp::Focus { id: 9 }]
         }
-        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &Cancel) -> Vec<PtyOp> {
             Vec::new()
         }
     }
@@ -1070,13 +1259,16 @@ done
     #[test]
     fn a_panicking_decoration_is_isolated() {
         let ctx = DecorCtx::default();
+        let cancel = Cancel::never();
         let mut bad = Boom;
         let mut good = Quiet;
-        assert!(isolate_chrome(&mut bad, &ctx).is_none());
-        assert_eq!(isolate_chrome(&mut good, &ctx).unwrap().top, 4);
-        assert!(isolate_event(&mut bad, &DecorEvent::KeyOnExited, &ctx).is_none());
-        assert_eq!(isolate_event(&mut good, &DecorEvent::KeyOnExited, &ctx).unwrap(), vec![PtyOp::Focus { id: 9 }]);
-        assert!(isolate_note(&mut bad, &PtyNote::Focused { id: 1 }, &ctx).is_none());
-        assert!(isolate_note(&mut good, &PtyNote::Focused { id: 1 }, &ctx).unwrap().is_empty());
+        assert!(matches!(isolate_chrome(&mut bad, &ctx, &cancel), Outcome::Failed));
+        assert!(matches!(isolate_chrome(&mut good, &ctx, &cancel), Outcome::Done(c) if c.top == 4));
+        assert!(matches!(isolate_event(&mut bad, &DecorEvent::KeyOnExited, &ctx, &cancel), Outcome::Failed));
+        assert!(
+            matches!(isolate_event(&mut good, &DecorEvent::KeyOnExited, &ctx, &cancel), Outcome::Done(ops) if ops == vec![PtyOp::Focus { id: 9 }])
+        );
+        assert!(matches!(isolate_note(&mut bad, &PtyNote::Focused { id: 1 }, &ctx, &cancel), Outcome::Failed));
+        assert!(matches!(isolate_note(&mut good, &PtyNote::Focused { id: 1 }, &ctx, &cancel), Outcome::Done(ops) if ops.is_empty()));
     }
 }

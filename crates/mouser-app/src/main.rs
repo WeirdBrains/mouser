@@ -529,6 +529,10 @@ enum PluginCommand {
     Enable { name: String },
     /// Turn a plugin or engine off without removing it (not the mouser engine).
     Disable { name: String },
+    /// Keep a plugin from loading until `mouser plugin unquarantine`.
+    Quarantine { name: String },
+    /// Clear a quarantine and its miss count so the plugin loads on the next start.
+    Unquarantine { name: String },
     /// Engines: put this engine first in the priority order (and unskip it).
     Use { name: String },
     /// Set the priority order (the rest keep their order; for engines mouser stays last).
@@ -589,6 +593,8 @@ fn plugin_action(c: &Command) -> Option<(mouser_app::plugin_cli::Action, Option<
         PluginCommand::Uninstall { name } => Action::Uninstall(name.clone()),
         PluginCommand::Enable { name } => Action::Enable(name.clone()),
         PluginCommand::Disable { name } => Action::Disable(name.clone()),
+        PluginCommand::Quarantine { name } => Action::Quarantine(name.clone()),
+        PluginCommand::Unquarantine { name } => Action::Unquarantine(name.clone()),
         PluginCommand::Use { name } => Action::Use(name.clone()),
         PluginCommand::Unskip { name, .. } => Action::Unskip(name.clone()),
         PluginCommand::Priority { names } => Action::Priority(names.clone()),

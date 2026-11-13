@@ -15,6 +15,8 @@ pub enum Action {
     Uninstall(String),
     Enable(String),
     Disable(String),
+    Quarantine(String),
+    Unquarantine(String),
     Priority(Vec<String>),
     Move(String, String),
     /// Show (no setting) or set `cap=allow|ask|never` (`*` for every requested one).
@@ -90,6 +92,9 @@ fn engine(action: &Action, out: &mut dyn Write) -> Result<()> {
         Action::Unskip(n) => E::Unskip(n.clone()),
         Action::Priority(l) => E::Priority(l.clone()),
         Action::Move(n, to) => E::Move(n.clone(), to.clone()),
+        Action::Quarantine(_) | Action::Unquarantine(_) => {
+            bail!("quarantine is for plugins (`mouser plugin quarantine`)")
+        }
         Action::Enable(n) | Action::Disable(n) => {
             if !plugins::is_engine(n) {
                 bail!("no engine named {n} (see `mouser engine list`)");
@@ -127,6 +132,21 @@ pub fn run(action: &Action, out: &mut dyn Write) -> Result<()> {
             let on = matches!(action, Action::Enable(_));
             plugins::set_enabled(n, on)?;
             writeln!(out, "{n} {}", if on { "enabled" } else { "disabled" })?;
+            Ok(())
+        }
+        Action::Quarantine(n) => match plugins::quarantine(n)? {
+            plugins::QuarantinePut::Done => {
+                writeln!(out, "{n} quarantined (manual). It stays out until `mouser plugin unquarantine {n}` (next start).")?;
+                Ok(())
+            }
+            plugins::QuarantinePut::Already { reason } => {
+                writeln!(out, "{n} is already quarantined ({reason})")?;
+                Ok(())
+            }
+        },
+        Action::Unquarantine(n) => {
+            plugins::unquarantine(n)?;
+            writeln!(out, "{n} is out of quarantine and loads on the next start")?;
             Ok(())
         }
         Action::Priority(names) => {
@@ -233,7 +253,13 @@ fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
     let mut i = 0;
     for e in r.entries.iter().filter(|e| !e.kinds.contains(&Kind::Engine) && only.is_none_or(|k| e.kinds.contains(&k))) {
         i += 1;
-        let state = if e.enabled { "" } else { " [disabled]" };
+        let quar = plugins::quarantine_of(&e.name);
+        let state = match (&quar, e.enabled) {
+            (Some(q), _) if q.reason == "manual" => " [quarantined: manual]".to_string(),
+            (Some(q), _) => format!(" [quarantined: timeout, {} misses]", q.misses),
+            (None, false) => " [disabled]".to_string(),
+            (None, true) => String::new(),
+        };
         let from = match e.source {
             Some(s @ (plugins::Source::Bundle | plugins::Source::System)) => format!(" [{}]", s.name()),
             _ => String::new(),
@@ -273,4 +299,43 @@ fn list(out: &mut dyn Write, only: Option<Kind>) -> Result<()> {
         .collect();
     writeln!(out, "by kind: {}", kinds_with.join("; "))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn quarantine_and_unquarantine_are_listed_and_reject_a_bad_name() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        let err = run(&Action::Quarantine("missing".into()), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("no plugin named"), "{err}");
+        let mut out = Vec::new();
+        run(&Action::Quarantine("tabs".into()), &mut out).unwrap();
+        assert!(String::from_utf8_lossy(&out).contains("quarantined (manual)"));
+        out.clear();
+        run(&Action::Quarantine("tabs".into()), &mut out).unwrap();
+        assert!(String::from_utf8_lossy(&out).contains("already quarantined (manual)"));
+        out.clear();
+        run(&Action::List, &mut out).unwrap();
+        assert!(String::from_utf8_lossy(&out).contains("[quarantined: manual]"));
+        out.clear();
+        run(&Action::Unquarantine("tabs".into()), &mut out).unwrap();
+        assert!(String::from_utf8_lossy(&out).contains("out of quarantine"));
+        let err = run(&Action::Unquarantine("tabs".into()), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("not quarantined"), "{err}");
+        plugins::note_decoration_miss("tabs");
+        plugins::note_decoration_miss("tabs");
+        plugins::note_decoration_miss("tabs");
+        plugins::note_decoration_miss("tabs");
+        out.clear();
+        run(&Action::List, &mut out).unwrap();
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.contains("[quarantined: timeout, 4 misses]"), "{text}");
+        run(&Action::Unquarantine("tabs".into()), &mut Vec::new()).unwrap();
+        assert!(!plugins::is_quarantined("tabs"));
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
 }
