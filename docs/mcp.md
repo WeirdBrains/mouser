@@ -70,6 +70,7 @@ with `mouser mcp token --show`, and replace it with `--rotate`.
 | `list_themes`, `get_theme` | built-in and user themes; one theme's dark and light values | no (`themes.read`) |
 | `set_theme` | make a theme active (saved, and the open window picks it up) | **yes** (`themes.write`) |
 | `create_theme`, `duplicate_theme`, `edit_theme` | create, copy, or merge values into a user theme | **yes** (`themes.write`) |
+| `delete_theme` | delete any theme except the last one (user files go to the trash; a built-in is hidden) | **yes** (`themes.write`) |
 | `modes_list` | the modes: name, hotkey, which is on, whether it has the keyboard | no (`screen.read`) |
 | `modes_switch` | turn a mode on by name or hotkey (its own again: modes off) | **yes** (`modes.control`) |
 | `mode_actions` | every action of the current mode for its selected item and view state (its context menu) | no (`screen.read`) |
@@ -123,6 +124,20 @@ it the name is `<theme> copy`, then `<theme> copy 2`, and so on.
 `edit_theme` merges the colour fields you send into a user theme. Omitted
 fields stay. `variant` picks which file (`both` is the default). A built-in
 theme is read-only; the error tells you to `duplicate_theme` first.
+
+`delete_theme` removes a theme from the list. The last one is refused
+(`'{name}' is the last theme; Mouser keeps at least one`). A user theme's
+directory is moved to `$MOUSER_HOME/trash`, not unlinked. A built-in cannot
+be removed from the program: its name is appended to
+`$MOUSER_HOME/themes/.hidden` (one name per line) and `list_themes` skips
+it. Any copy of that built-in already on disk is trashed too, and a later
+start does not write it back. Delete that line to show the built-in again.
+The name stays reserved while it is hidden.
+
+If the deleted theme is the one in preferences (or the default, when no theme
+is saved), Mouser saves another: the default theme when that is still listed,
+otherwise the first theme that remains. This window drops its colour cache so
+the next frame uses it.
 
 ## Mode actions
 

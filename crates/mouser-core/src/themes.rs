@@ -198,12 +198,44 @@ pub fn on_omarchy() -> bool {
     })
 }
 
-/// Built-in theme names first, then user themes found under `themes/`.
+/// Built-in names that `delete_theme` hid. One name per line. A built-in is
+/// compiled in, so deleting it writes the name here and [`list_themes`] skips
+/// it. Delete that line to show the built-in again.
+pub fn hidden_path() -> PathBuf {
+    resolve_home().join("themes").join(".hidden")
+}
+
+fn hidden_names() -> Vec<String> {
+    fs::read_to_string(hidden_path())
+        .ok()
+        .map(|s| s.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn hide_builtin(name: &str) -> Result<(), String> {
+    let mut names = hidden_names();
+    if !names.iter().any(|n| n == name) {
+        names.push(name.to_string());
+    }
+    let path = hidden_path();
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, names.join("\n") + "\n").map_err(|e| e.to_string())
+}
+
+/// Built-in theme names first (hidden ones left out), then user themes under `themes/`.
 pub fn list_themes() -> Vec<String> {
-    let mut names: Vec<String> = builtins().into_iter().map(|(n, _, _)| n).collect();
+    let hidden = hidden_names();
+    let compiled: Vec<String> = builtins().into_iter().map(|(n, _, _)| n).collect();
+    let mut names: Vec<String> = compiled.iter().filter(|n| !hidden.iter().any(|h| h == *n)).cloned().collect();
     if let Ok(rd) = fs::read_dir(resolve_home().join("themes")) {
-        let mut user: Vec<String> =
-            rd.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| !names.contains(n)).collect();
+        let mut user: Vec<String> = rd
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| !compiled.iter().any(|c| c == n))
+            .collect();
         user.sort_by_key(|n| n.to_lowercase());
         names.extend(user);
     }
@@ -242,9 +274,9 @@ pub fn valid_theme_name(name: &str) -> bool {
     !t.is_empty() && t.len() <= 64 && !t.contains('/') && !t.contains('\0') && !t.starts_with('.')
 }
 
-/// Whether `name` already exists (built-in or on disk).
+/// Whether `name` already exists (visible, or a hidden built-in).
 pub fn theme_exists(name: &str) -> bool {
-    list_themes().iter().any(|n| n.eq_ignore_ascii_case(name))
+    list_themes().iter().any(|n| n.eq_ignore_ascii_case(name)) || hidden_names().iter().any(|n| n.eq_ignore_ascii_case(name))
 }
 
 /// Copy both variants of `src` into a new theme named `dest` (trimmed).
@@ -323,6 +355,9 @@ pub fn create_from_values(name: &str, patch: &serde_json::Value) -> Result<(), S
     if !valid_theme_name(name) {
         return Err("name must be 1–64 characters, not starting with '.' and without '/'".into());
     }
+    if hidden_names().iter().any(|n| n.eq_ignore_ascii_case(name)) {
+        return Err(format!("'{name}' is a hidden built-in theme"));
+    }
     if theme_exists(name) {
         return Err(format!("a theme named '{name}' already exists"));
     }
@@ -375,6 +410,59 @@ pub fn set_active_theme(name: &str) -> Result<String, String> {
     let name = find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
     crate::storage::update_preferences(|p| p.theme = Some(name.clone())).map_err(|e| e.to_string())?;
     Ok(name)
+}
+
+/// What [`delete_theme`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeRemoval {
+    pub name: String,
+    /// The theme is compiled in. It was hidden, not erased from the program.
+    pub builtin: bool,
+    pub hidden: bool,
+    /// User-theme directory, or the on-disk copy of a built-in, now in the trash.
+    pub trashed: Option<PathBuf>,
+    /// The theme in preferences after this call.
+    pub active: String,
+    /// `active` changed because the deleted theme was the one in use.
+    pub switched: bool,
+}
+
+/// Remove `name` from the theme list.
+///
+/// The last remaining theme is refused. A user theme's directory is moved to
+/// Mouser's trash. A built-in is appended to [`hidden_path`] (it cannot be
+/// removed from the program) and its on-disk copy, if any, is trashed too.
+/// Deleting the active theme saves another one: the default
+/// ([`default_theme_name`]) when that is still listed, otherwise the first
+/// theme that remains.
+pub fn delete_theme(name: &str) -> Result<ThemeRemoval, String> {
+    let name = find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+    if list_themes().len() <= 1 {
+        return Err(format!("'{name}' is the last theme; Mouser keeps at least one"));
+    }
+    let builtin = is_builtin(&name);
+    let dir = resolve_home().join("themes").join(&name);
+    let trashed = if dir.is_dir() { Some(crate::fileops::trash(&dir).map_err(|e| e.to_string())?) } else { None };
+    if builtin {
+        hide_builtin(&name)?;
+    } else if trashed.is_none() {
+        return Err(format!("no theme files for '{name}'"));
+    }
+    let was = current_active();
+    let switched = was.eq_ignore_ascii_case(&name);
+    let active = if switched {
+        let names = list_themes();
+        let def = default_theme_name();
+        let next = if names.iter().any(|n| n == def) { def.to_string() } else { names.into_iter().next().ok_or("no theme left")? };
+        set_active_theme(&next)?
+    } else {
+        was
+    };
+    Ok(ThemeRemoval { name, builtin, hidden: builtin, trashed, active, switched })
+}
+
+fn current_active() -> String {
+    crate::storage::load_preferences().theme.clone().unwrap_or_else(|| default_theme_name().to_string())
 }
 
 fn apply_variant(dark: &mut ThemeDef, light: &mut ThemeDef, patch: &serde_json::Value) -> Result<(), String> {
@@ -501,7 +589,11 @@ pub fn resolve_active_theme(prefs: &Preferences) -> ThemeDef {
 
 pub fn write_builtins_if_absent() -> std::io::Result<()> {
     ensure_dirs()?;
+    let hidden = hidden_names();
     for (name, dark, light) in builtins() {
+        if hidden.iter().any(|h| h == &name) {
+            continue;
+        }
         let dir = resolve_home().join("themes").join(&name);
         fs::create_dir_all(&dir)?;
         let dark_path = dir.join("dark.toml");
@@ -718,5 +810,50 @@ mod tests {
         assert_eq!(active, "Pond");
         assert_eq!(crate::storage::load_preferences().theme.as_deref(), Some("Pond"));
         unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn delete_theme_hides_builtins_trashes_user_themes_and_keeps_one() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe {
+            std::env::set_var("MOUSER_HOME", t.path());
+            std::env::set_var("MOUSER_OMARCHY", "0");
+        }
+        let gone = delete_theme("Tokyo Night").unwrap();
+        assert!(gone.builtin && gone.hidden && !gone.switched);
+        assert!(!list_themes().iter().any(|n| n == "Tokyo Night"));
+        assert!(fs::read_to_string(hidden_path()).unwrap().contains("Tokyo Night"));
+        write_builtins_if_absent().unwrap();
+        assert!(!t.path().join("themes/Tokyo Night").exists());
+        assert!(create_from_values("Tokyo Night", &serde_json::json!({})).unwrap_err().contains("hidden"));
+
+        create_from_values("Moss", &serde_json::json!({})).unwrap();
+        set_active_theme("Moss").unwrap();
+        let d = delete_theme("Moss").unwrap();
+        assert!(!d.builtin && d.switched);
+        let trashed = d.trashed.expect("user theme goes to the trash");
+        assert!(trashed.join("dark.toml").is_file(), "{trashed:?}");
+        assert!(trashed.starts_with(t.path().join("trash")));
+        assert!(!t.path().join("themes/Moss").exists());
+        assert_eq!(d.active, "Red Star");
+        assert_eq!(crate::storage::load_preferences().theme.as_deref(), Some("Red Star"));
+
+        loop {
+            let names = list_themes();
+            if names.len() <= 1 {
+                break;
+            }
+            delete_theme(&names[0]).unwrap();
+        }
+        let last = list_themes();
+        assert_eq!(last.len(), 1);
+        let err = delete_theme(&last[0]).unwrap_err();
+        assert!(err.contains("last theme"), "{err}");
+        assert_eq!(list_themes(), last);
+        unsafe {
+            std::env::remove_var("MOUSER_OMARCHY");
+            std::env::remove_var("MOUSER_HOME");
+        }
     }
 }
