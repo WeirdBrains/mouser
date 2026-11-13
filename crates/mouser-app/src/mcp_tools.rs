@@ -208,6 +208,13 @@ pub fn descriptors() -> Vec<Value> {
             false,
         ),
         tool(
+            "delete_theme",
+            "Delete a theme. The last remaining theme is refused. A user theme's files go to Mouser's trash. A built-in is hidden (it stays in the program; themes/.hidden lists it) and any copy on disk is trashed. Deleting the active theme switches to the default if that remains, otherwise another theme, and saves that. Asks first.",
+            json!({"name": {"type": "string"}}),
+            &["name"],
+            false,
+        ),
+        tool(
             "files_trash",
             "Move to Mouser's trash ($MOUSER_HOME/trash); nothing is deleted for good. Asks first.",
             json!({"tab": tab, "path": path}),
@@ -256,7 +263,7 @@ fn destructive(id: &str) -> bool {
 
 /// Tools that can replace or remove something (the previous bytes go to the trash).
 fn tool_destructive(name: &str) -> bool {
-    matches!(name, "files_trash" | "file_sync" | "remote_file_sync" | "file_download" | "file_upload" | "edit_theme" | "mode_action")
+    matches!(name, "files_trash" | "file_sync" | "remote_file_sync" | "file_download" | "file_upload" | "edit_theme" | "delete_theme" | "mode_action")
 }
 
 type R = std::result::Result<Value, String>;
@@ -553,6 +560,37 @@ impl mouser_core::mcp_server::Tools for AppTools {
                 mouser_core::themes::edit_user_theme(&name, a)?;
                 Ok(json!({"theme": name, "saved": true}))
             }
+            "delete_theme" => {
+                let name = a.get("name").and_then(Value::as_str).ok_or("name is required")?;
+                let name = mouser_core::themes::find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+                if mouser_core::themes::list_themes().len() <= 1 {
+                    return Err(format!("'{name}' is the last theme; Mouser keeps at least one"));
+                }
+                let mut detail = vec![format!("Delete theme {name}")];
+                if mouser_core::themes::is_builtin(&name) {
+                    detail.push("  a built-in: hidden, not removed from the program".into());
+                } else {
+                    detail.push("  its files go to Mouser's trash".into());
+                }
+                let active = mouser_core::storage::load_preferences().theme.unwrap_or_else(|| mouser_core::themes::default_theme_name().into());
+                if active.eq_ignore_ascii_case(&name) {
+                    detail.push("  it is the active theme; another theme will be saved".into());
+                }
+                self.ask(client, "themes.write", detail)?;
+                let r = mouser_core::themes::delete_theme(&name)?;
+                if r.switched {
+                    self.app_state.lock().unwrap().look.reload_theme();
+                    wake();
+                }
+                Ok(json!({
+                    "theme": r.name,
+                    "builtin": r.builtin,
+                    "hidden": r.hidden,
+                    "trashed": r.trashed.as_ref().map(|p| p.display().to_string()),
+                    "active": r.active,
+                    "switched": r.switched,
+                }))
+            }
             "files_trash" => {
                 let p = self.path(a, "path")?;
                 self.ask(client, "files.write", vec![format!("Move {} to Mouser's trash", p.display())])?;
@@ -710,6 +748,7 @@ mod tests {
             "create_theme",
             "duplicate_theme",
             "edit_theme",
+            "delete_theme",
             "modes_list",
             "modes_switch",
             "mode_actions",
@@ -717,10 +756,10 @@ mod tests {
         ] {
             assert!(names.contains(&n), "missing {n}");
         }
-        assert_eq!(names.len(), 26);
+        assert_eq!(names.len(), 27);
         assert!(!super::destructive("open") && super::destructive("delete") && super::destructive("menu:move_to"));
         assert!(super::tool_destructive("file_sync") && super::tool_destructive("file_download") && !super::tool_destructive("file_move"));
-        assert!(super::tool_destructive("edit_theme") && !super::tool_destructive("set_theme"));
+        assert!(super::tool_destructive("edit_theme") && super::tool_destructive("delete_theme") && !super::tool_destructive("set_theme"));
         for t in &d {
             let n = t["name"].as_str().unwrap();
             assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{n}");
