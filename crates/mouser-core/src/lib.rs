@@ -10,6 +10,7 @@ pub mod engines;
 pub mod exec;
 pub mod fetch;
 pub mod fileops;
+pub mod filesync;
 pub mod fuzzball;
 pub mod fuzzy;
 pub mod graphics;

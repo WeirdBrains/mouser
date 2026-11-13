@@ -196,7 +196,7 @@ screen and the last 200 scrollback lines (`CONTEXT_LINES`).
 | Tools | Names | Permission |
 |---|---|---|
 | The terminal (chat only) | `mouser.terminal_run` | asks on every call (`shell.type`), unless Allow all is on |
-| Mouser's own (the P2 MCP server's, in-process) | `mouser.screen_read`, `mouser.shell_run`, `mouser.files_trash`, … | reads run unless the broker says never for `chat`; `shell_*` and `files_mkdir/copy/move/trash` **ask on every call** unless Allow all is on |
+| Mouser's own (the P2 MCP server's, in-process) | `mouser.screen_read`, `mouser.shell_run`, `mouser.file_sync`, `mouser.set_theme`, … | reads run unless the broker says never for `chat`; shell, file and theme changes **ask on every call** unless Allow all is on |
 | Connected MCP servers and MCP plugins (P3) | `SERVER.TOOL`, `plugin:NAME.TOOL` | the server's broker entry (`mcp-server:NAME` / plugin, `tool.NAME`); *ask* shows the card (Allow all covers these too) |
 
 Tool-provider plugins are MCP plugins, so they appear in the second row once

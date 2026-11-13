@@ -28,7 +28,7 @@ fn tool(name: &str, desc: &str, props: Value, required: &[&str], read_only: bool
         "name": name,
         "description": desc,
         "inputSchema": {"type": "object", "properties": props, "required": required},
-        "annotations": {"readOnlyHint": read_only, "destructiveHint": !read_only && (name.contains("trash") || name == "mode_action"), "openWorldHint": false}
+        "annotations": {"readOnlyHint": read_only, "destructiveHint": tool_destructive(name), "openWorldHint": false}
     })
 }
 
@@ -75,7 +75,138 @@ pub fn descriptors() -> Vec<Value> {
             &["from", "to"],
             false,
         ),
-        tool("files_move", "Move or rename (never overwrites). Asks first.", json!({"tab": tab, "from": path, "to": path}), &["from", "to"], false),
+        tool(
+            "files_move",
+            "Alias of file_move. Move or rename (never overwrites). Asks first.",
+            json!({"tab": tab, "from": path, "to": path}),
+            &["from", "to"],
+            false,
+        ),
+        tool(
+            "file_move",
+            "Move or rename a file or folder (never overwrites). files_move is the same tool. Asks first.",
+            json!({"tab": tab, "from": path, "to": path}),
+            &["from", "to"],
+            false,
+        ),
+        tool(
+            "file_sync",
+            "Sync two local paths. direction is push (from → to), pull (to → from) or both (default). conflict is newer (default; the strictly newer mtime wins) or refuse (leave both, report the clash). A file that would be replaced is moved to Mouser's trash first. dry_run lists the changes and writes nothing. Directories need recursive (default true). Asks first.",
+            json!({
+                "tab": tab, "from": path, "to": path,
+                "direction": {"type": "string", "description": "push, pull or both (default both)"},
+                "conflict": {"type": "string", "description": "newer (default) or refuse"},
+                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
+                "dry_run": {"type": "boolean", "description": "list changes and write nothing"}
+            }),
+            &["from", "to"],
+            false,
+        ),
+        tool(
+            "remote_file_sync",
+            "Sync a local path with a path on a remote host (the tab's ssh, or host). push uploads, pull downloads, both (default) copies whichever side is missing or newer. Same conflict, trash, dry_run and recursive rules as file_sync. Asks first.",
+            json!({
+                "tab": tab,
+                "local": path,
+                "remote": {"type": "string", "description": "path on the remote host"},
+                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
+                "port": {"type": "integer", "description": "ssh port when host is set"},
+                "direction": {"type": "string", "description": "push (upload), pull (download) or both (default)"},
+                "conflict": {"type": "string", "description": "newer (default) or refuse"},
+                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
+                "dry_run": {"type": "boolean", "description": "list changes and write nothing"}
+            }),
+            &["local", "remote"],
+            false,
+        ),
+        tool(
+            "file_download",
+            "Download a remote file or directory (recursive, default true) onto a local path. Same as remote_file_sync direction pull: a newer local file is kept, otherwise the local file goes to the trash and the remote copy replaces it. dry_run lists that and writes nothing. Asks first.",
+            json!({
+                "tab": tab,
+                "remote": {"type": "string", "description": "path on the remote host"},
+                "to": path,
+                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
+                "port": {"type": "integer"},
+                "conflict": {"type": "string", "description": "newer (default) or refuse"},
+                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
+                "dry_run": {"type": "boolean"}
+            }),
+            &["remote", "to"],
+            false,
+        ),
+        tool(
+            "file_upload",
+            "Upload a local file or directory (recursive, default true) onto a remote path. Same as remote_file_sync direction push. A replaced remote file's previous bytes go to Mouser's trash. dry_run lists that and writes nothing. Asks first.",
+            json!({
+                "tab": tab,
+                "from": path,
+                "remote": {"type": "string", "description": "path on the remote host"},
+                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
+                "port": {"type": "integer"},
+                "conflict": {"type": "string", "description": "newer (default) or refuse"},
+                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
+                "dry_run": {"type": "boolean"}
+            }),
+            &["from", "remote"],
+            false,
+        ),
+        tool("list_themes", "Every built-in and user theme, and which one is active.", json!({}), &[], true),
+        tool(
+            "get_theme",
+            "One theme's dark and light values (colours, cursor, accent, palette, selection).",
+            json!({"name": {"type": "string"}}),
+            &["name"],
+            true,
+        ),
+        tool(
+            "set_theme",
+            "Make a theme the active one: saved in preferences and applied to this window on the next frame. Asks first.",
+            json!({"name": {"type": "string"}}),
+            &["name"],
+            false,
+        ),
+        tool(
+            "create_theme",
+            "Create a user theme. name is required. Missing colours fall back to Red Star. variant is dark, light or both (default both). A short palette is padded with the default ANSI colours. A bad colour is an error and nothing is written. Asks first.",
+            json!({
+                "name": {"type": "string"},
+                "variant": {"type": "string", "description": "dark, light or both (default both)"},
+                "foreground": {"type": "string", "description": "#rrggbb"},
+                "background": {"type": "string"},
+                "cursor": {"type": "string"},
+                "accent": {"type": "string"},
+                "selection_foreground": {"type": "string"},
+                "selection_background": {"type": "string"},
+                "palette": {"type": "array", "items": {"type": "string"}, "description": "up to 16 #rrggbb colours"}
+            }),
+            &["name"],
+            false,
+        ),
+        tool(
+            "duplicate_theme",
+            "Copy a theme. name is the copy's name; omitted, it is \"<theme> copy\" (then \"<theme> copy 2\", …). Asks first.",
+            json!({"theme": {"type": "string"}, "name": {"type": "string", "description": "name of the copy"}}),
+            &["theme"],
+            false,
+        ),
+        tool(
+            "edit_theme",
+            "Merge colour fields into a user theme and save it. Omitted fields stay. variant dark, light or both (default both). Built-in themes are read-only: the error says to use duplicate_theme. Asks first.",
+            json!({
+                "name": {"type": "string"},
+                "variant": {"type": "string"},
+                "foreground": {"type": "string"},
+                "background": {"type": "string"},
+                "cursor": {"type": "string"},
+                "accent": {"type": "string"},
+                "selection_foreground": {"type": "string"},
+                "selection_background": {"type": "string"},
+                "palette": {"type": "array", "items": {"type": "string"}}
+            }),
+            &["name"],
+            false,
+        ),
         tool(
             "files_trash",
             "Move to Mouser's trash ($MOUSER_HOME/trash); nothing is deleted for good. Asks first.",
@@ -121,6 +252,11 @@ const ACTIONS_WAIT: Duration = Duration::from_secs(3);
 fn destructive(id: &str) -> bool {
     let id = id.strip_prefix("menu:").unwrap_or(id);
     ["delete", "trash", "move", "rename", "paste", "cut"].iter().any(|w| id.contains(w))
+}
+
+/// Tools that can replace or remove something (the previous bytes go to the trash).
+fn tool_destructive(name: &str) -> bool {
+    matches!(name, "files_trash" | "file_sync" | "remote_file_sync" | "file_download" | "file_upload" | "edit_theme" | "mode_action")
 }
 
 type R = std::result::Result<Value, String>;
@@ -225,6 +361,36 @@ impl AppTools {
             _ => Ok(()),
         }
     }
+
+    fn sync_opts(a: &Value, default_dir: &str) -> std::result::Result<mouser_core::filesync::SyncOpts, String> {
+        use mouser_core::filesync::{Conflict, Direction, SyncOpts};
+        Ok(SyncOpts {
+            direction: Direction::parse(a.get("direction").and_then(Value::as_str).unwrap_or(default_dir))?,
+            conflict: Conflict::parse(a.get("conflict").and_then(Value::as_str).unwrap_or("newer"))?,
+            recursive: a.get("recursive").and_then(Value::as_bool).unwrap_or(true),
+            dry_run: a.get("dry_run").and_then(Value::as_bool).unwrap_or(false),
+        })
+    }
+
+    /// `host` (and optional `port`), or the tab's remote ssh.
+    fn ssh_of(&self, a: &Value) -> std::result::Result<mouser_core::remote::SshTarget, String> {
+        if let Some(h) = a.get("host").and_then(Value::as_str) {
+            if h.is_empty() || h.contains(['\n', '\0']) {
+                return Err("host is empty".into());
+            }
+            let mut opts = Vec::new();
+            if let Some(p) = a.get("port").and_then(Value::as_u64) {
+                opts.push("-p".into());
+                opts.push(p.to_string());
+            }
+            return Ok(mouser_core::remote::SshTarget { opts, dest: h.to_string() });
+        }
+        let (_, sess) = self.session(a)?;
+        match sess.place() {
+            Some(mouser_core::remote::Place::Remote { ssh: Some(t), .. }) => Ok(t),
+            _ => Err("give host, or a tab whose shell is on a remote host".into()),
+        }
+    }
 }
 
 impl mouser_core::mcp_server::Tools for AppTools {
@@ -302,12 +468,90 @@ impl mouser_core::mcp_server::Tools for AppTools {
                 fileops::mkdir(&p).map_err(s)?;
                 Ok(json!({"created": p.display().to_string()}))
             }
-            "files_copy" | "files_move" => {
+            "files_copy" | "files_move" | "file_move" => {
                 let (f, t) = (self.path(a, "from")?, self.path(a, "to")?);
                 let verb = if name == "files_copy" { "Copy" } else { "Move" };
                 self.ask(client, "files.write", vec![format!("{verb} {}", f.display()), format!("  to {}", t.display())])?;
                 if name == "files_copy" { fileops::copy(&f, &t) } else { fileops::rename(&f, &t) }.map_err(s)?;
                 Ok(json!({"from": f.display().to_string(), "to": t.display().to_string()}))
+            }
+            "file_sync" => {
+                let (f, t) = (self.path(a, "from")?, self.path(a, "to")?);
+                let opts = Self::sync_opts(a, "both")?;
+                let dry = if opts.dry_run { " (dry run)" } else { "" };
+                let dir = opts.direction.as_str();
+                self.ask(client, "files.write", vec![format!("Sync ({dir}) {}{dry}", f.display()), format!("  with {}", t.display())])?;
+                mouser_core::filesync::sync_local(&f, &t, &opts).map_err(s)
+            }
+            "remote_file_sync" | "file_download" | "file_upload" => {
+                let ssh = self.ssh_of(a)?;
+                let (local, remote, default_dir, verb) = if name == "file_download" {
+                    (self.path(a, "to")?, a.get("remote").and_then(Value::as_str).ok_or("remote is required")?.to_string(), "pull", "Download")
+                } else if name == "file_upload" {
+                    (self.path(a, "from")?, a.get("remote").and_then(Value::as_str).ok_or("remote is required")?.to_string(), "push", "Upload")
+                } else {
+                    (self.path(a, "local")?, a.get("remote").and_then(Value::as_str).ok_or("remote is required")?.to_string(), "both", "Sync")
+                };
+                let opts = Self::sync_opts(a, default_dir)?;
+                let dry = if opts.dry_run { " (dry run)" } else { "" };
+                let dir = opts.direction.as_str();
+                self.ask(
+                    client,
+                    "files.write",
+                    vec![format!("{verb} ({dir}) {}{dry}", local.display()), format!("  remote {remote} on {}", ssh.dest)],
+                )?;
+                mouser_core::filesync::sync_remote(&local, &remote, &ssh, &opts).map_err(s)
+            }
+            "list_themes" => {
+                self.may_read(client, "themes.read")?;
+                let prefs = mouser_core::storage::load_preferences();
+                let active = prefs.theme.clone().unwrap_or_else(|| mouser_core::themes::default_theme_name().to_string());
+                let v: Vec<Value> = mouser_core::themes::list_themes()
+                    .into_iter()
+                    .map(|n| json!({"name": n, "builtin": mouser_core::themes::is_builtin(&n), "active": n == active}))
+                    .collect();
+                Ok(json!({"themes": v, "active": active}))
+            }
+            "get_theme" => {
+                self.may_read(client, "themes.read")?;
+                let name = a.get("name").and_then(Value::as_str).ok_or("name is required")?;
+                let mut v = mouser_core::themes::theme_values(name)?;
+                let active = mouser_core::storage::load_preferences().theme.unwrap_or_else(|| mouser_core::themes::default_theme_name().into());
+                v["active"] = json!(v["name"] == active);
+                Ok(v)
+            }
+            "set_theme" => {
+                let name = a.get("name").and_then(Value::as_str).ok_or("name is required")?;
+                let name = mouser_core::themes::find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+                self.ask(client, "themes.write", vec![format!("Use the {name} theme")])?;
+                let name = mouser_core::themes::set_active_theme(&name)?;
+                self.app_state.lock().unwrap().look.reload_theme();
+                wake();
+                Ok(json!({"theme": name, "active": true}))
+            }
+            "create_theme" => {
+                let name = a.get("name").and_then(Value::as_str).ok_or("name is required")?;
+                self.ask(client, "themes.write", vec![format!("Create theme {name}")])?;
+                mouser_core::themes::create_from_values(name, a)?;
+                Ok(json!({"created": name.trim()}))
+            }
+            "duplicate_theme" => {
+                let theme = a.get("theme").and_then(Value::as_str).ok_or("theme is required")?;
+                let name = a.get("name").and_then(Value::as_str);
+                let label = name.unwrap_or("(copy)");
+                self.ask(client, "themes.write", vec![format!("Duplicate theme {theme} as {label}")])?;
+                let created = mouser_core::themes::duplicate_named(theme, name)?;
+                Ok(json!({"theme": theme, "created": created}))
+            }
+            "edit_theme" => {
+                let name = a.get("name").and_then(Value::as_str).ok_or("name is required")?;
+                let name = mouser_core::themes::find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+                if mouser_core::themes::is_builtin(&name) {
+                    return Err(format!("'{name}' is a built-in theme and read-only; use duplicate_theme"));
+                }
+                self.ask(client, "themes.write", vec![format!("Edit theme {name}")])?;
+                mouser_core::themes::edit_user_theme(&name, a)?;
+                Ok(json!({"theme": name, "saved": true}))
             }
             "files_trash" => {
                 let p = self.path(a, "path")?;
@@ -443,14 +687,49 @@ mod tests {
     #[test]
     fn descriptors_are_valid_and_mutating_ones_say_they_ask() {
         let d = super::descriptors();
-        assert_eq!(d.len(), 15);
+        let names: Vec<&str> = d.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for n in [
+            "tabs_list",
+            "screen_read",
+            "scrollback_read",
+            "shell_type",
+            "shell_run",
+            "files_list",
+            "files_read",
+            "files_mkdir",
+            "files_copy",
+            "files_move",
+            "file_move",
+            "file_sync",
+            "remote_file_sync",
+            "file_download",
+            "file_upload",
+            "list_themes",
+            "get_theme",
+            "set_theme",
+            "create_theme",
+            "duplicate_theme",
+            "edit_theme",
+            "modes_list",
+            "modes_switch",
+            "mode_actions",
+            "mode_action",
+        ] {
+            assert!(names.contains(&n), "missing {n}");
+        }
+        assert_eq!(names.len(), 26);
         assert!(!super::destructive("open") && super::destructive("delete") && super::destructive("menu:move_to"));
+        assert!(super::tool_destructive("file_sync") && super::tool_destructive("file_download") && !super::tool_destructive("file_move"));
+        assert!(super::tool_destructive("edit_theme") && !super::tool_destructive("set_theme"));
         for t in &d {
             let n = t["name"].as_str().unwrap();
             assert!(n.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{n}");
             assert_eq!(t["inputSchema"]["type"], "object");
             if t["annotations"]["readOnlyHint"] == false {
                 assert!(t["description"].as_str().unwrap().contains("Asks"), "{n}");
+            }
+            if n == "files_move" || n == "file_move" {
+                assert!(t["description"].as_str().unwrap().contains("file_move") || t["description"].as_str().unwrap().contains("files_move"));
             }
         }
         assert_eq!(super::visible("ls\r\x1b[A"), "ls⏎·[A");

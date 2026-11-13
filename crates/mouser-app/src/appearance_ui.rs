@@ -103,6 +103,14 @@ impl Appearance {
         self.preview_font = None;
     }
 
+    /// Drop the cached colours so the next frame reads the theme in preferences
+    /// (an MCP `set_theme`). A colour preview in the appearance panel is cleared
+    /// too, so the saved theme shows immediately; a font preview is left alone.
+    pub fn reload_theme(&mut self) {
+        self.cache = None;
+        self.preview_colors = None;
+    }
+
     pub fn open_picker(&mut self) {
         let prefs = load_preferences();
         let current = prefs.theme.clone().unwrap_or_else(|| default_theme_name().into());
