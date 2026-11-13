@@ -275,6 +275,168 @@ pub fn create_theme(name: &str) -> Result<(), String> {
     duplicate_theme("Red Star", name)
 }
 
+/// Whether `name` is one of the built-in themes (those are read-only).
+pub fn is_builtin(name: &str) -> bool {
+    builtins().iter().any(|(n, _, _)| n == name)
+}
+
+/// The canonical spelling of `name` (built-in or on disk), ignoring case.
+pub fn find_theme(name: &str) -> Option<String> {
+    list_themes().into_iter().find(|n| n.eq_ignore_ascii_case(name))
+}
+
+/// `"<name> copy"`, then `"<name> copy 2"`, and so on, until the name is free.
+pub fn unique_copy_name(src: &str) -> String {
+    let base = format!("{src} copy");
+    if !theme_exists(&base) {
+        return base;
+    }
+    for n in 2..1000 {
+        let c = format!("{base} {n}");
+        if !theme_exists(&c) {
+            return c;
+        }
+    }
+    format!("{base} {}", std::process::id())
+}
+
+/// Duplicate `src`. `name` empty or absent becomes [`unique_copy_name`].
+pub fn duplicate_named(src: &str, name: Option<&str>) -> Result<String, String> {
+    let src = find_theme(src).ok_or_else(|| format!("no theme named '{src}'"))?;
+    let dest = match name.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(n) => n.to_string(),
+        None => unique_copy_name(&src),
+    };
+    duplicate_theme(&src, &dest)?;
+    Ok(dest)
+}
+
+/// Create `name` from Red Star, then overlay `patch`.
+///
+/// Missing colour fields stay as Red Star. `variant` is `dark`, `light` or
+/// `both` (default `both`): `both` writes the same overlay into each variant,
+/// otherwise only that variant changes and the other stays Red Star. A short
+/// `palette` is padded with the default ANSI colours. A bad hex value is an
+/// error and nothing is written.
+pub fn create_from_values(name: &str, patch: &serde_json::Value) -> Result<(), String> {
+    let name = name.trim();
+    if !valid_theme_name(name) {
+        return Err("name must be 1–64 characters, not starting with '.' and without '/'".into());
+    }
+    if theme_exists(name) {
+        return Err(format!("a theme named '{name}' already exists"));
+    }
+    let mut dark = load_theme("Red Star", "dark");
+    let mut light = load_theme("Red Star", "light");
+    dark.name = name.to_string();
+    light.name = name.to_string();
+    dark.variant = "dark".into();
+    light.variant = "light".into();
+    apply_variant(&mut dark, &mut light, patch)?;
+    dark.ensure_complete();
+    light.ensure_complete();
+    save_theme(&dark).map_err(|e| e.to_string())?;
+    save_theme(&light).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Merge `patch` into a user theme. Built-ins are refused.
+/// Omitted fields stay as they are. `variant` selects which file changes
+/// (`both` is the default). See [`create_from_values`] for the fields.
+pub fn edit_user_theme(name: &str, patch: &serde_json::Value) -> Result<(), String> {
+    let name = find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+    if is_builtin(&name) {
+        return Err(format!("'{name}' is a built-in theme and read-only; use duplicate_theme"));
+    }
+    let mut dark = load_theme(&name, "dark");
+    let mut light = load_theme(&name, "light");
+    apply_variant(&mut dark, &mut light, patch)?;
+    dark.name = name.clone();
+    light.name = name;
+    dark.variant = "dark".into();
+    light.variant = "light".into();
+    dark.ensure_complete();
+    light.ensure_complete();
+    save_theme(&dark).map_err(|e| e.to_string())?;
+    save_theme(&light).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Both variants of `name`, plus whether it is built in.
+pub fn theme_values(name: &str) -> Result<serde_json::Value, String> {
+    let name = find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+    let dark = load_theme(&name, "dark");
+    let light = load_theme(&name, "light");
+    Ok(serde_json::json!({"name": name, "builtin": is_builtin(&name), "dark": dark, "light": light}))
+}
+
+/// Make `name` the theme stored in preferences. The caller refreshes open windows.
+pub fn set_active_theme(name: &str) -> Result<String, String> {
+    let name = find_theme(name).ok_or_else(|| format!("no theme named '{name}'"))?;
+    crate::storage::update_preferences(|p| p.theme = Some(name.clone())).map_err(|e| e.to_string())?;
+    Ok(name)
+}
+
+fn apply_variant(dark: &mut ThemeDef, light: &mut ThemeDef, patch: &serde_json::Value) -> Result<(), String> {
+    let variant = patch.get("variant").and_then(|v| v.as_str()).unwrap_or("both");
+    match variant {
+        "dark" => apply_patch(dark, patch)?,
+        "light" => apply_patch(light, patch)?,
+        "both" => {
+            apply_patch(dark, patch)?;
+            apply_patch(light, patch)?;
+        }
+        _ => return Err("variant must be dark, light or both".into()),
+    }
+    Ok(())
+}
+
+fn apply_patch(def: &mut ThemeDef, patch: &serde_json::Value) -> Result<(), String> {
+    if let Some(s) = hex_field(patch, "foreground")? {
+        def.foreground = s;
+    }
+    if let Some(s) = hex_field(patch, "background")? {
+        def.background = s;
+    }
+    if let Some(s) = hex_field(patch, "cursor")? {
+        def.cursor = Some(s);
+    }
+    if let Some(s) = hex_field(patch, "accent")? {
+        def.accent = Some(s);
+    }
+    if let Some(s) = hex_field(patch, "selection_foreground")? {
+        def.selection_foreground = Some(s);
+    }
+    if let Some(s) = hex_field(patch, "selection_background")? {
+        def.selection_background = Some(s);
+    }
+    if let Some(p) = patch.get("palette") {
+        let arr = p.as_array().ok_or("palette must be an array of #rrggbb")?;
+        if arr.len() > 16 {
+            return Err("palette has at most 16 colours".into());
+        }
+        let mut out = Vec::new();
+        for (i, c) in arr.iter().enumerate() {
+            let s = c.as_str().ok_or("palette entries must be strings")?;
+            out.push(normalize_hex(s).ok_or_else(|| format!("palette[{i}] must be #rrggbb"))?);
+        }
+        def.palette = out;
+    }
+    Ok(())
+}
+
+fn hex_field(v: &serde_json::Value, key: &str) -> Result<Option<String>, String> {
+    match v.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(normalize_hex(s).ok_or_else(|| format!("{key} must be #rrggbb (got {s})"))?)),
+        _ => Err(format!("{key} must be a string")),
+    }
+}
+
+fn normalize_hex(s: &str) -> Option<String> {
+    parse_hex(s).map(|v| format!("#{v:06X}"))
+}
+
 /// Export both variants of `name` into `dir` as `dark.toml` / `light.toml`.
 pub fn export_theme(name: &str, dir: &std::path::Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -519,4 +681,42 @@ fn theme_pair(name: &str, dark_fg: &str, dark_bg: &str, light_fg: &str, light_bg
             selection_background: None,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[serial_test::serial]
+    fn theme_tools_create_duplicate_edit_and_refuse_builtins() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        assert!(is_builtin("Red Star"));
+        assert_eq!(theme_values("red star").unwrap()["builtin"], true);
+        let err = edit_user_theme("Red Star", &serde_json::json!({"foreground": "#112233"})).unwrap_err();
+        assert!(err.contains("duplicate_theme"), "{err}");
+
+        create_from_values("Moss", &serde_json::json!({"foreground": "#abc"})).unwrap();
+        let got = theme_values("Moss").unwrap();
+        assert_eq!(got["dark"]["foreground"], "#AABBCC");
+        assert_eq!(got["dark"]["background"], theme_values("Red Star").unwrap()["dark"]["background"]);
+        assert!(create_from_values("Bad", &serde_json::json!({"foreground": "nope"})).unwrap_err().contains("#rrggbb"));
+
+        edit_user_theme("Moss", &serde_json::json!({"variant": "light", "accent": "#010203"})).unwrap();
+        let got = theme_values("Moss").unwrap();
+        assert_eq!(got["light"]["accent"], "#010203");
+        assert_ne!(got["dark"]["accent"].as_str(), Some("#010203"));
+
+        let copy = duplicate_named("Moss", None).unwrap();
+        assert_eq!(copy, "Moss copy");
+        let copy2 = duplicate_named("Moss", None).unwrap();
+        assert_eq!(copy2, "Moss copy 2");
+        assert_eq!(duplicate_named("Moss", Some("Pond")).unwrap(), "Pond");
+
+        let active = set_active_theme("pond").unwrap();
+        assert_eq!(active, "Pond");
+        assert_eq!(crate::storage::load_preferences().theme.as_deref(), Some("Pond"));
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
 }

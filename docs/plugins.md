@@ -269,6 +269,7 @@ left out with a notice.
 | `scrollback.read` | read the tab's scrollback |
 | `shell.type` | type or run commands in a shell |
 | `files.read` / `files.write` | read / change or delete files |
+| `themes.read` / `themes.write` | list or read themes / switch, create, duplicate or edit them (MCP) |
 | `network` | use the network |
 | `models.download` | download or start a model |
 | `remote.read` | list and read files on the shell's remote host (mode plugins) |

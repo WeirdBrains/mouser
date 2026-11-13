@@ -94,11 +94,30 @@ pub fn rename(from: &Path, to: &Path) -> Result<()> {
 /// Move into $MOUSER_HOME/trash/<unix time>-<name>; returns where it went.
 pub fn trash(p: &Path) -> Result<PathBuf> {
     let name = p.file_name().context("no file name")?.to_string_lossy().into_owned();
+    let to = trash_path(&name)?;
+    rename(p, &to)?;
+    Ok(to)
+}
+
+/// Write `bytes` into the trash under `name` (the previous bytes of a remote
+/// file a sync is about to replace). Nothing is deleted for good.
+pub fn trash_bytes(name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let name = name.rsplit(['/', '\\']).next().filter(|s| !s.is_empty()).unwrap_or("file");
+    let to = trash_path(name)?;
+    fs::write(&to, bytes).with_context(|| format!("trashing {name}"))?;
+    Ok(to)
+}
+
+fn trash_path(name: &str) -> Result<PathBuf> {
     let d = crate::storage::resolve_home().join("trash");
     fs::create_dir_all(&d)?;
     let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
-    let to = d.join(format!("{t}-{name}"));
-    rename(p, &to)?;
+    let mut to = d.join(format!("{t}-{name}"));
+    let mut n = 1u32;
+    while to.symlink_metadata().is_ok() {
+        to = d.join(format!("{t}-{n}-{name}"));
+        n += 1;
+    }
     Ok(to)
 }
 

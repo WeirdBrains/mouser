@@ -62,8 +62,14 @@ with `mouser mcp token --show`, and replace it with `--rotate`.
 | `shell_type` | type text into a tab (no Enter) | **yes** (`shell.type`) |
 | `shell_run` | run one command line, only when the shell is at its prompt | **yes** (`shell.type`) |
 | `files_list`, `files_read` | list a folder, read up to 1 MiB of a file | no |
-| `files_mkdir`, `files_copy`, `files_move` | create, copy, move or rename (never overwrite) | **yes** (`files.write`) |
+| `files_mkdir`, `files_copy`, `file_move` | create, copy, move or rename (never overwrite). `files_move` is `file_move` | **yes** (`files.write`) |
 | `files_trash` | move to `$MOUSER_HOME/trash` (nothing is deleted for good) | **yes** (`files.write`) |
+| `file_sync` | sync two local paths (`push`, `pull` or `both`) | **yes** (`files.write`) |
+| `remote_file_sync` | sync a local path with a path on the tab's host, or `host` | **yes** (`files.write`) |
+| `file_download`, `file_upload` | remote → local, and local → remote (directories recursive) | **yes** (`files.write`) |
+| `list_themes`, `get_theme` | built-in and user themes; one theme's dark and light values | no (`themes.read`) |
+| `set_theme` | make a theme active (saved, and the open window picks it up) | **yes** (`themes.write`) |
+| `create_theme`, `duplicate_theme`, `edit_theme` | create, copy, or merge values into a user theme | **yes** (`themes.write`) |
 | `modes_list` | the modes: name, hotkey, which is on, whether it has the keyboard | no (`screen.read`) |
 | `modes_switch` | turn a mode on by name or hotkey (its own again: modes off) | **yes** (`modes.control`) |
 | `mode_actions` | every action of the current mode for its selected item and view state (its context menu) | no (`screen.read`) |
@@ -71,6 +77,52 @@ with `mouser mcp token --show`, and replace it with `--rotate`.
 
 Relative paths are resolved in the tab's local folder. A tool argument `tab`
 picks a tab; the default is the active one.
+
+## Sync, download and upload
+
+`file_sync` copies between two local paths. `direction` is `push` (`from` →
+`to`), `pull` (`to` → `from`) or `both` (the default: a file that exists on
+only one side is copied to the other). `remote_file_sync` is the same with a
+local path and a remote path: `push` uploads, `pull` downloads, `both` is the
+default. The remote host is the tab's ssh session, or `host` (and optional
+`port`) when you pass one. `file_download` is that pull (`remote` → `to`).
+`file_upload` is that push (`from` → `remote`). There is no URL download.
+
+`conflict` is `newer` (the default) or `refuse`. `newer` copies a file only
+when its mtime is strictly later than the other side; the same mtime is left
+alone. `refuse` copies nothing that already exists with a different size or
+mtime, and reports it as a conflict. A file that would be replaced is moved
+to `$MOUSER_HOME/trash` first. A replaced remote file is not deleted on the
+host: its previous bytes are written into that trash, then the path is
+replaced. `dry_run` lists the copies, trashes and skips and writes nothing.
+Directories need `recursive` (default true). Dotfiles are included; symlinks
+are skipped. The result counts `copied`, `trashed`, `skipped`, `unchanged`
+and `bytes`.
+
+`file_move` never overwrites. `files_move` calls the same code.
+
+## Themes
+
+`list_themes` and `get_theme` are reads. `get_theme` returns the `dark` and
+`light` variants: foreground, background, cursor, accent, palette and
+selection colours.
+
+`set_theme` stores the name in `preferences.toml` and drops this window's
+cached colours, so the next frame uses it. A colour preview open in the
+appearance panel is cleared; a font preview is not.
+
+`create_theme` starts from Red Star. Any colour you omit stays Red Star.
+`variant` is `dark`, `light` or `both` (default `both`): `both` writes the
+colours you gave into each variant. A `palette` shorter than 16 colours is
+padded with the default ANSI palette. A value that is not `#rgb` or `#rrggbb`
+is an error and nothing is written.
+
+`duplicate_theme` copies both variants. `name` is the copy's name; without
+it the name is `<theme> copy`, then `<theme> copy 2`, and so on.
+
+`edit_theme` merges the colour fields you send into a user theme. Omitted
+fields stay. `variant` picks which file (`both` is the default). A built-in
+theme is read-only; the error tells you to `duplicate_theme` first.
 
 ## Mode actions
 
@@ -121,12 +173,12 @@ client can walk the list, then ask again for the new item's actions.
 - The `Host` and `Origin` headers must be loopback, or one of the names in
   `[mcp.server.tls] domains` (an `Origin` must then be `https://`), which
   blocks DNS-rebinding attacks from web pages. Bodies are capped at 4 MiB.
-- Typing, running and file changes go through the plugin permission broker
+- Typing, running, file changes and theme changes go through the plugin permission broker
   (docs/plugins.md) under `mcp:<client name>`. They show Mouser's approval
   popup with the exact text, command or path, and the call waits up to 5 minutes
   for your answer. Choose Always or Never there, or later with
   `mouser plugin permissions mcp:<client> …`. A `never` for `screen.read`,
-  `scrollback.read` or `files.read` also blocks those reads.
+  `scrollback.read`, `files.read` or `themes.read` also blocks those reads.
 - The client name comes from the client itself (`clientInfo.name`). The token
   is what proves access; the name only keeps grants apart.
 
