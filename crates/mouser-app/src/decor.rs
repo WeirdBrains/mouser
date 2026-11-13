@@ -12,10 +12,73 @@ use mouser_core::scrollback::ScrollbackConfig;
 use mouser_core::types::Size;
 use mouser_render::ui::UiAction;
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::thread;
+use std::time::Instant;
+
+/// One job for a decoration's worker. The worker owns the [`Decoration`] and
+/// runs a single job at a time, so a slow plugin cannot re-enter itself.
+enum Work {
+    Chrome(DecorCtx),
+    Event(DecorEvent, DecorCtx),
+    Note(decoration::PtyNote, DecorCtx),
+    /// The hit's owner runs the event and then the note. Everyone else runs the note.
+    Hit {
+        event: Option<DecorEvent>,
+        note: decoration::PtyNote,
+        ctx: DecorCtx,
+    },
+}
+
+enum Reply {
+    Chrome(Option<Chrome>),
+    Ops(Option<Vec<PtyOp>>),
+}
+
+struct Envelope {
+    index: usize,
+    work: Work,
+    tx: Sender<(usize, Reply)>,
+}
 
 struct Slot {
     name: String,
-    driver: Box<dyn Decoration>,
+    tx: Sender<Envelope>,
+}
+
+fn serve(mut driver: Box<dyn Decoration>, rx: Receiver<Envelope>) {
+    while let Ok(env) = rx.recv() {
+        let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &env.work {
+            Work::Chrome(ctx) => Reply::Chrome(decoration::isolate_chrome(driver.as_mut(), ctx)),
+            Work::Event(ev, ctx) => Reply::Ops(decoration::isolate_event(driver.as_mut(), ev, ctx)),
+            Work::Note(note, ctx) => Reply::Ops(decoration::isolate_note(driver.as_mut(), note, ctx)),
+            Work::Hit { event, note, ctx } => Reply::Ops(hit_reply(driver.as_mut(), event.as_ref(), note, ctx)),
+        }));
+        let reply = match reply {
+            Ok(reply) => reply,
+            Err(_) => match &env.work {
+                Work::Chrome(_) => Reply::Chrome(None),
+                _ => Reply::Ops(None),
+            },
+        };
+        let _ = env.tx.send((env.index, reply));
+    }
+}
+
+fn hit_reply(driver: &mut dyn Decoration, event: Option<&DecorEvent>, note: &decoration::PtyNote, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
+    let mut ops = Vec::new();
+    if let Some(ev) = event {
+        ops.extend(decoration::isolate_event(driver, ev, ctx)?);
+    }
+    ops.extend(decoration::isolate_note(driver, note, ctx)?);
+    Some(ops)
+}
+
+fn start_slot(name: String, driver: Box<dyn Decoration>) -> Slot {
+    let (tx, rx) = mpsc::channel();
+    let label = format!("mouser-decor-{name}");
+    thread::Builder::new().name(label).spawn(move || serve(driver, rx)).expect("decoration worker");
+    Slot { name, tx }
 }
 
 pub struct Decor {
@@ -47,7 +110,7 @@ impl Decor {
                 None
             };
             if let Some(driver) = driver {
-                slots.push(Slot { name, driver });
+                slots.push(start_slot(name, driver));
             }
         }
         if slots.is_empty() {
@@ -71,7 +134,14 @@ impl Decor {
     }
 
     pub fn chrome(&mut self, ctx: &DecorCtx) -> Chrome {
-        let parts = self.gather(|slot| decoration::isolate_chrome(slot.driver.as_mut(), ctx));
+        let parts = self.fan(
+            ctx,
+            |ctx| Work::Chrome(ctx.clone()),
+            |reply| match reply {
+                Reply::Chrome(chrome) => chrome,
+                Reply::Ops(_) => None,
+            },
+        );
         if !self.on {
             return Chrome::default();
         }
@@ -80,52 +150,61 @@ impl Decor {
     }
 
     fn ops(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp> {
-        let parts = self.gather(|slot| decoration::isolate_event(slot.driver.as_mut(), ev, ctx));
-        let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
-        decoration::arbitrate(&refs)
+        let parts = self.fan(ctx, |ctx| Work::Event(ev.clone(), ctx.clone()), ops_of);
+        self.arbitrate_parts(&parts)
     }
 
     fn dispatch_hit(&mut self, owner: &str, id: &str, ctx: &DecorCtx) -> Vec<PtyOp> {
         let owner = if owner.is_empty() && self.slots.len() == 1 { self.slots[0].name.clone() } else { owner.to_string() };
         let note = decoration::PtyNote::ChromeHit { owner: owner.clone(), id: id.to_string() };
-        let mut parts = Vec::new();
-        let mut i = 0;
-        while i < self.slots.len() {
-            let name = self.slots[i].name.clone();
-            let event = (name == owner).then(|| DecorEvent::Hit { id: id.to_string() });
-            let ev_ops = match &event {
-                Some(ev) => decoration::isolate_event(self.slots[i].driver.as_mut(), ev, ctx),
-                None => Some(Vec::new()),
-            };
-            let note_ops = decoration::isolate_note(self.slots[i].driver.as_mut(), &note, ctx);
-            match (ev_ops, note_ops) {
-                (Some(mut ops), Some(more)) => {
-                    ops.extend(more);
-                    parts.push((name, ops));
-                    i += 1;
-                }
-                _ => self.drop_slot(i),
-            }
-        }
-        self.on = !self.slots.is_empty();
-        let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
-        decoration::arbitrate(&refs)
+        let jobs: Vec<Work> = self
+            .slots
+            .iter()
+            .map(|slot| Work::Hit {
+                event: (slot.name == owner).then(|| DecorEvent::Hit { id: id.to_string() }),
+                note: note.clone(),
+                ctx: ctx.clone(),
+            })
+            .collect();
+        let parts = self.fan_jobs(jobs, ops_of);
+        self.arbitrate_parts(&parts)
     }
 
-    fn gather<T>(&mut self, mut call: impl FnMut(&mut Slot) -> Option<T>) -> Vec<(String, T)> {
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i < self.slots.len() {
-            match call(&mut self.slots[i]) {
-                Some(value) => {
-                    out.push((self.slots[i].name.clone(), value));
-                    i += 1;
-                }
-                None => self.drop_slot(i),
+    /// Send `work` to every worker, then wait until each has replied or [`decoration::REPLY_TIMEOUT`]
+    /// has passed since the send. Arrival order is ignored: the returned vec follows slot order.
+    fn fan<T>(&mut self, ctx: &DecorCtx, work: impl Fn(&DecorCtx) -> Work, map: impl Fn(Reply) -> Option<T>) -> Vec<(String, T)> {
+        let jobs: Vec<Work> = self.slots.iter().map(|_| work(ctx)).collect();
+        self.fan_jobs(jobs, map)
+    }
+
+    fn fan_jobs<T>(&mut self, jobs: Vec<Work>, map: impl Fn(Reply) -> Option<T>) -> Vec<(String, T)> {
+        let (tx, rx) = mpsc::channel();
+        let mut waiting = 0;
+        for (index, (slot, work)) in self.slots.iter().zip(jobs).enumerate() {
+            if slot.tx.send(Envelope { index, work, tx: tx.clone() }).is_ok() {
+                waiting += 1;
             }
         }
+        drop(tx);
+        let answers = wait_replies(rx, self.slots.len(), waiting);
+        let mut dead = Vec::new();
+        let mut parts = Vec::new();
+        for (i, answer) in answers.into_iter().enumerate() {
+            match answer.and_then(&map) {
+                Some(value) => parts.push((self.slots[i].name.clone(), value)),
+                None => dead.push(i),
+            }
+        }
+        for i in dead.into_iter().rev() {
+            self.drop_slot(i);
+        }
         self.on = !self.slots.is_empty();
-        out
+        parts
+    }
+
+    fn arbitrate_parts(&self, parts: &[(String, Vec<PtyOp>)]) -> Vec<PtyOp> {
+        let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
+        decoration::arbitrate(&refs)
     }
 
     fn drop_slot(&mut self, index: usize) {
@@ -142,6 +221,33 @@ impl Decor {
         self.extras_done = true;
         self.plan.extra.clone()
     }
+}
+
+fn ops_of(reply: Reply) -> Option<Vec<PtyOp>> {
+    match reply {
+        Reply::Ops(ops) => ops,
+        Reply::Chrome(_) => None,
+    }
+}
+
+fn wait_replies(rx: Receiver<(usize, Reply)>, n: usize, mut waiting: usize) -> Vec<Option<Reply>> {
+    let mut out = (0..n).map(|_| None).collect::<Vec<_>>();
+    let deadline = Instant::now() + decoration::REPLY_TIMEOUT;
+    while waiting > 0 {
+        let remain = deadline.saturating_duration_since(Instant::now());
+        if remain.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(remain) {
+            Ok((i, reply)) if i < n && out[i].is_none() => {
+                out[i] = Some(reply);
+                waiting -= 1;
+            }
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+    out
 }
 
 fn open_process(name: &str) -> Option<Box<dyn Decoration>> {
@@ -303,9 +409,8 @@ pub fn on_note(decor: &mut Decor, tabs: &mut Tabs, note: &decoration::PtyNote, s
     }
     let before = focused_id(tabs);
     let ctx = pty_ctx(tabs);
-    let parts = decor.gather(|slot| decoration::isolate_note(slot.driver.as_mut(), note, &ctx));
-    let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
-    for op in decoration::arbitrate(&refs) {
+    let parts = decor.fan(&ctx, |ctx| Work::Note(note.clone(), ctx.clone()), ops_of);
+    for op in decor.arbitrate_parts(&parts) {
         apply(tabs, op, sb, wake);
     }
     if !matches!(note, decoration::PtyNote::Focused { .. }) {
@@ -333,7 +438,7 @@ mod tests {
     fn decor_on(config: TabsConfig, cli_shell: bool) -> Decor {
         Decor {
             on: true,
-            slots: vec![Slot { name: decoration::TABS_PLUGIN.into(), driver: Box::new(TabsDecoration { pinned: Some(config.clone()) }) }],
+            slots: vec![start_slot(decoration::TABS_PLUGIN.into(), Box::new(TabsDecoration { pinned: Some(config.clone()) }))],
             plan: decoration::startup_plan(&config, cli_shell),
             extras_done: false,
             told: Vec::new(),
@@ -444,7 +549,7 @@ mod tests {
     fn a_crashing_decoration_is_dropped_and_the_other_still_runs() {
         let mut decor = Decor {
             on: true,
-            slots: vec![Slot { name: "boom".into(), driver: Box::new(Boom) }, Slot { name: "band".into(), driver: Box::new(SpawnBand) }],
+            slots: vec![start_slot("boom".into(), Box::new(Boom)), start_slot("band".into(), Box::new(SpawnBand))],
             plan: StartupPlan::default(),
             extras_done: true,
             told: Vec::new(),
@@ -457,5 +562,77 @@ mod tests {
         assert!(on_action(&mut decor, &mut tabs, &UiAction::NewTab, &ScrollbackConfig::default()));
         assert_eq!(tabs.list.len(), 1);
         assert_eq!(tabs.list[0].title(), "nap");
+    }
+
+    struct Pause {
+        ms: u64,
+        top: i32,
+        color: u32,
+    }
+
+    impl Decoration for Pause {
+        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+            if self.ms > 0 {
+                thread::sleep(std::time::Duration::from_millis(self.ms));
+            }
+            Chrome {
+                top: self.top,
+                ops: vec![decoration::DrawOp::Fill { x: 0, y: 0, w: 10, h: self.top.max(1), color: self.color }],
+                ..Chrome::default()
+            }
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+            Vec::new()
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+            Vec::new()
+        }
+    }
+
+    fn sched(slots: Vec<Slot>) -> Decor {
+        Decor { on: true, slots, plan: StartupPlan::default(), extras_done: true, told: Vec::new() }
+    }
+
+    fn fill_at(ops: &[decoration::DrawOp], color: u32) -> (i32, i32) {
+        ops.iter()
+            .find_map(|op| match op {
+                decoration::DrawOp::Fill { y, h, color: c, .. } if *c == color => Some((*y, *h)),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn two_slow_decorations_finish_together_in_priority_order() {
+        let mut decor = sched(vec![
+            start_slot("high".into(), Box::new(Pause { ms: 80, top: 10, color: 1 })),
+            start_slot("low".into(), Box::new(Pause { ms: 80, top: 8, color: 2 })),
+        ]);
+        let started = Instant::now();
+        let chrome = decor.chrome(&DecorCtx { width: 80, height: 40, ..DecorCtx::default() });
+        let elapsed = started.elapsed();
+        // Serial would be ~160 ms. 150 ms is still under that sum and leaves room for scheduling jitter.
+        assert!(elapsed < std::time::Duration::from_millis(150), "parallel broadcast took {elapsed:?}");
+        assert_eq!(chrome.top, 18);
+        assert_eq!(decor.slots.len(), 2);
+        assert_eq!(fill_at(&chrome.ops, 1), (0, 10));
+        assert_eq!(fill_at(&chrome.ops, 2), (10, 8));
+    }
+
+    #[test]
+    fn a_hung_decoration_is_dropped_at_the_deadline_and_the_other_chrome_applies() {
+        let mut decor = sched(vec![
+            start_slot("hung".into(), Box::new(Pause { ms: 400, top: 30, color: 9 })),
+            start_slot("fast".into(), Box::new(Pause { ms: 0, top: 5, color: 3 })),
+        ]);
+        let started = Instant::now();
+        let chrome = decor.chrome(&DecorCtx { width: 80, height: 40, ..DecorCtx::default() });
+        let elapsed = started.elapsed();
+        assert!(elapsed >= std::time::Duration::from_millis(80), "returned in {elapsed:?}, before the deadline");
+        assert!(elapsed < std::time::Duration::from_millis(320), "stalled {elapsed:?}, past the 120 ms deadline");
+        assert_eq!(chrome.top, 5);
+        assert_eq!(decor.slots.len(), 1);
+        assert_eq!(decor.slots[0].name, "fast");
+        assert_eq!(fill_at(&chrome.ops, 3), (0, 5));
     }
 }

@@ -4,6 +4,7 @@
 
 - Decoration plugins, and the built-in `tabs` decoration: a tab bar in one window, each tab its own shell or command (`mouser plugin enable tabs`; docs/tabs.md, docs/plugins.md).
 - More than one decoration can run in the same window. Their chrome is stacked by plugin priority, PTY ops are merged, and a crashing decoration is dropped without stopping the others.
+- Decoration calls go out together. A frame waits for the slowest reply, and no longer than 120 ms. A decoration that misses that deadline is dropped; the others still apply.
 
 ## [1.7.0] - 2026-11-11
 

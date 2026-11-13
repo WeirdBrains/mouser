@@ -220,7 +220,17 @@ pub enum PtyNote {
     },
 }
 
-/// In-process or out-of-process decoration. Called on the session thread.
+/// How long one fan-out waits for the slowest decoration. The same cap as a
+/// JSON decoration's reply. Calls run together, so a frame takes this long
+/// at most, not this long times the number of decorations.
+pub const REPLY_TIMEOUT: Duration = Duration::from_millis(120);
+
+/// In-process or out-of-process decoration.
+///
+/// `Send` because each decoration is owned by its own worker thread. The host
+/// fans one call out to every worker at once and waits until the slowest
+/// reply or [`REPLY_TIMEOUT`]. A decoration is not called re-entrantly. A
+/// panic, a failed flag, or a missed deadline drops only that worker.
 pub trait Decoration: Send {
     fn chrome(&mut self, ctx: &DecorCtx) -> Chrome;
     fn event(&mut self, ev: &DecorEvent, ctx: &DecorCtx) -> Vec<PtyOp>;
@@ -513,7 +523,7 @@ impl DecorationProc {
             bail!("decoration stopped writing");
         }
         let Some(rx) = self.lines.as_ref() else { bail!("decoration stopped") };
-        match rx.recv_timeout(Duration::from_millis(500)) {
+        match rx.recv_timeout(REPLY_TIMEOUT) {
             Ok(Ok(line)) => serde_json::from_str(line.trim()).context("decoration reply was not JSON"),
             Ok(Err(e)) => {
                 self.fail();
@@ -521,7 +531,7 @@ impl DecorationProc {
             }
             Err(_) => {
                 self.fail();
-                bail!("decoration did not answer within 500ms")
+                bail!("decoration did not answer within {}ms", REPLY_TIMEOUT.as_millis())
             }
         }
     }
