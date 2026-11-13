@@ -80,10 +80,14 @@ the collective release rules:
   (`hello` / `chrome` / `event` / `note`, reply `{chrome, ops}`). They need
   `run` allowed. `Decoration` is `Send`: each one lives on a worker thread.
   A call is broadcast to every worker at once. The wait is the slowest
-  reply, capped at 120 ms (`REPLY_TIMEOUT`), then replies are merged in
-  registry order. A timeout, a bad reply, or a panic drops that decoration
-  only. If none remain, the window uses the built-in sessions. `compose`,
-  `arbitrate` and `fanout_hit` are the scheduler.
+  reply, capped at 120 ms (`REPLY_TIMEOUT`), then a `kill` for that call id.
+  Plugins stop on [`Cancel`] or the JSON `kill` (80 ms grace, then the
+  process is killed). Replies are merged in registry order. A miss stays
+  loaded; the fourth consecutive miss quarantines it until
+  `mouser plugin unquarantine`. `mouser plugin quarantine` is the manual
+  form. A panic or a bad reply drops that decoration only. If none remain,
+  the window uses the built-in sessions. `compose`, `arbitrate` and
+  `fanout_hit` are the scheduler.
 - Host glue is `mouser-app` (`decor.rs`, `tabs.rs`). Chrome insets shrink the
   grid. Only the active PTY is resized, and a newly focused PTY is resized to
   the stored size. On Unix the session server forwards chrome over the split

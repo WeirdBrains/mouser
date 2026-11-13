@@ -28,15 +28,18 @@ enum Work {
         note: decoration::PtyNote,
         ctx: DecorCtx,
     },
+    Shutdown,
 }
 
 enum Reply {
-    Chrome(Option<Chrome>),
-    Ops(Option<Vec<PtyOp>>),
+    Chrome(decoration::Outcome<Chrome>),
+    Ops(decoration::Outcome<Vec<PtyOp>>),
+    Shutdown,
 }
 
 struct Envelope {
     index: usize,
+    cancel: decoration::Cancel,
     work: Work,
     tx: Sender<(usize, Reply)>,
 }
@@ -48,30 +51,62 @@ struct Slot {
 
 fn serve(mut driver: Box<dyn Decoration>, rx: Receiver<Envelope>) {
     while let Ok(env) = rx.recv() {
+        if matches!(env.work, Work::Shutdown) {
+            driver.shutdown();
+            break;
+        }
         let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match &env.work {
-            Work::Chrome(ctx) => Reply::Chrome(decoration::isolate_chrome(driver.as_mut(), ctx)),
-            Work::Event(ev, ctx) => Reply::Ops(decoration::isolate_event(driver.as_mut(), ev, ctx)),
-            Work::Note(note, ctx) => Reply::Ops(decoration::isolate_note(driver.as_mut(), note, ctx)),
-            Work::Hit { event, note, ctx } => Reply::Ops(hit_reply(driver.as_mut(), event.as_ref(), note, ctx)),
+            Work::Chrome(ctx) => Reply::Chrome(finish_call(env.cancel.is_cancelled(), decoration::isolate_chrome(driver.as_mut(), ctx, &env.cancel))),
+            Work::Event(ev, ctx) => {
+                Reply::Ops(finish_call(env.cancel.is_cancelled(), decoration::isolate_event(driver.as_mut(), ev, ctx, &env.cancel)))
+            }
+            Work::Note(note, ctx) => {
+                Reply::Ops(finish_call(env.cancel.is_cancelled(), decoration::isolate_note(driver.as_mut(), note, ctx, &env.cancel)))
+            }
+            Work::Hit { event, note, ctx } => {
+                Reply::Ops(finish_call(env.cancel.is_cancelled(), hit_reply(driver.as_mut(), event.as_ref(), note, ctx, &env.cancel)))
+            }
+            Work::Shutdown => Reply::Shutdown,
         }));
         let reply = match reply {
             Ok(reply) => reply,
             Err(_) => match &env.work {
-                Work::Chrome(_) => Reply::Chrome(None),
-                _ => Reply::Ops(None),
+                Work::Chrome(_) => Reply::Chrome(decoration::Outcome::Failed),
+                _ => Reply::Ops(decoration::Outcome::Failed),
             },
         };
         let _ = env.tx.send((env.index, reply));
     }
 }
 
-fn hit_reply(driver: &mut dyn Decoration, event: Option<&DecorEvent>, note: &decoration::PtyNote, ctx: &DecorCtx) -> Option<Vec<PtyOp>> {
+fn finish_call<T>(cancelled: bool, outcome: decoration::Outcome<T>) -> decoration::Outcome<T> {
+    match outcome {
+        decoration::Outcome::Done(_) if cancelled => decoration::Outcome::Cancelled,
+        other => other,
+    }
+}
+
+fn hit_reply(
+    driver: &mut dyn Decoration,
+    event: Option<&DecorEvent>,
+    note: &decoration::PtyNote,
+    ctx: &DecorCtx,
+    cancel: &decoration::Cancel,
+) -> decoration::Outcome<Vec<PtyOp>> {
     let mut ops = Vec::new();
     if let Some(ev) = event {
-        ops.extend(decoration::isolate_event(driver, ev, ctx)?);
+        match decoration::isolate_event(driver, ev, ctx, cancel) {
+            decoration::Outcome::Done(v) => ops.extend(v),
+            other => return other,
+        }
     }
-    ops.extend(decoration::isolate_note(driver, note, ctx)?);
-    Some(ops)
+    match decoration::isolate_note(driver, note, ctx, cancel) {
+        decoration::Outcome::Done(v) => {
+            ops.extend(v);
+            decoration::Outcome::Done(ops)
+        }
+        other => other,
+    }
 }
 
 fn start_slot(name: String, driver: Box<dyn Decoration>) -> Slot {
@@ -88,6 +123,7 @@ pub struct Decor {
     extras_done: bool,
     /// PTY ids already reported with [`PtyNote::Exited`].
     told: Vec<u64>,
+    next_call: u64,
 }
 
 impl Decor {
@@ -99,6 +135,10 @@ impl Decor {
         let mut slots = Vec::new();
         let mut tabs_plugin = false;
         for (name, builtin, transport) in listed {
+            if plugins::is_quarantined(&name) {
+                log::warn!("decoration {name} is quarantined; not loading it");
+                continue;
+            }
             let is_tabs = name == decoration::TABS_PLUGIN && builtin;
             let driver = if is_tabs {
                 tabs_plugin = true;
@@ -122,11 +162,12 @@ impl Decor {
             plan: if tabs_plugin { decoration::startup_plan(&config, cli_default_shell) } else { StartupPlan::default() },
             extras_done: false,
             told: Vec::new(),
+            next_call: 0,
         }
     }
 
     fn off() -> Self {
-        Self { on: false, slots: Vec::new(), plan: StartupPlan::default(), extras_done: true, told: Vec::new() }
+        Self { on: false, slots: Vec::new(), plan: StartupPlan::default(), extras_done: true, told: Vec::new(), next_call: 0 }
     }
 
     pub fn plan(&self) -> &StartupPlan {
@@ -138,8 +179,8 @@ impl Decor {
             ctx,
             |ctx| Work::Chrome(ctx.clone()),
             |reply| match reply {
-                Reply::Chrome(chrome) => chrome,
-                Reply::Ops(_) => None,
+                Reply::Chrome(outcome) => Some(outcome),
+                Reply::Ops(_) | Reply::Shutdown => None,
             },
         );
         if !self.on {
@@ -172,27 +213,65 @@ impl Decor {
 
     /// Send `work` to every worker, then wait until each has replied or [`decoration::REPLY_TIMEOUT`]
     /// has passed since the send. Arrival order is ignored: the returned vec follows slot order.
-    fn fan<T>(&mut self, ctx: &DecorCtx, work: impl Fn(&DecorCtx) -> Work, map: impl Fn(Reply) -> Option<T>) -> Vec<(String, T)> {
+    fn fan<T>(
+        &mut self,
+        ctx: &DecorCtx,
+        work: impl Fn(&DecorCtx) -> Work,
+        map: impl Fn(Reply) -> Option<decoration::Outcome<T>>,
+    ) -> Vec<(String, T)> {
         let jobs: Vec<Work> = self.slots.iter().map(|_| work(ctx)).collect();
         self.fan_jobs(jobs, map)
     }
 
-    fn fan_jobs<T>(&mut self, jobs: Vec<Work>, map: impl Fn(Reply) -> Option<T>) -> Vec<(String, T)> {
+    fn fan_jobs<T>(&mut self, jobs: Vec<Work>, map: impl Fn(Reply) -> Option<decoration::Outcome<T>>) -> Vec<(String, T)> {
+        self.drop_quarantined();
+        let cancel = decoration::Cancel::new(self.alloc_call());
         let (tx, rx) = mpsc::channel();
         let mut waiting = 0;
+        let n = self.slots.len().min(jobs.len());
         for (index, (slot, work)) in self.slots.iter().zip(jobs).enumerate() {
-            if slot.tx.send(Envelope { index, work, tx: tx.clone() }).is_ok() {
+            let env = Envelope { index, cancel: cancel.clone(), work, tx: tx.clone() };
+            if slot.tx.send(env).is_ok() {
                 waiting += 1;
             }
         }
         drop(tx);
-        let answers = wait_replies(rx, self.slots.len(), waiting);
+        let answers = wait_replies(rx, n, waiting, &cancel);
         let mut dead = Vec::new();
         let mut parts = Vec::new();
         for (i, answer) in answers.into_iter().enumerate() {
+            let name = self.slots[i].name.clone();
             match answer.and_then(&map) {
-                Some(value) => parts.push((self.slots[i].name.clone(), value)),
-                None => dead.push(i),
+                Some(decoration::Outcome::Done(value)) => {
+                    plugins::note_decoration_ok(&name);
+                    parts.push((name, value));
+                }
+                Some(decoration::Outcome::Cancelled) => {
+                    if plugins::note_decoration_miss(&name) {
+                        log::warn!(
+                            "decoration {name} quarantined after {} consecutive deadline misses (3 retries); `mouser plugin unquarantine {name}` releases it",
+                            decoration::DEADLINE_RETRIES + 1
+                        );
+                        dead.push(i);
+                    }
+                }
+                Some(decoration::Outcome::Ignored) => {
+                    let quarantined = plugins::note_decoration_miss(&name);
+                    if quarantined {
+                        log::warn!("decoration {name} quarantined after ignoring the deadline; `mouser plugin unquarantine {name}` releases it");
+                    } else {
+                        log::warn!("decoration {name} ignored the cancel and was stopped for this session");
+                    }
+                    dead.push(i);
+                }
+                _ => {
+                    if plugins::note_decoration_miss(&name) {
+                        log::warn!("decoration {name} quarantined after missing the deadline; `mouser plugin unquarantine {name}` releases it");
+                    } else {
+                        log::warn!("decoration {name} missed the deadline; the others keep running");
+                    }
+                    dead.push(i);
+                }
             }
         }
         for i in dead.into_iter().rev() {
@@ -202,14 +281,32 @@ impl Decor {
         parts
     }
 
+    fn alloc_call(&mut self) -> u64 {
+        self.next_call = self.next_call.wrapping_add(1);
+        self.next_call
+    }
+
+    fn drop_quarantined(&mut self) {
+        let mut i = 0;
+        while i < self.slots.len() {
+            if plugins::is_quarantined(&self.slots[i].name) {
+                let name = self.slots[i].name.clone();
+                self.drop_slot(i);
+                log::warn!("decoration {name} is quarantined; removed from this window");
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     fn arbitrate_parts(&self, parts: &[(String, Vec<PtyOp>)]) -> Vec<PtyOp> {
         let refs: Vec<(&str, &[PtyOp])> = parts.iter().map(|(name, ops)| (name.as_str(), ops.as_slice())).collect();
         decoration::arbitrate(&refs)
     }
 
     fn drop_slot(&mut self, index: usize) {
-        let name = self.slots[index].name.clone();
-        log::warn!("decoration {name} stopped; the others keep running");
+        let (gone, _) = mpsc::channel();
+        let _ = self.slots[index].tx.send(Envelope { index, cancel: decoration::Cancel::never(), work: Work::Shutdown, tx: gone });
         self.slots.remove(index);
     }
 
@@ -223,19 +320,28 @@ impl Decor {
     }
 }
 
-fn ops_of(reply: Reply) -> Option<Vec<PtyOp>> {
+fn ops_of(reply: Reply) -> Option<decoration::Outcome<Vec<PtyOp>>> {
     match reply {
-        Reply::Ops(ops) => ops,
-        Reply::Chrome(_) => None,
+        Reply::Ops(outcome) => Some(outcome),
+        Reply::Chrome(_) | Reply::Shutdown => None,
     }
 }
 
-fn wait_replies(rx: Receiver<(usize, Reply)>, n: usize, mut waiting: usize) -> Vec<Option<Reply>> {
+fn wait_replies(rx: Receiver<(usize, Reply)>, n: usize, mut waiting: usize, cancel: &decoration::Cancel) -> Vec<Option<Reply>> {
     let mut out = (0..n).map(|_| None).collect::<Vec<_>>();
     let deadline = Instant::now() + decoration::REPLY_TIMEOUT;
+    let mut grace_end: Option<Instant> = None;
     while waiting > 0 {
-        let remain = deadline.saturating_duration_since(Instant::now());
+        let remain = match grace_end {
+            None => deadline.saturating_duration_since(Instant::now()),
+            Some(end) => end.saturating_duration_since(Instant::now()),
+        };
         if remain.is_zero() {
+            if grace_end.is_none() {
+                cancel.cancel();
+                grace_end = Some(Instant::now() + decoration::KILL_GRACE + std::time::Duration::from_millis(30));
+                continue;
+            }
             break;
         }
         match rx.recv_timeout(remain) {
@@ -244,7 +350,14 @@ fn wait_replies(rx: Receiver<(usize, Reply)>, n: usize, mut waiting: usize) -> V
                 waiting -= 1;
             }
             Ok(_) => {}
-            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => {
+                if grace_end.is_none() {
+                    cancel.cancel();
+                    grace_end = Some(Instant::now() + decoration::KILL_GRACE + std::time::Duration::from_millis(30));
+                    continue;
+                }
+                break;
+            }
         }
     }
     out
@@ -442,6 +555,7 @@ mod tests {
             plan: decoration::startup_plan(&config, cli_shell),
             extras_done: false,
             told: Vec::new(),
+            next_call: 0,
         }
     }
 
@@ -517,13 +631,13 @@ mod tests {
     struct Boom;
 
     impl Decoration for Boom {
-        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+        fn chrome(&mut self, _: &DecorCtx, _: &decoration::Cancel) -> Chrome {
             panic!("boom");
         }
-        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             panic!("boom");
         }
-        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             panic!("boom");
         }
     }
@@ -531,16 +645,16 @@ mod tests {
     struct SpawnBand;
 
     impl Decoration for SpawnBand {
-        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
+        fn chrome(&mut self, _: &DecorCtx, _: &decoration::Cancel) -> Chrome {
             Chrome { bottom: 6, ..Chrome::default() }
         }
-        fn event(&mut self, ev: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+        fn event(&mut self, ev: &DecorEvent, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             match ev {
                 DecorEvent::NewTab { .. } => vec![PtyOp::Spawn { shell: None, command: vec!["sleep".into(), "30".into()], title: "nap".into() }],
                 _ => Vec::new(),
             }
         }
-        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             Vec::new()
         }
     }
@@ -553,6 +667,7 @@ mod tests {
             plan: StartupPlan::default(),
             extras_done: true,
             told: Vec::new(),
+            next_call: 0,
         };
         let chrome = decor.chrome(&DecorCtx::default());
         assert!(decor.on);
@@ -571,9 +686,16 @@ mod tests {
     }
 
     impl Decoration for Pause {
-        fn chrome(&mut self, _: &DecorCtx) -> Chrome {
-            if self.ms > 0 {
-                thread::sleep(std::time::Duration::from_millis(self.ms));
+        fn chrome(&mut self, _: &DecorCtx, cancel: &decoration::Cancel) -> Chrome {
+            let step = std::time::Duration::from_millis(5);
+            let mut left = self.ms;
+            while left > 0 {
+                if cancel.is_cancelled() {
+                    return Chrome::default();
+                }
+                let slice = left.min(5);
+                thread::sleep(step);
+                left -= slice;
             }
             Chrome {
                 top: self.top,
@@ -581,16 +703,16 @@ mod tests {
                 ..Chrome::default()
             }
         }
-        fn event(&mut self, _: &DecorEvent, _: &DecorCtx) -> Vec<PtyOp> {
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             Vec::new()
         }
-        fn note(&mut self, _: &PtyNote, _: &DecorCtx) -> Vec<PtyOp> {
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
             Vec::new()
         }
     }
 
     fn sched(slots: Vec<Slot>) -> Decor {
-        Decor { on: true, slots, plan: StartupPlan::default(), extras_done: true, told: Vec::new() }
+        Decor { on: true, slots, plan: StartupPlan::default(), extras_done: true, told: Vec::new(), next_call: 0 }
     }
 
     fn fill_at(ops: &[decoration::DrawOp], color: u32) -> (i32, i32) {
@@ -619,20 +741,147 @@ mod tests {
         assert_eq!(fill_at(&chrome.ops, 2), (10, 8));
     }
 
+    /// Sleeps through the cancel flag. The host drops it after the grace period.
+    struct Stubborn {
+        ms: u64,
+    }
+
+    impl Decoration for Stubborn {
+        fn chrome(&mut self, _: &DecorCtx, _: &decoration::Cancel) -> Chrome {
+            thread::sleep(std::time::Duration::from_millis(self.ms));
+            Chrome { top: 30, ..Chrome::default() }
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
+            Vec::new()
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
+            Vec::new()
+        }
+    }
+
     #[test]
     fn a_hung_decoration_is_dropped_at_the_deadline_and_the_other_chrome_applies() {
         let mut decor = sched(vec![
-            start_slot("hung".into(), Box::new(Pause { ms: 400, top: 30, color: 9 })),
+            start_slot("hung".into(), Box::new(Stubborn { ms: 400 })),
             start_slot("fast".into(), Box::new(Pause { ms: 0, top: 5, color: 3 })),
         ]);
         let started = Instant::now();
         let chrome = decor.chrome(&DecorCtx { width: 80, height: 40, ..DecorCtx::default() });
         let elapsed = started.elapsed();
-        assert!(elapsed >= std::time::Duration::from_millis(80), "returned in {elapsed:?}, before the deadline");
-        assert!(elapsed < std::time::Duration::from_millis(320), "stalled {elapsed:?}, past the 120 ms deadline");
+        assert!(elapsed >= std::time::Duration::from_millis(100), "returned in {elapsed:?}, before the deadline");
+        assert!(elapsed < std::time::Duration::from_millis(350), "stalled {elapsed:?}");
         assert_eq!(chrome.top, 5);
         assert_eq!(decor.slots.len(), 1);
         assert_eq!(decor.slots[0].name, "fast");
         assert_eq!(fill_at(&chrome.ops, 3), (0, 5));
+    }
+
+    struct Watch {
+        calls: Arc<std::sync::atomic::AtomicU64>,
+        second_cancelled: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Decoration for Watch {
+        fn chrome(&mut self, _: &DecorCtx, cancel: &decoration::Cancel) -> Chrome {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n == 0 {
+                while !cancel.is_cancelled() {
+                    thread::sleep(std::time::Duration::from_millis(5));
+                }
+                return Chrome::default();
+            }
+            self.second_cancelled.store(cancel.is_cancelled(), std::sync::atomic::Ordering::Relaxed);
+            Chrome { top: 6, ..Chrome::default() }
+        }
+        fn event(&mut self, _: &DecorEvent, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
+            Vec::new()
+        }
+        fn note(&mut self, _: &PtyNote, _: &DecorCtx, _: &decoration::Cancel) -> Vec<PtyOp> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_cancel_stops_the_call_and_does_not_cancel_the_next_one() {
+        let calls = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let second_cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut decor = sched(vec![start_slot("watch".into(), Box::new(Watch { calls: calls.clone(), second_cancelled: second_cancelled.clone() }))]);
+        let started = Instant::now();
+        let first = decor.chrome(&DecorCtx { width: 40, height: 20, ..DecorCtx::default() });
+        let elapsed = started.elapsed();
+        assert!(elapsed < std::time::Duration::from_millis(280), "cancel took {elapsed:?}");
+        assert_eq!(first.top, 0);
+        assert_eq!(decor.slots.len(), 1, "a decoration that stops on cancel stays loaded");
+        let second = decor.chrome(&DecorCtx { width: 40, height: 20, ..DecorCtx::default() });
+        assert_eq!(second.top, 6);
+        assert!(!second_cancelled.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[cfg(unix)]
+    fn external(dir: &std::path::Path, name: &str, body: &str) -> Slot {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let proc = decoration::DecorationProc::spawn(&[path.display().to_string()], dir).unwrap();
+        start_slot(name.into(), Box::new(proc))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_external_decoration_stops_on_kill_and_the_next_call_still_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = r#"#!/bin/bash
+n=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"op":"hello"'*) printf '%s\n' '{}' ;;
+    *'"op":"kill"'*) printf '%s\n' '{"cancelled":true}' ;;
+    *)
+      n=$((n + 1))
+      if [ "$n" -eq 1 ]; then
+        if IFS= read -t 0.25 -r extra; then
+          case "$extra" in
+            *'"op":"kill"'*) printf '%s\n' '{"cancelled":true}' ;;
+          esac
+        fi
+      else
+        printf '%s\n' '{"chrome":{"top":4}}'
+      fi
+      ;;
+  esac
+done
+"#;
+        let mut decor = sched(vec![external(dir.path(), "stop", body)]);
+        let started = Instant::now();
+        let first = decor.chrome(&DecorCtx { width: 20, height: 10, ..DecorCtx::default() });
+        assert!(started.elapsed() < std::time::Duration::from_millis(350), "{:?}", started.elapsed());
+        assert_eq!(first.top, 0);
+        assert_eq!(decor.slots.len(), 1);
+        let second = decor.chrome(&DecorCtx { width: 20, height: 10, ..DecorCtx::default() });
+        assert_eq!(second.top, 4);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_external_decoration_that_ignores_kill_is_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let slow = r#"#!/bin/sh
+while IFS= read -r line; do
+  case "$line" in
+    *'"op":"hello"'*) printf '%s\n' '{}' ;;
+    *) sleep 2; printf '%s\n' '{"chrome":{"top":9}}' ;;
+  esac
+done
+"#;
+        let mut decor = sched(vec![external(dir.path(), "ignore", slow), start_slot("fast".into(), Box::new(Pause { ms: 0, top: 5, color: 3 }))]);
+        let started = Instant::now();
+        let chrome = decor.chrome(&DecorCtx { width: 40, height: 20, ..DecorCtx::default() });
+        let elapsed = started.elapsed();
+        assert!(elapsed < std::time::Duration::from_millis(350), "waited {elapsed:?}");
+        assert_eq!(chrome.top, 5);
+        assert_eq!(decor.slots.len(), 1);
+        assert_eq!(decor.slots[0].name, "fast");
     }
 }

@@ -681,6 +681,36 @@ pub struct State {
     /// Plugins that are off by default (`tabs`) and have been turned on.
     #[serde(default)]
     pub enabled: Vec<String>,
+    /// Consecutive decoration deadline misses that have not yet quarantined.
+    #[serde(default)]
+    pub deadline_misses: Vec<DeadlineMiss>,
+    /// Kept out of the decoration scheduler until `mouser plugin unquarantine`.
+    #[serde(default)]
+    pub quarantine: Vec<Quarantine>,
+}
+
+/// A plugin kept out of the scheduler. `reason` is `timeout` or `manual`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Quarantine {
+    pub name: String,
+    pub reason: String,
+    pub misses: u32,
+}
+
+/// Running count of consecutive decoration deadline misses.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DeadlineMiss {
+    pub name: String,
+    pub misses: u32,
+}
+
+/// Result of asking to quarantine a plugin that exists.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuarantinePut {
+    /// Newly quarantined.
+    Done,
+    /// It was already quarantined. The reason is the one already saved.
+    Already { reason: String },
 }
 
 impl State {
@@ -735,6 +765,84 @@ pub fn set_enabled(name: &str, on: bool) -> Result<()> {
 
 pub fn is_enabled(name: &str) -> bool {
     entry_enabled(&State::load(), name)
+}
+
+pub fn is_quarantined(name: &str) -> bool {
+    quarantine_of(name).is_some()
+}
+
+pub fn quarantine_of(name: &str) -> Option<Quarantine> {
+    State::load().quarantine.into_iter().find(|q| q.name == name)
+}
+
+pub fn deadline_misses(name: &str) -> u32 {
+    State::load().deadline_misses.into_iter().find(|m| m.name == name).map(|m| m.misses).unwrap_or(0)
+}
+
+/// Record one consecutive deadline miss. Unknown names are ignored so tests
+/// and stray workers do not write the user's plugin state. Returns whether
+/// this miss quarantined the plugin (the count exceeded
+/// [`crate::decoration::DEADLINE_RETRIES`]).
+pub fn note_decoration_miss(name: &str) -> bool {
+    if known(name).is_err() || is_quarantined(name) {
+        return is_quarantined(name);
+    }
+    let mut st = State::load();
+    let n = if let Some(m) = st.deadline_misses.iter_mut().find(|m| m.name == name) {
+        m.misses += 1;
+        m.misses
+    } else {
+        st.deadline_misses.push(DeadlineMiss { name: name.to_string(), misses: 1 });
+        1
+    };
+    if n > crate::decoration::DEADLINE_RETRIES {
+        st.deadline_misses.retain(|m| m.name != name);
+        st.quarantine.push(Quarantine { name: name.to_string(), reason: "timeout".into(), misses: n });
+        let _ = st.save();
+        return true;
+    }
+    let _ = st.save();
+    false
+}
+
+/// An on-time reply clears the consecutive miss count. A quarantine stays.
+pub fn note_decoration_ok(name: &str) {
+    if known(name).is_err() || is_quarantined(name) {
+        return;
+    }
+    let mut st = State::load();
+    let before = st.deadline_misses.len();
+    st.deadline_misses.retain(|m| m.name != name);
+    if st.deadline_misses.len() != before {
+        let _ = st.save();
+    }
+}
+
+/// Persist a manual quarantine. Idempotent when it is already quarantined.
+pub fn quarantine(name: &str) -> Result<QuarantinePut> {
+    known(name)?;
+    let mut st = State::load();
+    if let Some(q) = st.quarantine.iter().find(|q| q.name == name) {
+        return Ok(QuarantinePut::Already { reason: q.reason.clone() });
+    }
+    let misses = st.deadline_misses.iter().find(|m| m.name == name).map(|m| m.misses).unwrap_or(0);
+    st.deadline_misses.retain(|m| m.name != name);
+    st.quarantine.push(Quarantine { name: name.to_string(), reason: "manual".into(), misses });
+    st.save()?;
+    Ok(QuarantinePut::Done)
+}
+
+/// Clear a quarantine and the miss count. The plugin loads on the next start.
+pub fn unquarantine(name: &str) -> Result<()> {
+    known(name)?;
+    let mut st = State::load();
+    let before = st.quarantine.len();
+    st.quarantine.retain(|q| q.name != name);
+    if st.quarantine.len() == before {
+        bail!("{name} is not quarantined");
+    }
+    st.deadline_misses.retain(|m| m.name != name);
+    st.save()
 }
 
 /// Every known plugin name in priority order (saved order first, then the rest by name).
@@ -1310,6 +1418,39 @@ library = "libfancy.so"
         set_enabled("tabs", false).unwrap();
         assert!(!is_enabled("tabs"));
         assert!(Registry::load().providers(Kind::Decoration).is_empty());
+        unsafe { std::env::remove_var("MOUSER_HOME") };
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn deadline_misses_reset_and_the_fourth_quarantines() {
+        let t = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("MOUSER_HOME", t.path()) };
+        assert!(!note_decoration_miss("tabs"));
+        assert_eq!(deadline_misses("tabs"), 1);
+        assert!(!note_decoration_miss("tabs"));
+        assert!(!note_decoration_miss("tabs"));
+        assert_eq!(deadline_misses("tabs"), 3);
+        note_decoration_ok("tabs");
+        assert_eq!(deadline_misses("tabs"), 0);
+        assert!(!is_quarantined("tabs"));
+        assert!(!note_decoration_miss("tabs"));
+        assert!(!note_decoration_miss("tabs"));
+        assert!(!note_decoration_miss("tabs"));
+        assert!(note_decoration_miss("tabs"));
+        let q = quarantine_of("tabs").unwrap();
+        assert_eq!((q.reason.as_str(), q.misses), ("timeout", 4));
+        note_decoration_ok("tabs");
+        assert!(is_quarantined("tabs"));
+        unquarantine("tabs").unwrap();
+        assert!(!is_quarantined("tabs"));
+        assert_eq!(deadline_misses("tabs"), 0);
+        assert!(unquarantine("tabs").is_err());
+        assert!(quarantine("no-such-plugin").is_err());
+        assert!(matches!(quarantine("tabs").unwrap(), QuarantinePut::Done));
+        assert!(matches!(quarantine("tabs").unwrap(), QuarantinePut::Already { reason } if reason == "manual"));
+        assert_eq!(quarantine_of("tabs").unwrap().reason, "manual");
+        unquarantine("tabs").unwrap();
         unsafe { std::env::remove_var("MOUSER_HOME") };
     }
 }
