@@ -78,9 +78,11 @@ the collective release rules:
   matches that one decoration.
 - External decorations use `transport = "decoration"` and newline JSON
   (`hello` / `chrome` / `event` / `note`, reply `{chrome, ops}`). They need
-  `run` allowed. A reply over 500 ms, a bad reply, or a panic drops that
-  decoration only. If none remain, the window uses the built-in sessions.
-  The Rust trait is `mouser_core::decoration::Decoration`. `compose`,
+  `run` allowed. `Decoration` is `Send`: each one lives on a worker thread.
+  A call is broadcast to every worker at once. The wait is the slowest
+  reply, capped at 120 ms (`REPLY_TIMEOUT`), then replies are merged in
+  registry order. A timeout, a bad reply, or a panic drops that decoration
+  only. If none remain, the window uses the built-in sessions. `compose`,
   `arbitrate` and `fanout_hit` are the scheduler.
 - Host glue is `mouser-app` (`decor.rs`, `tabs.rs`). Chrome insets shrink the
   grid. Only the active PTY is resized, and a newly focused PTY is resized to

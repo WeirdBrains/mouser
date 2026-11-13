@@ -20,7 +20,7 @@ the same registry.
 | `command` | an executable behind `[mouser]` line words: one JSON request on stdin, one JSON reply on stdout | one run per command (10 s limit) | installed: asks, then remembers |
 | `http` | a model provider reached over HTTP: a `[model]` table with `api` (openai, anthropic, google), `url`, `models`, `default` (docs/models.md) | when a model is used | built in or listed by you |
 | `library` | an engine: a native library over the engine C ABI, with an `[engine]` table (docs/engines.md) | loaded when it draws | installed by you; checked (name, ABI) at install and load |
-| `decoration` | a program that draws the window chrome and decides which PTYs exist (newline JSON, below) | one process for the window; killed if a reply takes over 500 ms | installed: asks (`run`), then remembers |
+| `decoration` | a program that draws the window chrome and decides which PTYs exist (newline JSON, below) | one process for the window; killed if a reply takes over 120 ms | installed: asks (`run`), then remembers |
 | `builtin` | compiled into Mouser (commander, chat, preferences, the model adapters, the tabs decoration); reserved | always there | part of Mouser |
 
 Native libraries are only for engines (kind `engine`, transport `library`); their
@@ -42,10 +42,11 @@ An external one is `kind = "decoration"` and `transport = "decoration"`, with
 it never starts and the window stays on the built-in behaviour. The environment
 is scrubbed the same way as a command plugin.
 
-The process speaks newline-delimited JSON. Mouser sends one object and waits
-for one object (500 ms). A timeout, a bad reply or a crash drops that
-decoration only. The others keep running. If none remain, the window uses the
-built-in sessions.
+The process speaks newline-delimited JSON. Each call is sent to every live
+decoration at once. Mouser waits for the slowest reply, and no longer than
+120 ms. A timeout, a bad reply or a crash drops that decoration only. Replies
+that arrived are still applied, in registry order. If none remain, the window
+uses the built-in sessions.
 
 Mouser to the plugin:
 
@@ -75,7 +76,10 @@ In Rust the same contract is `mouser_core::decoration::{Decoration, DecorEvent, 
 ### Several decorations
 
 The scheduler (`compose`, `arbitrate`, `fanout_hit`) sits between the host and
-every enabled decoration.
+every enabled decoration. Each decoration is `Send` and owned by a worker
+thread. A frame or event is sent to all of those workers at once. The wait is
+the slowest reply, capped at 120 ms, not the sum. After the replies are in,
+merge order is registry priority, not arrival order.
 
 - **Chrome.** Each positive inset reserves a band. Top bands stack down from
   the top of the window, bottom bands stack up from the bottom, and left and
@@ -93,8 +97,9 @@ every enabled decoration.
 - **Keys, resize, exit, focus.** Tab keys and `KeyOnExited` go to every
   decoration. Each frame's `chrome` call carries the window size. A PTY exit
   and a focus change are notes to every decoration.
-- **Faults.** Each call is isolated. A panic, a failed flag, or a 500 ms
-  timeout removes that decoration and leaves the rest.
+- **Faults.** Each call is isolated. A panic, a failed flag, or a miss of the
+  120 ms deadline removes that decoration. Replies that made the deadline
+  still apply. The frame does not wait past the deadline.
 
 ## The manifest: `plugin.toml`
 
