@@ -54,3 +54,4 @@ These stay in the repository and are **not** published on mouser.weirdbrains.com
 - [Deploying the website](./deploy-site.md)
 - [Release process](./release.md)
 - [Handover notes](./HANDOVER.md)
+- [Weirdnet integration plan](./weirdnet-integration-plan.md): moving internal code onto Weirdnet crates, chromeless windows, sync (paused)
