@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The shared WeirdBrains release script (weirdnet-project-helpers).
 
-    release.py [cut] [--major|--minor|--patch|--version X.Y.Z] [--dry-run] [--yes]
+    release.py [cut] [--major|--minor|--patch] [--pre alpha|beta|rc] [--version V] [--dry-run] [--yes]
                [--no-push] [--no-fetch] [--skip-checks] [--skip-hooks] [--skip-crates]
                [--expect-head SHA] [--date YYYY-MM-DD] [--section NAME]
                [--allow-empty-changelog] [MESSAGE ...]
@@ -11,13 +11,19 @@
     release.py taur-srcinfo [DIR]          write DIR/.SRCINFO from DIR/PKGBUILD
     release.py taur-check VERSION [DIR]    is the recipe ready for TAUR
     release.py assets VERSION              check the GitHub release has every [[platforms]] asset
+    release.py github VERSION [--dry-run] [--notes-file F]   create the GitHub release ([github] files)
     release.py version                     print this script's version
 
 `cut` (the default) follows the collective AGENTS.md order: preflight, bump every version
 file in release.toml, move the changelog, run hooks and checks, commit `release: vX.Y.Z`,
 annotated tag `vX.Y.Z`, one atomic push of main and that tag (never forced), then publish
 affected public crates to crates.io and print the project's next steps (TAUR and so on).
-MINOR is the default bump. Python 3.9+, standard library only (3.11+ reads release.toml with
+[[requires]] crates released in lockstep (e.g. an app's library) must already be on crates.io:
+checked before any edit, pinned in the manifest, and matched in Cargo.lock against the index.
+MINOR is the default bump. Pre-releases (since 0.3.0) are X.Y.Z-alpha.N, -beta.N or -rc.N:
+`--pre alpha` starts or continues one, a plain bump from a pre-release finishes it, and
+{pkgver} (0.2.0alpha8, for PKGBUILDs) and {debver} (0.2.0~alpha.8) map it for packages.
+Python 3.9+, standard library only (3.11+ reads release.toml with
 tomllib; older Pythons use a small built-in parser for the subset it needs). See README.md.
 """
 from __future__ import annotations
@@ -47,12 +53,13 @@ try:
 except ImportError:  # Python < 3.11 (e.g. Ubuntu 22.04 runners): mini_toml() below
     tomllib = None
 
-__version__ = "0.1.1"
+__version__ = "0.3.2"
 
 CONFIG = "release.toml"
 ORDER = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]
-SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
-PLACEHOLDER = re.compile(r"\{(version|old|tag|old_tag|date|title|title_cell|build|project|work)\}")
+SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-(alpha|beta|rc)\.([1-9]\d*))?$")
+PRE_STAGES = ("alpha", "beta", "rc")
+PLACEHOLDER = re.compile(r"\{(version|old|tag|old_tag|date|title|title_cell|build|project|work|pkgver|debver|prerelease|gh_prerelease)\}")
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -67,21 +74,67 @@ def out(msg=""):
 # ---- versions ------------------------------------------------------------------------------
 
 def parse_version(v):
+    """A sortable key: (MAJOR, MINOR, PATCH, stage, N), where a release sorts after its
+    pre-releases (alpha < beta < rc < release)."""
     m = SEMVER.match(str(v).strip())
     if not m:
-        raise ReleaseError(f"version {v!r} is not MAJOR.MINOR.PATCH (no v prefix, prerelease or build)")
-    return tuple(int(x) for x in m.groups())
+        raise ReleaseError(f"version {v!r} is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-(alpha|beta|rc).N "
+                           "(no v prefix or build metadata)")
+    ma, mi, pa, stage, n = m.groups()
+    rank = PRE_STAGES.index(stage) if stage else len(PRE_STAGES)
+    return (int(ma), int(mi), int(pa), rank, int(n or 0))
 
 
-def bump(version, part):
-    ma, mi, pa = parse_version(version)
-    if part == "major":
-        return f"{ma + 1}.0.0"
-    if part == "minor":
-        return f"{ma}.{mi + 1}.0"
-    if part == "patch":
-        return f"{ma}.{mi}.{pa + 1}"
-    raise ReleaseError(f"unknown bump {part!r}")
+def is_prerelease(version):
+    return parse_version(version)[3] < len(PRE_STAGES)
+
+
+def bump(version, part, pre=None):
+    """The next version. A plain bump from a pre-release finishes it the way semver tools do
+    (1.2.0-rc.1 --minor is 1.2.0, 1.2.3-rc.1 --minor is 1.3.0). With pre (alpha|beta|rc):
+    without a part it continues the current pre-release (alpha.7 -> alpha.8, alpha -> beta.1)
+    or starts one on the next minor; with a part it starts one on that bump of X.Y.Z."""
+    ma, mi, pa, rank, n = parse_version(version)
+    cur_pre = rank < len(PRE_STAGES)
+    if pre is not None and pre not in PRE_STAGES:
+        raise ReleaseError(f"unknown pre-release stage {pre!r} (alpha, beta or rc)")
+    if pre is not None and part is None and cur_pre:
+        want = PRE_STAGES.index(pre)
+        if want < rank:
+            raise ReleaseError(f"{version} is past {pre}; use --pre {PRE_STAGES[rank]} or a later stage")
+        return f"{ma}.{mi}.{pa}-{pre}.{n + 1 if want == rank else 1}"
+
+    def plain(p):
+        if p == "major":
+            return f"{ma}.0.0" if cur_pre and pre is None and mi == 0 and pa == 0 else f"{ma + 1}.0.0"
+        if p == "minor":
+            return f"{ma}.{mi}.0" if cur_pre and pre is None and pa == 0 else f"{ma}.{mi + 1}.0"
+        if p == "patch":
+            return f"{ma}.{mi}.{pa}" if cur_pre and pre is None else f"{ma}.{mi}.{pa + 1}"
+        raise ReleaseError(f"unknown bump {p!r}")
+
+    base = plain(part or "minor")
+    return f"{base}-{pre}.1" if pre else base
+
+
+def pkgver(version):
+    """Arch pkgver for a version: 0.2.0-alpha.8 -> 0.2.0alpha8 (no '-' allowed; vercmp sorts it
+    before 0.2.0)."""
+    ma, mi, pa, rank, n = parse_version(version)
+    return f"{ma}.{mi}.{pa}" + (f"{PRE_STAGES[rank]}{n}" if rank < len(PRE_STAGES) else "")
+
+
+def debver(version):
+    """Debian/RPM upstream version: 0.2.0-alpha.8 -> 0.2.0~alpha.8 (~ sorts before 0.2.0)."""
+    ma, mi, pa, rank, n = parse_version(version)
+    return f"{ma}.{mi}.{pa}" + (f"~{PRE_STAGES[rank]}.{n}" if rank < len(PRE_STAGES) else "")
+
+
+def version_ctx(version):
+    """Placeholders derived from a version: {pkgver}, {debver}, {prerelease}, {gh_prerelease}."""
+    pre = is_prerelease(version)
+    return {"pkgver": pkgver(version), "debver": debver(version), "prerelease": "true" if pre else "false",
+            "gh_prerelease": "--prerelease" if pre else ""}
 
 
 def today(tz="America/New_York"):
@@ -371,7 +424,7 @@ def read_current(root, cfg):
     elif kind == "cargo-package":
         v = _table_version(text, "package")
     elif kind == "pubspec":
-        m = re.search(r"^version:\s*([0-9.]+)(\+\d+)?\s*$", text, re.M)
+        m = re.search(r"^version:\s*([0-9.]+(?:-[0-9A-Za-z.]+)?)(\+\d+)?\s*$", text, re.M)
         v = m.group(1) if m else None
     elif kind == "regex" and e.get("read"):
         m = re.search(e["read"], text, re.M)
@@ -714,9 +767,11 @@ def run_cmds(root, cmds, ctx, env, label, dry):
 
 def hook_env(env, ctx, dry):
     e = dict(env)
-    for k in ("version", "old", "tag", "old_tag", "date", "title", "build", "project"):
+    for k in ("version", "old", "tag", "old_tag", "date", "title", "build", "project", "pkgver", "debver"):
         if ctx.get(k) is not None:
             e[f"RELEASE_{k.upper()}"] = str(ctx[k])
+    if ctx.get("prerelease") is not None:
+        e["RELEASE_PRERELEASE"] = "1" if ctx["prerelease"] == "true" else "0"
     e["RELEASE_DRY_RUN"] = "1" if dry else "0"
     return e
 
@@ -732,30 +787,161 @@ def confirm(question, yes):
 
 # ---- crates.io -----------------------------------------------------------------------------
 
-def crates_index(name):
-    """Published versions of `name` from the crates.io sparse index (set of strings)."""
+CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+
+
+def crates_index_entries(name):
+    """Index lines (dicts with vers, cksum, yanked, ...) for `name` from the crates.io sparse index."""
     base = os.environ.get("WEIRDNET_RELEASE_CRATES_INDEX", "https://index.crates.io")
     n = name.lower()
     pfx = {1: "1", 2: "2", 3: f"3/{n[0]}"}.get(len(n), f"{n[:2]}/{n[2:4]}")
     if "://" not in base:  # a local index directory (tests)
         f = Path(base) / pfx / n
-        return {json.loads(l)["vers"] for l in f.read_text().splitlines() if l.strip()} if f.is_file() else set()
-    try:
-        with urllib.request.urlopen(f"{base}/{pfx}/{n}", timeout=30) as r:
-            body = r.read().decode()
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return set()
-        raise ReleaseError(f"crates.io index for {name}: {e}")
-    except OSError as e:
-        raise ReleaseError(f"crates.io index for {name}: {e}")
-    return {json.loads(l)["vers"] for l in body.splitlines() if l.strip()}
+        body = f.read_text() if f.is_file() else ""
+    else:
+        try:
+            with urllib.request.urlopen(f"{base}/{pfx}/{n}", timeout=30) as r:
+                body = r.read().decode()
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return []
+            raise ReleaseError(f"crates.io index for {name}: {e}")
+        except OSError as e:
+            raise ReleaseError(f"crates.io index for {name}: {e}")
+    return [json.loads(l) for l in body.splitlines() if l.strip()]
 
 
-def crate_plan(root, cfg, tag, prev_tag):
+def crates_index(name):
+    """Published versions of `name` from the crates.io sparse index (set of strings)."""
+    return {e["vers"] for e in crates_index_entries(name)}
+
+
+# ---- [[requires]]: crates released in lockstep -----------------------------------------------
+
+DEP_TABLE = re.compile(r"^(?:workspace\.|target\.[^\]]*\.)?(?:dev-|build-)?dependencies$")
+
+
+def _sections(text):
+    """[(header, body_start, body_end)] for every [table] in a TOML file ([[arrays]] included)."""
+    heads = [(m.group(1).strip(), m.start(), m.end()) for m in re.finditer(r"^\[\[?([^\]\n]+)\]\]?[ \t]*$", text, re.M)]
+    return [(h, e + 1, heads[i + 1][1] if i + 1 < len(heads) else len(text)) for i, (h, _, e) in enumerate(heads)]
+
+
+def dependency_specs(text, name):
+    """[(span_start, span_end, spec_text)] for each declaration of dependency `name` in a manifest:
+    `name = "..."`, `name = { ... }` in a dependencies table, or a `[...dependencies.name]` table."""
+    res = []
+    key = r"(?:" + re.escape(name) + r"|\"" + re.escape(name) + r"\")"
+    for h, a, b in _sections(text):
+        body = text[a:b]
+        if DEP_TABLE.match(h):
+            for m in re.finditer(r"^" + key + r"[ \t]*=[ \t]*(\"[^\"\n]*\"|\{[^}\n]*\})", body, re.M):
+                res.append((a + m.start(1), a + m.end(1), m.group(1)))
+        elif re.match(r"^(?:workspace\.|target\.[^\]]*\.)?(?:dev-|build-)?dependencies\." + key + r"$", h):
+            res.append((a, b, body))
+    return res
+
+
+def check_required_manifest(text, name, rel):
+    """The manifest must declare `name` from crates.io: no path/git/registry source and no
+    [patch]/[replace] override, so the lock can only resolve the published crate."""
+    specs = dependency_specs(text, name)
+    if not specs:
+        raise ReleaseError(f"{rel}: no dependency on {name}")
+    for _, _, spec in specs:
+        if re.search(r"(?:^|[{,\s])(path|git|registry|registry-index)\s*=", spec):
+            raise ReleaseError(f"{rel}: {name} must come from crates.io for a release (found {spec.strip()!r})")
+    check_no_override(text, name, rel)
+
+
+def check_no_override(text, name, rel):
+    key = r"(?:" + re.escape(name) + r"|\"" + re.escape(name) + r"\")"
+    for h, a, b in _sections(text):
+        if h.startswith("patch.") and (re.search(r"^" + key + r"\s*=", text[a:b], re.M) or re.search(r"\." + key + r"$", h)):
+            raise ReleaseError(f"{rel}: [{h}] overrides {name}; remove it before releasing")
+        if h == "replace" and re.search(r"^\"" + re.escape(name) + r":", text[a:b], re.M):
+            raise ReleaseError(f"{rel}: [replace] overrides {name}; remove it before releasing")
+
+
+def pin_required(text, name, version, rel, exact=True):
+    """Set every declaration of `name` in `text` to `=version` (or `version` when not exact)."""
+    want = ("=" if exact else "") + version
+    out_, last = [], 0
+    specs = sorted(dependency_specs(text, name))
+    for a, b, spec in specs:
+        if spec.startswith('"'):
+            new = f'"{want}"'
+        else:
+            new, n = re.subn(r'((?:^|[{,\s])version\s*=\s*)"[^"]*"', lambda m: m.group(1) + f'"{want}"', spec, count=1, flags=re.M)
+            if not n:
+                raise ReleaseError(f"{rel}: {name} has no version key to pin")
+        out_ += [text[last:a], new]
+        last = b
+    return "".join(out_) + text[last:]
+
+
+def lock_packages(text):
+    """[{name, version, source, checksum}] from a Cargo.lock."""
+    res = []
+    for block in re.split(r"^\[\[package\]\][ \t]*$", text, flags=re.M)[1:]:
+        d = dict(re.findall(r'^(name|version|source|checksum)\s*=\s*"([^"]*)"', block, re.M))
+        res.append(d)
+    return res
+
+
+def required_crates(root, cfg, ctx, online=True):
+    """Check every [[requires]] entry before any edit: the manifest takes the crate from crates.io
+    and (online) crates.io has the version, not yanked. Returns [(entry, version, cksum)]."""
+    res = []
+    for r in cfg.get("requires") or []:
+        name = r.get("crate")
+        if not name:
+            raise ReleaseError("[[requires]] entry without crate")
+        ver = fill(r.get("version", "{version}"), ctx)
+        parse_version(ver)
+        for rel in [r["manifest"]] if r.get("manifest") else []:
+            p = Path(root) / rel
+            if not p.is_file():
+                raise ReleaseError(f"[[requires]] {name}: no {rel}")
+            check_required_manifest(p.read_text(encoding="utf-8"), name, rel)
+        for rel in ("Cargo.toml", ".cargo/config.toml", ".cargo/config"):
+            p = Path(root) / rel
+            if rel != r.get("manifest") and p.is_file():
+                check_no_override(p.read_text(encoding="utf-8"), name, rel)
+        if r.get("lock") and not (Path(root) / r["lock"]).is_file():
+            raise ReleaseError(f"[[requires]] {name}: no {r['lock']}")
+        cksum = None
+        if online:
+            hit = [e for e in crates_index_entries(name) if e.get("vers") == ver]
+            if not hit:
+                raise ReleaseError(f"{name} {ver} is not on crates.io; release and publish it first (lockstep)")
+            if hit[0].get("yanked"):
+                raise ReleaseError(f"{name} {ver} is yanked on crates.io")
+            cksum = hit[0].get("cksum")
+        res.append((r, ver, cksum))
+    return res
+
+
+def verify_required_lock(root, r, ver, cksum):
+    """Cargo.lock must resolve `crate` to exactly `ver` from crates.io with the index checksum."""
+    rel, name = r["lock"], r["crate"]
+    got = [p for p in lock_packages((Path(root) / rel).read_text(encoding="utf-8")) if p.get("name") == name]
+    if len(got) != 1:
+        raise ReleaseError(f"{rel}: expected one {name} entry, found {len(got)}")
+    p = got[0]
+    if p.get("version") != ver:
+        raise ReleaseError(f"{rel}: {name} is {p.get('version')}, expected {ver}")
+    if p.get("source") != CRATES_IO_SOURCE:
+        raise ReleaseError(f"{rel}: {name} source is {p.get('source')!r}, expected crates.io")
+    if cksum and p.get("checksum") != cksum:
+        raise ReleaseError(f"{rel}: {name} {ver} checksum {p.get('checksum')} does not match crates.io {cksum}")
+
+
+def crate_plan(root, cfg, tag, prev_tag, edits=None):
     """[(path, name, version, action, reason)] for [crates] publish, in the configured order.
     publish = false crates are skipped; a version already on crates.io is skipped (with a warning
-    when the crate changed since the previous tag, because it then needs a version bump)."""
+    when the crate changed since the previous tag, because it then needs a version bump).
+    `edits` (dry run): planned file contents, read instead of the tree's."""
     ws = (Path(root) / "Cargo.toml").read_text(encoding="utf-8") if (Path(root) / "Cargo.toml").is_file() else ""
     ws_ver = _table_version(ws, "workspace.package")
     res = []
@@ -764,6 +950,9 @@ def crate_plan(root, cfg, tag, prev_tag):
         if not mf.is_file():
             raise ReleaseError(f"[crates] {rel}: no Cargo.toml")
         t = mf.read_text(encoding="utf-8")
+        if edits:
+            t = edits.get(str(Path(rel) / "Cargo.toml"), (t, t))[1]
+            ws_ver = _table_version(edits.get("Cargo.toml", (ws, ws))[1], "workspace.package") if ws else ws_ver
         name, ver = package_name(t), _table_version(t, "package")
         ver = ws_ver if ver == "workspace" else ver
         if not publish_flag(t):
@@ -775,7 +964,7 @@ def crate_plan(root, cfg, tag, prev_tag):
             changed = True
         have = crates_index(name)
         if ver in have:
-            res.append((rel, name, ver, "skip", "already on crates.io" + (" (changed since " + prev_tag + ": bump its version)" if changed else "")))
+            res.append((rel, name, ver, "skip", "already on crates.io" + (f" (changed since {prev_tag}: bump its version)" if changed and prev_tag else "")))
         else:
             # A version crates.io doesn't have is always affected (its own or the workspace bump).
             res.append((rel, name, ver, "publish", f"{ver} not on crates.io yet"))
@@ -822,14 +1011,22 @@ def cut(a, root):
     D = "[dry-run] " if dry else ""
     old = read_current(root, cfg)
     pfx = cfg.get("tag_prefix", "v")
-    if a.version:
+    if a.version and a.pre:
+        raise ReleaseError("--pre and --version don't mix (write the pre-release into --version)")
+    if a.first:
+        if a.version or a.part or a.pre:
+            raise ReleaseError("--first releases the current version; it doesn't mix with --version, --major/--minor/--patch or --pre")
+        if tags(root, pfx):
+            raise ReleaseError(f"--first is only for a project with no {pfx}* tags yet")
+        new, part = old, "first"
+    elif a.version:
         new = a.version
         parse_version(new)
         part = "explicit"
     else:
-        part = a.part or "minor"
-        new = bump(old, part)
-    if parse_version(new) <= parse_version(old):
+        part = a.part or ("pre" if a.pre else "minor")
+        new = bump(old, a.part, a.pre) if a.pre else bump(old, part)
+    if not a.first and parse_version(new) <= parse_version(old):
         raise ReleaseError(f"version must increase ({old} -> {new})")
     tag = f"{pfx}{new}"
     date = a.date or today(cfg["timezone"])
@@ -843,14 +1040,17 @@ def cut(a, root):
     title = re.sub(r"^(" + "|".join(ORDER) + r"):\s+", "", title).rstrip(".").strip()
     prev = tags(root, pfx)
     ctx = {"version": new, "old": old, "tag": tag, "old_tag": f"{pfx}{old}", "date": date, "title": title,
-           "title_cell": title.replace("|", "/"), "project": cfg["project"], "tag_prefix": pfx, "build": ""}
+           "title_cell": title.replace("|", "/"), "project": cfg["project"], "tag_prefix": pfx, "build": "",
+           **version_ctx(new)}
     head = preflight(root, cfg, tag, new, a.expect_head, fetch=not a.no_fetch)
     henv = hook_env(env, ctx, dry)
     hooks = cfg.get("hooks") or {}
     if not a.skip_hooks:
         # Read-only checks: run in --dry-run too.
         run_cmds(root, hooks.get("pre"), ctx, henv, "pre hook", False)
+    reqs = required_crates(root, cfg, ctx)
     plan = plan_files(root, cfg, ctx)
+    plan_requires(plan, reqs)
     henv = hook_env(env, ctx, dry)
     cl = cfg.get("changelog") or {}
     section = a.section or ("Fixed" if part == "patch" else cl.get("default_section", "Added"))
@@ -867,6 +1067,10 @@ def cut(a, root):
     push = ["git", "push", "--atomic", remote, f"HEAD:refs/heads/{branch}", f"refs/tags/{tag}"]
 
     out(f"{D}{cfg['project']} {old} -> {new} ({part}) on {branch} at {head[:12]}, {date}")
+    for r, ver, cksum in reqs:
+        out(f"{D}requires {r['crate']} {ver}: on crates.io" + (f" (checksum {cksum[:12]})" if cksum else ""))
+        if r.get("lock"):
+            out(f"{D}lock: {' '.join(lock_update_cmd(r, ver))}; then check {r['lock']}")
     for rel, (o, n) in plan.edits.items():
         what = "delete" if n is None else "create" if o is None else "write"
         note = "" if o is None or tracked(root, rel) else " (not tracked; written, not committed)"
@@ -890,7 +1094,7 @@ def cut(a, root):
         out("[dry-run] commit message:\n" + commit_msg)
         if not a.skip_crates and not a.no_push and cfg.get("crates"):
             try:
-                publish_crates_preview(root, cfg, prev[-1][1] if prev else None)
+                publish_crates_preview(root, cfg, prev[-1][1] if prev else None, plan.edits)
             except ReleaseError as e:
                 out(f"[dry-run] crates: {e}")
         for n in cfg.get("next", []):
@@ -901,6 +1105,7 @@ def cut(a, root):
         raise ReleaseError("not confirmed; nothing changed")
 
     stage = [rel for rel, (o, n) in plan.edits.items() if (o is None and n is not None) or tracked(root, rel)]
+    stage += [r["lock"] for r, _, _ in reqs if r.get("lock") and r["lock"] not in stage and tracked(root, r["lock"])]
     try:
         for rel, (o, n) in plan.edits.items():
             p = root / rel
@@ -914,6 +1119,14 @@ def cut(a, root):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 with open(p, "w", encoding="utf-8", newline="") as f:
                     f.write(n)
+        for r, ver, cksum in reqs:
+            if r.get("lock"):
+                cmd = lock_update_cmd(r, ver)
+                out(f"lock: {' '.join(cmd)}")
+                if subprocess.run(cmd, cwd=root, env=env).returncode != 0:
+                    raise ReleaseError(f"failed: {' '.join(cmd)}")
+                verify_required_lock(root, r, ver, cksum)
+                out(f"lock: {r['crate']} {ver} from crates.io, checksum matches")
         if not a.skip_hooks:
             run_cmds(root, hooks.get("post_bump"), ctx, henv, "post_bump hook", False)
         if not a.skip_checks:
@@ -967,9 +1180,25 @@ def cut(a, root):
     return 0
 
 
-def publish_crates_preview(root, cfg, prev_tag):
-    """Dry-run view of crates.io: changes are measured from the previous tag to HEAD."""
-    for rel, name, ver, act, why in crate_plan(root, cfg, "HEAD", prev_tag):
+def plan_requires(plan, reqs):
+    for r, ver, _ in reqs:
+        if r.get("manifest") and r.get("pin", "exact") != "none":
+            rel = r["manifest"]
+            plan.put(rel, pin_required(plan.read(rel), r["crate"], ver, rel, r.get("pin", "exact") == "exact"))
+
+
+def lock_update_cmd(r, ver):
+    cargo = os.environ.get("WEIRDNET_RELEASE_CARGO", "cargo")
+    cmd = [cargo, "update", "-p", r["crate"], "--precise", ver]
+    if r.get("manifest"):
+        cmd += ["--manifest-path", r["manifest"]]
+    return cmd
+
+
+def publish_crates_preview(root, cfg, prev_tag, edits=None):
+    """Dry-run view of crates.io: changes are measured from the previous tag to HEAD, at the
+    versions the bump would write."""
+    for rel, name, ver, act, why in crate_plan(root, cfg, "HEAD", prev_tag, edits):
         out(f"[dry-run] crate {name} {ver}: {act} ({why})")
 
 
@@ -1106,8 +1335,8 @@ def taur_check(version, pkgdir, pkg=None):
     errs = []
     if pkg.get("name") and v.get("pkgname") != pkg["name"]:
         errs.append(f"PKGBUILD pkgname is {v.get('pkgname')!r}, not {pkg['name']!r}")
-    if v.get("pkgver") != version:
-        errs.append(f"PKGBUILD pkgver is {v.get('pkgver')!r}, not {version!r}")
+    if v.get("pkgver") != pkgver(version):
+        errs.append(f"PKGBUILD pkgver is {v.get('pkgver')!r}, not {pkgver(version)!r}")
     if not re.fullmatch(r"\d+", str(v.get("pkgrel", ""))):
         errs.append(f"PKGBUILD pkgrel {v.get('pkgrel')!r} is not a number")
     sums = [k for k in v if re.fullmatch(r"sha256sums(_\w+)?", k)]
@@ -1116,7 +1345,7 @@ def taur_check(version, pkgdir, pkg=None):
     for k in sums:
         if not v[k] or not all(HEX64.match(s) for s in v[k]):
             errs.append(f"{k} {v[k]!r} is not all real sha256 (SKIP and placeholders can't be published)")
-    want = fill(pkg.get("source_contains", "v{version}"), {"version": version})
+    want = fill(pkg.get("source_contains", "v{version}"), {"version": version, **version_ctx(version)})
     for k in [k for k in v if re.fullmatch(r"source(_\w+)?", k)]:
         for s in v[k]:
             if "://" in s and want not in s:
@@ -1151,7 +1380,7 @@ def taur_pack(pkgdir, out_dir, version, srcinfo_text=None):
     for n in extra:
         if n not in ("PKGBUILD", ".SRCINFO"):
             files.append((n, (pkgdir / n).read_bytes()))
-    res = Path(out_dir) / f"{base}-{version}-taur.tar.gz"
+    res = Path(out_dir) / f"{base}-{v.get('pkgver') or version}-taur.tar.gz"
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as t:
         d = tarfile.TarInfo(base)
@@ -1231,7 +1460,7 @@ def taur(a, root):
             raise ReleaseError(f"no [[taur.packages]] named {a.package}")
     org = tc.get("org", "WeirdBrains")
     taurctl = a.taurctl or os.environ.get("TAURCTL", "taurctl")
-    ctx = {"version": version, "tag": f"{cfg.get('tag_prefix', 'v')}{version}", "project": cfg["project"]}
+    ctx = {"version": version, "tag": f"{cfg.get('tag_prefix', 'v')}{version}", "project": cfg["project"], **version_ctx(version)}
     for pkg in pkgs:
         work = Path(tempfile.mkdtemp(prefix=f"taur-{pkg.get('name', 'pkg')}-"))
         try:
@@ -1270,7 +1499,7 @@ def taur(a, root):
                 raise ReleaseError(f"taurctl is not signed in ({(who.stderr or who.stdout).strip()[:200]}); run: taurctl login NAME")
             out(f"taurctl: {who.stdout.strip()}")
             v = parse_pkgbuild((pkgdir / "PKGBUILD").read_text())
-            name, want = v["pkgname"], f"{version}-{v['pkgrel']}"
+            name, want = v["pkgname"], f"{pkgver(version)}-{v['pkgrel']}"
             cur = taur_version(taurctl, name)
             if cur == want:
                 out(f"TAUR already has {name} {want}; nothing to upload")
@@ -1370,10 +1599,11 @@ def assets(a, root):
     if not plats:
         raise ReleaseError(f"{CONFIG} has no [[platforms]] with assets")
     version = a.version.lstrip("v")
-    ctx = {"version": version, "tag": f"{cfg.get('tag_prefix', 'v')}{version}", "project": cfg["project"]}
+    parse_version(version)
+    ctx = {"version": version, "tag": f"{cfg.get('tag_prefix', 'v')}{version}", "project": cfg["project"], **version_ctx(version)}
     slug = github_slug(root)
     gh = os.environ.get("WEIRDNET_RELEASE_GH", "gh")
-    r = subprocess.run([gh, "release", "view", ctx["tag"], "-R", slug, "--json", "assets,isDraft"], capture_output=True, text=True)
+    r = subprocess.run([gh, "release", "view", ctx["tag"], "-R", slug, "--json", "assets,isDraft,isPrerelease"], capture_output=True, text=True)
     if r.returncode != 0:
         raise ReleaseError(f"gh release view {ctx['tag']}: {(r.stderr or r.stdout).strip()[:300]}")
     rel = json.loads(r.stdout)
@@ -1387,9 +1617,91 @@ def assets(a, root):
             bad += not hit
     if rel.get("isDraft"):
         out(f"note: {ctx['tag']} is still a draft")
+    if "isPrerelease" in rel and bool(rel["isPrerelease"]) != is_prerelease(version):
+        out(f"WRONG {ctx['tag']} is {'' if rel['isPrerelease'] else 'not '}marked pre-release")
+        bad += 1
     if bad:
         raise ReleaseError(f"{bad} expected asset(s) missing from {ctx['tag']}")
     return 0
+
+
+def github_asset_name(name):
+    """The name GitHub gives an uploaded file: characters outside letters, digits and ._-+ become
+    '.' (a deb's 0.2.0~alpha.8 is stored as 0.2.0.alpha.8)."""
+    return re.sub(r"[^A-Za-z0-9._+-]", ".", name)
+
+
+def changelog_notes(text, version):
+    """The body of the changelog section for VERSION (keepachangelog `## [V]` or raw `## vV`)."""
+    m = re.search(r"^## \[?v?" + re.escape(version) + r"\]?(?:[ (].*)?$", text, re.M)
+    if not m:
+        return ""
+    rest = text[m.end():]
+    end = re.search(r"^## |^\[[^\]]+\]: ", rest, re.M)
+    return (rest[:end.start()] if end else rest).strip()
+
+
+def github_release(a, root):
+    """Create the GitHub release for an existing tag: the [github] files (globs, each must match),
+    an optional checksum file written with the names GitHub will give the files, notes from the
+    changelog section, marked pre-release for X.Y.Z-(alpha|beta|rc).N. Uploads to an existing
+    release instead (replacing files of the same name)."""
+    cfg = load_config(root, a.config)
+    gc = cfg.get("github") or {}
+    version = a.version.lstrip("v")
+    parse_version(version)
+    pfx = cfg.get("tag_prefix", "v")
+    ctx = {"version": version, "tag": f"{pfx}{version}", "project": cfg["project"], **version_ctx(version)}
+    files = []
+    for pat in gc.get("files") or []:
+        hit = sorted(globmod.glob(str(root / fill(pat, ctx))))
+        if not hit:
+            raise ReleaseError(f"[github] files: nothing matches {fill(pat, ctx)}")
+        files += [Path(h) for h in hit if Path(h) not in files]
+    if not files:
+        raise ReleaseError(f"{CONFIG} has no [github] files")
+    names = [github_asset_name(f.name) for f in files]
+    if len(set(names)) != len(names):
+        raise ReleaseError("two files get the same name on GitHub: " + ", ".join(names))
+    work = Path(tempfile.mkdtemp(prefix="gh-release-"))
+    try:
+        upload = list(files)
+        if gc.get("sums"):
+            sums = work / fill(gc["sums"], ctx)
+            lines = [f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {n}" for f, n in zip(files, names)]
+            sums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            upload.append(sums)
+        if a.notes_file:
+            notes = Path(a.notes_file).read_text(encoding="utf-8")
+        else:
+            cl = cfg.get("changelog") or {}
+            text = (root / cl.get("path", "CHANGELOG.md")).read_text(encoding="utf-8") if cl else ""
+            notes = changelog_notes(text, version) or fill(gc.get("notes", "{project} {version}"), ctx)
+        (work / "notes.md").write_text(notes + "\n", encoding="utf-8")
+        slug = github_slug(root)
+        if not slug:
+            raise ReleaseError("origin is not a GitHub repository")
+        gh = os.environ.get("WEIRDNET_RELEASE_GH", "gh")
+        exists = subprocess.run([gh, "release", "view", ctx["tag"], "-R", slug, "--json", "tagName"], capture_output=True, text=True).returncode == 0
+        if exists:
+            cmd = [gh, "release", "upload", ctx["tag"], "-R", slug, "--clobber", *map(str, upload)]
+        else:
+            cmd = [gh, "release", "create", ctx["tag"], "-R", slug, "--verify-tag", "--title", fill(gc.get("title", "{tag}"), ctx),
+                   "--notes-file", str(work / "notes.md"), *(["--prerelease"] if is_prerelease(version) else []), *map(str, upload)]
+        shown = " ".join(shlex.quote(c) for c in [Path(cmd[0]).name, *cmd[1:]])
+        if a.dry_run:
+            out(f"[dry-run] {shown}")
+            for f, n in zip(files, names):
+                out(f"[dry-run]   {f.name}" + (f" (on GitHub: {n})" if n != f.name else ""))
+            return 0
+        out(shown)
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise ReleaseError(f"gh release {'upload' if exists else 'create'} failed: {(r.stderr or r.stdout).strip()[:400]}")
+        out(f"{'uploaded to' if exists else 'created'} {ctx['tag']}{' (pre-release)' if is_prerelease(version) and not exists else ''}: {len(upload)} file(s)")
+        return 0
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 # ---- main ----------------------------------------------------------------------------------
@@ -1412,7 +1724,11 @@ def parser():
     g.add_argument("--major", dest="part", action="store_const", const="major")
     g.add_argument("--minor", dest="part", action="store_const", const="minor", help="the default")
     g.add_argument("--patch", dest="part", action="store_const", const="patch")
-    g.add_argument("--version", help="explicit X.Y.Z (must increase)")
+    g.add_argument("--version", help="explicit X.Y.Z or X.Y.Z-(alpha|beta|rc).N (must increase)")
+    c.add_argument("--first", action="store_true", help="release the current version as the first release "
+                   "(no tags yet; the version files keep their version)")
+    c.add_argument("--pre", choices=PRE_STAGES, help="a pre-release: continue the current one (alpha.7 -> alpha.8) "
+                   "or start one (with --major/--minor/--patch, default the next minor)")
     c.add_argument("message", nargs="*", help="changelog bullets / commit body (`Fixed: ...` picks a section)")
     c.add_argument("--dry-run", action="store_true", help="print every step and diff; change nothing")
     c.add_argument("--yes", "-y", action="store_true", help="don't ask for confirmation")
@@ -1445,13 +1761,17 @@ def parser():
     ck.add_argument("dir", nargs="?")
     sa = sub.add_parser("assets", help="check the GitHub release has every [[platforms]] asset")
     sa.add_argument("version")
+    gr = sub.add_parser("github", help="create the GitHub release for an existing tag from [github] files")
+    gr.add_argument("version")
+    gr.add_argument("--notes-file", help="release notes (default: the version's changelog section)")
+    gr.add_argument("--dry-run", action="store_true")
     sub.add_parser("version", help="print the script version")
     return ap
 
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    cmds = {"cut", "validate", "assets", "crates", "taur", "taur-srcinfo", "taur-check", "version", "-h", "--help"}
+    cmds = {"cut", "validate", "assets", "github", "crates", "taur", "taur-srcinfo", "taur-check", "version", "-h", "--help"}
     # `cut` is the default subcommand: insert it after the global options.
     i = 0
     while i < len(argv) and argv[i] in ("--repo", "--config"):
@@ -1486,14 +1806,19 @@ def main(argv=None):
             return taur(a, root)
         if a.cmd == "assets":
             return assets(a, root)
+        if a.cmd == "github":
+            return github_release(a, root)
         if a.cmd == "validate":
             cfg = load_config(root, a.config)
             old = read_current(root, cfg)
-            new = bump(old, "minor")
+            # From a pre-release, plan the next one of the same stage (what such projects cut).
+            new = bump(old, None, PRE_STAGES[parse_version(old)[3]]) if is_prerelease(old) else bump(old, "minor")
             pfx = cfg.get("tag_prefix", "v")
             ctx = {"version": new, "old": old, "tag": f"{pfx}{new}", "old_tag": f"{pfx}{old}", "date": "2000-01-01",
-                   "title": "validate", "title_cell": "validate", "project": cfg["project"], "tag_prefix": pfx, "build": ""}
+                   "title": "validate", "title_cell": "validate", "project": cfg["project"], "tag_prefix": pfx, "build": "",
+                   **version_ctx(new)}
             plan = plan_files(root, cfg, ctx)
+            plan_requires(plan, required_crates(root, cfg, ctx, online=False))
             cl = cfg.get("changelog")
             if cl:
                 p = cl.get("path", "CHANGELOG.md")
@@ -1511,7 +1836,8 @@ def main(argv=None):
                 out("platforms:")
                 for l in lines:
                     out(l)
-            out(f"{cfg['project']}: release.toml ok (helpers {__version__}); next minor {old} -> {new} rewrites {len(plan.edits) + (1 if cl else 0)} files")
+            kind = "pre-release" if is_prerelease(new) else "minor"
+            out(f"{cfg['project']}: release.toml ok (helpers {__version__}); next {kind} {old} -> {new} rewrites {len(plan.edits) + (1 if cl else 0)} files")
             return 0
         if a.cmd == "crates":
             cfg = load_config(root, a.config)

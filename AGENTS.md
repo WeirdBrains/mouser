@@ -33,7 +33,7 @@ the maintainer's build machine, the release script, and changelog style. Do not 
 Do not cut a release or create a tag unless the owner asks. Record the change
 under `## [Unreleased]` and leave the version alone.
 
-What this repo does (`docs/release.md`, `release.toml`, helpers 0.1.1), beyond
+What this repo does (`docs/release.md`, `release.toml`, helpers 0.3.2), beyond
 the collective release rules:
 
 - The script bumps `[workspace.package] version` and the members `release.toml`
