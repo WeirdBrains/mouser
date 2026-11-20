@@ -27,13 +27,13 @@ struct Server {
 
 impl Server {
     fn start() -> Server {
-        let ck = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()]).unwrap();
+        let ck = weirdnet_tls::cert::self_signed(&["localhost".into(), "127.0.0.1".into()], 1).unwrap();
         let ca = tempfile::tempdir().unwrap();
-        std::fs::write(ca.path().join("ca.pem"), ck.cert.pem()).unwrap();
+        std::fs::write(ca.path().join("ca.pem"), &ck.chain_pem).unwrap();
         // SAFETY: serial tests.
         unsafe { std::env::set_var("MOUSER_TEST_CA", ca.path().join("ca.pem")) };
-        let cert = rustls::pki_types::CertificateDer::from(ck.cert.der().to_vec());
-        let key = rustls::pki_types::PrivateKeyDer::try_from(ck.key_pair.serialize_der()).unwrap();
+        let cert = weirdnet_tls::cert::parse_chain(&ck.chain_pem).unwrap().remove(0);
+        let key = weirdnet_tls::cert::parse_key(&ck.key_pem).unwrap();
         let cfg = Arc::new(
             rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
                 .with_safe_default_protocol_versions()

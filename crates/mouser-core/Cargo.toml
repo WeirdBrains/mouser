@@ -37,10 +37,8 @@ hex = "0.4"
 unicode-width = "0.1.14"
 flate2 = "1"
 png = { version = "0.17.16", default-features = false }
-# MCP server (P2): TLS for the HTTPS option, self-signed certs, token in the OS keychain.
+# MCP server (P2): TLS for the HTTPS option (certificates through weirdnet-tls), token in the OS keychain.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-rustls-pemfile = "2"
-rcgen = { version = "0.13", default-features = false, features = ["ring", "pem"] }
 sha2 = "0.10"
 # Fuzzball wire format (encode/parse); terminal state stays in src/fuzzball.rs.
 fuzzball = "1"

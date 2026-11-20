@@ -86,8 +86,9 @@ pub fn tls_for(ca: Option<&std::path::Path>) -> Result<Arc<rustls::ClientConfig>
     let mut roots = rustls::RootCertStore::empty();
     match ca {
         Some(p) => {
-            for c in rustls_pemfile::certs(&mut BufReader::new(std::fs::File::open(p).with_context(|| format!("{}", p.display()))?)) {
-                roots.add(c?)?;
+            let pem = std::fs::read_to_string(p).with_context(|| format!("{}", p.display()))?;
+            for c in weirdnet_tls::cert::parse_chain(&pem).with_context(|| format!("{}", p.display()))? {
+                roots.add(c)?;
             }
         }
         None => roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned()),

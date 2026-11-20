@@ -398,11 +398,10 @@ pub fn tls_config(cert: Option<&str>, key: Option<&str>) -> Result<(Arc<rustls::
         }
         _ => bail!("set both mcp.server.cert and mcp.server.key, or neither"),
     };
-    let certs: Vec<_> = rustls_pemfile::certs(&mut BufReader::new(std::fs::File::open(&cp).with_context(|| format!("{}", cp.display()))?))
-        .collect::<std::result::Result<_, _>>()?;
-    let first = certs.first().context("no certificate in the PEM file")?.clone();
-    let key = rustls_pemfile::private_key(&mut BufReader::new(std::fs::File::open(&kp).with_context(|| format!("{}", kp.display()))?))?
-        .context("no private key in the PEM file")?;
+    let read = |p: &PathBuf| std::fs::read_to_string(p).with_context(|| format!("{}", p.display()));
+    let certs = weirdnet_tls::cert::parse_chain(&read(&cp)?).with_context(|| format!("{}", cp.display()))?;
+    let first = certs[0].clone();
+    let key = weirdnet_tls::cert::parse_key(&read(&kp)?).with_context(|| format!("no private key in {}", kp.display()))?;
     let cfg = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()?
         .with_no_client_auth()
@@ -415,18 +414,13 @@ pub fn fingerprint(der: &[u8]) -> String {
     sha2::Sha256::digest(der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
 }
 
+/// A self-signed pair for `localhost` and `127.0.0.1` (valid for 100 years),
+/// the key readable only by you.
 fn self_signed(c: &std::path::Path, k: &std::path::Path) -> Result<()> {
-    let ck = rcgen::generate_simple_self_signed(vec!["localhost".into(), "127.0.0.1".into()])?;
+    let pair = weirdnet_tls::cert::self_signed(&["localhost".into(), "127.0.0.1".into()], 36_500)?;
     std::fs::create_dir_all(c.parent().context("dir")?)?;
-    std::fs::write(c, ck.cert.pem())?;
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        o.mode(0o600);
-    }
-    o.open(k)?.write_all(ck.key_pair.serialize_pem().as_bytes())?;
+    std::fs::write(c, &pair.chain_pem)?;
+    weirdnet_tls::store::write_private(k, pair.key_pem.as_bytes())?;
     Ok(())
 }
 
@@ -475,8 +469,8 @@ pub fn post(
 /// A client TLS config trusting exactly `cert_pem` (for the self-signed cert).
 pub fn client_tls(cert_pem: &std::path::Path) -> Result<Arc<rustls::ClientConfig>> {
     let mut roots = rustls::RootCertStore::empty();
-    for c in rustls_pemfile::certs(&mut BufReader::new(std::fs::File::open(cert_pem)?)) {
-        roots.add(c?)?;
+    for c in weirdnet_tls::cert::parse_chain(&std::fs::read_to_string(cert_pem)?)? {
+        roots.add(c)?;
     }
     Ok(Arc::new(
         rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
