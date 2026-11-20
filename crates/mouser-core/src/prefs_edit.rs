@@ -100,7 +100,7 @@ pub fn schema() -> Vec<Field> {
         f("MCP server", "mcp.server.tls.domains", "Let's Encrypt domain(s), comma-separated", Kind::Text { url: false }, "(none)", false),
         f("MCP server", "mcp.server.tls.email", "Let's Encrypt contact email", Kind::Text { url: false }, "(none)", false),
         f("MCP server", "mcp.server.tls.staging", "Let's Encrypt staging CA", Kind::Bool, "false", false),
-        f("MCP server", "mcp.server.tls.challenge", "ACME challenge", choice(&crate::mcp_acme::Challenge::NAMES), "tls-alpn-01", false),
+        f("MCP server", "mcp.server.tls.challenge", "ACME challenge", choice(&crate::mcp_acme::CHALLENGES), "tls-alpn-01", false),
         f("MCP server", "mcp.server.tls.http_port", "http-01 port", Kind::Int { min: 1, max: 65535 }, "80", false),
         f("MCP server", "mcp.server.tls.dns_hook", "dns-01 hook command", Kind::Text { url: false }, "(ask in mouser mcp cert renew)", false),
         f("MCP server", "mcp.server.tls.directory", "ACME directory URL (other CA)", Kind::Text { url: true }, "(Let's Encrypt)", false),

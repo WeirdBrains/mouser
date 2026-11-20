@@ -37,6 +37,36 @@ fn enable_status_token_and_disable() {
     }
 }
 
+#[test]
+#[serial_test::serial]
+fn cert_status_reads_a_mouser_1_7_lets_encrypt_certificate() {
+    let t = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("MOUSER_HOME", t.path());
+        std::env::set_var("MOUSER_SECRET_STORE", "file");
+    }
+    std::fs::write(
+        t.path().join("preferences.toml"),
+        "[mcp.server]\nenabled = false\nhttps = true\n\n[mcp.server.tls]\nsource = \"acme\"\ndomains = \"mcp.example.com\"\n",
+    )
+    .unwrap();
+    let s = cli(Action::CertStatus).unwrap();
+    assert!(s.contains("Let's Encrypt for mcp.example.com (tls-alpn-01)") && s.contains("none yet") && s.contains("due now"), "{s}");
+
+    let acme = t.path().join("mcp").join("acme");
+    std::fs::create_dir_all(&acme).unwrap();
+    let pair = weirdnet_tls::cert::self_signed(&["mcp.example.com".to_string()], 90).unwrap();
+    std::fs::write(acme.join("cert.pem"), &pair.chain_pem).unwrap();
+    std::fs::write(acme.join("key.pem"), &pair.key_pem).unwrap();
+    let s = cli(Action::CertStatus).unwrap();
+    assert!(s.contains("cert/mcp.json valid until") && s.contains("renew : after"), "{s}");
+    assert!(acme.join("cert").join("mcp.json").is_file());
+    unsafe {
+        std::env::remove_var("MOUSER_SECRET_STORE");
+        std::env::remove_var("MOUSER_HOME");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 #[serial_test::serial]

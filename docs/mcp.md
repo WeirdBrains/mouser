@@ -220,7 +220,9 @@ Before you start:
    only way to get a wildcard (`*.example.com`). There are no DNS provider
    integrations; the hook is any command, e.g. one calling your provider's CLI.
    It gets `MOUSER_ACME_ACTION` (`present`/`cleanup`), `MOUSER_ACME_DOMAIN`,
-   `MOUSER_ACME_NAME` and `MOUSER_ACME_TXT`.
+   `MOUSER_ACME_NAME` and `MOUSER_ACME_TXT`, and the same values as
+   `WEIRDNET_TLS_ACTION`, `WEIRDNET_TLS_DOMAIN`, `WEIRDNET_TLS_NAME` and
+   `WEIRDNET_TLS_TXT`.
 
 ```toml
 [mcp.server]
@@ -244,15 +246,20 @@ All of these are in preferences mode under *MCP server* (dropdowns for the
 source and challenge); saving keeps your comments.
 
 - Mouser asks for the certificate when it starts and serves HTTPS with it as
-  soon as it arrives. It renews **30 days before expiry** in the background
-  and swaps the new certificate in without a restart; open connections keep
-  the old one.
+  soon as it arrives. It renews in the background inside the renewal window
+  the CA suggests (ACME Renewal Information), or two thirds into the
+  certificate's lifetime when the CA has none (30 days before expiry for a
+  90-day certificate), and swaps the new certificate in without a restart;
+  open connections keep the old one.
 - A failed attempt keeps the current certificate, is logged, and is retried
   after 1 h, 2 h, 4 h, … up to once a day. That stays within Let's Encrypt's
   [rate limits](https://letsencrypt.org/docs/rate-limits/). A forced renewal
   is refused within a day of the last certificate.
 - The account key, certificate, private key and renewal state live in
-  `$MOUSER_HOME/mcp/acme/`, readable only by you (0600).
+  `$MOUSER_HOME/mcp/acme/` (`account/`, `cert/`, `state/`), readable only by
+  you (0600). Mouser 1.7 and earlier kept them as `cert.pem`, `key.pem`,
+  `state.json` and `account-*.json` there; they are copied over on the first
+  start and are no longer used after that.
 - Production is the default; `staging = true` gives untrusted test
   certificates with looser limits. Changing the names or the CA gets a new
   certificate.

@@ -287,23 +287,19 @@ fn cert_status(s: &McpServerPrefs, out: &mut dyn Write) -> Result<()> {
             let acme = mcp_acme::AcmeConfig::from_prefs(s.tls.as_ref().expect("acme source"))?;
             let dir = mcp_acme::default_dir();
             writeln!(out, "  cert  : {} for {} ({})", acme.ca_name(), acme.domains.join(", "), acme.challenge.as_str())?;
-            let store = mcp_acme::CertStore::default();
-            match store.load(&dir) {
-                Ok(true) => {
-                    writeln!(out, "          {} valid until {}", dir.join("cert.pem").display(), mcp_acme::fmt_time(store.not_after().unwrap()))?
+            let certs = mcp_acme::Certs::open(&acme, &dir)?;
+            match certs.load() {
+                Ok(Some(i)) => {
+                    writeln!(out, "          {} valid until {}", mcp_acme::cert_file(&dir, &acme).display(), mcp_acme::fmt_time(i.not_after))?
                 }
-                Ok(false) => writeln!(out, "          none yet (Mouser gets one when it starts)")?,
+                Ok(None) => writeln!(out, "          none yet (Mouser gets one when it starts)")?,
                 Err(e) => writeln!(out, "          unusable: {e:#}")?,
             }
-            let st = mcp_acme::load_state(&dir);
-            let next = mcp_acme::next_attempt(&acme, &st, store.not_after(), std::time::SystemTime::now());
-            writeln!(
-                out,
-                "  renew : {}",
-                if next <= std::time::SystemTime::now() { "due now".to_string() } else { format!("after {}", mcp_acme::fmt_time(next)) }
-            )?;
-            if st.failures > 0 {
-                writeln!(out, "  failed: {} time(s) in a row; last error: {}", st.failures, st.last_error.unwrap_or_default())?;
+            let now = std::time::SystemTime::now();
+            let sch = certs.schedule(now);
+            writeln!(out, "  renew : {}", if sch.next <= now { "due now".to_string() } else { format!("after {}", mcp_acme::fmt_time(sch.next)) })?;
+            if sch.failures > 0 {
+                writeln!(out, "  failed: {} time(s) in a row; last error: {}", sch.failures, sch.last_error.unwrap_or_default())?;
             }
         }
         src => {
@@ -328,49 +324,48 @@ fn cert_renew(s: &McpServerPrefs, force: bool, out: &mut dyn Write) -> Result<()
     // The running Mouser owns the HTTPS port: ask it.
     if s.enabled && s.https && std::net::TcpListener::bind((addr, s.https_port)).is_err() {
         if !force {
-            let store = mcp_acme::CertStore::default();
-            let _ = store.load(&dir);
-            let next = mcp_acme::next_attempt(&acme, &mcp_acme::load_state(&dir), store.not_after(), std::time::SystemTime::now());
+            let next = mcp_acme::Certs::open(&acme, &dir)?.schedule(std::time::SystemTime::now()).next;
             if next > std::time::SystemTime::now() {
                 writeln!(out, "not due until {} (use --force to renew anyway)", mcp_acme::fmt_time(next))?;
                 return Ok(());
             }
         }
-        mcp_acme::write_private(&mcp_acme::trigger_path(&dir), b"")?;
+        mcp_acme::request_renewal(&dir)?;
         writeln!(out, "asked the running Mouser to renew within a minute; check with `mouser mcp cert status`")?;
         return Ok(());
     }
-    let store = std::sync::Arc::new(mcp_acme::CertStore::default());
-    let _ = store.load(&dir);
+    let manual = mouser_core::mcp_acme::ManualDns::new(|r| {
+        eprintln!("Add this DNS record, wait until it resolves, then press Enter:\n  {}. 300 IN TXT \"{}\"", r.name, r.value);
+        let mut l = String::new();
+        std::io::stdin().read_line(&mut l)?;
+        Ok(())
+    });
+    let dns: Option<std::sync::Arc<dyn mcp_acme::DnsChallenge>> = match acme.dns_hook {
+        Some(_) => None,
+        None => Some(std::sync::Arc::new(manual)),
+    };
+    let certs = mcp_acme::Certs::open_with(&acme, &dir, dns, None)?;
     // Answer the challenge ourselves while Mouser isn't running.
+    let mut http01 = None;
     match acme.challenge {
         mcp_acme::Challenge::TlsAlpn01 => {
             let (token, _) = mouser_core::secrets::mcp_token()?;
             let l = mcp_server::bind_addr(addr, s.https_port, true, &token)?;
-            let st = store.clone();
-            std::thread::spawn(move || mcp_acme::serve_challenge_only(l, st));
+            let tls = certs.server_config()?;
+            std::thread::spawn(move || mcp_acme::serve_challenge_only(l, tls));
         }
         mcp_acme::Challenge::Http01 => {
-            let l = std::net::TcpListener::bind((addr, acme.http_port))
-                .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?;
-            let st = store.clone();
-            std::thread::spawn(move || mcp_acme::serve_http01(l, st));
+            http01 = Some(
+                std::net::TcpListener::bind((addr, acme.http_port))
+                    .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?,
+            );
         }
         mcp_acme::Challenge::Dns01 => {}
     }
-    let manual = |name: &str, txt: &str| -> Result<()> {
-        eprintln!("Add this DNS record, wait until it resolves, then press Enter:\n  {name}. 300 IN TXT \"{txt}\"");
-        let mut l = String::new();
-        std::io::stdin().read_line(&mut l)?;
-        Ok(())
-    };
-    let dns = match acme.dns_hook.as_deref() {
-        Some(h) => Some(mcp_acme::DnsPublisher::Hook(h)),
-        None => Some(mcp_acme::DnsPublisher::Manual(&manual)),
-    };
-    let retry = mcp_acme::RetryPolicy::new().timeout(std::time::Duration::from_secs(180));
-    match mcp_acme::renew_once(&acme, &dir, &store, force, None, dns, retry)? {
-        mcp_acme::Outcome::Renewed(na) => writeln!(out, "new certificate for {} valid until {}", acme.domains.join(", "), mcp_acme::fmt_time(na))?,
+    match certs.renew_blocking(force, http01)? {
+        mcp_acme::Outcome::Renewed(i) => {
+            writeln!(out, "new certificate for {} valid until {}", acme.domains.join(", "), mcp_acme::fmt_time(i.not_after))?
+        }
         mcp_acme::Outcome::NotDue(t) => writeln!(out, "not due until {} (use --force to renew anyway)", mcp_acme::fmt_time(t))?,
     }
     Ok(())

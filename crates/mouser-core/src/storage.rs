@@ -219,7 +219,8 @@ pub struct McpTlsPrefs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http_port: Option<u16>,
     /// ACME dns-01: command run to add/remove the TXT record (gets
-    /// MOUSER_ACME_ACTION/NAME/TXT/DOMAIN); unset: `mouser mcp cert renew` asks.
+    /// MOUSER_ACME_ACTION/NAME/TXT/DOMAIN and the same as WEIRDNET_TLS_*);
+    /// unset: `mouser mcp cert renew` asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dns_hook: Option<String>,
 }

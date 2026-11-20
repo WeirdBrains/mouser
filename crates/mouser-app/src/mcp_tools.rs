@@ -684,27 +684,30 @@ fn start_https(cfg: &mouser_core::storage::McpServerPrefs, token: &str, server: 
     match mcp_server::TlsSource::of(cfg)? {
         mcp_server::TlsSource::Acme => {
             let acme = mcp_acme::AcmeConfig::from_prefs(cfg.tls.as_ref().expect("acme source implies [mcp.server.tls]"))?;
-            let store = Arc::new(mcp_acme::CertStore::default());
+            let certs = mcp_acme::Certs::open(&acme, &mcp_acme::default_dir())?;
             server.allow_hosts(&acme.domains);
             let (l, https_port) = mcp_server::bind_addr_preferred(addr, cfg.https_port, true, token)?;
             if https_port != cfg.https_port {
                 eprintln!("[mouser] MCP HTTPS: port {} in use; using ephemeral {https_port}", cfg.https_port);
             }
-            let tls = mcp_acme::server_config(store.clone())?;
+            let tls = certs.server_config()?;
             std::thread::spawn(move || mcp_server::serve(l, Some(tls), server));
             let mut extra = String::new();
+            let mut http01 = None;
             if acme.challenge == mcp_acme::Challenge::Http01 {
                 // Answers only /.well-known/acme-challenge/; never MCP.
-                let l = std::net::TcpListener::bind((addr, acme.http_port))
-                    .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?;
-                let s = store.clone();
-                std::thread::spawn(move || mcp_acme::serve_http01(l, s));
+                http01 = Some(
+                    std::net::TcpListener::bind((addr, acme.http_port))
+                        .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?,
+                );
                 extra = format!(", http-01 on :{}", acme.http_port);
             }
-            let name = acme.domains[0].clone();
-            let ca = acme.ca_name().to_string();
-            mcp_acme::spawn_renewer(acme, mcp_acme::default_dir(), store);
-            Ok(format!("[mouser] MCP server on https://{name}:{https_port}/mcp ({ca} certificate, renewed automatically{extra})"))
+            certs.spawn_renewer(http01);
+            Ok(format!(
+                "[mouser] MCP server on https://{}:{https_port}/mcp ({} certificate, renewed automatically{extra})",
+                acme.domains[0],
+                acme.ca_name()
+            ))
         }
         src => {
             let (cert, key) = if src == mcp_server::TlsSource::Files { (cfg.cert.as_deref(), cfg.key.as_deref()) } else { (None, None) };
