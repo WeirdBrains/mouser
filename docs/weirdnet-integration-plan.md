@@ -2,6 +2,19 @@
 
 Drafted Nov 18, 2026 after a read-only survey of the checkouts on the maintainer's build machine. Nothing was changed, committed or launched. Effort numbers are estimates.
 
+## Status (Nov 20, 2026)
+
+| Phase | State | Commits |
+|---|---|---|
+| 0. Setup | Done | `3f87c0a` helpers 0.3.2 vendored (`validate` passes); `weirdnet-tls` 0.2.0 added to `[workspace.dependencies]` from crates.io in `08675df` |
+| 1. weirdnet-tls | Done | `08675df` Let's Encrypt on weirdnet-tls; `9cff03a` self-signed and PEM certificates through it (no direct `rcgen` or `rustls-pemfile` left in mouser-core) |
+| 2 to 9 | Not started | |
+
+- Phase 0 takes Weirdnet crates from crates.io: each is published at its `main` (`weirdnet-tls` main is 0.2.0 plus a docs-only commit). Later phases add their crates the same way when they start.
+- Current crates.io versions on Nov 20: weirdnet-tls 0.2.0, weirdnet-agent 0.4.5, weirdnet-mcp 0.5.2, weirdnet-model 0.4.3 (older agent, mcp and model releases are yanked). mcp 0.5.2 and model 0.4.3 both need agent `^0.4`, so the version trap below is gone (G8 is done) and phases 2 to 5 use those three together.
+- Phase 1 behavior: same config keys, challenges, CLI and files directory. The store layout under `$MOUSER_HOME/mcp/acme/` is now weirdnet-tls's (`account/`, `cert/`, `state/`, one certificate set per CA); the 1.7 files are copied in on first start. Renewal follows ARI, else two thirds of the lifetime (the same 30 days before expiry for a 90-day certificate). Hooks get `MOUSER_ACME_*` and `WEIRDNET_TLS_*`. A forced renewal no longer waits out the failure back-off (weirdnet-tls behavior); the one-day guard stays.
+- Tests: `mcp_acme` runs on weirdnet-tls's `MockCa` (tls-alpn-01 and http-01 issue, hot swap from the `renew-now` trigger, schedule, back-off, 1.7 migration, hook variables), plus a `mouser mcp cert status` CLI test; mouser-core's whole suite passes.
+
 ## Summary
 
 - Mouser (`3a36891`, workspace 1.7.0) uses no Weirdnet crate today, not even `weirdnet-model`, which was extracted from Mouser.
@@ -10,7 +23,7 @@ Drafted Nov 18, 2026 after a read-only survey of the checkouts on the maintainer
   - Local models and llama.cpp move to `weirdnet-model` 0.2.0.
   - The MCP JSON-RPC core and client move to `weirdnet-mcp` 0.2.0.
   - The chat agent loop and approvals move to `weirdnet-agent`.
-- Version trap: only `weirdnet-agent =0.1.0`, `weirdnet-mcp =0.2.0` and `weirdnet-model =0.2.0` fit together today, which is what Morph pins. Agent 0.2.0 is published, but the model and mcp releases still depend on agent 0.1.0.
+- Version trap (Nov 18; resolved Nov 20, see Status): only `weirdnet-agent =0.1.0`, `weirdnet-mcp =0.2.0` and `weirdnet-model =0.2.0` fit together, which is what Morph pinned. Agent 0.2.0 was published, but the model and mcp releases still depended on agent 0.1.0.
 - Sync is a new feature, not a swap. `weirdnet-sync` 0.4.0 needs Weirdnet identity, a device roster and device linking (`weirdnet-keys`, `-net`, `-device-link`). Mouser has none of these. `filesync.rs` copies files over ssh and isn't device sync.
 - Mouser has no frameless code today, on Linux included. `mouser-render/src/lib.rs:539` creates a plain winit 0.30.13 window, and it only looks chromeless under Hyprland. GNOME Wayland draws a winit or adwaita frame, and X11 window managers draw their own. Morph already has toolkit-free code that decides which buttons to show and detects tiling window managers (`morph-ui/src/chrome.rs`); it should move to a shared crate.
 
@@ -65,12 +78,12 @@ Morph pins `weirdnet-keys =0.1.0`, `weirdnet-net =0.7.0`, `weirdnet-sync =0.4.0`
 
 All testing is headless. Each phase is a small commit to `main` with a CHANGELOG entry, updated docs, and passing fmt, clippy and tests.
 
-0. **Setup, about half a day.** Re-vendor helpers 0.3.2. Add workspace weirdnet deps as git main for development; releases pin `=X.Y.Z` from crates.io.
-1. **weirdnet-tls replaces `mcp_acme.rs`, 1.5 to 2 days.** Keep or migrate `$MOUSER_HOME/mcp/acme/`, use `Resolver`, map `mouser mcp cert renew` onto it. Test with `MockCa` and a hot swap. Behavior doesn't change.
+0. **Setup, about half a day. Done.** Re-vendor helpers 0.3.2. Add workspace weirdnet deps as git main for development; releases pin `=X.Y.Z` from crates.io. (Done with crates.io versions, which match main.)
+1. **weirdnet-tls replaces `mcp_acme.rs`, 1.5 to 2 days. Done.** Keep or migrate `$MOUSER_HOME/mcp/acme/`, use `Resolver`, map `mouser mcp cert renew` onto it. Test with `MockCa` and a hot swap. Behavior doesn't change.
 2. **weirdnet-mcp server core, 1.5 days.** Dispatch through `Server::handle`, turn the tools into annotated `ToolSpec`s, and add golden `tools/list` tests so clients keep working.
 3. **weirdnet-model for local models, 3 to 4 days.** Map `local-llm` onto `weirdnet-model/llama` (vulkan on Linux, metal on macOS). Keep the per-repo model folder layout. Remove `mouser-llm`. Test with the mock engine and a mock Hub.
 4. **weirdnet-mcp client, 2 days, after G3.**
-5. **weirdnet-agent for chat, 4 to 5 days.** Pin agent 0.1.0. Port `Chat` to `AgentSession`, with terminal and screen as local tools and MCP through `McpSource`, following Morph's `mcp_runtime.rs`. Hosted providers go through a `ModelBackend` adapter. The chat UI and chat file format stay the same.
+5. **weirdnet-agent for chat, 4 to 5 days.** Use agent 0.4 with mcp 0.5 and model 0.4 (was: pin agent 0.1.0). Port `Chat` to `AgentSession`, with terminal and screen as local tools and MCP through `McpSource`, following Morph's `mcp_runtime.rs`. Hosted providers go through a `ModelBackend` adapter. The chat UI and chat file format stay the same.
 6. **Chromeless on every desktop platform, 4 to 6 days.**
    - Linux: `with_decorations(false)` and a caption band with drag, double-click to maximize, right-click window menu, and invisible resize edges.
    - macOS: Morph's approach. A transparent, hidden-title, full-size content view keeps the native traffic lights and native resize, with a 78 px inset. winit can't do custom resize on macOS.
@@ -100,7 +113,13 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 - G5: weirdnet-themes gets a terminal palette.
 - G6: OS keychain store and download manager (optional).
 - G7: a chunked transfer crate.
-- G8: weirdnet-mcp 0.3.0 and a weirdnet-model release, both on agent 0.2.
+- G8: weirdnet-mcp and weirdnet-model releases on the current agent. Done: mcp 0.5.2 and model 0.4.3 on agent `^0.4`.
+- G13: weirdnet-tls `cert::valid_name` accepts `localhost`, `*.localhost`, IP addresses and all-digit top labels, which no public CA certifies. Mouser checks those on top.
+- G14: weirdnet-tls `HookDns` sets only `WEIRDNET_TLS_*`. An app-chosen variable prefix (or extra names) would let Mouser drop the `MOUSER_ACME_*` shell wrapper in `mcp_acme::dns_hook`, which on Windows relies on `call` re-expansion.
+- G15: weirdnet-tls has no offline "next renewal" query (`Acme::load` leaves `Status::next_attempt` empty and `Acme::due` may go to the network and register an account). Mouser's `Certs::schedule` repeats the small due computation from the store for `mouser mcp cert status`.
+- G16: weirdnet-tls `Acme` can't make its certificate the resolver's default (handshakes without SNI or for another name), and `Acme::trigger` can't force a renewal. Mouser sets the default from a status watcher and calls `renew_once(true)` for its cross-process `renew-now` file.
+- G17: weirdnet-tls has no handshake-only TLS-ALPN-01 responder for when the app's own HTTPS listener isn't running; Mouser keeps a small `serve_challenge_only`.
+- G18: weirdnet-tls `FileStore` doesn't read the per-app layouts it replaces; Mouser's `migrate_legacy` copies its 1.7 files in.
 - G9: a Windows snap-layouts hit-test hook.
 - G10: a new window-chrome policy crate from Morph's `chrome.rs`.
 - G11: Wayland tiled state in winit (optional).
@@ -108,7 +127,7 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 
 ## Risks
 
-- Mixing agent 0.1 and 0.2 loads two copies of the traits, so stay on 0.1 until G8 ships.
+- Mixing agent versions loads two copies of the traits; with G8 done, keep agent, mcp and model on one agent line (0.4 today).
 - Existing data has to keep working: ACME state, model ids and paths, and MCP tool names.
 - llama.cpp packaging: either cpu-dispatch shared libraries or Morph's x86-64-v3 baseline.
 - Chromeless on Windows loses the native resize border and the snap flyout, and the caption band can clash with decoration plugin bands.
