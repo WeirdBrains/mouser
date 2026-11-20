@@ -55,7 +55,7 @@ In this order; any failure stops that install and nothing else:
 2. A size limit of 200 MB.
 3. sha256: from the lock, the release manifest or `ASSET.sha256`. Official
    items must have one.
-4. A minisign signature. Official items must verify against the WeirdBrains
+4. A minisign signature. Official items must verify against the [Weird Brains](https://weirdbrains.com)
    key pinned in Mouser (minisign key `61BA1720747F9146`,
    `RWRGkX90IBe6YaOypKF9r1wz4OqpCp3Ggb1Ag2omAzxTRaqoHzsNQSdP`). Third-party items verify against their
    author's `minisign.pub`. Mouser remembers that key the first time

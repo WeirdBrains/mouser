@@ -60,7 +60,7 @@ Homebrew checksums (`scripts/packaging.py`)
 - `check` fails on an empty or malformed sha256, a url for another version, or a missing architecture. CI runs it with `scripts/test-packaging.py`, and on macOS installs the committed formula from a local tap: `brew fetch` for both architectures (formula and cask), each download checked against its sha256, then `brew install` and `mouser --version`.
 
 `scripts/weirdnet_release.py` (shared; `release.toml`)
-- The shared WeirdBrains release script, vendored from the private `weirdnet-project-helpers` repo so CI can run it. Don't edit it here: change it there and re-vendor (`vendor.py`). Its README documents every flag and the `release.toml` format.
+- The shared [Weird Brains](https://weirdbrains.com) release script, vendored from the private `weirdnet-project-helpers` repo so CI can run it. Don't edit it here: change it there and re-vendor (`vendor.py`). Its README documents every flag and the `release.toml` format.
 - Message: one sentence becomes one bullet under `### Added` (`### Fixed` with `--patch`; `--section Changed` or a `Fixed: ` prefix to choose); `- ` bullets and `### Heading` blocks are used as written. Keep it summary level, like the rest of `CHANGELOG.md`.
 - `release.toml` bumps what earlier `release:` commits bumped: `[workspace.package] version` in `Cargo.toml`, `crates/mouser-llm/Cargo.toml` (and any member pinned to the workspace version), `Cargo.lock` if present (gitignored, so not committed), the version lines in `man/*.1`, `Current release` in `docs/HANDOVER.md` and the homepage version in `site_jaspr/lib/pages/home.dart`. The Homebrew files and `mouser-bin` PKGBUILD need the release checksums, so they stay a step 3 follow-up.
 - Refuses (exit 1, nothing written) when not on `main`, with uncommitted tracked changes, when `main` is behind or diverged from `origin/main`, when the tag exists locally or on `origin`, or when HEAD is not `--expect-head SHA`. If anything fails before the commit, the tree is put back.
@@ -205,7 +205,7 @@ wants an OpenPGP detached signature from a key in pacman's keyring for anything
 installed from a URL. Releases up to 1.3.1 have no `.sig`, so that fails with a
 404 there. Never turn signature checking off in `pacman.conf` for this.
 
-From 1.4.0 every Arch package has a `.pkg.tar.zst.sig`, made with the WeirdBrains
+From 1.4.0 every Arch package has a `.pkg.tar.zst.sig`, made with the [Weird Brains](https://weirdbrains.com)
 Mouser packages key:
 
 - fingerprint `3561BE80D8B3E767CF0B0B176318D43051C4DBBC` (ed25519, expires 2029-11-04)
@@ -247,7 +247,7 @@ release's `.sha256`, then `sudo pacman -U ./<file>`: `LocalFileSigLevel`
 (default `Optional`) checks a `.sig` beside the file only if there is one. The
 `.sha256` files stay on every release.
 
-The two signatures are different things: `.minisig` is WeirdBrains' minisign
+The two signatures are different things: `.minisig` is [Weird Brains](https://weirdbrains.com)' minisign
 signature (key `61BA1720747F9146`, for Mouser's own downloads and `plugins.lock`),
 which pacman cannot read; `.sig` is OpenPGP, what pacman checks.
 

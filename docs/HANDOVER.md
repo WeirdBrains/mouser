@@ -87,7 +87,7 @@ Commander shows a scrollable file list above the prompt after `cd`; `t` cycles v
 Only commander is described so far; wait for the maintainer before building it.
 
 ## Packaging
-CI may only use GitHub-owned or verified actions (WeirdBrains org policy); any other
+CI may only use GitHub-owned or verified actions ([Weird Brains](https://weirdbrains.com) org policy); any other
 action fails the run at startup with no jobs. The workflows install Rust with `rustup`,
 cache with `actions/cache` and publish with `gh release create` (2737875); the release
 path is untested until the next tag.
@@ -104,7 +104,7 @@ stays unless the maintainer decides otherwise.
 - Kitty graphics fallback: 8332289, 5628141, 529c968, 75e5bcf, docs f9212d7.
 - Command-line launching and xdg-terminal-exec desktop entry: 88e50c1; CI fixes
   2737875 (actions policy), 5da1891 (non-Linux warning), 4b70ea7 (Windows test).
-- Arch packaging (mouser-git, mouser-bin) and URL move to WeirdBrains: see Packaging.
+- Arch packaging (mouser-git, mouser-bin) and URL move to [Weird Brains](https://weirdbrains.com): see Packaging.
 - Selection, copy and paste: 3acc2a1 (model `mouser-core/src/selection.rs`, app glue
   `mouser-app/src/select.rs`, renderer hooks), c21b8c0 (paste sanitising, Shift+Insert),
   022c8a6 (smithay-clipboard: Hyprland ignores `wl-copy --primary` over data-control, so
