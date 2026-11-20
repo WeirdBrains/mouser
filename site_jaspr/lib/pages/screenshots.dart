@@ -1,6 +1,8 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/server.dart';
 
+import '../components/weird_brains.dart';
+
 class ScreenshotsPage extends StatelessComponent {
   const ScreenshotsPage({super.key});
 
@@ -160,6 +162,7 @@ class ScreenshotsPage extends StatelessComponent {
       a(href: '../', [
       .text('mouser.weirdbrains.com'),
       ]),
+      weirdBrainsCredit(),
       ]),
       script(src: '../main.js'),
     ]);

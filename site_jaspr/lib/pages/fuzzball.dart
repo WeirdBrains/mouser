@@ -1,6 +1,8 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/server.dart';
 
+import '../components/weird_brains.dart';
+
 class FuzzballPage extends StatelessComponent {
   const FuzzballPage({super.key});
 
@@ -382,8 +384,10 @@ class FuzzballPage extends StatelessComponent {
       a(href: 'https://github.com/WeirdBrains/fuzzball/blob/main/LICENSE', [
       .text('BSD-3-Clause'),
       ]),
-      .text(' · © 2026 Weird Brains'),
+      .text(' · © 2026 '),
+      weirdBrainsLink('Weird Brains LLC'),
       ]),
+      weirdBrainsCredit(),
       ]),
       script(src: '../main.js'),
     ]);

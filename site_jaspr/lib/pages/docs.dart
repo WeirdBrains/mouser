@@ -1,6 +1,7 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/server.dart';
 
+import '../components/weird_brains.dart';
 import '../docs/catalog.dart';
 
 /// Shared chrome for generated docs pages (matches scripts/build_docs.py).
@@ -64,6 +65,7 @@ class DocsChrome extends StatelessComponent {
           .text('docs/'),
         ]),
         .text(' on main. Do not edit by hand.'),
+        weirdBrainsCredit(),
       ]),
       script(src: '${up}main.js'),
     ]);

@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Every page of mouser.weirdbrains.com now says "A [Weird Brains](https://weirdbrains.com) project" in its footer, linking to weirdbrains.com.
 - Packages and crates name [Weird Brains LLC](https://weirdbrains.com) as the publisher and copyright holder: LICENSE, crate authors, `.deb`/`.rpm` vendor and maintainer, the Windows installer publisher, the macOS app's copyright and the AppStream metainfo developer.
 
 ## [1.7.0] - 2026-11-11
