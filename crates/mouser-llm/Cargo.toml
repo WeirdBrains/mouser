@@ -4,6 +4,7 @@ description = "Mouser's built-in local model: llama.cpp (Vulkan/Metal) behind th
 version = "1.7.0"
 edition = "2024"
 license = "BSD-3-Clause"
+authors.workspace = true
 publish = false
 
 [dependencies]

@@ -3,6 +3,7 @@ name = "mouser-engine-skia"
 edition = "2024"
 version = "0.1.0"
 license = "BSD-3-Clause"
+authors.workspace = true
 description = "Mouser's Skia renderer (engine \"skia\") as an engine library on the C ABI (mouser-engine-abi v2)"
 repository = ""
 publish = false

@@ -314,6 +314,7 @@ jobs:
             <key>CFBundleExecutable</key><string>mouser</string>
             <key>CFBundleIconFile</key><string>mouser</string>
             <key>LSMinimumSystemVersion</key><string>10.13</string>
+            <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Weird Brains LLC. BSD-3-Clause.</string>
           </dict></plist>
           PLIST
           if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then

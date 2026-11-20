@@ -3,6 +3,7 @@ name = "mouser-pty"
 edition = "2024"
 version.workspace = true
 license = "BSD-3-Clause"
+authors.workspace = true
 description = "PTY spawn and IO glue for Mouser"
 repository = ""
 

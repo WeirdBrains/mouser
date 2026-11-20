@@ -5,7 +5,7 @@
   <summary>GPU-accelerated terminal with compressed scrollback and Kitty protocol</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>BSD-3-Clause</project_license>
-  <developer_name>Mouser Contributors</developer_name>
+  <developer_name>Weird Brains LLC</developer_name>
   <launchable type="desktop-id">mouser.desktop</launchable>
   <categories>
     <category>System</category>

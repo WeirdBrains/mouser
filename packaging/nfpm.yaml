@@ -4,7 +4,8 @@ platform: linux
 version: ${VERSION}
 section: utils
 priority: optional
-maintainer: Mouser Contributors <noreply@example.com>
+maintainer: Weird Brains LLC <noreply@example.com>
+vendor: Weird Brains LLC
 description: |
   Mouser terminal emulator with chunk-compressed scrollback and Kitty protocol.
 homepage: https://github.com/WeirdBrains/mouser

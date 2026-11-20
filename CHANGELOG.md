@@ -7,6 +7,10 @@
 - Decoration calls go out together. A frame waits for the slowest reply, and no longer than 120 ms, then cancels that call. A plugin that stops stays loaded; the fourth consecutive miss quarantines it until `mouser plugin unquarantine`. `mouser plugin quarantine` does the same by hand.
 - MCP tools to move, sync, download and upload files (local and over the tab's ssh), and to list, read, switch, create, duplicate, edit and delete themes (docs/mcp.md). A deleted built-in is hidden; the last theme stays.
 
+### Changed
+
+- Packages and crates name [Weird Brains LLC](https://weirdbrains.com) as the publisher and copyright holder: LICENSE, crate authors, `.deb`/`.rpm` vendor and maintainer, the Windows installer publisher, the macOS app's copyright and the AppStream metainfo developer.
+
 ## [1.7.0] - 2026-11-11
 
 ### Added
