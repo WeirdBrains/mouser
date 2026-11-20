@@ -304,9 +304,3 @@ mouser model test gemma-local/Qwen2.5-0.5B-Instruct-Q4_K_M
   `.gguf` (with the owner in front if two repositories have the same file).
 - `MOUSER_HF_URL` points the search and downloads at another Hub (a mirror, or
   the tests' mock server).
-
-## Not yet
-
-Responses API, images, retries/backoff, listing models from the server
-(`/models`), and the `network` grant for plugin-declared hosts. The chat mode (docs/chat.md)
-uses the default model.

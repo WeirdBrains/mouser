@@ -574,8 +574,7 @@ focus navigation, so the section is mouse-only like the rest of the bar. Hit-tes
 
 Rollback point for the split: the annotated tag `pre-session-split` (adf349b).
 
-## 9. Status and gaps
-
+## 9. Performance
 
 Measured on a Linux desktop (Hyprland, 1100x760, the multi-image screen,
 ~240 drag-resize steps), after isolation: mouser 62–63 fps (frame p95 7.0 ms), skia
@@ -583,11 +582,3 @@ Measured on a Linux desktop (Hyprland, 1100x760, the multi-image screen,
 ~60 fps is the ceiling of the test. Skia's output matches the CPU reference to a few
 hundred pixels (cursor/rounding); the wgpu engine differs slightly more (its blending
 was already a little different).
-
-Gaps: no URL install (by decision: download, then install the folder); no per-engine
-options; damage is always the full frame; the frame has no text runs or font data
-(engines can't do their own shaping or subpixel text, by design for v1). Native crashes
-in any engine are survived by the session split (§8) on Linux and macOS; Windows still
-runs single-process. A UI restart loses the window's scroll-back position, an
-in-progress drag and the GPU caches; the compositor may place the new window elsewhere.
-No per-user server or re-attach from a new launch yet.

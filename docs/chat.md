@@ -290,11 +290,3 @@ Keys: `i` type, `Enter` send, `x` cancel, `m` model, `h` Hugging Face, `l` clear
 search; hosted providers are set up in the preferences mode or with
 `mouser model add`. Tested through Mouser's StdioMode with a fake provider in
 `plugins/chat/tests/through_mouser.rs`.
-
-## Not yet
-
-- The plan's **Edit** button on the card.
-- Showing cost.
-- Sending pictures to a model (vision); models' mmproj files are not installed.
-- Gated Hugging Face models (they need a Hugging Face login).
-- More than one chat at a time.

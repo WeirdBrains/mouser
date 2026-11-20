@@ -361,8 +361,3 @@ mouser plugin permissions 'mcp-server:docs' revoke
 
 `mouser mcp servers test --call` asks the same question in the terminal (y once,
 a always) and refuses without a terminal.
-
-## Not yet
-
-Resources, prompts, list-changed notifications, OAuth and a project-local
-`.mouser/mcp.toml` are not in P3 (plan questions 7 and 8).
