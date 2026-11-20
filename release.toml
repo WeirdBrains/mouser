@@ -9,9 +9,6 @@ next = [
   "python3 scripts/weirdnet_release.py assets {version}   # every platform file is on the release",
 ]
 
-[env]
-CARGO_TARGET_DIR = "target"
-
 [[files]]                       # [workspace.package] version, members on the workspace version,
 kind = "cargo-workspace"        # members pinned to the old version, and mouser-llm even if it drifted
 path = "Cargo.toml"

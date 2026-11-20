@@ -369,7 +369,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - Packaging: `MOUSER_LOCAL_LLM=1 makepkg` adds `--features local-llm`. Default deps are unchanged; the variant also needs cmake, clang, vulkan-headers, shaderc and spirv-headers.
 - No CI job for the feature, because it needs Vulkan headers and shaderc that the runners don't have. Instead it was build-checked locally: release build plus `clippy --features local-llm -D warnings`.
 - Live check (m3talsmith OK'd the E2B download, t206u):
-  - The weights were downloaded with Mouser's own downloader into `~/Projects/.models/gemma/` and verified against the published SHA256.
+  - The weights were downloaded with Mouser's own downloader into a models folder on the build machine and verified against the published SHA256.
   - Run with a temp HOME/MOUSER_HOME and `MOUSER_MODELS_DIR` pointing there.
   - Desktop GPU via Vulkan: load about 1.0 s warm, prompt 2,700-5,400 t/s, generation 91-119 t/s.
   - VRAM: 1,227 MiB baseline → 3,396 MiB peak, so about 2.2 GB for E2B plus an 8k context.
@@ -386,7 +386,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - 15b2524 app;
   - e737bed docs.
 - CI: run 41351536334, green on Linux, macOS and Windows.
-- Packages (not installed), in `~/Projects/.cache/mouser-pkg/`. Big build dirs now live on /mnt/scratch, not /tmp or ~/.cache.
+- Packages (not installed), in a scratch cache dir on the build machine. Big build dirs live on a large scratch disk, not /tmp or ~/.cache.
   - default: `mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst`;
   - local-llm: `llm/mouser-git-0.7.2.r110.ge737bed-1-x86_64.pkg.tar.zst` (depends on vulkan-icd-loader).
 - Core: `agent.rs`.
@@ -402,7 +402,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - `examples/chat_live.rs` (required feature local-llm).
 - Tests: `agent_tests` (8: allow, card once/deny/never, for-chat vs always-ask, cancel mid-stream/card/tool (the tool sees the cancel), step limit, transcript, redaction, nameless call) and `chat_render_tests` (2).
 - Live check:
-  - Temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch in `~/Projects/.cache/mouser-p5`.
+  - Temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch in a cache dir on the build machine.
   - Mock provider (loopback, port 17901) in a floating, unfocused window:
     - redacted token (`p5-1-mock-redacted.png`);
     - the `shell_run` card (`p5-2-card.png`), allowed and ran in the tab (`p5-3-allowed.png`);
@@ -425,7 +425,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
 - CI:
   - run 41356839191 failed on Windows clippy (unix-only test helpers), fixed in 4ee3e76;
   - run 41357399586 green on Linux, macOS and Windows.
-- Packages (not installed), in `~/Projects/.cache/mouser-pkg/`:
+- Packages (not installed), in a scratch cache dir on the build machine:
   - default `mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst`;
   - local-llm `llm/mouser-git-0.7.2.r116.g4ee3e76-1-x86_64.pkg.tar.zst`.
 - Core (`plugins.rs`):
@@ -459,7 +459,7 @@ Next steps: confirm CI on all OSes; live-test keys in a test window (alt+t/s/arr
   - main.rs parse test: engine X == plugin X --kind engine;
   - existing commander and engine tests unchanged.
   - Full workspace: 423 passed, 0 failed, 4 ignored.
-- Live check (release build, temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch `~/Projects/.cache/mouser-p6`):
+- Live check (release build, temp HOME/MOUSER_HOME, `SHELL=/bin/sh`, scratch in a cache dir on the build machine):
   - in the CLI: engine list == plugin list --kind engine (diff), `disable mouser` refused, `use` of a disabled skia refused;
   - in a floating, unfocused window: `esc :h` switched to hello-mode, and its program logged `activate`, `cwd`, `key time`, `key files` with the cwd; switched to `:a` and `:c`.
   - No P6 screenshots: the test window is translucent, so a region capture shows what is behind it. Captures that did were deleted at once. Next time make the test window opaque first, or capture headless.

@@ -8,11 +8,13 @@ overrides a rule and gives a reason.
 
 Shared rules live only there: straight to `main` with no pull requests, the
 quality bar, secrets, temp homes (`MOUSER_HOME`), virtual-display GUI tests on
-the build machine, the release script, and changelog style. Do not copy them here.
+the maintainer's build machine, the release script, and changelog style. Do not copy them here.
 
 ## Where to work
 
-- This checkout is `~/Projects/WeirdBrains/mouser` on the maintainer's build machine.
+- This checkout is `~/Projects/WeirdBrains/mouser` on the maintainer's build
+  machine. Host names and machine paths stay out of the repo (see the
+  collective `AGENTS.md`).
 
 ## Documentation
 
