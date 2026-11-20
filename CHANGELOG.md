@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Website: the front page shows a still image instead of the hero clip, and the MCP demo app page has fewer clips ("Demo coming soon" where a section has none), until they are re-recorded.
 - Every page of mouser.weirdbrains.com now says "A [Weird Brains](https://weirdbrains.com) project" in its footer, linking to weirdbrains.com.
 - Packages and crates name [Weird Brains LLC](https://weirdbrains.com) as the publisher and copyright holder: LICENSE, crate authors, `.deb`/`.rpm` vendor and maintainer, the Windows installer publisher, the macOS app's copyright and the AppStream metainfo developer.
 
