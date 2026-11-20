@@ -58,7 +58,11 @@ The protocol version offered is selectable. Mouser serves 2025-11-25,
 2025-06-18 and 2025-03-26, and answers with its newest for anything else. The
 Connect page then shows the status and server info.
 
-<p class="clip-soon"><em>Demo coming soon.</em></p>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/01-connect-and-tools.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/01-connect-and-tools.mp4?v=4" type="video/mp4"></video><figcaption>Connecting over HTTP, listing the tools and calling <code>tabs_list</code>.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/10-connect-https.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/10-connect-https.mp4?v=2" type="video/mp4"></video><figcaption>HTTPS on port 7802, pinning the certificate SHA-256 from <code>mouser mcp status</code>.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/11-connect-stdio.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/11-connect-stdio.mp4?v=2" type="video/mp4"></video><figcaption>stdio: the app spawns <code>mouser mcp serve --stdio</code>, which bridges to the running Mouser.</figcaption></figure>
 
 ## 4. Protocol
 
@@ -66,7 +70,7 @@ Shows the session (server info, capabilities, session id, certificate SHA-256),
 `ping` with its round trip, a JSON-RPC batch, the capability probes, a raw
 JSON-RPC console, and "End HTTP session" (`DELETE /mcp`).
 
-<p class="clip-soon"><em>Demo coming soon.</em></p>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/08-protocol-ping-batch-probes.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/08-protocol-ping-batch-probes.mp4?v=4" type="video/mp4"></video><figcaption>The Protocol page: <code>ping</code>, a JSON-RPC batch, and the probes Mouser answers with <code>-32601</code>.</figcaption></figure>
 
 ## 5. Tools
 
@@ -74,7 +78,7 @@ Lists every tool from `tools/list`, builds a form from each tool's input schema,
 and shows the result of `tools/call`. Write tools (`shell_*`,
 `files_mkdir`/`copy`/`move`/`trash`) show Mouser's approval popup first.
 
-<p class="clip-soon"><em>Demo coming soon.</em></p>
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/06-run-with-approval.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/06-run-with-approval.mp4?v=4" type="video/mp4"></video><figcaption><code>shell_run</code> waits for the approval popup in Mouser; Allow once runs it.</figcaption></figure>
 
 ## 6. Demo
 
@@ -87,9 +91,15 @@ upload API.
 Tapping a file, or a path chip in any tool result, opens a viewer for text,
 images, .docx, PDF, video and audio (Linux needs `mpv` for media).
 
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/02-read-the-terminal.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/02-read-the-terminal.mp4?v=4" type="video/mp4"></video><figcaption>Typing in Mouser, then List tabs and Read screen in the app.</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/03-files-image-pdf-docx.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/03-files-image-pdf-docx.mp4?v=4" type="video/mp4"></video><figcaption><code>files_list</code>, then the image, PDF, .docx and text viewers.</figcaption></figure>
+
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/04-video-player.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/04-video-player.mp4?v=2" type="video/mp4"></video><figcaption>Playing a video from the file list (with sound).</figcaption></figure>
 
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/05-music-player.jpg?v=2" width="1280" height="720"><source src="../../assets/demo/05-music-player.mp4?v=2" type="video/mp4"></video><figcaption>Playing music from the file list (with sound).</figcaption></figure>
+
+<figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/07-type-and-scrollback.jpg?v=4" width="1280" height="720"><source src="../../assets/demo/07-type-and-scrollback.mp4?v=4" type="video/mp4"></video><figcaption><code>shell_type</code> sends keystrokes; <code>scrollback_read</code> reads them back.</figcaption></figure>
 
 <figure class="clip"><video controls preload="none" playsinline poster="../../assets/demo/09-send-files-picker.jpg" width="1280" height="720"><source src="../../assets/demo/09-send-files-picker.mp4" type="video/mp4"></video><figcaption>Send files to Mouser: pick a local file, copy it into the tab folder, make a folder; Mouser asks first.</figcaption></figure>
 
