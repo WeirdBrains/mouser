@@ -29,14 +29,18 @@ GitHub Pages.
 - **Screenshots** gallery at `/screenshots/` (`site_jaspr/lib/pages/screenshots.dart`):
   Omarchy shots under `site/assets/screenshots/` (commander, chat, sidebar, theme
   editor, tiled).
-- **Mouser is beautiful** is the hero image on the front page,
-  `site/assets/mouser-is-beautiful-poster.png`, until the clip is re-recorded.
-  A clip goes back as a `<video>` (`autoplay` `muted` `loop` `playsinline`)
-  with that image as its `poster` attribute (no sibling poster `<img>`). Record
-  in a virtual workspace with a neutral shell prompt and no host names in view
-  (screen recordings are public too). Re-record on a Hyprland desktop with wf-recorder after
-  theme-editor features ship: use an empty workspace (e.g. 9), keep the right
-  sidebar fully in frame, and trim any MCP port-in-use toast from the start.
+- **Mouser is beautiful** is the hero clip on the front page. The files live at
+  `site/assets/mouser-is-beautiful.mp4` and `.webm` (1350x944, 60 fps), with
+  `mouser-is-beautiful-poster.png` as the video `poster` attribute (there is no
+  sibling poster `<img>` under the video). The `<video>` is `autoplay` `muted`
+  `loop` `playsinline`. Screen recordings are public too: record in a virtual
+  display (Xvfb in fresh user, mount, network, PID and UTS namespaces, nothing
+  inherited from the desktop) with a seeded demo profile: a `demo` user, host
+  name `mouser`, `HOME=/home/demo`, sample files only. Check the frames with OCR
+  for host names, home paths and real names before committing. The MCP demo
+  clips under `site/assets/demo/` (1280x720, 30 fps, H.264 with a silent AAC
+  track, a `.jpg` poster each) are recorded the same way, with Mouser on the
+  left and the Flutter demo app on the right.
 - Code blocks get a Copy button from `site/main.js` (copied into the Jaspr
   output) and scroll sideways when a line is longer than the card (never
   clipped); install cards are one per row.

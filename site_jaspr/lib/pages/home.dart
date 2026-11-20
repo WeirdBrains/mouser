@@ -75,7 +75,10 @@ class HomePage extends StatelessComponent {
       ]),
       figure(classes: 'shot beautiful', attributes: {'aria-label': 'Mouser is beautiful'}, [
       div(classes: 'media-frame hero-fill', [
-      img(src: 'assets/mouser-is-beautiful-poster.png?v=15', alt: 'Mouser is beautiful', attributes: {'width': '1350', 'height': '944'}),
+      video(id: 'beautiful-video', autoplay: true, muted: true, loop: true, preload: Preload.metadata, poster: 'assets/mouser-is-beautiful-poster.png?v=16', attributes: {'playsinline': '', 'width': '1350', 'height': '944'}, [
+      source(src: 'assets/mouser-is-beautiful.webm?v=16', type: 'video/webm'),
+      source(src: 'assets/mouser-is-beautiful.mp4?v=16', type: 'video/mp4'),
+      ]),
       ]),
       ]),
       div(classes: 'hero-meta', [
