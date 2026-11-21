@@ -8,11 +8,12 @@ Drafted Nov 18, 2026 after a read-only survey of the checkouts on the maintainer
 |---|---|---|
 | 0. Setup | Done | `3f87c0a` helpers 0.3.2 vendored (`validate` passes); `weirdnet-tls` 0.2.0 added to `[workspace.dependencies]` from crates.io in `08675df` |
 | 1. weirdnet-tls | Done | `08675df` Let's Encrypt on weirdnet-tls; `9cff03a` self-signed and PEM certificates through it (no direct `rcgen` or `rustls-pemfile` left in mouser-core) |
+| 1b. weirdnet-tls 0.3 | Done | Mouser's workarounds for G13–G18 replaced by 0.3.0 APIs |
 | 2 to 9 | Not started | |
 
 - Phase 0 takes Weirdnet crates from crates.io: each is published at its `main` (`weirdnet-tls` main is 0.2.0 plus a docs-only commit). Later phases add their crates the same way when they start.
-- Current crates.io versions on Nov 20: weirdnet-tls 0.2.0, weirdnet-agent 0.4.5, weirdnet-mcp 0.5.2, weirdnet-model 0.4.3 (older agent, mcp and model releases are yanked). mcp 0.5.2 and model 0.4.3 both need agent `^0.4`, so the version trap below is gone (G8 is done) and phases 2 to 5 use those three together.
-- Phase 1 behavior: same config keys, challenges, CLI and files directory. The store layout under `$MOUSER_HOME/mcp/acme/` is now weirdnet-tls's (`account/`, `cert/`, `state/`, one certificate set per CA); the 1.7 files are copied in on first start. Renewal follows ARI, else two thirds of the lifetime (the same 30 days before expiry for a 90-day certificate). Hooks get `MOUSER_ACME_*` and `WEIRDNET_TLS_*`. A forced renewal no longer waits out the failure back-off (weirdnet-tls behavior); the one-day guard stays.
+- Current crates.io versions on Nov 20: weirdnet-tls 0.3.0 (0.2.0 at Phase 1), weirdnet-agent 0.4.5, weirdnet-mcp 0.5.2, weirdnet-model 0.4.3 (older agent, mcp and model releases are yanked). mcp 0.5.2 and model 0.4.3 both need agent `^0.4`, so the version trap below is gone (G8 is done) and phases 2 to 5 use those three together.
+- Phase 1 behavior: same config keys, challenges, CLI and files directory. The store layout under `$MOUSER_HOME/mcp/acme/` is now weirdnet-tls's (`account/`, `cert/`, `state/`, one certificate set per CA); the 1.7 files are copied in on first start. Renewal follows ARI, else two thirds of the lifetime (the same 30 days before expiry for a 90-day certificate). Hooks get `MOUSER_ACME_*` and `WEIRDNET_TLS_*` (with 0.3 set by `HookDns::with_prefix`, so Windows hooks need no `call` wrapper). A forced renewal no longer waits out the failure back-off (weirdnet-tls behavior); the one-day guard stays.
 - Tests: `mcp_acme` runs on weirdnet-tls's `MockCa` (tls-alpn-01 and http-01 issue, hot swap from the `renew-now` trigger, schedule, back-off, 1.7 migration, hook variables), plus a `mouser mcp cert status` CLI test; mouser-core's whole suite passes.
 
 ## Summary
@@ -114,12 +115,12 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 - G6: OS keychain store and download manager (optional).
 - G7: a chunked transfer crate.
 - G8: weirdnet-mcp and weirdnet-model releases on the current agent. Done: mcp 0.5.2 and model 0.4.3 on agent `^0.4`.
-- G13: weirdnet-tls `cert::valid_name` accepts `localhost`, `*.localhost`, IP addresses and all-digit top labels, which no public CA certifies. Mouser checks those on top.
-- G14: weirdnet-tls `HookDns` sets only `WEIRDNET_TLS_*`. An app-chosen variable prefix (or extra names) would let Mouser drop the `MOUSER_ACME_*` shell wrapper in `mcp_acme::dns_hook`, which on Windows relies on `call` re-expansion.
-- G15: weirdnet-tls has no offline "next renewal" query (`Acme::load` leaves `Status::next_attempt` empty and `Acme::due` may go to the network and register an account). Mouser's `Certs::schedule` repeats the small due computation from the store for `mouser mcp cert status`.
-- G16: weirdnet-tls `Acme` can't make its certificate the resolver's default (handshakes without SNI or for another name), and `Acme::trigger` can't force a renewal. Mouser sets the default from a status watcher and calls `renew_once(true)` for its cross-process `renew-now` file.
-- G17: weirdnet-tls has no handshake-only TLS-ALPN-01 responder for when the app's own HTTPS listener isn't running; Mouser keeps a small `serve_challenge_only`.
-- G18: weirdnet-tls `FileStore` doesn't read the per-app layouts it replaces; Mouser's `migrate_legacy` copies its 1.7 files in.
+- G13: weirdnet-tls `cert::valid_name` accepts `localhost`, `*.localhost`, IP addresses and all-digit top labels, which no public CA certifies. Mouser checks those on top. **Resolved in weirdnet-tls 0.3.0:** `cert::valid_name` refuses them; Mouser calls it (`private_names` stays off).
+- G14: weirdnet-tls `HookDns` sets only `WEIRDNET_TLS_*`. An app-chosen variable prefix (or extra names) would let Mouser drop the `MOUSER_ACME_*` shell wrapper in `mcp_acme::dns_hook`, which on Windows relies on `call` re-expansion. **Resolved in weirdnet-tls 0.3.0:** `HookDns::new(hook).with_prefix("MOUSER_ACME_")`; the wrapper is gone.
+- G15: weirdnet-tls has no offline "next renewal" query (`Acme::load` leaves `Status::next_attempt` empty and `Acme::due` may go to the network and register an account). Mouser's `Certs::schedule` repeats the small due computation from the store for `mouser mcp cert status`. **Resolved in weirdnet-tls 0.3.0:** `Acme::schedule` / `acme::schedule`; `Certs::schedule` and `mouser mcp cert status` use it.
+- G16: weirdnet-tls `Acme` can't make its certificate the resolver's default (handshakes without SNI or for another name), and `Acme::trigger` can't force a renewal. Mouser sets the default from a status watcher and calls `renew_once(true)` for its cross-process `renew-now` file. **Resolved in weirdnet-tls 0.3.0:** `Acme::with_default_cert(true)` and `Acme::trigger_renewal()`; the status-watcher default and the forced `renew_once(true)` are gone.
+- G17: weirdnet-tls has no handshake-only TLS-ALPN-01 responder for when the app's own HTTPS listener isn't running; Mouser keeps a small `serve_challenge_only`. **Resolved in weirdnet-tls 0.3.0:** `Acme::serve_challenge` in `mouser mcp cert renew`; `serve_challenge_only` is gone.
+- G18: weirdnet-tls `FileStore` doesn't read the per-app layouts it replaces; Mouser's `migrate_legacy` copies its 1.7 files in. **Resolved in weirdnet-tls 0.3.0:** `store::Legacy::from_files(..).with_state(..)` and `Acme::import`; Mouser keeps only `legacy()` (the 1.7 `state.json` conversion and the same-CA check).
 - G9: a Windows snap-layouts hit-test hook.
 - G10: a new window-chrome policy crate from Morph's `chrome.rs`.
 - G11: Wayland tiled state in winit (optional).

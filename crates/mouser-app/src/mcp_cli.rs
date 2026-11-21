@@ -296,8 +296,12 @@ fn cert_status(s: &McpServerPrefs, out: &mut dyn Write) -> Result<()> {
                 Err(e) => writeln!(out, "          unusable: {e:#}")?,
             }
             let now = std::time::SystemTime::now();
-            let sch = certs.schedule(now);
-            writeln!(out, "  renew : {}", if sch.next <= now { "due now".to_string() } else { format!("after {}", mcp_acme::fmt_time(sch.next)) })?;
+            let sch = certs.schedule(now)?;
+            writeln!(
+                out,
+                "  renew : {}",
+                if sch.is_due(now) { "due now".to_string() } else { format!("after {}", mcp_acme::fmt_time(sch.next_attempt)) }
+            )?;
             if sch.failures > 0 {
                 writeln!(out, "  failed: {} time(s) in a row; last error: {}", sch.failures, sch.last_error.unwrap_or_default())?;
             }
@@ -324,7 +328,7 @@ fn cert_renew(s: &McpServerPrefs, force: bool, out: &mut dyn Write) -> Result<()
     // The running Mouser owns the HTTPS port: ask it.
     if s.enabled && s.https && std::net::TcpListener::bind((addr, s.https_port)).is_err() {
         if !force {
-            let next = mcp_acme::Certs::open(&acme, &dir)?.schedule(std::time::SystemTime::now()).next;
+            let next = mcp_acme::Certs::open(&acme, &dir)?.schedule(std::time::SystemTime::now())?.next_attempt;
             if next > std::time::SystemTime::now() {
                 writeln!(out, "not due until {} (use --force to renew anyway)", mcp_acme::fmt_time(next))?;
                 return Ok(());
@@ -346,23 +350,17 @@ fn cert_renew(s: &McpServerPrefs, force: bool, out: &mut dyn Write) -> Result<()
     };
     let certs = mcp_acme::Certs::open_with(&acme, &dir, dns, None)?;
     // Answer the challenge ourselves while Mouser isn't running.
-    let mut http01 = None;
-    match acme.challenge {
+    let challenge = match acme.challenge {
         mcp_acme::Challenge::TlsAlpn01 => {
             let (token, _) = mouser_core::secrets::mcp_token()?;
-            let l = mcp_server::bind_addr(addr, s.https_port, true, &token)?;
-            let tls = certs.server_config()?;
-            std::thread::spawn(move || mcp_acme::serve_challenge_only(l, tls));
+            Some(mcp_server::bind_addr(addr, s.https_port, true, &token)?)
         }
-        mcp_acme::Challenge::Http01 => {
-            http01 = Some(
-                std::net::TcpListener::bind((addr, acme.http_port))
-                    .map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?,
-            );
-        }
-        mcp_acme::Challenge::Dns01 => {}
-    }
-    match certs.renew_blocking(force, http01)? {
+        mcp_acme::Challenge::Http01 => Some(
+            std::net::TcpListener::bind((addr, acme.http_port)).map_err(|e| anyhow::anyhow!("http-01 listener on {addr}:{}: {e}", acme.http_port))?,
+        ),
+        mcp_acme::Challenge::Dns01 => None,
+    };
+    match certs.renew_blocking(force, challenge)? {
         mcp_acme::Outcome::Renewed(i) => {
             writeln!(out, "new certificate for {} valid until {}", acme.domains.join(", "), mcp_acme::fmt_time(i.not_after))?
         }

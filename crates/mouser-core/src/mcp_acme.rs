@@ -10,13 +10,12 @@
 //! - reading `[mcp.server.tls]` ([`AcmeConfig::from_prefs`]);
 //! - the store in `$MOUSER_HOME/mcp/acme/` (a [`FileStore`], files 0600), one
 //!   certificate set per CA so switching staging to production gets a new
-//!   certificate, and moving the files of Mouser 1.7 and earlier into it
-//!   ([`migrate_legacy`]);
-//! - the `MOUSER_ACME_*` variables for `dns_hook` (next to weirdnet-tls's
+//!   certificate, and where the files of Mouser 1.7 and earlier were
+//!   ([`legacy`], imported with [`Acme::import`]);
+//! - the `MOUSER_ACME_` prefix for `dns_hook` variables (next to weirdnet-tls's
 //!   `WEIRDNET_TLS_*`);
 //! - the `renew-now` file `mouser mcp cert renew` drops for the running app
-//!   ([`trigger_path`]), and the handshake-only listener it answers
-//!   `tls-alpn-01` on while Mouser isn't running ([`serve_challenge_only`]).
+//!   ([`trigger_path`]).
 
 use anyhow::{Result, bail};
 use std::net::TcpListener;
@@ -24,8 +23,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use weirdnet_tls::instant_acme::HttpClient;
-use weirdnet_tls::renew::{self, Persisted};
-use weirdnet_tls::{Acme, CertInfo, CertPair, CertStore, Directory, FileStore, HookDns, store};
+use weirdnet_tls::renew::Persisted;
+pub use weirdnet_tls::renew::Schedule;
+use weirdnet_tls::store::{self, Legacy};
+use weirdnet_tls::{Acme, CertInfo, Directory, FileStore, HookDns};
 pub use weirdnet_tls::{ChallengeKind as Challenge, DnsChallenge, DnsRecord, ManualDns, Outcome, Resolver, Status};
 
 /// The `mcp.server.tls.challenge` values.
@@ -55,17 +56,6 @@ pub struct AcmeConfig {
     pub dns_hook: Option<String>,
 }
 
-/// Whether `d` is a public DNS name a CA will certify: weirdnet-tls's name
-/// check, plus no `localhost`, IP address or all-digit top label.
-fn valid_domain(d: &str, wildcard_ok: bool) -> bool {
-    let base = d.strip_prefix("*.").unwrap_or(d);
-    weirdnet_tls::cert::valid_name(d, wildcard_ok)
-        && base != "localhost"
-        && !base.ends_with(".localhost")
-        && base.parse::<std::net::IpAddr>().is_err()
-        && !base.rsplit('.').next().unwrap_or("").bytes().all(|b| b.is_ascii_digit())
-}
-
 impl AcmeConfig {
     pub fn from_prefs(t: &crate::storage::McpTlsPrefs) -> Result<Self> {
         let challenge = parse_challenge(t.challenge.as_deref().unwrap_or("tls-alpn-01"))?;
@@ -84,7 +74,7 @@ impl AcmeConfig {
             bail!("mcp.server.tls.domains: at most 100 names");
         }
         for d in &domains {
-            if !valid_domain(d, challenge == Challenge::Dns01) {
+            if !weirdnet_tls::cert::valid_name(d, challenge == Challenge::Dns01) {
                 bail!(
                     "mcp.server.tls.domains: {d:?} is not a public DNS name{}",
                     if d.starts_with("*.") { " (wildcards need challenge = \"dns-01\")" } else { "" }
@@ -190,55 +180,22 @@ fn from_unix(s: u64) -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(s)
 }
 
-/// Copies the account, certificate and renewal state Mouser 1.7 and earlier
-/// kept in `dir` (`account-<id>.json`, `cert.pem`, `key.pem`, `state.json`)
-/// into `store` for `cfg`, unless the store already has them. The old files
-/// stay. True when something was copied.
-pub fn migrate_legacy(dir: &Path, cfg: &AcmeConfig, st: &dyn CertStore) -> Result<bool> {
-    let mut moved = false;
-    let account = dir.join(format!("account-{}.json", short_hash(&cfg.directory, 6)));
-    let key = store::account_key(&cfg.directory);
-    if account.is_file() && st.get(&key)?.is_none() {
-        st.put(&key, &std::fs::read(&account)?)?;
-        moved = true;
-    }
+/// What Mouser 1.7 and earlier kept in `dir` for `cfg`'s CA:
+/// `account-<id>.json`, and `cert.pem`, `key.pem` and `state.json` when the
+/// certificate came from that CA. For [`Acme::import`], which never overwrites.
+pub fn legacy(dir: &Path, cfg: &AcmeConfig) -> Result<Legacy> {
     let old: LegacyState = std::fs::read(dir.join("state.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-    let set = cfg.set_id();
+    let account = dir.join(format!("account-{}.json", short_hash(&cfg.directory, 6)));
     let (c, k) = (dir.join("cert.pem"), dir.join("key.pem"));
-    if old.directory.as_deref().is_none_or(|d| d == cfg.directory) && c.is_file() && k.is_file() && store::load_cert(st, &set)?.is_none() {
-        let pair = CertPair { chain_pem: std::fs::read_to_string(&c)?, key_pem: std::fs::read_to_string(&k)? };
-        if weirdnet_tls::cert::certified_key(&pair).is_ok() {
-            store::save_cert(st, &set, &pair)?;
-            let state = store::state_key(&set);
-            if store::get_json::<Persisted>(st, &state)?.is_none() {
-                let p = Persisted {
-                    failures: old.failures,
-                    last_failure: old.last_failure.map(from_unix),
-                    last_error: old.last_error,
-                    last_issued: old.last_issued.map(from_unix),
-                    ..Persisted::default()
-                };
-                store::put_json(st, &state, &p)?;
-            }
-            moved = true;
-        }
-    }
-    Ok(moved)
-}
-
-/// Runs `dns_hook` with weirdnet-tls's `WEIRDNET_TLS_*` variables and
-/// Mouser's `MOUSER_ACME_ACTION`, `_DOMAIN`, `_NAME` and `_TXT` copied from them.
-pub fn dns_hook(hook: &str) -> HookDns {
-    let vars = ["ACTION", "DOMAIN", "NAME", "TXT"];
-    let command = if cfg!(windows) {
-        // `call` expands the hook's own %MOUSER_ACME_*% after the `set`s.
-        let sets: Vec<String> = vars.iter().map(|v| format!("set \"MOUSER_ACME_{v}=%WEIRDNET_TLS_{v}%\"")).collect();
-        format!("{} & call {hook}", sets.join(" & "))
-    } else {
-        let exports: Vec<String> = vars.iter().map(|v| format!("MOUSER_ACME_{v}=\"$WEIRDNET_TLS_{v}\"")).collect();
-        format!("export {}\n{hook}", exports.join(" "))
-    };
-    HookDns::new(command)
+    let same_ca = old.directory.as_deref().is_none_or(|d| d == cfg.directory);
+    let l = if same_ca { Legacy::from_files(Some(&account), Some(&c), Some(&k))? } else { Legacy::from_files(Some(&account), None, None)? };
+    Ok(l.with_state(Persisted {
+        failures: old.failures,
+        last_failure: old.last_failure.map(from_unix),
+        last_error: old.last_error,
+        last_issued: old.last_issued.map(from_unix),
+        ..Persisted::default()
+    }))
 }
 
 /// Makes the client factory weirdnet-tls talks to the CA through (tests).
@@ -259,17 +216,6 @@ impl std::fmt::Debug for Certs {
     }
 }
 
-/// When the next renewal is due, read from the store without the network.
-#[derive(Debug, Clone)]
-pub struct Schedule {
-    /// The stored certificate.
-    pub cert: Option<CertInfo>,
-    /// The next attempt (now when overdue).
-    pub next: SystemTime,
-    pub failures: u32,
-    pub last_error: Option<String>,
-}
-
 impl Certs {
     /// The app's setup: `dns-01` through `dns_hook`, or failing with a hint to
     /// run `mouser mcp cert renew` when there is none.
@@ -280,20 +226,25 @@ impl Certs {
     /// [`Certs::open`] with another `dns-01` publisher and CA client.
     pub fn open_with(cfg: &AcmeConfig, dir: &Path, dns: Option<Arc<dyn DnsChallenge>>, client: Option<ClientFactory>) -> Result<Self> {
         let store = Arc::new(FileStore::new(dir));
-        if let Err(e) = migrate_legacy(dir, cfg, &*store) {
-            log::warn!("acme: moving the old certificate files: {e:#}");
-        }
-        let dns = dns.unwrap_or_else(|| match &cfg.dns_hook {
-            Some(h) => Arc::new(dns_hook(h)),
-            None => Arc::new(ManualDns::new(|_| {
-                Err(weirdnet_tls::Error::Challenge(
-                    "dns-01 needs mcp.server.tls.dns_hook, or run `mouser mcp cert renew` to add the TXT record by hand".into(),
-                ))
-            })),
-        });
-        let mut acme = Acme::new(cfg.to_weirdnet(), store.clone(), Arc::new(Resolver::new()))?.with_dns(dns);
+        let dns = dns.map_or_else(
+            || -> Result<Arc<dyn DnsChallenge>> {
+                Ok(match &cfg.dns_hook {
+                    Some(h) => Arc::new(HookDns::new(h.as_str()).with_prefix("MOUSER_ACME_")?),
+                    None => Arc::new(ManualDns::new(|_| {
+                        Err(weirdnet_tls::Error::Challenge(
+                            "dns-01 needs mcp.server.tls.dns_hook, or run `mouser mcp cert renew` to add the TXT record by hand".into(),
+                        ))
+                    })),
+                })
+            },
+            Ok,
+        )?;
+        let mut acme = Acme::new(cfg.to_weirdnet(), store.clone(), Arc::new(Resolver::new()))?.with_dns(dns).with_default_cert(true);
         if let Some(f) = client {
             acme = acme.with_http_client(f);
+        }
+        if let Err(e) = legacy(dir, cfg).and_then(|l| Ok(acme.import(&l)?)) {
+            log::warn!("acme: copying the Mouser 1.7 certificate files: {e:#}");
         }
         Ok(Self { cfg: cfg.clone(), dir: dir.to_path_buf(), store, acme: Arc::new(acme) })
     }
@@ -306,36 +257,23 @@ impl Certs {
     /// Serves the stored certificate, also to handshakes without a known name
     /// (an IP address, no SNI), as Mouser did before weirdnet-tls.
     pub fn load(&self) -> Result<Option<CertInfo>> {
-        let info = self.acme.load()?;
-        install_default(&self.acme);
-        Ok(info)
+        Ok(self.acme.load()?)
     }
 
-    /// The next renewal from the stored certificate, its cached ACME Renewal
-    /// Information window and the failure back-off; no network.
-    pub fn schedule(&self, now: SystemTime) -> Schedule {
-        let set = self.cfg.set_id();
-        let st: Persisted = store::get_json(&*self.store, &store::state_key(&set)).ok().flatten().unwrap_or_default();
-        let cert = self.acme.stored().ok().flatten().map(|(_, i)| i);
-        let due = match &cert {
-            Some(c) if self.cfg.domains.iter().all(|d| c.names.contains(&weirdnet_tls::cert::normalize(d))) => match (&st.ari, &c.ari_id) {
-                (Some((id, w)), Some(cid)) if id == cid => renew::pick(*w, &c.serial),
-                _ => renew::fallback(c.not_before, c.not_after),
-            },
-            _ => now,
-        };
-        Schedule { cert, next: renew::next_attempt(due, &st), failures: st.failures, last_error: st.last_error }
+    /// The next renewal from the store; no network.
+    pub fn schedule(&self, now: SystemTime) -> Result<Schedule> {
+        Ok(self.acme.schedule(now)?)
     }
 
     /// One renewal pass on this thread (`mouser mcp cert renew`): answers
-    /// `http-01` on `http01` while it runs.
-    pub fn renew_blocking(&self, force: bool, http01: Option<TcpListener>) -> Result<Outcome> {
+    /// `tls-alpn-01` or `http-01` on `challenge` alone while it runs.
+    pub fn renew_blocking(&self, force: bool, challenge: Option<TcpListener>) -> Result<Outcome> {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
         rt.block_on(async {
-            let srv = match http01 {
+            let srv = match challenge {
                 Some(l) => {
                     l.set_nonblocking(true)?;
-                    Some(weirdnet_tls::challenge::serve_http01(tokio::net::TcpListener::from_std(l)?, self.acme.http01().clone()))
+                    Some(self.acme.serve_challenge(tokio::net::TcpListener::from_std(l)?)?)
                 }
                 None => None,
             };
@@ -356,7 +294,8 @@ impl Certs {
 
     /// Background renewal for the running app: serves the stored certificate,
     /// answers `http-01` on `http01`, renews when due (weirdnet-tls
-    /// [`Acme::spawn`]), and renews now when [`trigger_path`] appears.
+    /// [`Acme::spawn`]), and renews now ([`Acme::trigger_renewal`]) when
+    /// [`trigger_path`] appears.
     pub fn spawn_renewer(&self, http01: Option<TcpListener>) -> std::thread::JoinHandle<()> {
         self.spawn_renewer_polling(http01, TRIGGER_POLL)
     }
@@ -381,11 +320,9 @@ impl Certs {
                         }
                     }
                     let mut rx = acme.watch();
-                    let a = acme.clone();
                     tokio::spawn(async move {
                         let mut last = (rx.borrow().not_after, rx.borrow().failures);
                         while rx.changed().await.is_ok() {
-                            install_default(&a);
                             let s = rx.borrow_and_update().clone();
                             if (s.not_after, s.failures) != last {
                                 match (&s.last_error, s.not_after) {
@@ -402,38 +339,13 @@ impl Certs {
                     let _renewer = acme.clone().spawn();
                     loop {
                         tokio::time::sleep(poll).await;
-                        if std::fs::remove_file(trigger_path(&dir)).is_ok()
-                            && let Err(e) = acme.renew_once(true).await
-                        {
-                            log::warn!("acme: renewal asked for by `mouser mcp cert renew`: {e}");
+                        if std::fs::remove_file(trigger_path(&dir)).is_ok() {
+                            acme.trigger_renewal();
                         }
                     }
                 })
             })
             .expect("spawn mcp-acme")
-    }
-}
-
-/// Makes the stored certificate the resolver's default too.
-fn install_default(acme: &Acme) {
-    if let Ok(Some((pair, _))) = acme.stored()
-        && let Ok((key, info)) = weirdnet_tls::cert::certified_key(&pair)
-    {
-        acme.resolver().set_default(key, info.not_after);
-    }
-}
-
-/// TLS handshakes only, for answering tls-alpn-01 while Mouser isn't running
-/// (`mouser mcp cert renew`): no HTTP, no MCP.
-pub fn serve_challenge_only(l: TcpListener, tls: Arc<rustls::ServerConfig>) {
-    for c in l.incoming().flatten() {
-        let _ = c.set_read_timeout(Some(Duration::from_secs(10)));
-        if let Ok(conn) = rustls::ServerConnection::new(tls.clone()) {
-            let mut t = rustls::StreamOwned::new(conn, c);
-            let _ = t.conn.complete_io(&mut t.sock);
-            t.conn.send_close_notify();
-            let _ = t.conn.complete_io(&mut t.sock);
-        }
     }
 }
 
@@ -454,8 +366,8 @@ pub fn cert_file(dir: &Path, cfg: &AcmeConfig) -> PathBuf {
 mod tests {
     use super::*;
     use crate::storage::McpTlsPrefs;
-    use weirdnet_tls::Source;
     use weirdnet_tls::testing::MockCa;
+    use weirdnet_tls::{CertStore, Source};
 
     const DOMAIN: &str = "mcp.example.test";
 
@@ -515,13 +427,12 @@ mod tests {
         let certs = certs(&ca, &c, dir.path());
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         ca.validate_tls_alpn_at(l.local_addr().unwrap());
-        let tls = certs.server_config().unwrap();
-        std::thread::spawn(move || serve_challenge_only(l, tls));
         assert!(certs.load().unwrap().is_none());
         assert!(served(certs.acme.resolver(), Some(DOMAIN)).is_none(), "no certificate, no TLS");
-        assert!(certs.schedule(SystemTime::now()).next <= SystemTime::now(), "due now");
+        assert!(certs.schedule(SystemTime::now()).unwrap().is_due(SystemTime::now()), "due now");
 
-        let Outcome::Renewed(info) = certs.renew_blocking(false, None).unwrap() else { panic!("not issued") };
+        // Answered on a challenge-only listener, as `mouser mcp cert renew` does.
+        let Outcome::Renewed(info) = certs.renew_blocking(false, Some(l)).unwrap() else { panic!("not issued") };
         assert_eq!(info.names, [DOMAIN]);
         assert_eq!(ca.validations(), [(DOMAIN.to_string(), "tls-alpn-01".to_string())]);
         assert_eq!(served(certs.acme.resolver(), Some(DOMAIN)), Some(info.der.clone()));
@@ -533,9 +444,10 @@ mod tests {
         assert_eq!(again.load().unwrap().unwrap().der, info.der);
         assert_eq!(served(again.acme.resolver(), None), Some(info.der.clone()), "no SNI");
         assert_eq!(served(again.acme.resolver(), Some("192.0.2.1")), Some(info.der.clone()), "another name");
-        let s = again.schedule(SystemTime::now());
+        let s = again.schedule(SystemTime::now()).unwrap();
         let life = info.lifetime();
-        assert!(s.next >= info.not_before + life * 2 / 3 && s.next <= info.not_before + life * 3 / 4, "{:?}", s.next);
+        let next = s.next_attempt;
+        assert!(next >= info.not_before + life * 2 / 3 && next <= info.not_before + life * 3 / 4, "{next:?}");
         assert!(matches!(certs.renew_blocking(false, None).unwrap(), Outcome::NotDue(_)));
         let e = certs.renew_blocking(true, None).unwrap_err();
         assert!(format!("{e:#}").contains("less than a day ago"), "{e:#}");
@@ -561,9 +473,9 @@ mod tests {
         let certs = certs(&ca, &cfg(Challenge::Dns01), dir.path());
         let e = certs.renew_blocking(false, None).unwrap_err();
         assert!(format!("{e:#}").contains("dns_hook"), "{e:#}");
-        let s = certs.schedule(SystemTime::now());
+        let s = certs.schedule(SystemTime::now()).unwrap();
         assert_eq!(s.failures, 1);
-        assert!(s.next > SystemTime::now() + Duration::from_secs(3500), "backs off an hour");
+        assert!(s.next_attempt > SystemTime::now() + Duration::from_secs(3500), "backs off an hour");
     }
 
     #[test]
@@ -606,28 +518,35 @@ mod tests {
     }
 
     #[test]
-    fn mouser_1_7_files_move_into_the_store() {
-        let dir = tempfile::tempdir().unwrap();
+    fn mouser_1_7_files_are_imported() {
+        // A real account from the CA, as 1.7 kept it.
+        let ca = MockCa::new();
         let c = cfg(Challenge::TlsAlpn01);
+        let scratch = tempfile::tempdir().unwrap();
+        let reg = certs(&ca, &c, scratch.path());
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(reg.acme.account()).unwrap();
+        let creds = reg.store.get(&store::account_key(&c.directory)).unwrap().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
         let pair = weirdnet_tls::cert::self_signed(&[DOMAIN.to_string()], 90).unwrap();
         std::fs::write(dir.path().join("cert.pem"), &pair.chain_pem).unwrap();
         std::fs::write(dir.path().join("key.pem"), &pair.key_pem).unwrap();
-        let acct = format!("account-{}.json", short_hash(&c.directory, 6));
-        std::fs::write(dir.path().join(&acct), br#"{"id":"x"}"#).unwrap();
+        std::fs::write(dir.path().join(format!("account-{}.json", short_hash(&c.directory, 6))), &creds).unwrap();
         let state = format!(
             r#"{{"failures":2,"last_failure":1900000000,"last_error":"boom","last_issued":1890000000,"domains":["{DOMAIN}"],"directory":"{}"}}"#,
             c.directory
         );
         std::fs::write(dir.path().join("state.json"), state).unwrap();
 
-        let s = FileStore::new(dir.path());
-        assert!(migrate_legacy(dir.path(), &c, &s).unwrap());
-        assert_eq!(store::load_cert(&s, &c.set_id()).unwrap(), Some(pair.clone()));
-        assert_eq!(s.get(&store::account_key(&c.directory)).unwrap().unwrap(), br#"{"id":"x"}"#);
-        let p: Persisted = store::get_json(&s, &store::state_key(&c.set_id())).unwrap().unwrap();
+        let certs = certs(&ca, &c, dir.path());
+        let s = &*certs.store;
+        assert_eq!(store::load_cert(s, &c.set_id()).unwrap(), Some(pair.clone()));
+        assert_eq!(s.get(&store::account_key(&c.directory)).unwrap().unwrap(), creds);
+        let p: Persisted = store::get_json(s, &store::state_key(&c.set_id())).unwrap().unwrap();
         assert_eq!((p.failures, p.last_error.as_deref(), p.last_issued), (2, Some("boom"), Some(from_unix(1_890_000_000))));
-        assert!(!migrate_legacy(dir.path(), &c, &s).unwrap(), "once");
+        assert!(!certs.acme.import(&legacy(dir.path(), &c).unwrap()).unwrap().any(), "once");
         assert!(dir.path().join("cert.pem").is_file(), "old files stay");
+        assert_eq!(certs.load().unwrap().unwrap().names, [DOMAIN]);
 
         // A certificate from another CA stays where it is.
         let other = tempfile::tempdir().unwrap();
@@ -635,9 +554,9 @@ mod tests {
             std::fs::copy(dir.path().join(f), other.path().join(f)).unwrap();
         }
         let prod = AcmeConfig { directory: weirdnet_tls::acme::LETS_ENCRYPT.into(), ..c.clone() };
-        let s = FileStore::new(other.path());
-        assert!(!migrate_legacy(other.path(), &prod, &s).unwrap());
-        assert!(store::load_cert(&s, &prod.set_id()).unwrap().is_none());
+        assert!(legacy(other.path(), &prod).unwrap().cert.is_none());
+        let p = Certs::open_with(&prod, other.path(), None, None).unwrap();
+        assert!(store::load_cert(&*p.store, &prod.set_id()).unwrap().is_none());
     }
 
     #[cfg(unix)]
@@ -645,10 +564,12 @@ mod tests {
     fn dns_hook_gets_both_sets_of_variables() {
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("hook.txt");
-        let hook = dns_hook(&format!(
+        let hook = HookDns::new(format!(
             "echo \"$MOUSER_ACME_ACTION $MOUSER_ACME_DOMAIN $MOUSER_ACME_NAME $MOUSER_ACME_TXT $WEIRDNET_TLS_TXT\" >> {}",
             out.display()
-        ));
+        ))
+        .with_prefix("MOUSER_ACME_")
+        .unwrap();
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         rt.block_on(async {
             hook.present(&DnsRecord::new("*.example.com", "abc")).await.unwrap();
@@ -658,7 +579,7 @@ mod tests {
             std::fs::read_to_string(&out).unwrap(),
             "present example.com _acme-challenge.example.com abc abc\ncleanup example.com _acme-challenge.example.com abc abc\n"
         );
-        let fail = dns_hook("exit 3");
+        let fail = HookDns::new("exit 3");
         assert!(rt.block_on(fail.present(&DnsRecord::new("example.com", "x"))).is_err());
     }
 }
