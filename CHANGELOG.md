@@ -9,6 +9,7 @@
 
 ### Changed
 
+- MCP server: JSON-RPC handling and the `mouser mcp serve --stdio` bridge now come from the shared [weirdnet-mcp](https://crates.io/crates/weirdnet-mcp) crate (0.5); Mouser keeps its listener, sessions, token and Host/Origin checks. Tool names, parameters and annotations are unchanged, and parameters that had no description now have one. `initialize` also accepts protocol 2024-11-05, and an unknown version is answered with 2025-06-18 (was 2025-11-25, which is still served when asked for). A bridge request that can't reach Mouser now fails with JSON-RPC error -32603 (was -32000).
 - MCP server: Let's Encrypt certificates now come from the shared [weirdnet-tls](https://crates.io/crates/weirdnet-tls) crate (0.3). Renewal follows the CA's renewal window (ACME Renewal Information), else two thirds into the certificate's lifetime; the stored account, certificate and state are moved over on the first start; `dns_hook` also gets `WEIRDNET_TLS_*` variables, and on Windows runs without a wrapper, so `%MOUSER_ACME_TXT%` expands directly. A forced renewal no longer waits out the back-off after failures.
 - Website: the "Mouser is beautiful" hero clip and the MCP demo app clips 01–03, 06–08, 10 and 11 are back, re-recorded on Linux in a virtual display with a seeded demo profile (`demo@mouser`, sample files only).
 - Every page of mouser.weirdbrains.com now says "A [Weird Brains](https://weirdbrains.com) project" in its footer, linking to weirdbrains.com.

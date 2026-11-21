@@ -9,7 +9,8 @@ Drafted Nov 18, 2026 after a read-only survey of the checkouts on the maintainer
 | 0. Setup | Done | `3f87c0a` helpers 0.3.2 vendored (`validate` passes); `weirdnet-tls` 0.2.0 added to `[workspace.dependencies]` from crates.io in `08675df` |
 | 1. weirdnet-tls | Done | `08675df` Let's Encrypt on weirdnet-tls; `9cff03a` self-signed and PEM certificates through it (no direct `rcgen` or `rustls-pemfile` left in mouser-core) |
 | 1b. weirdnet-tls 0.3 | Done | Mouser's workarounds for G13–G18 replaced by 0.3.0 APIs |
-| 2 to 9 | Not started | |
+| 2. weirdnet-mcp server core | Done | JSON-RPC dispatch through weirdnet-mcp `Server::handle`, the 27 tools as annotated `ToolSpec`s, golden `tools/list` test, stdio bridge on `weirdnet_mcp::stdio::bridge` (G19 to G21 below) |
+| 3 to 10 | Not started | |
 
 - Phase 0 takes Weirdnet crates from crates.io: each is published at its `main` (`weirdnet-tls` main is 0.2.0 plus a docs-only commit). Later phases add their crates the same way when they start.
 - Current crates.io versions on Nov 20: weirdnet-tls 0.3.0 (0.2.0 at Phase 1), weirdnet-agent 0.4.5, weirdnet-mcp 0.5.2, weirdnet-model 0.4.3 (older agent, mcp and model releases are yanked). mcp 0.5.2 and model 0.4.3 both need agent `^0.4`, so the version trap below is gone (G8 is done) and phases 2 to 5 use those three together.
@@ -81,7 +82,10 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 
 0. **Setup, about half a day. Done.** Re-vendor helpers 0.3.2. Add workspace weirdnet deps as git main for development; releases pin `=X.Y.Z` from crates.io. (Done with crates.io versions, which match main.)
 1. **weirdnet-tls replaces `mcp_acme.rs`, 1.5 to 2 days. Done.** Keep or migrate `$MOUSER_HOME/mcp/acme/`, use `Resolver`, map `mouser mcp cert renew` onto it. Test with `MockCa` and a hot swap. Behavior doesn't change.
-2. **weirdnet-mcp server core, 1.5 days.** Dispatch through `Server::handle`, turn the tools into annotated `ToolSpec`s, and add golden `tools/list` tests so clients keep working.
+2. **weirdnet-mcp server core, 1.5 days. Done.** Dispatch through `Server::handle`, turn the tools into annotated `ToolSpec`s, and add golden `tools/list` tests so clients keep working.
+   - `mcp_server.rs` keeps the transport (listener, `Mcp-Session-Id` sessions, bearer token, Host/Origin checks, body and connection caps, TLS) and hands each message to weirdnet-mcp. Its `Tools` trait is a thin shim over weirdnet-mcp's table that adds the session's client name (G20).
+   - `mcp_tools.rs` is a static `ToolSpec` table. Tool names, parameter names and types, required lists and annotations are unchanged; parameters that had no description now have one (weirdnet-mcp always writes one). The golden file is `crates/mouser-app/tests/golden/mcp_tools_list.json`.
+   - Behavior: an `initialize` asking for 2025-11-25 still gets it (shim until G19); an unknown version now gets weirdnet-mcp's newest (2025-06-18, was 2025-11-25), and 2024-11-05 is accepted. Tool results always carry `structuredContent` (Mouser's tools all return objects, so nothing changes for them). A failed bridge request is JSON-RPC error -32603 (was -32000), same message.
 3. **weirdnet-model for local models, 3 to 4 days.** Map `local-llm` onto `weirdnet-model/llama` (vulkan on Linux, metal on macOS). Keep the per-repo model folder layout. Remove `mouser-llm`. Test with the mock engine and a mock Hub.
 4. **weirdnet-mcp client, 2 days, after G3.**
 5. **weirdnet-agent for chat, 4 to 5 days.** Use agent 0.4 with mcp 0.5 and model 0.4 (was: pin agent 0.1.0). Port `Chat` to `AgentSession`, with terminal and screen as local tools and MCP through `McpSource`, following Morph's `mcp_runtime.rs`. Hosted providers go through a `ModelBackend` adapter. The chat UI and chat file format stay the same.
@@ -104,6 +108,13 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
    - Upstream a generic op-log store (G12) instead of copying Morph's SQLite version.
    - Morph's own sync wiring is still settling: it had persistence fixes on Nov 18.
 9. **Later:** UI colors from weirdnet-themes (after G5), and plugins on weirdnet-ext (major version).
+10. **Agent mode on the Ymir model pool (decided by m3talsmith, Nov 20, 2026; not started).**
+   - Goal: Mouser's agent mode can run larger models than one machine holds. Its model calls go to the Ymir model pool through weirdnet-agent.
+   - The pool sits alongside Mouser's local model and doesn't replace it. Agent mode gets a model selector that lists every available model, local and remote (the Ymir pool), and the user picks one. Local models keep working with no pool.
+   - Pool discovery and inference belong in weirdnet-agent. Mouser lists the models weirdnet-agent reports and passes the user's choice; it has no Ymir client code of its own. Anything weirdnet-agent lacks when this starts becomes an upstream gap first.
+   - There is no HTTPS or API-key endpoint for the pool, so Mouser configures no URL or key for it. Access, and whatever device trust it needs, comes through weirdnet-agent (if that needs Phase 8's identity, this waits for it).
+   - Builds on Phase 5 (chat on weirdnet-agent `AgentSession`). The chat UI and chat file format stay the same; a chat records which model it used.
+   - Tests: a mock pool from weirdnet-agent's test support; the selector lists local and pool models; a picked pool model receives the calls; with no pool only local models show.
 
 ## Upstream gaps (in weirdnet first)
 
@@ -125,6 +136,9 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 - G10: a new window-chrome policy crate from Morph's `chrome.rs`.
 - G11: Wayland tiled state in winit (optional).
 - G12: a persistent op-log store for apps.
+- G19: weirdnet-mcp `PROTOCOL_VERSIONS` lacks MCP 2025-11-25, which Mouser served before Phase 2, and the list can't be extended by the app. Mouser's shim (`EXTRA_VERSIONS` in `mcp_server.rs`) writes the asked version back into the `initialize` reply. Wanted: 2025-11-25 in the list, or a `ServerInfo` field for the versions served.
+- G20: weirdnet-mcp `Tools::call` gets only the bearer token, not the caller. Mouser's permission broker keys approvals on the MCP session's client name (`mcp:<client>`), so Mouser's `Tools` trait adds it and a per-request adapter (`ForClient`) binds it. Wanted: a caller context in `Tools::call` (token plus client name or session id), or a session-aware `handle`.
+- G21 (optional): a blocking (no tokio) Streamable HTTP front end for weirdnet-mcp: `Mcp-Session-Id` sessions with the client name, bearer check in constant time, Host/Origin allowlist against DNS rebinding, body and connection caps, TLS through weirdnet-tls. Mouser keeps its own in `mcp_server.rs` until then.
 
 ## Risks
 
@@ -146,4 +160,4 @@ All testing is headless. Each phase is a small commit to `main` with a CHANGELOG
 - Override variable: `MOUSER_WINDOW_BUTTONS` or a shared `WEIRDNET_WINDOW_BUTTONS`. My default is the shared name, with a Mouser config key on top.
 - llama.cpp for releases: cpu-dispatch or an x86-64-v3 baseline. My default is Morph's x86-64-v3 baseline.
 - Hosted model adapters: upstream them or keep them in Mouser. My default is to keep them in Mouser for now and upstream later.
-- Order: Phases 0 to 5, with 6 and 7 in parallel. Phase 8 waits on Morph.
+- Order: Phases 0 to 5, with 6 and 7 in parallel. Phase 8 waits on Morph. Phase 10 (Ymir pool) comes last, after Phase 5.

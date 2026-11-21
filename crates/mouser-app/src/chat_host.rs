@@ -14,7 +14,6 @@
 use crate::mcp_tools::{AppTools, descriptors};
 use crate::{AppState, mcp_clients, tabs};
 use mouser_core::agent::{AgentHost, AgentTool, Check, ScreenContext};
-use mouser_core::mcp_server::Tools;
 use mouser_core::permissions::{Broker, Scope};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -102,7 +101,7 @@ impl ChatHost {
 
 impl AgentHost for ChatHost {
     fn context(&self) -> ScreenContext {
-        let get = |n: &str, a: Value| self.tools.call(CLIENT, n, &a).ok();
+        let get = |n: &str, a: Value| self.tools.run(CLIENT, n, &a).ok();
         let place = get("tabs_list", Value::Null)
             .and_then(|v| {
                 v["tabs"].as_array()?.iter().find(|t| t["active"] == true).map(|t| {
@@ -214,7 +213,7 @@ Runs in the active tab's folder unless `cwd` is given. Asks the user first (Allo
             return self.call_cancellable(tool, args, &std::sync::atomic::AtomicBool::new(false));
         }
         if let Some(n) = tool.display.strip_prefix("mouser.") {
-            return self.tools.call(CLIENT, n, args).map(text);
+            return self.tools.run(CLIENT, n, args).map(text);
         }
         let (id, name) = tool.display.rsplit_once('.').ok_or("bad tool")?;
         mcp_clients().call(id, name, args.clone()).map_err(|e| format!("{e:#}"))

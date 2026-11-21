@@ -6,6 +6,7 @@
 
 use crate::{AppState, approval_ui, tabs, wake};
 use mouser_core::fileops;
+use mouser_core::mcp_server::{Param, ParamType, ToolError, ToolSpec};
 use mouser_core::permissions::{Broker, Check, Scope};
 use serde_json::{Value, json};
 use std::io::Write;
@@ -23,233 +24,196 @@ pub struct AppTools {
     pub preapproved: bool,
 }
 
-fn tool(name: &str, desc: &str, props: Value, required: &[&str], read_only: bool) -> Value {
-    json!({
-        "name": name,
-        "description": desc,
-        "inputSchema": {"type": "object", "properties": props, "required": required},
-        "annotations": {"readOnlyHint": read_only, "destructiveHint": tool_destructive(name), "openWorldHint": false}
-    })
+const TAB: Param = Param::optional("tab", ParamType::Integer, "tab index from tabs_list (default: the active tab)");
+const PATH_HELP: &str = "absolute, or relative to the tab's local folder";
+const REMOTE: Param = Param::required("remote", ParamType::String, "path on the remote host");
+const HOST: Param = Param::optional("host", ParamType::String, "user@host or host; omitted: the tab's remote shell");
+const CONFLICT: Param = Param::optional("conflict", ParamType::String, "newer (default) or refuse");
+const RECURSIVE: Param = Param::optional("recursive", ParamType::Boolean, "descend into directories (default true)");
+const DRY_RUN: Param = Param::optional("dry_run", ParamType::Boolean, "list changes and write nothing");
+const THEME_NAME: Param = Param::required("name", ParamType::String, "theme name (list_themes)");
+const VARIANT: Param = Param::optional("variant", ParamType::String, "dark, light or both (default both)");
+const COLOURS: [Param; 6] = [
+    Param::optional("foreground", ParamType::String, "#rrggbb"),
+    Param::optional("background", ParamType::String, "#rrggbb"),
+    Param::optional("cursor", ParamType::String, "#rrggbb"),
+    Param::optional("accent", ParamType::String, "#rrggbb"),
+    Param::optional("selection_foreground", ParamType::String, "#rrggbb"),
+    Param::optional("selection_background", ParamType::String, "#rrggbb"),
+];
+const PALETTE: Param = Param::optional("palette", ParamType::StringArray, "up to 16 #rrggbb colours");
+
+const fn path(name: &'static str) -> Param {
+    Param::required(name, ParamType::String, PATH_HELP)
 }
 
+/// A tool that only reads.
+const fn read(name: &'static str, description: &'static str, params: &'static [Param]) -> ToolSpec {
+    ToolSpec { name, description, params, auth: false, read_only: true, destructive: false, open_world: false }
+}
+
+/// A tool that changes something (it asks the user first); `destructive` when it can
+/// replace or remove something (the previous bytes go to the trash).
+const fn write(name: &'static str, description: &'static str, params: &'static [Param], destructive: bool) -> ToolSpec {
+    ToolSpec { name, description, params, auth: false, read_only: false, destructive, open_world: false }
+}
+
+/// The tool table (weirdnet-mcp `ToolSpec`s). Names, parameters and annotations are what
+/// clients rely on; `tools_list_is_golden` keeps `tools/list` stable.
+pub static TOOLS: &[ToolSpec] = &[
+    read("tabs_list", "List Mouser's tabs: index, title, active, local folder or remote host.", &[]),
+    read("screen_read", "Visible text of a tab's screen.", &[TAB]),
+    read(
+        "scrollback_read",
+        "The last lines of a tab's scrollback (above the screen).",
+        &[TAB, Param::optional("lines", ParamType::Integer, "how many (default 200, at most 5000)")],
+    ),
+    write(
+        "shell_type",
+        "Type text into a tab as keystrokes (no Enter added). Asks the user in Mouser first.",
+        &[TAB, Param::required("text", ParamType::String, "the text to type")],
+        false,
+    ),
+    write(
+        "shell_run",
+        "Run a command line in a tab's shell (typed, then Enter). Only when the shell is at its prompt. Asks the user in Mouser first.",
+        &[TAB, Param::required("command", ParamType::String, "the command line")],
+        false,
+    ),
+    read(
+        "files_list",
+        "List a folder (name, kind, size, mtime).",
+        &[TAB, path("path"), Param::optional("hidden", ParamType::Boolean, "include hidden entries (default false)")],
+    ),
+    read(
+        "files_read",
+        "Read a text file (up to 1 MiB).",
+        &[TAB, path("path"), Param::optional("max_bytes", ParamType::Integer, "read at most this many bytes")],
+    ),
+    write("files_mkdir", "Create a folder (and parents). Asks first.", &[TAB, path("path")], false),
+    write("files_copy", "Copy a file or folder (never overwrites). Asks first.", &[TAB, path("from"), path("to")], false),
+    write("files_move", "Alias of file_move. Move or rename (never overwrites). Asks first.", &[TAB, path("from"), path("to")], false),
+    write(
+        "file_move",
+        "Move or rename a file or folder (never overwrites). files_move is the same tool. Asks first.",
+        &[TAB, path("from"), path("to")],
+        false,
+    ),
+    write(
+        "file_sync",
+        "Sync two local paths. direction is push (from → to), pull (to → from) or both (default). conflict is newer (default; the strictly newer mtime wins) or refuse (leave both, report the clash). A file that would be replaced is moved to Mouser's trash first. dry_run lists the changes and writes nothing. Directories need recursive (default true). Asks first.",
+        &[
+            TAB,
+            path("from"),
+            path("to"),
+            Param::optional("direction", ParamType::String, "push, pull or both (default both)"),
+            CONFLICT,
+            RECURSIVE,
+            DRY_RUN,
+        ],
+        true,
+    ),
+    write(
+        "remote_file_sync",
+        "Sync a local path with a path on a remote host (the tab's ssh, or host). push uploads, pull downloads, both (default) copies whichever side is missing or newer. Same conflict, trash, dry_run and recursive rules as file_sync. Asks first.",
+        &[
+            TAB,
+            path("local"),
+            REMOTE,
+            HOST,
+            Param::optional("port", ParamType::Integer, "ssh port when host is set"),
+            Param::optional("direction", ParamType::String, "push (upload), pull (download) or both (default)"),
+            CONFLICT,
+            RECURSIVE,
+            DRY_RUN,
+        ],
+        true,
+    ),
+    write(
+        "file_download",
+        "Download a remote file or directory (recursive, default true) onto a local path. Same as remote_file_sync direction pull: a newer local file is kept, otherwise the local file goes to the trash and the remote copy replaces it. dry_run lists that and writes nothing. Asks first.",
+        &[TAB, REMOTE, path("to"), HOST, Param::optional("port", ParamType::Integer, "ssh port when host is set"), CONFLICT, RECURSIVE, DRY_RUN],
+        true,
+    ),
+    write(
+        "file_upload",
+        "Upload a local file or directory (recursive, default true) onto a remote path. Same as remote_file_sync direction push. A replaced remote file's previous bytes go to Mouser's trash. dry_run lists that and writes nothing. Asks first.",
+        &[TAB, path("from"), REMOTE, HOST, Param::optional("port", ParamType::Integer, "ssh port when host is set"), CONFLICT, RECURSIVE, DRY_RUN],
+        true,
+    ),
+    read("list_themes", "Every built-in and user theme, and which one is active.", &[]),
+    read("get_theme", "One theme's dark and light values (colours, cursor, accent, palette, selection).", &[THEME_NAME]),
+    write(
+        "set_theme",
+        "Make a theme the active one: saved in preferences and applied to this window on the next frame. Asks first.",
+        &[THEME_NAME],
+        false,
+    ),
+    write(
+        "create_theme",
+        "Create a user theme. name is required. Missing colours fall back to Red Star. variant is dark, light or both (default both). A short palette is padded with the default ANSI colours. A bad colour is an error and nothing is written. Asks first.",
+        &[
+            Param::required("name", ParamType::String, "the new theme's name"),
+            VARIANT,
+            COLOURS[0],
+            COLOURS[1],
+            COLOURS[2],
+            COLOURS[3],
+            COLOURS[4],
+            COLOURS[5],
+            PALETTE,
+        ],
+        false,
+    ),
+    write(
+        "duplicate_theme",
+        "Copy a theme. name is the copy's name; omitted, it is \"<theme> copy\" (then \"<theme> copy 2\", …). Asks first.",
+        &[Param::required("theme", ParamType::String, "the theme to copy"), Param::optional("name", ParamType::String, "name of the copy")],
+        false,
+    ),
+    write(
+        "edit_theme",
+        "Merge colour fields into a user theme and save it. Omitted fields stay. variant dark, light or both (default both). Built-in themes are read-only: the error says to use duplicate_theme. Asks first.",
+        &[THEME_NAME, VARIANT, COLOURS[0], COLOURS[1], COLOURS[2], COLOURS[3], COLOURS[4], COLOURS[5], PALETTE],
+        true,
+    ),
+    write(
+        "delete_theme",
+        "Delete a theme. The last remaining theme is refused. A user theme's files go to Mouser's trash. A built-in is hidden (it stays in the program; themes/.hidden lists it) and any copy on disk is trashed. Deleting the active theme switches to the default if that remains, otherwise another theme, and saves that. Asks first.",
+        &[THEME_NAME],
+        true,
+    ),
+    write("files_trash", "Move to Mouser's trash ($MOUSER_HOME/trash); nothing is deleted for good. Asks first.", &[TAB, path("path")], true),
+    read(
+        "modes_list",
+        "List Mouser's modes (commander, chat, preferences, plugins): name, hotkey, which is on and whether it has the keyboard.",
+        &[],
+    ),
+    write(
+        "modes_switch",
+        "Turn a mode on by name or hotkey (its own name again turns modes off). Asks first.",
+        &[Param::required("mode", ParamType::String, "mode name or hotkey (modes_list)")],
+        false,
+    ),
+    read(
+        "mode_actions",
+        "Every action of the current mode that applies now to its selected item and view state (a file, folder, image, clip; list or fullscreen view ...): the same list as its right-click menu, with id, arg, label, key, enabled and destructive.",
+        &[],
+    ),
+    write(
+        "mode_action",
+        "Run one action from mode_actions (id and arg), as its key would. Asks first; destructive file changes (delete, move, rename, paste) also ask again on the mode's own approval card and never overwrite.",
+        &[
+            Param::required("id", ParamType::String, "action id from mode_actions"),
+            Param::optional("arg", ParamType::Integer, "from mode_actions (default 0)"),
+        ],
+        true,
+    ),
+];
+
+/// The `tools/list` entries (also the chat's Mouser tools).
 pub fn descriptors() -> Vec<Value> {
-    let tab = json!({"type": "integer", "description": "tab index from tabs_list (default: the active tab)"});
-    let path = json!({"type": "string", "description": "absolute, or relative to the tab's local folder"});
-    vec![
-        tool("tabs_list", "List Mouser's tabs: index, title, active, local folder or remote host.", json!({}), &[], true),
-        tool("screen_read", "Visible text of a tab's screen.", json!({"tab": tab}), &[], true),
-        tool(
-            "scrollback_read",
-            "The last lines of a tab's scrollback (above the screen).",
-            json!({"tab": tab, "lines": {"type": "integer", "description": "how many (default 200, at most 5000)"}}),
-            &[],
-            true,
-        ),
-        tool(
-            "shell_type",
-            "Type text into a tab as keystrokes (no Enter added). Asks the user in Mouser first.",
-            json!({"tab": tab, "text": {"type": "string"}}),
-            &["text"],
-            false,
-        ),
-        tool(
-            "shell_run",
-            "Run a command line in a tab's shell (typed, then Enter). Only when the shell is at its prompt. Asks the user in Mouser first.",
-            json!({"tab": tab, "command": {"type": "string"}}),
-            &["command"],
-            false,
-        ),
-        tool(
-            "files_list",
-            "List a folder (name, kind, size, mtime).",
-            json!({"tab": tab, "path": path, "hidden": {"type": "boolean"}}),
-            &["path"],
-            true,
-        ),
-        tool("files_read", "Read a text file (up to 1 MiB).", json!({"tab": tab, "path": path, "max_bytes": {"type": "integer"}}), &["path"], true),
-        tool("files_mkdir", "Create a folder (and parents). Asks first.", json!({"tab": tab, "path": path}), &["path"], false),
-        tool(
-            "files_copy",
-            "Copy a file or folder (never overwrites). Asks first.",
-            json!({"tab": tab, "from": path, "to": path}),
-            &["from", "to"],
-            false,
-        ),
-        tool(
-            "files_move",
-            "Alias of file_move. Move or rename (never overwrites). Asks first.",
-            json!({"tab": tab, "from": path, "to": path}),
-            &["from", "to"],
-            false,
-        ),
-        tool(
-            "file_move",
-            "Move or rename a file or folder (never overwrites). files_move is the same tool. Asks first.",
-            json!({"tab": tab, "from": path, "to": path}),
-            &["from", "to"],
-            false,
-        ),
-        tool(
-            "file_sync",
-            "Sync two local paths. direction is push (from → to), pull (to → from) or both (default). conflict is newer (default; the strictly newer mtime wins) or refuse (leave both, report the clash). A file that would be replaced is moved to Mouser's trash first. dry_run lists the changes and writes nothing. Directories need recursive (default true). Asks first.",
-            json!({
-                "tab": tab, "from": path, "to": path,
-                "direction": {"type": "string", "description": "push, pull or both (default both)"},
-                "conflict": {"type": "string", "description": "newer (default) or refuse"},
-                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
-                "dry_run": {"type": "boolean", "description": "list changes and write nothing"}
-            }),
-            &["from", "to"],
-            false,
-        ),
-        tool(
-            "remote_file_sync",
-            "Sync a local path with a path on a remote host (the tab's ssh, or host). push uploads, pull downloads, both (default) copies whichever side is missing or newer. Same conflict, trash, dry_run and recursive rules as file_sync. Asks first.",
-            json!({
-                "tab": tab,
-                "local": path,
-                "remote": {"type": "string", "description": "path on the remote host"},
-                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
-                "port": {"type": "integer", "description": "ssh port when host is set"},
-                "direction": {"type": "string", "description": "push (upload), pull (download) or both (default)"},
-                "conflict": {"type": "string", "description": "newer (default) or refuse"},
-                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
-                "dry_run": {"type": "boolean", "description": "list changes and write nothing"}
-            }),
-            &["local", "remote"],
-            false,
-        ),
-        tool(
-            "file_download",
-            "Download a remote file or directory (recursive, default true) onto a local path. Same as remote_file_sync direction pull: a newer local file is kept, otherwise the local file goes to the trash and the remote copy replaces it. dry_run lists that and writes nothing. Asks first.",
-            json!({
-                "tab": tab,
-                "remote": {"type": "string", "description": "path on the remote host"},
-                "to": path,
-                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
-                "port": {"type": "integer"},
-                "conflict": {"type": "string", "description": "newer (default) or refuse"},
-                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
-                "dry_run": {"type": "boolean"}
-            }),
-            &["remote", "to"],
-            false,
-        ),
-        tool(
-            "file_upload",
-            "Upload a local file or directory (recursive, default true) onto a remote path. Same as remote_file_sync direction push. A replaced remote file's previous bytes go to Mouser's trash. dry_run lists that and writes nothing. Asks first.",
-            json!({
-                "tab": tab,
-                "from": path,
-                "remote": {"type": "string", "description": "path on the remote host"},
-                "host": {"type": "string", "description": "user@host or host; omitted: the tab's remote shell"},
-                "port": {"type": "integer"},
-                "conflict": {"type": "string", "description": "newer (default) or refuse"},
-                "recursive": {"type": "boolean", "description": "descend into directories (default true)"},
-                "dry_run": {"type": "boolean"}
-            }),
-            &["from", "remote"],
-            false,
-        ),
-        tool("list_themes", "Every built-in and user theme, and which one is active.", json!({}), &[], true),
-        tool(
-            "get_theme",
-            "One theme's dark and light values (colours, cursor, accent, palette, selection).",
-            json!({"name": {"type": "string"}}),
-            &["name"],
-            true,
-        ),
-        tool(
-            "set_theme",
-            "Make a theme the active one: saved in preferences and applied to this window on the next frame. Asks first.",
-            json!({"name": {"type": "string"}}),
-            &["name"],
-            false,
-        ),
-        tool(
-            "create_theme",
-            "Create a user theme. name is required. Missing colours fall back to Red Star. variant is dark, light or both (default both). A short palette is padded with the default ANSI colours. A bad colour is an error and nothing is written. Asks first.",
-            json!({
-                "name": {"type": "string"},
-                "variant": {"type": "string", "description": "dark, light or both (default both)"},
-                "foreground": {"type": "string", "description": "#rrggbb"},
-                "background": {"type": "string"},
-                "cursor": {"type": "string"},
-                "accent": {"type": "string"},
-                "selection_foreground": {"type": "string"},
-                "selection_background": {"type": "string"},
-                "palette": {"type": "array", "items": {"type": "string"}, "description": "up to 16 #rrggbb colours"}
-            }),
-            &["name"],
-            false,
-        ),
-        tool(
-            "duplicate_theme",
-            "Copy a theme. name is the copy's name; omitted, it is \"<theme> copy\" (then \"<theme> copy 2\", …). Asks first.",
-            json!({"theme": {"type": "string"}, "name": {"type": "string", "description": "name of the copy"}}),
-            &["theme"],
-            false,
-        ),
-        tool(
-            "edit_theme",
-            "Merge colour fields into a user theme and save it. Omitted fields stay. variant dark, light or both (default both). Built-in themes are read-only: the error says to use duplicate_theme. Asks first.",
-            json!({
-                "name": {"type": "string"},
-                "variant": {"type": "string"},
-                "foreground": {"type": "string"},
-                "background": {"type": "string"},
-                "cursor": {"type": "string"},
-                "accent": {"type": "string"},
-                "selection_foreground": {"type": "string"},
-                "selection_background": {"type": "string"},
-                "palette": {"type": "array", "items": {"type": "string"}}
-            }),
-            &["name"],
-            false,
-        ),
-        tool(
-            "delete_theme",
-            "Delete a theme. The last remaining theme is refused. A user theme's files go to Mouser's trash. A built-in is hidden (it stays in the program; themes/.hidden lists it) and any copy on disk is trashed. Deleting the active theme switches to the default if that remains, otherwise another theme, and saves that. Asks first.",
-            json!({"name": {"type": "string"}}),
-            &["name"],
-            false,
-        ),
-        tool(
-            "files_trash",
-            "Move to Mouser's trash ($MOUSER_HOME/trash); nothing is deleted for good. Asks first.",
-            json!({"tab": tab, "path": path}),
-            &["path"],
-            false,
-        ),
-        tool(
-            "modes_list",
-            "List Mouser's modes (commander, chat, preferences, plugins): name, hotkey, which is on and whether it has the keyboard.",
-            json!({}),
-            &[],
-            true,
-        ),
-        tool(
-            "modes_switch",
-            "Turn a mode on by name or hotkey (its own name again turns modes off). Asks first.",
-            json!({"mode": {"type": "string"}}),
-            &["mode"],
-            false,
-        ),
-        tool(
-            "mode_actions",
-            "Every action of the current mode that applies now to its selected item and view state (a file, folder, image, clip; list or fullscreen view ...): the same list as its right-click menu, with id, arg, label, key, enabled and destructive.",
-            json!({}),
-            &[],
-            true,
-        ),
-        tool(
-            "mode_action",
-            "Run one action from mode_actions (id and arg), as its key would. Asks first; destructive file changes (delete, move, rename, paste) also ask again on the mode's own approval card and never overwrite.",
-            json!({"id": {"type": "string"}, "arg": {"type": "integer", "description": "from mode_actions (default 0)"}}),
-            &["id"],
-            false,
-        ),
-    ]
+    TOOLS.iter().map(ToolSpec::to_json).collect()
 }
 
 /// How long `mode_actions` waits for a mode plugin's answer.
@@ -262,8 +226,9 @@ fn destructive(id: &str) -> bool {
 }
 
 /// Tools that can replace or remove something (the previous bytes go to the trash).
+#[cfg(test)]
 fn tool_destructive(name: &str) -> bool {
-    matches!(name, "files_trash" | "file_sync" | "remote_file_sync" | "file_download" | "file_upload" | "edit_theme" | "delete_theme" | "mode_action")
+    TOOLS.iter().any(|t| t.name == name && t.destructive)
 }
 
 type R = std::result::Result<Value, String>;
@@ -401,11 +366,18 @@ impl AppTools {
 }
 
 impl mouser_core::mcp_server::Tools for AppTools {
-    fn list(&self) -> Vec<Value> {
-        descriptors()
+    fn specs(&self) -> &[ToolSpec] {
+        TOOLS
     }
 
-    fn call(&self, client: &str, name: &str, a: &Value) -> R {
+    fn call(&self, client: &str, tool: &ToolSpec, a: &Value) -> std::result::Result<Value, ToolError> {
+        self.run(client, tool.name, a).map_err(ToolError)
+    }
+}
+
+impl AppTools {
+    /// Run tool `name` for `client` (the MCP session's client, or the chat).
+    pub fn run(&self, client: &str, name: &str, a: &Value) -> R {
         match name {
             "tabs_list" => {
                 let t = self.tabs.lock().unwrap();
@@ -775,5 +747,19 @@ mod tests {
             }
         }
         assert_eq!(super::visible("ls\r\x1b[A"), "ls⏎·[A");
+    }
+
+    /// `tools/list` is what MCP clients (and saved permissions) rely on: names,
+    /// parameters, required lists and annotations. A deliberate change updates the
+    /// golden file: `MOUSER_TEST_BLESS=1 cargo test -p mouser-app --bin mouser-app tools_list_is_golden`.
+    #[test]
+    fn tools_list_is_golden() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/mcp_tools_list.json");
+        let now = serde_json::Value::Array(super::descriptors());
+        if std::env::var_os("MOUSER_TEST_BLESS").is_some() {
+            std::fs::write(path, serde_json::to_string_pretty(&now).unwrap() + "\n").unwrap();
+        }
+        let golden: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(now, golden, "tools/list changed; see the comment above to update the golden file");
     }
 }

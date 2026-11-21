@@ -1,0 +1,794 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List Mouser's tabs: index, title, active, local folder or remote host.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "tabs_list"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Visible text of a tab's screen.",
+    "inputSchema": {
+      "properties": {
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "screen_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "The last lines of a tab's scrollback (above the screen).",
+    "inputSchema": {
+      "properties": {
+        "lines": {
+          "description": "how many (default 200, at most 5000)",
+          "type": "integer"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "name": "scrollback_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Type text into a tab as keystrokes (no Enter added). Asks the user in Mouser first.",
+    "inputSchema": {
+      "properties": {
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "text": {
+          "description": "the text to type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "type": "object"
+    },
+    "name": "shell_type"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Run a command line in a tab's shell (typed, then Enter). Only when the shell is at its prompt. Asks the user in Mouser first.",
+    "inputSchema": {
+      "properties": {
+        "command": {
+          "description": "the command line",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object"
+    },
+    "name": "shell_run"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List a folder (name, kind, size, mtime).",
+    "inputSchema": {
+      "properties": {
+        "hidden": {
+          "description": "include hidden entries (default false)",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "files_list"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Read a text file (up to 1 MiB).",
+    "inputSchema": {
+      "properties": {
+        "max_bytes": {
+          "description": "read at most this many bytes",
+          "type": "integer"
+        },
+        "path": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "files_read"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Create a folder (and parents). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "files_mkdir"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Copy a file or folder (never overwrites). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "to": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "files_copy"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Alias of file_move. Move or rename (never overwrites). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "to": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "files_move"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Move or rename a file or folder (never overwrites). files_move is the same tool. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "from": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "to": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "file_move"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Sync two local paths. direction is push (from → to), pull (to → from) or both (default). conflict is newer (default; the strictly newer mtime wins) or refuse (leave both, report the clash). A file that would be replaced is moved to Mouser's trash first. dry_run lists the changes and writes nothing. Directories need recursive (default true). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "conflict": {
+          "description": "newer (default) or refuse",
+          "type": "string"
+        },
+        "direction": {
+          "description": "push, pull or both (default both)",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "list changes and write nothing",
+          "type": "boolean"
+        },
+        "from": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "recursive": {
+          "description": "descend into directories (default true)",
+          "type": "boolean"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "to": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "file_sync"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Sync a local path with a path on a remote host (the tab's ssh, or host). push uploads, pull downloads, both (default) copies whichever side is missing or newer. Same conflict, trash, dry_run and recursive rules as file_sync. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "conflict": {
+          "description": "newer (default) or refuse",
+          "type": "string"
+        },
+        "direction": {
+          "description": "push (upload), pull (download) or both (default)",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "list changes and write nothing",
+          "type": "boolean"
+        },
+        "host": {
+          "description": "user@host or host; omitted: the tab's remote shell",
+          "type": "string"
+        },
+        "local": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "port": {
+          "description": "ssh port when host is set",
+          "type": "integer"
+        },
+        "recursive": {
+          "description": "descend into directories (default true)",
+          "type": "boolean"
+        },
+        "remote": {
+          "description": "path on the remote host",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "local",
+        "remote"
+      ],
+      "type": "object"
+    },
+    "name": "remote_file_sync"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Download a remote file or directory (recursive, default true) onto a local path. Same as remote_file_sync direction pull: a newer local file is kept, otherwise the local file goes to the trash and the remote copy replaces it. dry_run lists that and writes nothing. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "conflict": {
+          "description": "newer (default) or refuse",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "list changes and write nothing",
+          "type": "boolean"
+        },
+        "host": {
+          "description": "user@host or host; omitted: the tab's remote shell",
+          "type": "string"
+        },
+        "port": {
+          "description": "ssh port when host is set",
+          "type": "integer"
+        },
+        "recursive": {
+          "description": "descend into directories (default true)",
+          "type": "boolean"
+        },
+        "remote": {
+          "description": "path on the remote host",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        },
+        "to": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        }
+      },
+      "required": [
+        "remote",
+        "to"
+      ],
+      "type": "object"
+    },
+    "name": "file_download"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Upload a local file or directory (recursive, default true) onto a remote path. Same as remote_file_sync direction push. A replaced remote file's previous bytes go to Mouser's trash. dry_run lists that and writes nothing. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "conflict": {
+          "description": "newer (default) or refuse",
+          "type": "string"
+        },
+        "dry_run": {
+          "description": "list changes and write nothing",
+          "type": "boolean"
+        },
+        "from": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "host": {
+          "description": "user@host or host; omitted: the tab's remote shell",
+          "type": "string"
+        },
+        "port": {
+          "description": "ssh port when host is set",
+          "type": "integer"
+        },
+        "recursive": {
+          "description": "descend into directories (default true)",
+          "type": "boolean"
+        },
+        "remote": {
+          "description": "path on the remote host",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "remote"
+      ],
+      "type": "object"
+    },
+    "name": "file_upload"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Every built-in and user theme, and which one is active.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "list_themes"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "One theme's dark and light values (colours, cursor, accent, palette, selection).",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "theme name (list_themes)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "get_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Make a theme the active one: saved in preferences and applied to this window on the next frame. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "theme name (list_themes)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "set_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Create a user theme. name is required. Missing colours fall back to Red Star. variant is dark, light or both (default both). A short palette is padded with the default ANSI colours. A bad colour is an error and nothing is written. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "accent": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "background": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "cursor": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "foreground": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "name": {
+          "description": "the new theme's name",
+          "type": "string"
+        },
+        "palette": {
+          "description": "up to 16 #rrggbb colours",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selection_background": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "selection_foreground": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "variant": {
+          "description": "dark, light or both (default both)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "create_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Copy a theme. name is the copy's name; omitted, it is \"<theme> copy\" (then \"<theme> copy 2\", …). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "name of the copy",
+          "type": "string"
+        },
+        "theme": {
+          "description": "the theme to copy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "theme"
+      ],
+      "type": "object"
+    },
+    "name": "duplicate_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Merge colour fields into a user theme and save it. Omitted fields stay. variant dark, light or both (default both). Built-in themes are read-only: the error says to use duplicate_theme. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "accent": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "background": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "cursor": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "foreground": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "name": {
+          "description": "theme name (list_themes)",
+          "type": "string"
+        },
+        "palette": {
+          "description": "up to 16 #rrggbb colours",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "selection_background": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "selection_foreground": {
+          "description": "#rrggbb",
+          "type": "string"
+        },
+        "variant": {
+          "description": "dark, light or both (default both)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "edit_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Delete a theme. The last remaining theme is refused. A user theme's files go to Mouser's trash. A built-in is hidden (it stays in the program; themes/.hidden lists it) and any copy on disk is trashed. Deleting the active theme switches to the default if that remains, otherwise another theme, and saves that. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "name": {
+          "description": "theme name (list_themes)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "name": "delete_theme"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Move to Mouser's trash ($MOUSER_HOME/trash); nothing is deleted for good. Asks first.",
+    "inputSchema": {
+      "properties": {
+        "path": {
+          "description": "absolute, or relative to the tab's local folder",
+          "type": "string"
+        },
+        "tab": {
+          "description": "tab index from tabs_list (default: the active tab)",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "name": "files_trash"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "List Mouser's modes (commander, chat, preferences, plugins): name, hotkey, which is on and whether it has the keyboard.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "modes_list"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Turn a mode on by name or hotkey (its own name again turns modes off). Asks first.",
+    "inputSchema": {
+      "properties": {
+        "mode": {
+          "description": "mode name or hotkey (modes_list)",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "name": "modes_switch"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Every action of the current mode that applies now to its selected item and view state (a file, folder, image, clip; list or fullscreen view ...): the same list as its right-click menu, with id, arg, label, key, enabled and destructive.",
+    "inputSchema": {
+      "properties": {},
+      "required": [],
+      "type": "object"
+    },
+    "name": "mode_actions"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Run one action from mode_actions (id and arg), as its key would. Asks first; destructive file changes (delete, move, rename, paste) also ask again on the mode's own approval card and never overwrite.",
+    "inputSchema": {
+      "properties": {
+        "arg": {
+          "description": "from mode_actions (default 0)",
+          "type": "integer"
+        },
+        "id": {
+          "description": "action id from mode_actions",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "name": "mode_action"
+  }
+]

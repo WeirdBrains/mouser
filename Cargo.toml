@@ -69,5 +69,6 @@ clap = { version = "4.5.7", features = ["derive"] }
 clap_mangen = "0.2.20"
 # Weirdnet crates from crates.io (docs/weirdnet-integration-plan.md).
 weirdnet-tls = { version = "0.3", default-features = false, features = ["ring"] }
+weirdnet-mcp = { version = "0.5.2", default-features = false }
 image = { version = "0.25.2", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 

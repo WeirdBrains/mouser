@@ -1,7 +1,13 @@
-//! Mouser's MCP server (P2, docs/mcp.md): JSON-RPC 2.0 MCP over Streamable HTTP
-//! on loopback, the same over TLS (user cert or self-signed), and a stdio bridge
+//! Mouser's MCP server (P2, docs/mcp.md): MCP over Streamable HTTP on
+//! loopback, the same over TLS (user cert or self-signed), and a stdio bridge
 //! (`mouser mcp serve --stdio`) to the running app's loopback endpoint. The tools
 //! themselves come from the app through [`Tools`].
+//!
+//! JSON-RPC dispatch (`initialize`, `ping`, `tools/list`, `tools/call`, batches,
+//! tool results) is [weirdnet-mcp](https://crates.io/crates/weirdnet-mcp)'s
+//! `Server::handle`, and the stdio bridge is its `stdio::bridge`. Mouser keeps the
+//! transport: the listener, sessions (`Mcp-Session-Id` -> the client's name for
+//! the permission broker), the bearer token, Host/Origin checks and body caps.
 //!
 //! Security: loopback by default; a public address only for HTTPS with a
 //! token ([`bind_addr`]), and then only the configured names are accepted in
@@ -18,25 +24,45 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+pub use weirdnet_mcp::{Param, ParamType, ToolError, ToolSpec};
 
-/// Versions served (newest first); the client's choice wins when listed.
-pub const VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
+/// Protocol versions Mouser served before weirdnet-mcp lists them (G19 in
+/// docs/weirdnet-integration-plan.md): a client asking for one gets it back.
+const EXTRA_VERSIONS: [&str; 1] = ["2025-11-25"];
 pub const MAX_BODY: usize = 4 << 20;
 const MAX_CONNS: usize = 32;
 
-/// The app's tools.
+/// The app's tools: weirdnet-mcp's table, and calls that know the session's
+/// client name (`clientInfo.name`), which the permission broker keys on.
+/// weirdnet-mcp's own `Tools::call` gets only the bearer token (G20).
 pub trait Tools: Send + Sync {
-    /// MCP tool descriptors (`name`, `description`, `inputSchema`, `annotations`).
-    fn list(&self) -> Vec<Value>;
-    /// Run one; `client` is the session's `clientInfo.name`. `Err` becomes an
-    /// `isError` result the model can read.
-    fn call(&self, client: &str, name: &str, args: &Value) -> std::result::Result<Value, String>;
+    /// The tool table.
+    fn specs(&self) -> &[ToolSpec];
+    /// Run one; `Err` becomes an `isError` result the model can read.
+    fn call(&self, client: &str, tool: &ToolSpec, args: &Value) -> std::result::Result<Value, ToolError>;
+}
+
+/// One request's tools, bound to the session's client name.
+struct ForClient<'a> {
+    tools: &'a dyn Tools,
+    client: &'a str,
+}
+
+impl weirdnet_mcp::Tools for ForClient<'_> {
+    fn specs(&self) -> &[ToolSpec] {
+        self.tools.specs()
+    }
+
+    fn call(&self, tool: &ToolSpec, args: &Value, _token: Option<&str>) -> std::result::Result<Value, ToolError> {
+        // The token was checked on the HTTP request.
+        self.tools.call(self.client, tool, args)
+    }
 }
 
 pub struct Server {
     tools: Arc<dyn Tools>,
     token: String,
-    version: String,
+    info: weirdnet_mcp::ServerInfo,
     /// Session id -> client name.
     sessions: Mutex<HashMap<String, String>>,
     /// Public names (besides loopback) accepted in Host and Origin.
@@ -44,13 +70,29 @@ pub struct Server {
 }
 
 fn err(id: &Value, code: i64, msg: &str) -> Value {
-    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
+    weirdnet_mcp::rpc_err(id.clone(), code, msg)
+}
+
+/// The extra protocol version an `initialize` asks for, if any.
+fn extra_version(m: &Value) -> Option<&'static str> {
+    if m["method"] != "initialize" {
+        return None;
+    }
+    let asked = m["params"]["protocolVersion"].as_str()?;
+    EXTRA_VERSIONS.iter().copied().find(|v| *v == asked)
 }
 
 impl Server {
     /// `version`: what `serverInfo.version` reports (Mouser's version).
     pub fn new(tools: Arc<dyn Tools>, token: String, version: &str) -> Arc<Self> {
-        Arc::new(Server { tools, token, version: version.into(), sessions: Mutex::new(HashMap::new()), hosts: Mutex::new(Vec::new()) })
+        let info = weirdnet_mcp::ServerInfo {
+            name: "mouser".into(),
+            title: "Mouser terminal".into(),
+            version: version.into(),
+            instructions: "Mouser's tabs, screens, scrollback, shell and files. Typing, running and file changes ask the user in Mouser first."
+                .into(),
+        };
+        Arc::new(Server { tools, token, info, sessions: Mutex::new(HashMap::new()), hosts: Mutex::new(Vec::new()) })
     }
 
     /// Also accept these public DNS names in Host/Origin (the HTTPS
@@ -74,56 +116,18 @@ impl Server {
         self.hosts.lock().unwrap().iter().any(|n| hostport == n || hostport == format!("{n}:{port}"))
     }
 
-    /// One JSON-RPC message; `None` for notifications and responses.
-    pub fn rpc(&self, client: &str, m: &Value) -> Option<Value> {
-        let id = m.get("id")?.clone();
-        let method = m.get("method").and_then(Value::as_str)?;
-        let p = m.get("params").cloned().unwrap_or(json!({}));
-        let result = match method {
-            "initialize" => {
-                let want = p["protocolVersion"].as_str().unwrap_or("");
-                let v = VERSIONS.iter().find(|v| **v == want).copied().unwrap_or(VERSIONS[0]);
-                json!({
-                    "protocolVersion": v,
-                    "capabilities": {"tools": {"listChanged": false}},
-                    "serverInfo": {"name": "mouser", "title": "Mouser terminal", "version": self.version},
-                    "instructions": "Mouser's tabs, screens, scrollback, shell and files. Typing, running and file changes ask the user in Mouser first."
-                })
-            }
-            "ping" => json!({}),
-            "tools/list" => json!({"tools": self.tools.list()}),
-            "tools/call" => {
-                let Some(name) = p["name"].as_str() else { return Some(err(&id, -32602, "params.name is required")) };
-                if !self.tools.list().iter().any(|t| t["name"] == name) {
-                    return Some(err(&id, -32602, &format!("unknown tool {name}")));
-                }
-                let args = p.get("arguments").cloned().unwrap_or(json!({}));
-                match self.tools.call(client, name, &args) {
-                    Ok(v) => {
-                        let text = if let Value::String(s) = &v { s.clone() } else { serde_json::to_string_pretty(&v).unwrap_or_default() };
-                        let mut r = json!({"content": [{"type": "text", "text": text}], "isError": false});
-                        if v.is_object() {
-                            r["structuredContent"] = v;
-                        }
-                        r
-                    }
-                    Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
-                }
-            }
-            _ => return Some(err(&id, -32601, &format!("method not found: {method}"))),
-        };
-        Some(json!({"jsonrpc": "2.0", "id": id, "result": result}))
-    }
-
-    /// A body: one message or a batch.
-    fn body(&self, client: &str, v: &Value) -> Option<Value> {
-        match v {
-            Value::Array(a) => {
-                let r: Vec<Value> = a.iter().filter_map(|m| self.rpc(client, m)).collect();
-                (!r.is_empty()).then_some(Value::Array(r))
-            }
-            m => self.rpc(client, m),
+    /// One JSON-RPC message or batch from `client`, through weirdnet-mcp;
+    /// `None` when no reply is owed (notifications, responses).
+    pub fn rpc(&self, client: &str, m: Value) -> Option<Value> {
+        let extra = extra_version(&m);
+        let core = weirdnet_mcp::Server::new(self.info.clone(), ForClient { tools: &*self.tools, client });
+        let mut r = core.handle(None, m)?;
+        if let Some(v) = extra
+            && r["result"].is_object()
+        {
+            r["result"]["protocolVersion"] = json!(v);
         }
+        Some(r)
     }
 }
 
@@ -245,7 +249,7 @@ impl Server {
         } else {
             sid.and_then(|id| self.sessions.lock().unwrap().get(&id).cloned()).unwrap_or_else(|| "mcp-client".into())
         };
-        match self.body(&client, &v) {
+        match self.rpc(&client, v) {
             Some(r) => respond(s, "200 OK", &extra, r.to_string().as_bytes())?,
             None => respond(s, "202 Accepted", &extra, b"")?,
         }
@@ -480,37 +484,19 @@ pub fn client_tls(cert_pem: &std::path::Path) -> Result<Arc<rustls::ClientConfig
     ))
 }
 
-/// `mouser mcp serve --stdio`: newline-delimited JSON-RPC on stdin/stdout,
-/// forwarded to the app's loopback endpoint with the token.
-pub fn stdio_bridge(port: u16, token: &str, input: impl BufRead, mut out: impl Write) -> Result<()> {
+/// `mouser mcp serve --stdio`: newline-delimited JSON-RPC on stdin/stdout
+/// (weirdnet-mcp's `stdio::bridge`), forwarded to the app's loopback endpoint
+/// with the token and the session the app hands out.
+pub fn stdio_bridge(port: u16, token: &str, input: impl BufRead, out: impl Write) -> Result<()> {
     let mut session: Option<String> = None;
-    for line in input.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    weirdnet_mcp::stdio::bridge(input, out, |line| {
+        let (_, sid, body) = post(port, token, session.as_deref(), line, None)
+            .map_err(|e| format!("Mouser is not reachable on 127.0.0.1:{port} (is it running with [mcp.server] enabled?): {e:#}"))?;
+        if sid.is_some() {
+            session = sid;
         }
-        let id = serde_json::from_str::<Value>(&line).ok().and_then(|v| v.get("id").cloned());
-        match post(port, token, session.as_deref(), &line, None) {
-            Ok((_, sid, body)) => {
-                if sid.is_some() {
-                    session = sid;
-                }
-                if !body.trim().is_empty() {
-                    writeln!(out, "{}", body.trim())?;
-                }
-            }
-            Err(e) => {
-                if let Some(id) = id {
-                    writeln!(
-                        out,
-                        "{}",
-                        err(&id, -32000, &format!("Mouser is not reachable on 127.0.0.1:{port} (is it running with [mcp.server] enabled?): {e}"))
-                    )?;
-                }
-            }
-        }
-        out.flush()?;
-    }
+        Ok::<_, String>((!body.trim().is_empty()).then_some(body))
+    })?;
     Ok(())
 }
 
@@ -519,13 +505,22 @@ mod tests {
     use super::*;
 
     struct Fake;
+    static ECHO: &[ToolSpec] = &[ToolSpec {
+        name: "echo",
+        description: "echo",
+        params: &[Param::optional("x", ParamType::Integer, "anything")],
+        auth: false,
+        read_only: true,
+        destructive: false,
+        open_world: false,
+    }];
     impl Tools for Fake {
-        fn list(&self) -> Vec<Value> {
-            vec![json!({"name": "echo", "description": "echo", "inputSchema": {"type": "object"}})]
+        fn specs(&self) -> &[ToolSpec] {
+            ECHO
         }
-        fn call(&self, client: &str, _: &str, a: &Value) -> std::result::Result<Value, String> {
+        fn call(&self, client: &str, _: &ToolSpec, a: &Value) -> std::result::Result<Value, ToolError> {
             if a["fail"] == true {
-                return Err("nope".into());
+                return Err(ToolError("nope".into()));
             }
             Ok(json!({"client": client, "args": a}))
         }
@@ -578,6 +573,24 @@ mod tests {
         assert!(b.contains("\"isError\":true"));
         let (_, _, b) = post(port, TOK, Some(&sid), r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rm"}}"#, tls).unwrap();
         assert!(b.contains("-32602"));
+    }
+
+    #[test]
+    fn rpc_through_weirdnet_mcp() {
+        let s = Server::new(Arc::new(Fake), TOK.into(), "9.9");
+        let init = |v: &str| s.rpc("t", json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion": v}})).unwrap();
+        assert_eq!(init("2025-11-25")["result"]["protocolVersion"], "2025-11-25", "kept until weirdnet-mcp lists it (G19)");
+        assert_eq!(init("2025-06-18")["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(init("1999-01-01")["result"]["protocolVersion"], weirdnet_mcp::PROTOCOL_VERSIONS[0]);
+        let i = init("2025-06-18");
+        assert_eq!((i["result"]["serverInfo"]["name"].as_str(), i["result"]["serverInfo"]["version"].as_str()), (Some("mouser"), Some("9.9")));
+        let l = s.rpc("t", json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).unwrap();
+        assert_eq!(l["result"]["tools"][0]["annotations"]["readOnlyHint"], true);
+        let b = s.rpc("t", json!([{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","id":3,"method":"ping"}])).unwrap();
+        assert_eq!(b.as_array().map(Vec::len), Some(1));
+        assert!(s.rpc("t", json!({"jsonrpc":"2.0","method":"notifications/initialized"})).is_none());
+        let c = s.rpc("me", json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo","arguments":{"x":1}}})).unwrap();
+        assert_eq!(c["result"]["structuredContent"]["client"], "me", "the session's client reaches the tool");
     }
 
     #[test]
